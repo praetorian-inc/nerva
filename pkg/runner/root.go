@@ -27,9 +27,9 @@ var (
 	targetList []string
 	userInput  string
 	rootCmd    = &cobra.Command{
-		Use: "fingerprintx [flags]\nTARGET SPECIFICATION:\n\tRequires a host and port number or ip and port number. " +
-			"The port is assumed to be open.\n\tHOST:PORT or IP:PORT\nEXAMPLES:\n\tfingerprintx -t praetorian.com:80\n" +
-			"\tfingerprintx -l input-file.txt\n\tfingerprintx --json -t praetorian.com:80,127.0.0.1:8000",
+		Use: "nerva [flags]\nTARGET SPECIFICATION:\n\tRequires a host and port number or ip and port number. " +
+			"The port is assumed to be open.\n\tHOST:PORT or IP:PORT\nEXAMPLES:\n\tnerva -t praetorian.com:80\n" +
+			"\tnerva -l input-file.txt\n\tnerva --json -t praetorian.com:80,127.0.0.1:8000",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			configErr := checkConfig(config)
 			if configErr != nil {
