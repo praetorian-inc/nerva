@@ -3,6 +3,7 @@ module github.com/praetorian-inc/nerva
 go 1.24.0
 
 require (
+	github.com/ishidawataru/sctp v0.0.0-20251114114122-19ddcbc6aae2
 	github.com/ory/dockertest/v3 v3.12.0
 	github.com/projectdiscovery/wappalyzergo v0.2.17
 	github.com/spf13/cobra v1.5.0
