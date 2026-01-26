@@ -22,6 +22,9 @@ type Config struct {
 	// UDP scan
 	UDP bool
 
+	// SCTP scan (Linux only, falls back to error on other platforms)
+	SCTP bool
+
 	FastMode bool
 
 	// The timeout specifies how long certain tasks should wait during the scanning process.
