@@ -115,6 +115,50 @@ func (c *Config) UDPScanTarget(target plugins.Target) (*plugins.Service, error) 
 	return nil, nil
 }
 
+// SCTPScanTarget performs SCTP scanning of the target.
+// On Linux: Full SCTP features via kernel module.
+// On other platforms: Returns error (SCTP not supported).
+func (c *Config) SCTPScanTarget(target plugins.Target) (*plugins.Service, error) {
+	ip := target.Address.Addr().String()
+	port := target.Address.Port()
+
+	// First check default port mappings
+	for _, plugin := range sortedSCTPPlugins {
+		if plugin.PortPriority(port) {
+			conn, err := DialSCTP(ip, port)
+			if err != nil {
+				return nil, fmt.Errorf("SCTP connection failed: %w", err)
+			}
+			result, err := simplePluginRunner(conn, target, c, plugin)
+			if err != nil && c.Verbose {
+				log.Printf("error: %v scanning %v\n", err, target.Address.String())
+			}
+			if result != nil && err == nil {
+				return result, nil
+			}
+		}
+	}
+
+	// Fast mode: only check default port mappings
+	if c.FastMode {
+		return nil, nil
+	}
+
+	// Slow scan: try all SCTP plugins
+	for _, plugin := range sortedSCTPPlugins {
+		conn, err := DialSCTP(ip, port)
+		if err != nil {
+			return nil, fmt.Errorf("SCTP connection failed: %w", err)
+		}
+		result, err := simplePluginRunner(conn, target, c, plugin)
+		if result != nil && err == nil {
+			return result, nil
+		}
+	}
+
+	return nil, nil
+}
+
 // simpleScanTarget attempts to identify the service that is running on a given
 // port. The fingerprinter supports two modes of operation referred to as the
 // fast lane and slow lane. The fast lane aims to be as fast as possible and
