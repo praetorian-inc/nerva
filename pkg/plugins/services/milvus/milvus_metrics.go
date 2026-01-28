@@ -32,7 +32,7 @@ Milvus Prometheus Metrics Fingerprinting
 
 This plugin detects Milvus via its Prometheus metrics endpoint on port 9091.
 This is separate from the main Milvus plugin (port 19530) to follow the
-fingerprintx principle: one plugin per port/protocol combination.
+nerva principle: one plugin per port/protocol combination.
 
 Detection Strategy:
   PHASE 1 - DETECTION:

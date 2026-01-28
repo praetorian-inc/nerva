@@ -51,7 +51,7 @@ HELLO Message Structure (PackStream encoded):
   B1 01                         Structure with 1 field, tag HELLO (0x01)
   A1                            Map with 1 entry
   8A "user_agent"               Tiny string key (10 chars)
-  D0 10 "fingerprintx/1.0"      String8 value (16 chars)
+  D0 10 "nerva/1.0"             String8 value (16 chars)
 
 SUCCESS Response (signature 0x70):
   Contains map with "server" field: "Neo4j/{version}"

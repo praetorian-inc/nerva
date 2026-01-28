@@ -35,7 +35,7 @@ This plugin implements Milvus fingerprinting for the database service on port 19
 Milvus is a vector database that uses gRPC as its primary communication protocol,
 with HTTP REST API support in v2.3.x+.
 
-**SIGNIFICANCE:** This is the FIRST gRPC-based fingerprinting plugin in fingerprintx.
+**SIGNIFICANCE:** This is the FIRST gRPC-based fingerprinting plugin in nerva.
 All previous plugins used HTTP, binary protocols (MongoDB), or text protocols.
 This establishes reusable patterns for future gRPC service fingerprinting.
 

@@ -159,7 +159,7 @@ import (
     "context"
     "net"
 
-    "github.com/praetorian-inc/fingerprintx/pkg/plugins"
+    "github.com/praetorian-inc/nerva/pkg/plugins"
 )
 
 type MySCTPProtocolPlugin struct{}

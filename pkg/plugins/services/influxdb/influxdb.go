@@ -325,7 +325,7 @@ func (p *InfluxDBPlugin) Run(conn net.Conn, timeout time.Duration, target plugin
 
 	// Phase 2: Fallback to /health detection (2.x+ only, useful if headers stripped)
 	// Note: We need a new connection for this probe since we already read from the first one
-	// For now, we'll skip the fallback since fingerprintx typically gives us one connection per probe
+	// For now, we'll skip the fallback since nerva typically gives us one connection per probe
 	// If /ping didn't detect InfluxDB, it's likely not InfluxDB or is misconfigured
 
 	// Not detected

@@ -71,7 +71,7 @@ func (p *KubernetesPlugin) Priority() int {
 
 func (p *KubernetesPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
 	// Check if connection is already TLS-wrapped
-	// fingerprintx passes TLS connections for TCPTLS plugins
+	// nerva passes TLS connections for TCPTLS plugins
 	_, isTLS := conn.(*tls.Conn)
 
 	// Create HTTP client that uses the provided connection
