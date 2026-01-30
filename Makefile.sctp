@@ -1,7 +1,7 @@
 # Makefile.sctp - SCTP testing infrastructure for Nerva
 # Include this from main Makefile with: include Makefile.sctp
 
-.PHONY: sctp-up sctp-down sctp-test sctp-logs sctp-clean sctp-shell sctp-status sctp-full-up
+.PHONY: sctp-up sctp-down sctp-test sctp-logs sctp-clean sctp-shell sctp-status sctp-full-up m3ua-up m3ua-test m3ua-logs
 
 # SCTP test environment variables
 COMPOSE_FILE := docker-compose.dev.yml
@@ -125,6 +125,32 @@ sctp-verify:
 	@echo "4. FreeDiameter process:"
 	@$(COMPOSE_CMD) exec -T freediameter ps aux | grep freeDiameterd | grep -v grep || echo "   ⚠ Not running"
 
+# Start M3UA test environment (OsmoSTP only)
+m3ua-up:
+	@echo "Starting M3UA test environment..."
+	$(COMPOSE_CMD) up -d osmo-stp
+	@echo ""
+	@echo "Waiting for OsmoSTP to be ready..."
+	@sleep 5
+	@echo ""
+	@echo "M3UA test environment started!"
+	@echo "  - OsmoSTP M3UA: localhost:2905"
+	@echo "  - OsmoSTP VTY:  localhost:4239"
+
+# Run M3UA plugin tests
+m3ua-test:
+	@echo "Running M3UA plugin tests..."
+	$(COMPOSE_CMD) exec -T nerva-dev go test -v \
+		./pkg/plugins/services/m3ua/... \
+		-timeout 2m
+	@echo ""
+	@echo "M3UA tests completed"
+
+# View OsmoSTP logs
+m3ua-logs:
+	@echo "Viewing OsmoSTP logs (Ctrl+C to exit)..."
+	$(COMPOSE_CMD) logs -f osmo-stp
+
 # Help target
 sctp-help:
 	@echo "SCTP Testing Makefile Targets:"
@@ -141,6 +167,11 @@ sctp-help:
 	@echo "  sctp-verify       - Verify SCTP connectivity and services"
 	@echo "  sctp-clean        - Stop and remove all containers and volumes"
 	@echo "  sctp-rebuild      - Rebuild all SCTP test containers"
+	@echo ""
+	@echo "M3UA Testing Targets:"
+	@echo "  m3ua-up           - Start M3UA test environment (OsmoSTP)"
+	@echo "  m3ua-test         - Run M3UA plugin tests"
+	@echo "  m3ua-logs         - View OsmoSTP logs"
 	@echo ""
 	@echo "Environment variables:"
 	@echo "  FREEDIAMETER_HOST - FreeDiameter hostname (default: freediameter)"

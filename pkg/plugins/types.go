@@ -61,6 +61,7 @@ const (
 	ProtoKubernetes = "kubernetes"
 	ProtoLDAP       = "ldap"
 	ProtoLDAPS      = "ldaps"
+	ProtoM3UA       = "m3ua"
 	ProtoMemcached     = "memcached"
 	ProtoMilvus        = "milvus"
 	ProtoMilvusMetrics = "milvus-metrics"
@@ -244,6 +245,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoLDAPS:
 		var p ServiceLDAPS
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoM3UA:
+		var p ServiceM3UA
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoSSH:
@@ -753,3 +758,12 @@ type ServiceRMI struct {
 }
 
 func (e ServiceRMI) Type() string { return ProtoRMI }
+
+type ServiceM3UA struct {
+	InfoString   string `json:"infoString,omitempty"`
+	ErrorCode    uint32 `json:"errorCode,omitempty"`
+	MessageClass uint8  `json:"messageClass,omitempty"`
+	MessageType  uint8  `json:"messageType,omitempty"`
+}
+
+func (e ServiceM3UA) Type() string { return ProtoM3UA }

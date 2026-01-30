@@ -50,6 +50,27 @@ services:
       timeout: 5s
       retries: 5
 
+  # OsmoSTP for M3UA/SIGTRAN testing
+  osmo-stp:
+    build:
+      context: ./testdata/osmo-stp
+      dockerfile: Dockerfile
+    container_name: osmo-stp-server
+    hostname: osmo-stp.local
+    networks:
+      - sctp-test-network
+    ports:
+      - "2905:2905"        # M3UA SCTP
+      - "14001:14001"      # SUA SCTP
+      - "4239:4239"        # VTY telnet
+    environment:
+      - OSMO_STP_PC=1.2.3
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "2905"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   # Open5GS HSS (Optional - for realistic 5G/LTE testing)
   # Enable with: docker-compose --profile full up
   open5gs-hss:
