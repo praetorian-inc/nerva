@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+title: Nerva
+message: "If you use this software in your research, please cite it as below."
+type: software
+authors:
+  - name: Praetorian Inc.
+    website: https://www.praetorian.com
+repository-code: "https://github.com/praetorian-inc/nerva"
+url: "https://www.praetorian.com"
+keywords:
+  - service-fingerprinting
+  - network-scanner
+  - security-tool
+  - penetration-testing
+  - protocol-detection
+  - reconnaissance
+license: Apache-2.0

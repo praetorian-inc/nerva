@@ -8,42 +8,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Troubleshooting section in README
-- CONTRIBUTING.md with plugin development guide
-- SECURITY.md with vulnerability reporting policy
-- Dynamic badges for release version, build status, and Go report card
+- Complete README rewrite with accurate protocol documentation
+- Architecture diagram (Mermaid)
+- Use Cases section for security professionals
+- Troubleshooting guide
+- Terminology glossary
+- CITATION.cff for research citations
 
 ### Changed
-- Improved README with keyword-rich descriptions for SEO
-- Updated repository topics for better discoverability
+- Renamed examples/scan.go to examples/service-fingerprinting-example.go
 
-## [1.0.0] - 2024-01-XX
+## [1.0.0] - 2024
 
 ### Added
-- Initial release as Nerva (fork of fingerprintx)
-- 51 service detection plugins supporting TCP and UDP protocols
-- Vector database support: ChromaDB, Milvus, Pinecone
-- Industrial protocol support: Modbus, IPMI
-- Telecom protocol support: Diameter (3GPP/LTE/5G), SMPP
-- JSON and CSV output formats
-- Fast mode for default-port-only scanning
-- Docker support
-- Library usage with examples
+- **SCTP Transport Support** (Linux only)
+  - New `--sctp` / `-S` flag
+  - Diameter-SCTP plugin for telecom network fingerprinting (3GPP/LTE/5G)
 
-### Supported Protocols
-- **Databases**: PostgreSQL, MySQL, MSSQL, OracleDB, MongoDB, Redis, Cassandra, CouchDB, Elasticsearch, InfluxDB, Neo4j, DB2, Sybase, Firebird, Memcached
-- **Vector Databases**: ChromaDB, Milvus, Pinecone
-- **Remote Access**: SSH, RDP, Telnet, VNC
-- **Web**: HTTP/HTTPS
-- **File Transfer**: FTP, SMB, Rsync
-- **Messaging**: Kafka, MQTT, SMTP, POP3, IMAP
-- **Directory**: LDAP
-- **Network Services**: DNS, DHCP, NTP, SNMP, NetBIOS-NS
-- **VPN**: OpenVPN, IPsec
-- **Industrial**: Modbus, IPMI
-- **Telecom**: Diameter, SMPP
-- **Developer Tools**: JDWP, Java RMI
-- **Other**: RTSP, Echo, SNPP, STUN, Linux RPC
+- **54 Protocol Detection Plugins**
+
+  **Databases (18):**
+  - Relational: PostgreSQL, MySQL, MSSQL, OracleDB, DB2, Sybase, Firebird
+  - NoSQL: MongoDB, Redis, Cassandra, CouchDB, Elasticsearch, InfluxDB, Neo4j, Memcached
+  - Vector: ChromaDB, Milvus, Pinecone
+
+  **Remote Access (4):** SSH, RDP, Telnet, VNC
+
+  **Web & API (2):** HTTP/HTTPS (with Wappalyzer tech detection), Kubernetes
+
+  **Messaging (5):** Kafka (old/new), MQTT (3/5), SMTP/SMTPS, POP3/POP3S, IMAP/IMAPS
+
+  **File Transfer (3):** FTP, SMB, Rsync
+
+  **Directory (2):** LDAP, LDAPS
+
+  **Network Services (10):** DNS (TCP/UDP), DHCP, NTP, SNMP, NetBIOS-NS, STUN, OpenVPN, IPsec, IPMI, Echo
+
+  **Industrial & Telecom (5):** Modbus, IPMI, Diameter (TCP), Diameter-SCTP, SMPP
+
+  **Developer Tools (4):** JDWP, Java RMI, RTSP, Linux RPC
+
+- **Output Formats:** JSON, CSV, human-readable text
+- **Fast Mode:** Default-port-only scanning for rapid reconnaissance
+- **Library API:** Import as Go package for custom applications
+- **Docker Support:** Containerized deployment
+
+### Technical Details
+- Default timeout: 2000ms (configurable via `-w`)
+- UDP scanning requires `-U` flag (may need root on Linux/Darwin)
+- SCTP requires Linux kernel support
 
 ## Attribution
 

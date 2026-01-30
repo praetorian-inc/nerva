@@ -1,4 +1,4 @@
-<img width="2976" height="1440" alt="nerva" src="https://github.com/user-attachments/assets/66f38a0c-dd23-42b6-9121-16fb2296f752" />
+<img width="2976" height="1440" alt="Nerva - Fast service fingerprinting CLI for network reconnaissance supporting 54 protocols" src="https://github.com/user-attachments/assets/66f38a0c-dd23-42b6-9121-16fb2296f752" />
 <h1 align="center">
   Nerva
   <br>
@@ -6,272 +6,435 @@
 </h1>
 
 <p align="center">
-<a href="https://github.com/praetorian-inc/nerva/releases"><img src="https://img.shields.io/github/v/release/praetorian-inc/nerva?style=flat-square"></a>
-<a href="https://github.com/praetorian-inc/nerva/actions"><img src="https://img.shields.io/github/actions/workflow/status/praetorian-inc/nerva/ci.yml?style=flat-square"></a>
-<a href="https://goreportcard.com/report/github.com/praetorian-inc/nerva"><img src="https://goreportcard.com/badge/github.com/praetorian-inc/nerva?style=flat-square"></a>
-<a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg?style=flat-square"></a>
-<a href="https://github.com/praetorian-inc/nerva/stargazers"><img src="https://img.shields.io/github/stars/praetorian-inc/nerva?style=flat-square"></a>
+<a href="https://github.com/praetorian-inc/nerva/releases"><img src="https://img.shields.io/github/v/release/praetorian-inc/nerva?style=flat-square" alt="Release"></a>
+<a href="https://github.com/praetorian-inc/nerva/actions"><img src="https://img.shields.io/github/actions/workflow/status/praetorian-inc/nerva/ci.yml?style=flat-square" alt="Build Status"></a>
+<a href="https://goreportcard.com/report/github.com/praetorian-inc/nerva"><img src="https://goreportcard.com/badge/github.com/praetorian-inc/nerva?style=flat-square" alt="Go Report Card"></a>
+<a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg?style=flat-square" alt="License"></a>
+<a href="https://github.com/praetorian-inc/nerva/stargazers"><img src="https://img.shields.io/github/stars/praetorian-inc/nerva?style=flat-square" alt="Stars"></a>
 </p>
 
 <p align="center">
   <a href="#features">Features</a> •
   <a href="#installation">Installation</a> •
+  <a href="#quick-start">Quick Start</a> •
   <a href="#usage">Usage</a> •
-  <a href="#running-nerva">Running Nerva</a> •
-  <a href="#using-as-a-library">Using as a library</a> •
-  <a href="#why-not-nmap">Why not nmap?</a> •
-  <a href="#troubleshooting">Troubleshooting</a> •
-  <a href="#notes">Notes</a>
+  <a href="#supported-protocols">Protocols</a> •
+  <a href="#library-usage">Library</a> •
+  <a href="#use-cases">Use Cases</a> •
+  <a href="#troubleshooting">Troubleshooting</a>
 </p>
 
-> **Fast, lightweight service fingerprinting written in Go.** Identify 50+ protocols including databases, remote access services, and industrial systems in seconds.
+> **High-performance service fingerprinting written in Go.** Identify 54 network protocols across TCP, UDP, and SCTP transports with rich metadata extraction.
 
-`nerva` is a fast service fingerprinting utility that supports identifying services like RDP, SSH, MySQL, PostgreSQL, Kafka, and 50+ other protocols. `nerva` can be used alongside port scanners like [Naabu](https://github.com/projectdiscovery/naabu) to fingerprint services running on discovered ports. For example, an engineer may wish to scan an IP range and then rapidly fingerprint the service running on all the discovered ports.
+Nerva rapidly detects and identifies services running on open network ports. Use it alongside port scanners like [Naabu](https://github.com/projectdiscovery/naabu) to fingerprint discovered services, or integrate it into your security pipelines for automated reconnaissance.
 
+## Features
 
-# Features
+- **54 Protocol Plugins** — Databases, remote access, web services, messaging, industrial, and telecom protocols
+- **Multi-Transport Support** — TCP (default), UDP (`--udp`), and SCTP (`--sctp`, Linux only)
+- **Rich Metadata** — Extract versions, configurations, and security-relevant details from each service
+- **Fast Mode** — Scan only default ports for rapid reconnaissance (`--fast`)
+- **Flexible Output** — JSON, CSV, or human-readable formats
+- **Pipeline Friendly** — Pipe from Naabu, Nmap, or any tool that outputs `host:port`
+- **Go Library** — Import directly into your Go applications
 
-* Fast fingerprinting of exposed services
-* Application layer service discovery
-* Plays nicely with other command line tools
-* Automatic metadata collection from identified services
+## Installation
 
-## Supported Protocols:
+### From GitHub
 
-**51 service detection plugins** supporting TCP and UDP protocols:
-
-<div align="center">
-
-|SERVICE       |TRANSPORT|
-|--------------|---------|
-|Cassandra     |TCP      |
-|ChromaDB      |TCP      |
-|CouchDB       |TCP      |
-|DB2           |TCP      |
-|DHCP          |UDP      |
-|Diameter      |TCP      |
-|DNS           |TCP/UDP  |
-|Echo          |TCP      |
-|Elasticsearch |TCP      |
-|Firebird      |TCP      |
-|FTP           |TCP      |
-|HTTP/HTTPS    |TCP      |
-|IMAP          |TCP      |
-|InfluxDB      |TCP      |
-|IPMI          |TCP      |
-|IPSEC         |UDP      |
-|Java RMI      |TCP      |
-|JDWP          |TCP      |
-|Kafka         |TCP      |
-|LDAP          |TCP      |
-|Linux RPC     |TCP      |
-|Memcached     |TCP      |
-|Milvus        |TCP      |
-|Modbus        |TCP      |
-|MongoDB       |TCP      |
-|MQTT          |TCP      |
-|MSSQL         |TCP      |
-|MySQL         |TCP      |
-|Neo4j         |TCP      |
-|NetBIOS-NS    |UDP      |
-|NTP           |UDP      |
-|OpenVPN       |UDP      |
-|OracleDB      |TCP      |
-|Pinecone      |TCP      |
-|POP3          |TCP      |
-|PostgreSQL    |TCP      |
-|RDP           |TCP      |
-|Redis         |TCP      |
-|Rsync         |TCP      |
-|RTSP          |TCP      |
-|SMB           |TCP      |
-|SMPP          |TCP      |
-|SMTP          |TCP      |
-|SNMP          |UDP      |
-|SNPP          |TCP      |
-|SSH           |TCP      |
-|STUN          |UDP      |
-|Sybase        |TCP      |
-|Telnet        |TCP      |
-|VNC           |TCP      |
-
-</div>
-
-### Notable Features:
-- **Vector Databases**: ChromaDB, Milvus, Pinecone
-- **Relational Databases**: PostgreSQL, MySQL, MSSQL, OracleDB, DB2, Sybase, Firebird
-- **NoSQL Databases**: MongoDB, CouchDB, Cassandra, Redis, Elasticsearch, InfluxDB, Neo4j
-- **Developer Tools**: JDWP (Java Debug Wire Protocol), Java RMI
-- **Industrial Protocols**: Modbus, IPMI
-- **Messaging**: Kafka, MQTT, SMTP
-- **Remote Access**: SSH, RDP, Telnet, VNC
-- **File Transfer**: FTP, SMB, Rsync
-- **Telecom/AAA**: Diameter (3GPP networks, LTE/5G), SMPP (SMS gateways)
-
-# Installation
-
-From Github
 ```sh
 go install github.com/praetorian-inc/nerva/cmd/nerva@latest
 ```
 
-From source (go version > 1.18)
-```sh
-$ git clone git@github.com:praetorian-inc/nerva.git
-$ cd nerva
+### From Source
 
-# with go version > 1.18
-$ go build ./cmd/nerva
-$ ./nerva -h
+```sh
+git clone https://github.com/praetorian-inc/nerva.git
+cd nerva
+go build ./cmd/nerva
+./nerva -h
 ```
 
-Docker
-```sh
-$ git clone git@github.com:praetorian-inc/nerva.git
-$ cd nerva
+### Docker
 
-# build
+```sh
+git clone https://github.com/praetorian-inc/nerva.git
+cd nerva
 docker build -t nerva .
-
-# and run it
 docker run --rm nerva -h
-docker run --rm nerva -t praetorian.com:80 --json
+docker run --rm nerva -t example.com:80 --json
 ```
 
-# Usage
+## Quick Start
+
+Fingerprint a single target:
 
 ```sh
-nerva -h
+nerva -t example.com:22
+# ssh://example.com:22
 ```
 
-The `-h` option will display all of the supported flags for `nerva`.
+Get detailed JSON metadata:
 
 ```sh
-Usage:
-  nerva [flags]
+nerva -t example.com:22 --json
+# {"host":"example.com","ip":"93.184.216.34","port":22,"protocol":"ssh","transport":"tcp","metadata":{...}}
+```
+
+Pipe from a port scanner:
+
+```sh
+naabu -host example.com -silent | nerva
+# http://example.com:80
+# ssh://example.com:22
+# https://example.com:443
+```
+
+## Usage
+
+```
+nerva [flags]
+
 TARGET SPECIFICATION:
-	Requires a host and port number or ip and port number. The port is assumed to be open.
-	HOST:PORT or IP:PORT
+  Requires host:port or ip:port format. Assumes ports are open.
+
 EXAMPLES:
-	nerva -t praetorian.com:80
-	nerva -l input-file.txt
-	nerva --json -t praetorian.com:80,127.0.0.1:8000
-
-Flags:
-      --csv               output format in csv
-  -f, --fast              fast mode
-  -h, --help              help for nerva
-      --json              output format in json
-  -l, --list string       input file containing targets
-  -o, --output string     output file
-  -t, --targets strings   target or comma separated target list
-  -w, --timeout int       timeout (milliseconds) (default 500)
-  -U, --udp               run UDP plugins
-  -v, --verbose           verbose mode
+  nerva -t example.com:80
+  nerva -t example.com:80,example.com:443
+  nerva -l targets.txt
+  nerva --json -t example.com:80
+  cat targets.txt | nerva
 ```
 
-The `fast` mode will only attempt to fingerprint the default service associated with that port for each target. For example, if `praetorian.com:8443` is the input, only the `https` plugin would be run. If `https` is not running on `praetorian.com:8443`, there will be NO output. Why do this? It's a quick way to fingerprint most of the services in a large list of hosts (think the [80/20 rule](https://en.wikipedia.org/wiki/Pareto_principle)).
+### Flags
 
-# Running Nerva
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--targets` | `-t` | Target or comma-separated target list | — |
+| `--list` | `-l` | Input file containing targets | — |
+| `--output` | `-o` | Output file path | stdout |
+| `--json` | | Output in JSON format | false |
+| `--csv` | | Output in CSV format | false |
+| `--fast` | `-f` | Fast mode (default ports only) | false |
+| `--udp` | `-U` | Run UDP plugins | false |
+| `--sctp` | `-S` | Run SCTP plugins (Linux only) | false |
+| `--timeout` | `-w` | Timeout in milliseconds | 2000 |
+| `--verbose` | `-v` | Verbose output to stderr | false |
 
-With one target:
+### Examples
+
+**Multiple targets:**
+
 ```sh
-$ nerva -t 127.0.0.1:8000
-http://127.0.0.1:8000
+nerva -t example.com:22,example.com:80,example.com:443
 ```
 
-By default, the output is in the form: `SERVICE://HOST:PORT`. To get more detailed service output specify JSON with the `--json` flag:
+**From file:**
+
 ```sh
-$ nerva -t 127.0.0.1:8000 --json
-{"ip":"127.0.0.1","port":8000,"service":"http","transport":"tcp","metadata":{"responseHeaders":{"Content-Length":["1154"],"Content-Type":["text/html; charset=utf-8"],"Date":["Mon, 19 Sep 2022 18:23:18 GMT"],"Server":["SimpleHTTP/0.6 Python/3.10.6"]},"status":"200 OK","statusCode":200,"version":"SimpleHTTP/0.6 Python/3.10.6"}}
+nerva -l targets.txt --json -o results.json
 ```
 
-Pipe in output from another program (like [naabu](https://github.com/projectdiscovery/naabu)):
+**UDP scanning** (may require root):
+
 ```sh
-$ naabu 127.0.0.1 -silent 2>/dev/null | nerva
-http://127.0.0.1:8000
-ftp://127.0.0.1:21
+sudo nerva -t example.com:53 -U
+# dns://example.com:53
 ```
 
-Run with an input file:
-```
-$ cat input.txt | nerva
-http://praetorian.com:80
-telnet://telehack.com:23
+**SCTP scanning** (Linux only):
 
-# or if you prefer
-$ nerva -l input.txt
-http://praetorian.com:80
-telnet://telehack.com:23
-```
-
-With more metadata output:
-```
-$ cat input.txt | nerva --json
-{"host":"praetorian.com","ip":"146.148.61.165","port":80,"service":"http","transport":"tcp","metadata":{"responseHeaders":{"Connection":["keep-alive"],"Content-Type":["text/html"],"Date":["Mon, 19 Sep 2022 18:37:55 GMT"],"Etag":["W/\"5e3e263f-1703\""],"Keep-Alive":["timeout=20"],"Server":["nginx"],"Vary":["Accept-Encoding"]},"status":"404 Not Found","statusCode":404,"version":"nginx"}}
-{"host":"telehack.com","ip":"64.13.139.230","port":23,"service":"telnet","transport":"tcp","metadata":{"serverData":"fffb03"}}
-```
-
-# Using as a library
-
-`nerva` can be imported into your project to scan for services on open ports. Example code on how one might do this is provided [here in the examples directory](examples/scan.go). Build with `go build scan.go`. Another file that might be of use as a reference when importing `nerva` into your own project is the [command line runner](pkg/runner/root.go).
-
-# Why Not Nmap?
-
-[Nmap](https://nmap.org/) is the standard for network scanning. Why use `nerva` instead of nmap? The main two reasons are:
-
-* `nerva` works smarter, not harder: the first plugin run against a server with port 8080 open is the http plugin. The default service approach cuts down scanning time in the best case. Most of the time the services running on port 80, 443, 22 are http, https, and ssh -- so that's what `nerva` checks first.
-* `nerva` supports json output with the `--json` flag. Nmap supports numerous output options (normal, xml, grep), but they are often hard to parse and script appropriately. `nerva` supports json output which eases integration with other tools in processing pipelines.
-
-# Notes
-
-* Why do you have a `third_party` folder that imports the Go cryptography libraries?
-    * Good question! The `ssh` fingerprinting module identifies the various cryptographic options supported by the server when collecting metadata during the handshake process. This makes use of a few unexported functions, which is why the Go cryptography libraries are included here with an [export.go file](third_party/cryptolib/ssh/export.go).
-* Nerva is not designed to identify open ports on the target systems and assumes that every `target:port` input is open. If none of the ports are open there will be no output as there are no services running on the targets.
-* How does this compare to [zgrab2](https://github.com/zmap/zgrab2)?
-    * The `zgrab2` command line usage (and use case) is slightly different than `nerva`. For `zgrab2`, the protocol must be specified ahead of time: `echo praetorian.com | zgrab2 http -p 8000`, which assumes you already know what is running there. For `nerva`, that is not the case: `echo praetorian.com:8000 | nerva`. The "application layer" protocol scanning approach is very similar.
-
-# Troubleshooting
-
-### No output from nerva
-
-**Cause**: The target port is closed or no supported service is detected.
-
-**Solution**: Nerva assumes ports are open. Verify the port is open first:
 ```sh
-nc -zv target.com 80
+nerva -t telecom-server:3868 -S
+# diameter://telecom-server:3868
+```
+
+**Fast mode** (default ports only):
+
+```sh
+nerva -l large-target-list.txt --fast --json
+```
+
+## Supported Protocols
+
+**54 service detection plugins** across TCP, UDP, and SCTP:
+
+### Databases (18)
+
+| Protocol | Transport | Notes |
+|----------|-----------|-------|
+| PostgreSQL | TCP | Auth detection, version |
+| MySQL | TCP | Version, error codes |
+| MSSQL | TCP | Instance detection |
+| OracleDB | TCP | TNS protocol |
+| MongoDB | TCP | Wire protocol version |
+| Redis | TCP | Auth detection |
+| Cassandra | TCP | CQL protocol |
+| CouchDB | TCP | HTTP-based |
+| Elasticsearch | TCP | Cluster info |
+| InfluxDB | TCP | HTTP API |
+| Neo4j | TCP | Bolt protocol |
+| DB2 | TCP | DRDA protocol |
+| Sybase | TCP | TDS protocol |
+| Firebird | TCP | Wire protocol |
+| Memcached | TCP | Text/binary protocol |
+| **ChromaDB** | TCP | Vector database |
+| **Milvus** | TCP | Vector database |
+| **Pinecone** | TCP | Vector database |
+
+### Remote Access (4)
+
+| Protocol | Transport |
+|----------|-----------|
+| SSH | TCP |
+| RDP | TCP |
+| Telnet | TCP |
+| VNC | TCP |
+
+### Web & API (2)
+
+| Protocol | Transport | Notes |
+|----------|-----------|-------|
+| HTTP/HTTPS | TCP | HTTP/2, tech detection via Wappalyzer |
+| Kubernetes | TCP | API server detection |
+
+### Messaging (5)
+
+| Protocol | Transport | Notes |
+|----------|-----------|-------|
+| Kafka | TCP | Old and new protocol |
+| MQTT | TCP | MQTT 3 and 5 |
+| SMTP/SMTPS | TCP | Banner detection |
+| POP3/POP3S | TCP | Banner detection |
+| IMAP/IMAPS | TCP | Banner detection |
+
+### File Transfer (3)
+
+| Protocol | Transport |
+|----------|-----------|
+| FTP | TCP |
+| SMB | TCP |
+| Rsync | TCP |
+
+### Directory Services (2)
+
+| Protocol | Transport |
+|----------|-----------|
+| LDAP | TCP |
+| LDAPS | TCP |
+
+### Network Services (10 UDP)
+
+| Protocol | Transport |
+|----------|-----------|
+| DNS | TCP/UDP |
+| DHCP | UDP |
+| NTP | UDP |
+| SNMP | UDP |
+| NetBIOS-NS | UDP |
+| STUN | UDP |
+| OpenVPN | UDP |
+| IPsec | UDP |
+| IPMI | UDP |
+| Echo | TCP/UDP |
+
+### Industrial & Telecom (4)
+
+| Protocol | Transport | Notes |
+|----------|-----------|-------|
+| Modbus | TCP | Industrial control |
+| IPMI | UDP | Server management |
+| Diameter | TCP | 3GPP/LTE/5G AAA |
+| **Diameter-SCTP** | SCTP | Telecom (Linux only) |
+| SMPP | TCP | SMS gateway |
+
+### Developer Tools (4)
+
+| Protocol | Transport |
+|----------|-----------|
+| JDWP | TCP |
+| Java RMI | TCP |
+| RTSP | TCP |
+| Linux RPC | TCP |
+
+## Library Usage
+
+Import Nerva into your Go applications:
+
+```go
+package main
+
+import (
+    "fmt"
+    "log"
+    "net/netip"
+    "time"
+
+    "github.com/praetorian-inc/nerva/pkg/plugins"
+    "github.com/praetorian-inc/nerva/pkg/scan"
+)
+
+func main() {
+    // Configure scan
+    config := scan.Config{
+        DefaultTimeout: 2 * time.Second,
+        FastMode:       false,
+        UDP:            false,
+    }
+
+    // Create target
+    ip, _ := netip.ParseAddr("93.184.216.34")
+    target := plugins.Target{
+        Address: netip.AddrPortFrom(ip, 22),
+        Host:    "example.com",
+    }
+
+    // Run scan
+    results, err := scan.ScanTargets([]plugins.Target{target}, config)
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    // Process results
+    for _, result := range results {
+        fmt.Printf("%s:%d - %s (%s)\n",
+            result.Host, result.Port,
+            result.Protocol, result.Transport)
+    }
+}
+```
+
+See [examples/service-fingerprinting-example.go](examples/service-fingerprinting-example.go) for a complete working example.
+
+## Use Cases
+
+### Penetration Testing
+
+Rapidly fingerprint services discovered during reconnaissance to identify potential attack vectors.
+
+### Asset Discovery Pipelines
+
+Combine with Naabu or Masscan for large-scale asset inventory:
+
+```sh
+naabu -host 10.0.0.0/24 -silent | nerva --json | jq '.protocol'
+```
+
+### CI/CD Security Scanning
+
+Integrate into deployment pipelines to verify only expected services are exposed.
+
+### Bug Bounty Reconnaissance
+
+Quickly enumerate services across scope targets to find interesting endpoints.
+
+### Telecom Network Analysis
+
+Fingerprint Diameter nodes in LTE/5G networks using SCTP transport (Linux):
+
+```sh
+nerva -t mme.telecom.local:3868 -S --json
+```
+
+## Architecture
+
+```mermaid
+graph LR
+    A[host:port input] --> B[Target Parser]
+    B --> C[Scan Engine]
+    C --> D{Transport}
+    D -->|TCP| E[TCP Plugins]
+    D -->|UDP| F[UDP Plugins]
+    D -->|SCTP| G[SCTP Plugins]
+    E --> H[Service Detection]
+    F --> H
+    G --> H
+    H --> I[Metadata Extraction]
+    I --> J[JSON/CSV/Text Output]
+```
+
+## Why Nerva?
+
+### vs Nmap
+
+- **Smarter defaults**: Nerva checks the most likely protocol first based on port number
+- **Structured output**: Native JSON/CSV support for easy parsing and pipeline integration
+- **Focused**: Service fingerprinting only — pair with dedicated port scanners for discovery
+
+### vs zgrab2
+
+- **Auto-detection**: No need to specify protocol ahead of time
+- **Simpler usage**: `nerva -t host:port` vs `echo host | zgrab2 http -p port`
+
+## Troubleshooting
+
+### No output
+
+**Cause**: Port is closed or no supported service detected.
+
+**Solution**: Verify the port is open:
+
+```sh
+nc -zv example.com 80
 ```
 
 ### Timeout errors
 
-**Cause**: Default timeout (500ms) is too short for slow services.
+**Cause**: Default 2-second timeout too short for slow services.
 
-**Solution**: Increase timeout with `-w` flag:
+**Solution**: Increase timeout:
+
 ```sh
-nerva -t target.com:80 -w 2000  # 2 second timeout
+nerva -t example.com:80 -w 5000  # 5 seconds
 ```
 
 ### UDP services not detected
 
-**Cause**: UDP scanning is disabled by default.
+**Cause**: UDP scanning disabled by default.
 
-**Solution**: Enable UDP plugins with `-U` flag:
+**Solution**: Enable with `-U` flag (may require root):
+
 ```sh
-nerva -t target.com:53 -U
+sudo nerva -t example.com:53 -U
 ```
 
-### How to integrate with nmap
+### SCTP not working
 
-Pipe nmap output to nerva for service fingerprinting:
+**Cause**: SCTP only supported on Linux.
+
+**Solution**: Run on a Linux system or container:
+
 ```sh
-nmap -p- --open target.com -oG - | awk '/open/{print $2":"$5}' | cut -d'/' -f1 | nerva
+docker run --rm nerva -t telecom:3868 -S
 ```
 
-# Acknowledgements
+## Terminology
 
-Nerva is a maintained fork of [fingerprintx](https://github.com/praetorian-inc/fingerprintx), originally developed by Praetorian's intern class of 2022. Here is a list of contributors:
+- **Service**: A network service running on a port (SSH, HTTP, PostgreSQL, etc.)
+- **Fingerprinting**: Detecting and identifying the service type, version, and configuration
+- **Plugin**: A protocol-specific detection module
+- **Fast Mode**: Scanning only the default port for each protocol (80/20 optimization)
+- **Transport**: Network layer protocol (TCP, UDP, or SCTP)
 
-* [Soham Roy][praetorian-sohamroy](https://github.com/praetorian-sohamroy)
+## Support
+
+If you find Nerva useful, please consider giving it a star:
+
+[![GitHub stars](https://img.shields.io/github/stars/praetorian-inc/nerva?style=social)](https://github.com/praetorian-inc/nerva)
+
+## Contributing
+
+We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+## License
+
+Apache 2.0 — see [LICENSE](LICENSE) for details.
+
+## Acknowledgements
+
+Nerva is a maintained fork of [fingerprintx](https://github.com/praetorian-inc/fingerprintx), originally developed by Praetorian's intern class of 2022:
+
+* [Soham Roy](https://github.com/praetorian-sohamroy)
 * [Jue Huang](https://github.com/jue-huang)
 * [Henry Jung](https://github.com/henryjung64)
 * [Tristan Wiesepape](https://github.com/qwetboy10)
