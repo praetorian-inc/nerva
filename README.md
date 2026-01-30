@@ -1,4 +1,4 @@
-<img width="2976" height="1440" alt="Nerva - Fast service fingerprinting CLI for network reconnaissance supporting 54 protocols" src="https://github.com/user-attachments/assets/66f38a0c-dd23-42b6-9121-16fb2296f752" />
+<img width="2976" height="1440" alt="Nerva - Fast service fingerprinting CLI for network reconnaissance supporting 55 protocols" src="https://github.com/user-attachments/assets/66f38a0c-dd23-42b6-9121-16fb2296f752" />
 <h1 align="center">
   Nerva
   <br>
@@ -24,13 +24,13 @@
   <a href="#troubleshooting">Troubleshooting</a>
 </p>
 
-> **High-performance service fingerprinting written in Go.** Identify 54 network protocols across TCP, UDP, and SCTP transports with rich metadata extraction.
+> **High-performance service fingerprinting written in Go.** Identify 55 network protocols across TCP, UDP, and SCTP transports with rich metadata extraction.
 
 Nerva rapidly detects and identifies services running on open network ports. Use it alongside port scanners like [Naabu](https://github.com/projectdiscovery/naabu) to fingerprint discovered services, or integrate it into your security pipelines for automated reconnaissance.
 
 ## Features
 
-- **54 Protocol Plugins** — Databases, remote access, web services, messaging, industrial, and telecom protocols
+- **55 Protocol Plugins** — Databases, remote access, web services, messaging, industrial, and telecom protocols
 - **Multi-Transport Support** — TCP (default), UDP (`--udp`), and SCTP (`--sctp`, Linux only)
 - **Rich Metadata** — Extract versions, configurations, and security-relevant details from each service
 - **Fast Mode** — Scan only default ports for rapid reconnaissance (`--fast`)
@@ -157,7 +157,7 @@ nerva -l large-target-list.txt --fast --json
 
 ## Supported Protocols
 
-**54 service detection plugins** across TCP, UDP, and SCTP:
+**55 service detection plugins** across TCP, UDP, and SCTP:
 
 ### Databases (18)
 
@@ -238,7 +238,7 @@ nerva -l large-target-list.txt --fast --json
 | IPMI | UDP |
 | Echo | TCP/UDP |
 
-### Industrial & Telecom (4)
+### Industrial & Telecom (5)
 
 | Protocol | Transport | Notes |
 |----------|-----------|-------|
@@ -246,6 +246,7 @@ nerva -l large-target-list.txt --fast --json
 | IPMI | UDP | Server management |
 | Diameter | TCP | 3GPP/LTE/5G AAA |
 | **Diameter-SCTP** | SCTP | Telecom (Linux only) |
+| **M3UA** | SCTP | SIGTRAN SS7/IP (Linux only) |
 | SMPP | TCP | SMS gateway |
 
 ### Developer Tools (4)
