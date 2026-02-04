@@ -44,6 +44,7 @@ const (
 	ProtoCassandra  = "cassandra"
 	ProtoChromaDB   = "chromadb"
 	ProtoCouchDB    = "couchdb"
+	ProtoEtcd       = "etcd"
 	ProtoEcho          = "echo"
 	ProtoElasticsearch = "elasticsearch"
 	ProtoFirebird      = "firebird"
@@ -137,6 +138,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoChromaDB:
 		var p ServiceChromaDB
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoEtcd:
+		var p ServiceEtcd
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoFirebird:
@@ -722,6 +727,14 @@ type ServiceChromaDB struct {
 }
 
 func (e ServiceChromaDB) Type() string { return ProtoChromaDB }
+
+type ServiceEtcd struct {
+	CPEs           []string `json:"cpes,omitempty"`
+	ClusterVersion string   `json:"clusterVersion,omitempty"`
+	PortType       string   `json:"portType,omitempty"` // "client" or "peer"
+}
+
+func (e ServiceEtcd) Type() string { return ProtoEtcd }
 
 type ServiceEcho struct{}
 
