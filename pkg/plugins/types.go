@@ -41,6 +41,7 @@ const (
 	ProtoDNS        = "dns"
 	ProtoDHCP       = "dhcp"
 	ProtoDiameter   = "diameter"
+	ProtoDNP3       = "dnp3"
 	ProtoDB2        = "db2"
 	ProtoCassandra  = "cassandra"
 	ProtoChromaDB   = "chromadb"
@@ -128,6 +129,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoDiameter:
 		var p ServiceDiameter
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoDNP3:
+		var p ServiceDNP3
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoDB2:
@@ -722,6 +727,16 @@ type ServiceDiameter struct {
 }
 
 func (e ServiceDiameter) Type() string { return ProtoDiameter }
+
+type ServiceDNP3 struct {
+	SourceAddress      uint16   `json:"sourceAddress,omitempty"`      // DNP3 source address
+	DestinationAddress uint16   `json:"destinationAddress,omitempty"` // DNP3 destination address
+	DeviceRole         string   `json:"deviceRole,omitempty"`         // "master" or "outstation"
+	FunctionCode       uint8    `json:"functionCode,omitempty"`       // Function code used in detection
+	CPEs               []string `json:"cpes,omitempty"`               // Common Platform Enumeration identifiers
+}
+
+func (e ServiceDNP3) Type() string { return ProtoDNP3 }
 
 type ServiceDB2 struct {
 	ServerName string   `json:"serverName,omitempty"` // DB2 instance name
