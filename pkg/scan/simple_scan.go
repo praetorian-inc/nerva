@@ -165,23 +165,86 @@ func (c *Config) SCTPScanTarget(target plugins.Target) (*plugins.Service, error)
 // only attempts to fingerprint services by mapping them to their default port.
 // The slow lane isn't as focused on performance and instead tries to be as
 // accurate as possible.
-func (c *Config) SimpleScanTarget(target plugins.Target) (*plugins.Service, error) {
+// handlePluginResult processes a plugin result and handles weak match logic.
+// Returns (results, shouldContinue, err) where:
+// - results: services to return (if not continuing)
+// - shouldContinue: true if scanning should continue
+// - err: any error encountered
+func (c *Config) handlePluginResult(
+	result *plugins.Service,
+	err error,
+	plugin plugins.Plugin,
+	target plugins.Target,
+	weakMatch *plugins.Service,
+	weakMatchTransport *string,
+) ([]*plugins.Service, bool, error) {
+	if err != nil && c.Verbose {
+		log.Printf("error: %v scanning %v\n", err, target.Address.String())
+	}
+	if result != nil && err == nil {
+		// HTTP/HTTPS are weak matches - save but continue scanning
+		if plugin.Name() == "http" || plugin.Name() == "https" {
+			*weakMatchTransport = plugin.Name()
+			if c.Verbose {
+				log.Printf("%v -> %s detected (weak match, continuing to look for specific service)\n", target.Address.String(), plugin.Name())
+			}
+			return []*plugins.Service{result}, true, nil // return result as new weakMatch, continue
+		}
+		// Apply weak match transport if we detected HTTP/HTTPS first
+		if *weakMatchTransport != "" {
+			result.Transport = *weakMatchTransport
+		}
+		// Return both weak match (HTTP/HTTPS) and strong match (specific service)
+		if weakMatch != nil {
+			return []*plugins.Service{weakMatch, result}, false, nil
+		}
+		return []*plugins.Service{result}, false, nil
+	}
+	return nil, true, nil // no result, continue scanning
+}
+
+func (c *Config) SimpleScanTarget(target plugins.Target) ([]*plugins.Service, error) {
 	ip := target.Address.Addr().String()
 	port := target.Address.Port()
+	var weakMatch *plugins.Service
+	var weakMatchTransport string // "http" or "https" if HTTP-based weak match
+
+	// Always check HTTP first (regardless of PortPriority) to detect HTTP-based services
+	for _, plugin := range sortedTCPPlugins {
+		if plugin.Name() == "http" {
+			conn, err := DialTCP(ip, port)
+			if err == nil {
+				result, err := simplePluginRunner(conn, target, c, plugin)
+				if result != nil && err == nil {
+					weakMatch = result
+					weakMatchTransport = plugin.Name()
+					if c.Verbose {
+						log.Printf("%v -> %s detected (weak match, continuing to look for specific service)\n", target.Address.String(), plugin.Name())
+					}
+				}
+			}
+			break
+		}
+	}
 
 	// first check the default port mappings for TCP / TLS
 	for _, plugin := range sortedTCPPlugins {
+		// Skip HTTP since we already checked it above
+		if plugin.Name() == "http" {
+			continue
+		}
 		if plugin.PortPriority(port) {
 			conn, err := DialTCP(ip, port)
 			if err != nil {
 				return nil, fmt.Errorf("unable to connect, err = %w", err)
 			}
 			result, err := simplePluginRunner(conn, target, c, plugin)
-			if err != nil && c.Verbose {
-				log.Printf("error: %v scanning %v\n", err, target.Address.String())
+			results, shouldContinue, _ := c.handlePluginResult(result, err, plugin, target, weakMatch, &weakMatchTransport)
+			if !shouldContinue {
+				return results, nil
 			}
-			if result != nil && err == nil {
-				return result, nil
+			if results != nil {
+				weakMatch = results[0] // Update weakMatch with the result
 			}
 		}
 	}
@@ -192,12 +255,12 @@ func (c *Config) SimpleScanTarget(target plugins.Target) (*plugins.Service, erro
 		for _, plugin := range sortedTCPTLSPlugins {
 			if plugin.PortPriority(port) {
 				result, err := simplePluginRunner(tlsConn, target, c, plugin)
-				if err != nil && c.Verbose {
-					log.Printf("error: %v scanning %v\n", err, target.Address.String())
+				results, shouldContinue, _ := c.handlePluginResult(result, err, plugin, target, weakMatch, &weakMatchTransport)
+				if !shouldContinue {
+					return results, nil
 				}
-				if result != nil && err == nil {
-					// identified plugin match
-					return result, nil
+				if results != nil {
+					weakMatch = results[0] // Update weakMatch with the result
 				}
 				tlsConn, err = DialTLS(target)
 				if err != nil {
@@ -209,6 +272,9 @@ func (c *Config) SimpleScanTarget(target plugins.Target) (*plugins.Service, erro
 
 	// if we're fast mode, return (because fast mode only checks the default port service mapping)
 	if c.FastMode {
+		if weakMatch != nil {
+			return []*plugins.Service{weakMatch}, nil
+		}
 		return nil, nil
 	}
 
@@ -216,36 +282,48 @@ func (c *Config) SimpleScanTarget(target plugins.Target) (*plugins.Service, erro
 
 	if isTLS {
 		for _, plugin := range sortedTCPTLSPlugins {
+			// Skip HTTP since we already checked it at the start
+			if plugin.Name() == "http" {
+				continue
+			}
 			tlsConn, err := DialTLS(target)
 			if err != nil {
 				return nil, fmt.Errorf("error connecting via TLS, err = %w", err)
 			}
 			result, err := simplePluginRunner(tlsConn, target, c, plugin)
-			if err != nil && c.Verbose {
-				log.Printf("error: %v scanning %v\n", err, target.Address.String())
+			results, shouldContinue, _ := c.handlePluginResult(result, err, plugin, target, weakMatch, &weakMatchTransport)
+			if !shouldContinue {
+				return results, nil
 			}
-			if result != nil && err == nil {
-				// identified plugin match
-				return result, nil
+			if results != nil {
+				weakMatch = results[0] // Update weakMatch with the result
 			}
 		}
 	} else {
 		for _, plugin := range sortedTCPPlugins {
+			// Skip HTTP since we already checked it at the start
+			if plugin.Name() == "http" {
+				continue
+			}
 			conn, err := DialTCP(ip, port)
 			if err != nil {
 				return nil, fmt.Errorf("unable to connect, err = %w", err)
 			}
 			result, err := simplePluginRunner(conn, target, c, plugin)
-			if err != nil && c.Verbose {
-				log.Printf("error: %v scanning %v\n", err, target.Address.String())
+			results, shouldContinue, _ := c.handlePluginResult(result, err, plugin, target, weakMatch, &weakMatchTransport)
+			if !shouldContinue {
+				return results, nil
 			}
-			if result != nil && err == nil {
-				// identified plugin match
-				return result, nil
+			if results != nil {
+				weakMatch = results[0] // Update weakMatch with the result
 			}
 		}
 	}
 
+	// If no strong match found, return the weak match (if any)
+	if weakMatch != nil {
+		return []*plugins.Service{weakMatch}, nil
+	}
 	return nil, nil
 }
 
