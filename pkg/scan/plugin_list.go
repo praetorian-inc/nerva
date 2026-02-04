@@ -54,6 +54,7 @@ import (
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/netbios"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/ntp"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/openvpn"
+	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/opcua"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/oracledb"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/pinecone"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/pop3"
