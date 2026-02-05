@@ -98,7 +98,6 @@ const (
 	ProtoSNMP       = "snmp"
 	ProtoSNPP       = "snpp"
 	ProtoSSH        = "ssh"
-	ProtoSSLVPN     = "sslvpn"
 	ProtoStun       = "stun"
 	ProtoSybase     = "sybase"
 	ProtoTelnet     = "telnet"
@@ -340,10 +339,6 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoZooKeeper:
 		var p ServiceZooKeeper
-		_ = json.Unmarshal(e.Raw, &p)
-		return p
-	case ProtoSSLVPN:
-		var p ServiceSSLVPN
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	default:
@@ -860,11 +855,3 @@ type ServiceZooKeeper struct {
 }
 
 func (e ServiceZooKeeper) Type() string { return ProtoZooKeeper }
-
-type ServiceSSLVPN struct {
-	Vendor  string   `json:"vendor,omitempty"`  // VPN vendor: "Cisco" or "Palo Alto"
-	Product string   `json:"product,omitempty"` // Product name: "AnyConnect" or "GlobalProtect"
-	CPEs    []string `json:"cpes,omitempty"`    // Common Platform Enumeration identifiers
-}
-
-func (e ServiceSSLVPN) Type() string { return ProtoSSLVPN }
