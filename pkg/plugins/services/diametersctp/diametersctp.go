@@ -187,6 +187,10 @@ func (p *DIAMETERSCTPPlugin) Name() string {
 	return DIAMETER_SCTP
 }
 
+func (p *DIAMETERSCTPPlugin) IsWeakMatch() bool {
+	return false
+}
+
 // Type returns the protocol type (SCTP)
 func (p *DIAMETERSCTPPlugin) Type() plugins.Protocol {
 	return plugins.SCTP

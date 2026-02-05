@@ -61,6 +61,10 @@ func (p *MQTT3Plugin) Name() string {
 	return MQTT
 }
 
+func (p *MQTT3Plugin) IsWeakMatch() bool {
+	return false
+}
+
 func (p *MQTT3Plugin) Type() plugins.Protocol {
 	return plugins.TCP
 }
@@ -75,6 +79,10 @@ func (p *TLSPlugin) PortPriority(i uint16) bool {
 
 func (p *TLSPlugin) Name() string {
 	return MQTTTLS
+}
+
+func (p *TLSPlugin) IsWeakMatch() bool {
+	return false
 }
 
 func (p *MQTT3Plugin) Priority() int {

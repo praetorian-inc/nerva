@@ -166,6 +166,10 @@ func (p *PINECONEPlugin) Name() string {
 	return PROTOCOL_NAME
 }
 
+func (p *PINECONEPlugin) IsWeakMatch() bool {
+	return false
+}
+
 // Type returns TCPTLS since Pinecone uses HTTPS.
 func (p *PINECONEPlugin) Type() plugins.Protocol {
 	return plugins.TCPTLS

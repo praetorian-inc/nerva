@@ -397,6 +397,10 @@ func (p *SSHPlugin) Name() string {
 	return SSH
 }
 
+func (p *SSHPlugin) IsWeakMatch() bool {
+	return false
+}
+
 func (p *SSHPlugin) Type() plugins.Protocol {
 	return plugins.TCP
 }

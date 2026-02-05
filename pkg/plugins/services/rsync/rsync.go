@@ -83,6 +83,10 @@ func (p *RSYNCPlugin) Name() string {
 	return RSYNC
 }
 
+func (p *RSYNCPlugin) IsWeakMatch() bool {
+	return false
+}
+
 func (p *RSYNCPlugin) Type() plugins.Protocol {
 	return plugins.TCP
 }

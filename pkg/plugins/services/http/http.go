@@ -207,8 +207,16 @@ func (p *HTTPPlugin) Name() string {
 	return HTTP
 }
 
+func (p *HTTPPlugin) IsWeakMatch() bool {
+	return true
+}
+
 func (p *HTTPSPlugin) Name() string {
 	return HTTPS
+}
+
+func (p *HTTPSPlugin) IsWeakMatch() bool {
+	return true
 }
 
 func (p *HTTPPlugin) FingerprintResponse(resp *http.Response) ([]string, []string, error) {

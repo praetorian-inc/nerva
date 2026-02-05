@@ -187,6 +187,10 @@ func (p *Plugin) Name() string {
 	return STUN
 }
 
+func (p *Plugin) IsWeakMatch() bool {
+	return false
+}
+
 func (p *Plugin) Type() plugins.Protocol {
 	return plugins.UDP
 }

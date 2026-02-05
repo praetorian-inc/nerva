@@ -353,6 +353,10 @@ func (p *ChromaDBPlugin) Name() string {
 	return CHROMADB
 }
 
+func (p *ChromaDBPlugin) IsWeakMatch() bool {
+	return false
+}
+
 func (p *ChromaDBPlugin) Type() plugins.Protocol {
 	return plugins.TCP
 }
@@ -371,6 +375,10 @@ func (p *ChromaDBTLSPlugin) PortPriority(port uint16) bool {
 
 func (p *ChromaDBTLSPlugin) Name() string {
 	return CHROMADBTLS
+}
+
+func (p *ChromaDBTLSPlugin) IsWeakMatch() bool {
+	return false
 }
 
 func (p *ChromaDBTLSPlugin) Type() plugins.Protocol {

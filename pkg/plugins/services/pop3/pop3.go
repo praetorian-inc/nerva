@@ -120,12 +120,20 @@ func (p *POP3Plugin) Name() string {
 	return POP3
 }
 
+func (p *POP3Plugin) IsWeakMatch() bool {
+	return false
+}
+
 func (p *POP3Plugin) Type() plugins.Protocol {
 	return plugins.TCP
 }
 
 func (p *TLSPlugin) Name() string {
 	return POP3S
+}
+
+func (p *TLSPlugin) IsWeakMatch() bool {
+	return false
 }
 
 func (p *TLSPlugin) Type() plugins.Protocol {

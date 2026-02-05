@@ -212,6 +212,10 @@ func (p *ElasticsearchPlugin) Name() string {
 	return ELASTICSEARCH
 }
 
+func (p *ElasticsearchPlugin) IsWeakMatch() bool {
+	return false
+}
+
 func (p *ElasticsearchPlugin) Type() plugins.Protocol {
 	return plugins.TCP
 }

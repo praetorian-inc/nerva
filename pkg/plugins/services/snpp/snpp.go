@@ -157,6 +157,10 @@ func (p *SNPPPlugin) Name() string {
 	return SNPP
 }
 
+func (p *SNPPPlugin) IsWeakMatch() bool {
+	return false
+}
+
 func (p *SNPPPlugin) Type() plugins.Protocol {
 	return plugins.TCP
 }

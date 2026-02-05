@@ -77,6 +77,10 @@ func (p *Plugin) Name() string {
 	return NETBIOS
 }
 
+func (p *Plugin) IsWeakMatch() bool {
+	return false
+}
+
 func (p *Plugin) Type() plugins.Protocol {
 	return plugins.UDP
 }

@@ -76,6 +76,10 @@ func (f *SNMPPlugin) Name() string {
 	return SNMP
 }
 
+func (f *SNMPPlugin) IsWeakMatch() bool {
+	return false
+}
+
 func (f *SNMPPlugin) PortPriority(i uint16) bool {
 	return i == 161
 }

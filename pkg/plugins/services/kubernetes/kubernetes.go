@@ -60,6 +60,10 @@ func (p *KubernetesPlugin) Name() string {
 	return KUBERNETES
 }
 
+func (p *KubernetesPlugin) IsWeakMatch() bool {
+	return false
+}
+
 func (p *KubernetesPlugin) Type() plugins.Protocol {
 	return plugins.TCPTLS
 }

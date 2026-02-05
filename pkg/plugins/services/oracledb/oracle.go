@@ -235,6 +235,10 @@ func (p *ORACLEPlugin) Name() string {
 	return ORACLE
 }
 
+func (p *ORACLEPlugin) IsWeakMatch() bool {
+	return false
+}
+
 func (p *ORACLEPlugin) Type() plugins.Protocol {
 	return plugins.TCP
 }

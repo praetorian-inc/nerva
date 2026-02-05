@@ -105,6 +105,10 @@ func (p UDPPlugin) Name() string {
 	return DNS
 }
 
+func (p *UDPPlugin) IsWeakMatch() bool {
+	return false
+}
+
 func (p *UDPPlugin) Type() plugins.Protocol {
 	return plugins.UDP
 }
@@ -130,6 +134,10 @@ func (p TCPPlugin) PortPriority(i uint16) bool {
 
 func (p TCPPlugin) Name() string {
 	return DNS
+}
+
+func (p *TCPPlugin) IsWeakMatch() bool {
+	return false
 }
 
 func (p *TCPPlugin) Priority() int {

@@ -344,6 +344,10 @@ func (p *MEMCACHEDPlugin) Name() string {
 	return MEMCACHED
 }
 
+func (p *MEMCACHEDPlugin) IsWeakMatch() bool {
+	return false
+}
+
 func (p *MEMCACHEDPlugin) Type() plugins.Protocol {
 	return plugins.TCP
 }

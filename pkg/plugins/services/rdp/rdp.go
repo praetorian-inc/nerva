@@ -365,12 +365,20 @@ func (p *RDPPlugin) Name() string {
 	return RDP
 }
 
+func (p *RDPPlugin) IsWeakMatch() bool {
+	return false
+}
+
 func (p *RDPPlugin) Type() plugins.Protocol {
 	return plugins.TCP
 }
 
 func (p *TLSPlugin) Name() string {
 	return RDP
+}
+
+func (p *TLSPlugin) IsWeakMatch() bool {
+	return false
 }
 
 func (p *TLSPlugin) Type() plugins.Protocol {

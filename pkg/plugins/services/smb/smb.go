@@ -366,6 +366,10 @@ func (p *SMBPlugin) Name() string {
 	return SMB
 }
 
+func (p *SMBPlugin) IsWeakMatch() bool {
+	return false
+}
+
 func (p *SMBPlugin) Type() plugins.Protocol {
 	return plugins.TCP
 }

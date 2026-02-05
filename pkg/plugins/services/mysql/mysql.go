@@ -146,6 +146,10 @@ func (p *MYSQLPlugin) Name() string {
 	return MYSQL
 }
 
+func (p *MYSQLPlugin) IsWeakMatch() bool {
+	return false
+}
+
 func (p *MYSQLPlugin) Type() plugins.Protocol {
 	return plugins.TCP
 }

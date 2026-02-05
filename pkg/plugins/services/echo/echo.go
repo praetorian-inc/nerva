@@ -67,6 +67,10 @@ func (p *EchoPlugin) Name() string {
 	return ECHO
 }
 
+func (p *EchoPlugin) IsWeakMatch() bool {
+	return false
+}
+
 func (p *EchoPlugin) Type() plugins.Protocol {
 	return plugins.TCP
 }

@@ -232,6 +232,10 @@ func (p *POSTGRESPlugin) Name() string {
 	return POSTGRES
 }
 
+func (p *POSTGRESPlugin) IsWeakMatch() bool {
+	return false
+}
+
 func (p *POSTGRESPlugin) Type() plugins.Protocol {
 	return plugins.TCP
 }

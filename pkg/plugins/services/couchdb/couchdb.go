@@ -278,6 +278,10 @@ func (p *COUCHDBPlugin) Name() string {
 	return COUCHDB
 }
 
+func (p *COUCHDBPlugin) IsWeakMatch() bool {
+	return false
+}
+
 func (p *COUCHDBPlugin) Type() plugins.Protocol {
 	return plugins.TCP
 }
@@ -296,6 +300,10 @@ func (p *COUCHDBTLSPlugin) PortPriority(port uint16) bool {
 
 func (p *COUCHDBTLSPlugin) Name() string {
 	return COUCHDBTLS
+}
+
+func (p *COUCHDBTLSPlugin) IsWeakMatch() bool {
+	return false
 }
 
 func (p *COUCHDBTLSPlugin) Type() plugins.Protocol {

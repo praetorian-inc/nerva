@@ -232,8 +232,16 @@ func (p *REDISPlugin) Name() string {
 	return REDIS
 }
 
+func (p *REDISPlugin) IsWeakMatch() bool {
+	return false
+}
+
 func (p *REDISTLSPlugin) Name() string {
 	return REDISTLS
+}
+
+func (p *REDISTLSPlugin) IsWeakMatch() bool {
+	return false
 }
 
 func (p *REDISPlugin) Type() plugins.Protocol {

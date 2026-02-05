@@ -94,6 +94,10 @@ func (p *VNCPlugin) Name() string {
 	return VNC
 }
 
+func (p *VNCPlugin) IsWeakMatch() bool {
+	return false
+}
+
 func (p *VNCPlugin) Type() plugins.Protocol {
 	return plugins.TCP
 }

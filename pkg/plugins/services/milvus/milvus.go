@@ -389,6 +389,10 @@ func (p *MilvusPlugin) Name() string {
 	return MILVUS
 }
 
+func (p *MilvusPlugin) IsWeakMatch() bool {
+	return false
+}
+
 func (p *MilvusPlugin) Type() plugins.Protocol {
 	return plugins.TCP
 }

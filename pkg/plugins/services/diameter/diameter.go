@@ -156,6 +156,10 @@ func (p *DIAMETERPlugin) Name() string {
 	return DIAMETER
 }
 
+func (p *DIAMETERPlugin) IsWeakMatch() bool {
+	return false
+}
+
 // Type returns the protocol type (TCP)
 func (p *DIAMETERPlugin) Type() plugins.Protocol {
 	return plugins.TCP

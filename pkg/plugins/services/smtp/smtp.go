@@ -181,12 +181,20 @@ func (p *SMTPPlugin) Name() string {
 	return SMTP
 }
 
+func (p *SMTPPlugin) IsWeakMatch() bool {
+	return false
+}
+
 func (p *SMTPPlugin) Type() plugins.Protocol {
 	return plugins.TCP
 }
 
 func (p *TLSPlugin) Name() string {
 	return SMTPS
+}
+
+func (p *TLSPlugin) IsWeakMatch() bool {
+	return false
 }
 
 func (p *TLSPlugin) Type() plugins.Protocol {

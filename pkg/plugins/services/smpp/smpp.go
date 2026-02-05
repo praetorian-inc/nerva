@@ -102,6 +102,10 @@ func (p *SMPPPlugin) Name() string {
 	return SMPP
 }
 
+func (p *SMPPPlugin) IsWeakMatch() bool {
+	return false
+}
+
 func (p *SMPPPlugin) Type() plugins.Protocol {
 	return plugins.TCP
 }

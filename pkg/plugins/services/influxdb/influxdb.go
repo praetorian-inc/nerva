@@ -340,6 +340,10 @@ func (p *InfluxDBPlugin) Name() string {
 	return INFLUXDB
 }
 
+func (p *InfluxDBPlugin) IsWeakMatch() bool {
+	return false
+}
+
 func (p *InfluxDBPlugin) Type() plugins.Protocol {
 	return plugins.TCP
 }

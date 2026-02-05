@@ -365,6 +365,10 @@ func (p *Plugin) Name() string {
 	return DHCP
 }
 
+func (p *Plugin) IsWeakMatch() bool {
+	return false
+}
+
 func (p *Plugin) PortReject(u uint16) bool {
 	return u != 67
 }

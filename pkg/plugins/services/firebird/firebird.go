@@ -183,6 +183,10 @@ func (p *FirebirdPlugin) Name() string {
 	return FIREBIRD
 }
 
+func (p *FirebirdPlugin) IsWeakMatch() bool {
+	return false
+}
+
 // Type returns the protocol type (TCP)
 func (p *FirebirdPlugin) Type() plugins.Protocol {
 	return plugins.TCP

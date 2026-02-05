@@ -183,7 +183,7 @@ func (c *Config) handlePluginResult(
 	}
 	if result != nil && err == nil {
 		// HTTP/HTTPS are weak matches - save but continue scanning
-		if plugin.Name() == "http" || plugin.Name() == "https" {
+		if plugin.IsWeakMatch() {
 			*weakMatchTransport = plugin.Name()
 			if c.Verbose {
 				log.Printf("%v -> %s detected (weak match, continuing to look for specific service)\n", target.Address.String(), plugin.Name())
@@ -211,7 +211,7 @@ func (c *Config) SimpleScanTarget(target plugins.Target) ([]*plugins.Service, er
 
 	// Always check HTTP first (regardless of PortPriority) to detect HTTP-based services
 	for _, plugin := range sortedTCPPlugins {
-		if plugin.Name() == "http" {
+		if plugin.IsWeakMatch() {
 			conn, err := DialTCP(ip, port)
 			if err == nil {
 				result, err := simplePluginRunner(conn, target, c, plugin)
@@ -229,8 +229,8 @@ func (c *Config) SimpleScanTarget(target plugins.Target) ([]*plugins.Service, er
 
 	// first check the default port mappings for TCP / TLS
 	for _, plugin := range sortedTCPPlugins {
-		// Skip HTTP since we already checked it above
-		if plugin.Name() == "http" {
+		// Skip weak matches (HTTP/HTTPS) since we already checked them above
+		if plugin.IsWeakMatch() {
 			continue
 		}
 		if plugin.PortPriority(port) {
@@ -282,8 +282,8 @@ func (c *Config) SimpleScanTarget(target plugins.Target) ([]*plugins.Service, er
 
 	if isTLS {
 		for _, plugin := range sortedTCPTLSPlugins {
-			// Skip HTTP since we already checked it at the start
-			if plugin.Name() == "http" {
+			// Skip weak matches (HTTP/HTTPS) since we already checked them at the start
+			if plugin.IsWeakMatch() {
 				continue
 			}
 			tlsConn, err := DialTLS(target)
@@ -301,8 +301,8 @@ func (c *Config) SimpleScanTarget(target plugins.Target) ([]*plugins.Service, er
 		}
 	} else {
 		for _, plugin := range sortedTCPPlugins {
-			// Skip HTTP since we already checked it at the start
-			if plugin.Name() == "http" {
+			// Skip weak matches (HTTP/HTTPS) since we already checked them at the start
+			if plugin.IsWeakMatch() {
 				continue
 			}
 			conn, err := DialTCP(ip, port)

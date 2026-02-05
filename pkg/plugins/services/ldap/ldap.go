@@ -182,6 +182,10 @@ func (p *LDAPPlugin) Name() string {
 	return LDAP
 }
 
+func (p *LDAPPlugin) IsWeakMatch() bool {
+	return false
+}
+
 func (p *LDAPPlugin) Type() plugins.Protocol {
 	return plugins.TCP
 }
@@ -212,6 +216,10 @@ func (p *TLSPlugin) Priority() int {
 
 func (p *TLSPlugin) Name() string {
 	return LDAPS
+}
+
+func (p *TLSPlugin) IsWeakMatch() bool {
+	return false
 }
 
 func (p *TLSPlugin) Type() plugins.Protocol {

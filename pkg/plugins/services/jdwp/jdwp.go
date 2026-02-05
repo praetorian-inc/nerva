@@ -182,6 +182,10 @@ func (p *JDWPPlugin) Name() string {
 	return JDWP
 }
 
+func (p *JDWPPlugin) IsWeakMatch() bool {
+	return false
+}
+
 func (p *JDWPPlugin) Type() plugins.Protocol {
 	return plugins.TCP
 }

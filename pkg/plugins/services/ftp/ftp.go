@@ -220,6 +220,10 @@ func (p *FTPPlugin) Name() string {
 	return FTP
 }
 
+func (p *FTPPlugin) IsWeakMatch() bool {
+	return false
+}
+
 func (p *FTPPlugin) Type() plugins.Protocol {
 	return plugins.TCP
 }
