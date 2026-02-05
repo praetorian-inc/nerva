@@ -396,11 +396,6 @@ func (p *SSHPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 func (p *SSHPlugin) Name() string {
 	return SSH
 }
-
-func (p *SSHPlugin) IsWeakMatch() bool {
-	return false
-}
-
 func (p *SSHPlugin) Type() plugins.Protocol {
 	return plugins.TCP
 }

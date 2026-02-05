@@ -1,0 +1,78 @@
+protocol_name: "DNP3"
+protocol_slug: "dnp3"
+orchestration_skill: "orchestrating-nerva-development"
+created_at: "2026-02-04T16:49:00Z"
+description: |
+  DNP3 (Distributed Network Protocol 3) fingerprinting plugin for Nerva.
+  Detects exposed ICS/SCADA systems on power grids.
+  CRITICAL: Read-only detection only - no control operations.
+
+status: "in-progress"
+current_phase: 3
+current_phase_name: "codebase_discovery"
+work_type: "MEDIUM"
+
+phases:
+  1_setup:
+    status: "complete"
+    completed_at: "2026-02-04T16:49:00Z"
+  2_triage:
+    status: "complete"
+    completed_at: "2026-02-04T16:49:00Z"
+    work_type: "MEDIUM"
+  3_codebase_discovery:
+    status: "in_progress"
+  4_skill_discovery:
+    status: "pending"
+  5_complexity:
+    status: "pending"
+  6_brainstorming:
+    status: "skipped"
+    reason: "MEDIUM work type - only LARGE requires brainstorming"
+  7_architecture_plan:
+    status: "pending"
+  8_implementation:
+    status: "pending"
+  9_design_verification:
+    status: "pending"
+  10_domain_compliance:
+    status: "pending"
+  11_code_quality:
+    status: "pending"
+    retry_count: 0
+  12_test_planning:
+    status: "pending"
+  13_testing:
+    status: "pending"
+  14_coverage_verification:
+    status: "pending"
+  15_test_quality:
+    status: "pending"
+    retry_count: 0
+  16_completion:
+    status: "pending"
+
+# DNP3-specific tracking
+plugin_type: "open-source"
+default_ports: [20000]
+technologies_detected: ["Go", "TCP protocol plugin"]
+skills_mapped: []
+
+# Protocol research artifacts
+protocol_research:
+  detection_strategy: "pending"
+  banner_patterns: []
+  version_markers: []
+  shodan_queries: []
+
+# ICS/SCADA safety requirements
+safety_requirements:
+  - "Read-only probes only"
+  - "No control function codes (write, operate, direct operate)"
+  - "Use only safe diagnostic/read function codes"
+  - "Implement proper timeout handling"
+
+# Tracking
+agents_contributed: []
+artifacts: []
+feedback_iterations: 0

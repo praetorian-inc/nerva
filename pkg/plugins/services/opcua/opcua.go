@@ -160,7 +160,3 @@ func (p *OPCUAPlugin) Type() plugins.Protocol {
 func (p *OPCUAPlugin) Priority() int {
 	return 400
 }
-
-func (p *OPCUAPlugin) IsWeakMatch() bool {
-	return false
-}

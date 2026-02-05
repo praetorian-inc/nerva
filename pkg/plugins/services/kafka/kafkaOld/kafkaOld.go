@@ -57,11 +57,6 @@ func (p *TLSPlugin) Priority() int {
 func (p *Plugin) Name() string {
 	return KAFKA
 }
-
-func (p *Plugin) IsWeakMatch() bool {
-	return false
-}
-
 func (p *Plugin) Type() plugins.Protocol {
 	return plugins.TCP
 }
@@ -78,11 +73,6 @@ func (p *TLSPlugin) PortPriority(i uint16) bool {
 func (p *TLSPlugin) Name() string {
 	return KAFKATLS
 }
-
-func (p *TLSPlugin) IsWeakMatch() bool {
-	return false
-}
-
 func (p *TLSPlugin) Type() plugins.Protocol {
 	return plugins.TCPTLS
 }

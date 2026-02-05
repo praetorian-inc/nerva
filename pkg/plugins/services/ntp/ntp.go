@@ -71,11 +71,6 @@ func (p *Plugin) PortPriority(i uint16) bool {
 func (p *Plugin) Name() string {
 	return NTP
 }
-
-func (p *Plugin) IsWeakMatch() bool {
-	return false
-}
-
 func (p *Plugin) Type() plugins.Protocol {
 	return plugins.UDP
 }

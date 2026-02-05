@@ -114,11 +114,6 @@ func (p *SybasePlugin) PortPriority(port uint16) bool {
 func (p *SybasePlugin) Name() string {
 	return SYBASE
 }
-
-func (p *SybasePlugin) IsWeakMatch() bool {
-	return false
-}
-
 // Type returns the protocol type (TCP)
 func (p *SybasePlugin) Type() plugins.Protocol {
 	return plugins.TCP

@@ -117,11 +117,6 @@ func (p *RTSPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 func (p *RTSPPlugin) Name() string {
 	return RTSP
 }
-
-func (p *RTSPPlugin) IsWeakMatch() bool {
-	return false
-}
-
 func (p *RTSPPlugin) Type() plugins.Protocol {
 	return plugins.TCP
 }

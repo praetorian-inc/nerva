@@ -1,0 +1,24 @@
+feature_name: "HTTPFingerprinter Infrastructure + Kubernetes Pilot"
+feature_slug: "http-fingerprinter-infrastructure"
+created_at: "2026-02-05T12:20:28Z"
+created_by: "capability-developer"
+description: |
+  Implementation of HTTPFingerprinter infrastructure for Nerva to detect
+  technologies running on HTTP/HTTPS transports. Includes Kubernetes pilot
+  fingerprinter that detects k8s API servers via /version endpoint responses.
+
+  This enables detection of technologies like Kubernetes, Elasticsearch, etc.
+  as metadata attached to HTTP services rather than separate service types.
+
+status: "complete"
+
+agents_contributed:
+  - agent: "capability-developer"
+    artifact: "capability-developer-implementation.md"
+    timestamp: "2026-02-05T12:20:28Z"
+    status: "complete"
+
+artifacts:
+  - path: "capability-developer-implementation.md"
+    type: "implementation"
+    agent: "capability-developer"

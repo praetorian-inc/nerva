@@ -383,10 +383,6 @@ type Plugin interface {
 	Name() string
 	Type() Protocol
 	Priority() int
-	// IsWeakMatch returns true for transport-level detections (HTTP/HTTPS) that should
-	// continue scanning for application-level services. When true, scanning continues
-	// and both the weak match and any subsequent strong match are returned.
-	IsWeakMatch() bool
 }
 
 type Service struct {

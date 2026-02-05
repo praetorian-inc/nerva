@@ -132,11 +132,6 @@ func (p *IPMIPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 func (p *IPMIPlugin) Name() string {
 	return IPMI
 }
-
-func (p *IPMIPlugin) IsWeakMatch() bool {
-	return false
-}
-
 func (p *IPMIPlugin) Type() plugins.Protocol {
 	return plugins.UDP
 }

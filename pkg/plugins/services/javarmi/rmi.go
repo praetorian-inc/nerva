@@ -307,11 +307,6 @@ func (p *RMIPlugin) PortPriority(port uint16) bool {
 func (p *RMIPlugin) Name() string {
 	return RMI
 }
-
-func (p *RMIPlugin) IsWeakMatch() bool {
-	return false
-}
-
 // Type returns TCP as RMI uses TCP transport
 func (p *RMIPlugin) Type() plugins.Protocol {
 	return plugins.TCP

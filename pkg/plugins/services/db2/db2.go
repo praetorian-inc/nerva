@@ -582,11 +582,6 @@ func (p *DB2Plugin) PortPriority(port uint16) bool {
 func (p *DB2Plugin) Name() string {
 	return DB2
 }
-
-func (p *DB2Plugin) IsWeakMatch() bool {
-	return false
-}
-
 func (p *DB2Plugin) Type() plugins.Protocol {
 	return plugins.TCP
 }

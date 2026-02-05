@@ -124,11 +124,6 @@ func (f *Plugin) PortPriority(i uint16) bool {
 func (f *Plugin) Name() string {
 	return IPSEC
 }
-
-func (f *Plugin) IsWeakMatch() bool {
-	return false
-}
-
 func (f *Plugin) Priority() int {
 	return 198
 }

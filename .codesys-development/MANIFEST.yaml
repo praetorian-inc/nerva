@@ -1,0 +1,165 @@
+protocol_name: "CODESYS"
+protocol_slug: "codesys"
+orchestration_skill: "orchestrating-nerva-development"
+created_at: "2026-02-05T01:17:16Z"
+description: |
+  CODESYS PLC programming interface detection plugin for Nerva.
+  Detects exposed CODESYS runtime environments on TCP/2455, TCP/1217, TCP/1200.
+  Supports both V2 (little/big endian) and V3 protocols.
+
+status: "in-progress"
+current_phase: 10
+current_phase_name: "domain_compliance"
+work_type: "LARGE"
+
+# Triage classification
+triage:
+  work_type: "LARGE"
+  classified_at: "2026-02-05T01:19:14Z"
+  classification_method: "signal_parsing"
+
+  phases_to_execute: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+  phases_to_skip: []
+
+  checkpoints:
+    - phase: 6
+      type: "human_approval"
+      description: "Protocol design review after brainstorming"
+    - phase: 7
+      type: "human_approval"
+      description: "Architecture plan review"
+    - phase: 8
+      type: "human_approval"
+      description: "Implementation review"
+    - phase: 16
+      type: "human_approval"
+      description: "Completion review and PR creation"
+
+  classification_rationale:
+    - "New plugin from scratch (CODESYS detection)"
+    - "Multiple protocol versions (V2 little/big endian + V3)"
+    - "Full detection logic and version extraction needed"
+    - "Expected 5+ files (plugin, types, tests, registration)"
+
+# Standard phases (ALL orchestrations follow this structure)
+phases:
+  1_setup:
+    status: "complete"
+    completed_at: "2026-02-05T01:17:16Z"
+  2_triage:
+    status: "complete"
+    completed_at: "2026-02-05T01:19:14Z"
+    work_type: "LARGE"
+  3_codebase_discovery:
+    status: "complete"
+    completed_at: "2026-02-05T01:23:27Z"
+    similar_plugins_analyzed: ["modbus", "dnp3", "ssh", "mysql"]
+    patterns_identified: ["ICS safety", "TCP handshake", "version extraction", "multi-protocol fallback"]
+  4_skill_discovery:
+    status: "complete"
+    completed_at: "2026-02-05T01:23:27Z"
+  5_complexity:
+    status: "complete"
+    completed_at: "2026-02-05T01:23:27Z"
+  6_brainstorming:
+    status: "complete"
+    completed_at: "2026-02-05T01:23:27Z"
+    conditional: true # LARGE only
+  7_architecture_plan:
+    status: "complete"
+    completed_at: "2026-02-05T01:23:27Z"
+    conditional: true # MEDIUM+ only
+  8_implementation:
+    status: "complete"
+    completed_at: "2026-02-05T02:00:00Z"
+  9_design_verification:
+    status: "complete"
+    completed_at: "2026-02-05T02:15:00Z"
+    conditional: true # MEDIUM+ only
+    tasks_verified: 6
+    tasks_total: 6
+    architecture_compliance: 100
+  10_domain_compliance:
+    status: "complete"
+    completed_at: "2026-02-05T02:15:00Z"
+    p0_checks: 8
+    p0_passed: 8
+    p1_checks: 2
+    p1_passed: 1
+    p1_advisories: 1
+  11_code_quality:
+    status: "pending"
+    retry_count: 0
+  12_test_planning:
+    status: "pending"
+    conditional: true # MEDIUM+ only
+  13_testing:
+    status: "pending"
+  14_coverage_verification:
+    status: "pending"
+  15_test_quality:
+    status: "pending"
+    retry_count: 0
+  16_completion:
+    status: "pending"
+
+# CODESYS-specific tracking
+plugin_type: "open-source" # CODESYS runtime available, version extraction possible
+default_ports: [2455, 1217, 1200]
+technologies_detected: ["Go", "TCP protocol plugin"]
+skills_mapped: []
+
+# Protocol research artifacts
+protocol_research:
+  detection_strategy: "V2 handshake (try both endianness), fallback to V3"
+  banner_patterns:
+    - "V2 response starts with 0xbb"
+    - "V3 uses magic 0xe8170100"
+  version_markers:
+    - "Runtime version from V2 or V3 response"
+  shodan_queries:
+    - "port:2455"
+    - "codesys"
+    - "port:1217"
+
+# ICS/PLC safety requirements
+safety_requirements:
+  - "Read-only detection probes"
+  - "No write operations to PLC memory"
+  - "Handle malformed responses gracefully"
+  - "Proper timeout handling to avoid hanging on unresponsive devices"
+
+# Tracking
+agents_contributed: []
+artifacts:
+  - path: "triage.md"
+    type: "triage-report"
+    phase: 2
+    created_at: "2026-02-05T01:19:14Z"
+  - path: "discovery.md"
+    type: "discovery-report"
+    phase: 3
+    created_at: "2026-02-05T01:23:27Z"
+  - path: "protocol-research.md"
+    type: "protocol-research"
+    phase: 3
+    created_at: "2026-02-05T01:23:27Z"
+  - path: "architecture.md"
+    type: "architecture-plan"
+    phase: 7
+    created_at: "2026-02-05T01:23:27Z"
+  - path: "design-verification.md"
+    type: "verification-report"
+    phase: 9
+    created_at: "2026-02-05T02:15:00Z"
+  - path: "domain-compliance.md"
+    type: "compliance-report"
+    phase: 10
+    created_at: "2026-02-05T02:15:00Z"
+feedback_iterations: 0
+
+# Worktree info
+worktree:
+  opted_out: true
+  reason: "Following established repository pattern (see .dnp3-development/)"
+  note: "Parallel execution disabled for Phases 7, 11, 13 due to no worktree isolation"

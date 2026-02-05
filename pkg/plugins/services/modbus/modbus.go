@@ -117,11 +117,6 @@ func (p *MODBUSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.
 func (p *MODBUSPlugin) Name() string {
 	return MODBUS
 }
-
-func (p *MODBUSPlugin) IsWeakMatch() bool {
-	return false
-}
-
 func (p *MODBUSPlugin) Type() plugins.Protocol {
 	return plugins.TCP
 }

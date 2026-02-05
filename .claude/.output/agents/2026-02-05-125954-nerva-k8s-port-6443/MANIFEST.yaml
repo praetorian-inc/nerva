@@ -1,0 +1,20 @@
+feature_name: "Add Port 6443 to HTTPS PortPriority"
+feature_slug: "nerva-k8s-port-6443"
+created_at: "2026-02-05T12:59:54Z"
+created_by: "capability-developer"
+description: |
+  Added port 6443 to the commonHTTPSPorts map in nerva's HTTP plugin
+  to prioritize Kubernetes API server detection on this standard port.
+
+status: "complete"
+
+agents_contributed:
+  - agent: "capability-developer"
+    artifact: "capability-developer-implementation.md"
+    timestamp: "2026-02-05T12:59:54Z"
+    status: "complete"
+
+artifacts:
+  - path: "capability-developer-implementation.md"
+    type: "implementation"
+    agent: "capability-developer"

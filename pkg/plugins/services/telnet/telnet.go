@@ -289,11 +289,6 @@ func (p *TELNETPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.
 func (p *TELNETPlugin) Name() string {
 	return TELNET
 }
-
-func (p *TELNETPlugin) IsWeakMatch() bool {
-	return false
-}
-
 func (p *TELNETPlugin) Type() plugins.Protocol {
 	return plugins.TCP
 }

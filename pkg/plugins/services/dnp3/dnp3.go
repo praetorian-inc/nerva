@@ -138,11 +138,6 @@ func (p *DNP3Plugin) Type() plugins.Protocol {
 func (p *DNP3Plugin) Priority() int {
 	return 400 // Same priority as Modbus (ICS protocol)
 }
-
-func (p *DNP3Plugin) IsWeakMatch() bool {
-	return false
-}
-
 // buildRequestLinkStatusProbe creates a DNP3 Request Link Status frame
 func buildRequestLinkStatusProbe() ([]byte, error) {
 	// Generate random source address (1-65534, avoiding 0 and 65535)

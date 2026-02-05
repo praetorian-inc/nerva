@@ -185,11 +185,6 @@ func (p *MilvusMetricsPlugin) PortPriority(port uint16) bool {
 func (p *MilvusMetricsPlugin) Name() string {
 	return MILVUS_METRICS
 }
-
-func (p *MilvusMetricsPlugin) IsWeakMatch() bool {
-	return false
-}
-
 func (p *MilvusMetricsPlugin) Type() plugins.Protocol {
 	return plugins.TCP
 }

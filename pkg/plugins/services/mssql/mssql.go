@@ -356,11 +356,6 @@ func (p *MSSQLPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.T
 func (p *MSSQLPlugin) Name() string {
 	return MSSQL
 }
-
-func (p *MSSQLPlugin) IsWeakMatch() bool {
-	return false
-}
-
 func (p *MSSQLPlugin) Type() plugins.Protocol {
 	return plugins.TCP
 }
