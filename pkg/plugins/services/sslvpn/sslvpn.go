@@ -396,6 +396,12 @@ func (p *SSLVPNPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.
 			continue
 		}
 
+		// Only accept 2xx responses - error/redirect pages may reflect the request path
+		// which can cause false positives (e.g., Google's 404, Apple's 301 contain "CSCOE")
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			continue
+		}
+
 		if detectAnyConnect(body, resp.Header) {
 			version := extractAnyConnectVersion(body, resp.Header)
 			cpe := buildAnyConnectCPE(version)
@@ -414,6 +420,11 @@ func (p *SSLVPNPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.
 	for _, path := range globalProtectPaths {
 		resp, body, err := makeHTTPRequest(addr, path, host, timeout)
 		if err != nil {
+			continue
+		}
+
+		// Only accept 2xx responses - error/redirect pages may reflect the request path
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			continue
 		}
 
