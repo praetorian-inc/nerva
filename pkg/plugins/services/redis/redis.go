@@ -231,11 +231,9 @@ func (p *REDISPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.T
 func (p *REDISPlugin) Name() string {
 	return REDIS
 }
-
 func (p *REDISTLSPlugin) Name() string {
 	return REDISTLS
 }
-
 func (p *REDISPlugin) Type() plugins.Protocol {
 	return plugins.TCP
 }

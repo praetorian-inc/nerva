@@ -234,7 +234,6 @@ func (p *ORACLEPlugin) PortPriority(port uint16) bool {
 func (p *ORACLEPlugin) Name() string {
 	return ORACLE
 }
-
 func (p *ORACLEPlugin) Type() plugins.Protocol {
 	return plugins.TCP
 }

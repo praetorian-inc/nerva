@@ -186,7 +186,6 @@ func (p *Plugin) PortPriority(i uint16) bool {
 func (p *Plugin) Name() string {
 	return STUN
 }
-
 func (p *Plugin) Type() plugins.Protocol {
 	return plugins.UDP
 }

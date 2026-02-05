@@ -152,7 +152,6 @@ func (p *CODESYSPlugin) Priority() int {
 	// This ensures execution after HTTP/HTTPS (0/1) but before generic services
 	return 400
 }
-
 // extractNullTerminatedString extracts a null-terminated string from byte array at given offset
 func extractNullTerminatedString(data []byte, offset int) string {
 	if offset >= len(data) {

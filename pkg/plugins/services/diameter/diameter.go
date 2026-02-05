@@ -155,7 +155,6 @@ func (p *DIAMETERPlugin) PortPriority(port uint16) bool {
 func (p *DIAMETERPlugin) Name() string {
 	return DIAMETER
 }
-
 // Type returns the protocol type (TCP)
 func (p *DIAMETERPlugin) Type() plugins.Protocol {
 	return plugins.TCP

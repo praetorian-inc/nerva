@@ -68,7 +68,6 @@ func (p *TLSPlugin) Priority() int {
 func (p *MQTT5Plugin) Name() string {
 	return MQTT
 }
-
 func (p *MQTT5Plugin) Type() plugins.Protocol {
 	return plugins.TCP
 }
@@ -84,7 +83,6 @@ func (p *TLSPlugin) PortPriority(i uint16) bool {
 func (p *TLSPlugin) Name() string {
 	return MQTTTLS
 }
-
 func (p *TLSPlugin) Type() plugins.Protocol {
 	return plugins.TCPTLS
 }

@@ -559,7 +559,6 @@ func (p *CassandraPlugin) PortPriority(port uint16) bool {
 func (p *CassandraPlugin) Name() string {
 	return CASSANDRA
 }
-
 // Type returns the protocol type (TCP).
 func (p *CassandraPlugin) Type() plugins.Protocol {
 	return plugins.TCP

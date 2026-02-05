@@ -182,7 +182,6 @@ func (p *FirebirdPlugin) PortPriority(port uint16) bool {
 func (p *FirebirdPlugin) Name() string {
 	return FIREBIRD
 }
-
 // Type returns the protocol type (TCP)
 func (p *FirebirdPlugin) Type() plugins.Protocol {
 	return plugins.TCP

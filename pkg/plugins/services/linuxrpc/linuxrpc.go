@@ -171,7 +171,6 @@ func (p *RPCPlugin) PortPriority(i uint16) bool {
 func (p *RPCPlugin) Name() string {
 	return RPC
 }
-
 func (p *RPCPlugin) Type() plugins.Protocol {
 	return plugins.TCP
 }

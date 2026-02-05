@@ -66,7 +66,6 @@ func (p *EchoPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 func (p *EchoPlugin) Name() string {
 	return ECHO
 }
-
 func (p *EchoPlugin) Type() plugins.Protocol {
 	return plugins.TCP
 }
