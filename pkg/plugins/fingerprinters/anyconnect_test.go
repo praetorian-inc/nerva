@@ -81,10 +81,12 @@ func TestAnyConnectFingerprinter_Match(t *testing.T) {
 			want:       false,
 		},
 		{
-			name:       "does not match 301 redirect",
-			statusCode: 301,
-			headers:    http.Header{},
-			want:       false,
+			name:       "matches 302 redirect with CSCOE in Location",
+			statusCode: 302,
+			headers: http.Header{
+				"Location": []string{"/+CSCOE+/logon.html"},
+			},
+			want: true,
 		},
 	}
 
@@ -170,11 +172,14 @@ func TestAnyConnectFingerprinter_Fingerprint(t *testing.T) {
 			wantResult: false,
 		},
 		{
-			name:       "does not detect from 301 redirect",
-			statusCode: 301,
-			headers:    http.Header{},
-			body:       `<html><body>Redirecting to webvpn</body></html>`,
-			wantResult: false,
+			name:       "detects from 302 redirect with CSCOE Location",
+			statusCode: 302,
+			headers: http.Header{
+				"Location": []string{"/+CSCOE+/logon.html"},
+			},
+			body:       ``,
+			wantResult: true,
+			wantTech:   "cisco-anyconnect",
 		},
 		{
 			name:       "does not detect non-AnyConnect content",
@@ -248,6 +253,139 @@ func TestBuildAnyConnectCPE(t *testing.T) {
 		t.Run("version_"+tt.version, func(t *testing.T) {
 			if got := buildAnyConnectCPE(tt.version); got != tt.want {
 				t.Errorf("buildAnyConnectCPE() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestAnyConnectFingerprinter_ShodanVectors tests detection against real-world
+// response patterns observed via Shodan reconnaissance.
+// Shodan dorks: title:"SSL VPN Service" webvpnlogin=1, ssl:"ASA Temporary Self Signed"
+func TestAnyConnectFingerprinter_ShodanVectors(t *testing.T) {
+	f := &AnyConnectFingerprinter{}
+
+	tests := []struct {
+		name        string
+		description string
+		statusCode  int
+		headers     http.Header
+		body        string
+		wantTech    string
+		wantVersion string
+	}{
+		{
+			name:        "Shodan Vector 1: ASA 9.16 with webvpnlogin cookie",
+			description: "Cisco ASA with SSL VPN enabled, captured via webvpnlogin cookie presence",
+			statusCode:  200,
+			headers: http.Header{
+				"Server":          []string{"Cisco ASDM"},
+				"Set-Cookie":      []string{"webvpnlogin=1; path=/; secure", "webvpnLang=en; path=/"},
+				"X-Asa-Version":   []string{"9.16(3)19"},
+				"Content-Type":    []string{"text/html; charset=utf-8"},
+				"Cache-Control":   []string{"no-store, no-cache, must-revalidate"},
+				"X-Frame-Options": []string{"SAMEORIGIN"},
+			},
+			body: `<!DOCTYPE html>
+<html>
+<head><title>SSL VPN Service</title></head>
+<body>
+<form name="frmLogin" action="/+webvpn+/index.html" method="post">
+<input type="hidden" name="tgroup" value="">
+<div id="logon_form">Cisco AnyConnect</div>
+</form>
+</body>
+</html>`,
+			wantTech:    "cisco-anyconnect",
+			wantVersion: "9.16(3)19",
+		},
+		{
+			name:        "Shodan Vector 2: ASA 9.18 Firepower with CSCOE login page",
+			description: "Cisco Firepower Threat Defense with AnyConnect, detected via CSCOE path",
+			statusCode:  200,
+			headers: http.Header{
+				"Server":                []string{"Cisco Firepower Threat Defense"},
+				"X-Transcend-Version":   []string{"9.18.2"},
+				"Content-Type":          []string{"text/html"},
+				"Strict-Transport-Security": []string{"max-age=31536000"},
+			},
+			body: `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN">
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+<title>Secure Desktop</title>
+<script type="text/javascript" src="/+CSCOE+/cte.js"></script>
+<link rel="stylesheet" type="text/css" href="/+CSCOE+/portal.css"/>
+</head>
+<body onload="init()">
+<div id="cscoe-login">Please enter your credentials</div>
+</body>
+</html>`,
+			wantTech:    "cisco-anyconnect",
+			wantVersion: "9.18.2",
+		},
+		{
+			name:        "Shodan Vector 3: ASA with self-signed cert and webvpn context",
+			description: "Older ASA device with webvpncontext cookie, no version header",
+			statusCode:  200,
+			headers: http.Header{
+				"Server":       []string{"Cisco ASA"},
+				"Set-Cookie":   []string{"webvpncontext=00@portal; path=/; secure; httponly"},
+				"Content-Type": []string{"text/html"},
+			},
+			body: `<html>
+<head><title>NetScaler AAA</title></head>
+<body>
+<script>
+document.location='/+webvpn+/webvpn.html';
+</script>
+<noscript>
+<p>JavaScript is required. Enable JavaScript to use AnyConnect.</p>
+</noscript>
+</body>
+</html>`,
+			wantTech:    "cisco-anyconnect",
+			wantVersion: "",
+		},
+		{
+			name:        "Shodan Vector 4: ASA ASDM redirect to CSCOT",
+			description: "ASA redirecting to translation table endpoint",
+			statusCode:  302,
+			headers: http.Header{
+				"Server":       []string{"Cisco ASDM/7.18(1)"},
+				"Location":     []string{"/+CSCOT+/translation-table?type=mst&textdomain=AnyConnect"},
+				"Content-Type": []string{"text/html"},
+				"Set-Cookie":   []string{"webvpn=; path=/; secure"},
+			},
+			body:        ``,
+			wantTech:    "cisco-anyconnect",
+			wantVersion: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := &http.Response{
+				StatusCode: tt.statusCode,
+				Header:     tt.headers,
+			}
+			result, err := f.Fingerprint(resp, []byte(tt.body))
+
+			if err != nil {
+				t.Errorf("Fingerprint() error = %v", err)
+				return
+			}
+
+			if result == nil {
+				t.Errorf("Fingerprint() returned nil for Shodan vector: %s", tt.description)
+				return
+			}
+
+			if result.Technology != tt.wantTech {
+				t.Errorf("Technology = %q, want %q", result.Technology, tt.wantTech)
+			}
+
+			if tt.wantVersion != "" && result.Version != tt.wantVersion {
+				t.Errorf("Version = %q, want %q", result.Version, tt.wantVersion)
 			}
 		})
 	}

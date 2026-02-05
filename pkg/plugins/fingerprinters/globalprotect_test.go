@@ -73,10 +73,12 @@ func TestGlobalProtectFingerprinter_Match(t *testing.T) {
 			want:       false,
 		},
 		{
-			name:       "does not match 301 redirect",
-			statusCode: 301,
-			headers:    http.Header{},
-			want:       false,
+			name:       "matches 302 redirect with global-protect in Location",
+			statusCode: 302,
+			headers: http.Header{
+				"Location": []string{"/global-protect/login.esp"},
+			},
+			want: true,
 		},
 	}
 
@@ -178,11 +180,14 @@ func TestGlobalProtectFingerprinter_Fingerprint(t *testing.T) {
 			wantResult: false,
 		},
 		{
-			name:       "does not detect from 301 redirect",
-			statusCode: 301,
-			headers:    http.Header{},
-			body:       `<html><body>Redirecting to GlobalProtect</body></html>`,
-			wantResult: false,
+			name:       "detects from 302 redirect with global-protect Location",
+			statusCode: 302,
+			headers: http.Header{
+				"Location": []string{"/global-protect/login.esp"},
+			},
+			body:       ``,
+			wantResult: true,
+			wantTech:   "palo-alto-globalprotect",
 		},
 		{
 			name:       "does not detect non-GlobalProtect content",
@@ -256,6 +261,160 @@ func TestBuildGlobalProtectCPE(t *testing.T) {
 		t.Run("version_"+tt.version, func(t *testing.T) {
 			if got := buildGlobalProtectCPE(tt.version); got != tt.want {
 				t.Errorf("buildGlobalProtectCPE() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestGlobalProtectFingerprinter_ShodanVectors tests detection against real-world
+// response patterns observed via Shodan reconnaissance.
+// Shodan dorks: http.favicon.hash:-631559155, app:"paloalto-GlobalProtect"
+func TestGlobalProtectFingerprinter_ShodanVectors(t *testing.T) {
+	f := &GlobalProtectFingerprinter{}
+
+	tests := []struct {
+		name        string
+		description string
+		statusCode  int
+		headers     http.Header
+		body        string
+		wantTech    string
+		wantVersion string
+	}{
+		{
+			name:        "Shodan Vector 1: PAN-OS 10.2 prelogin.esp response",
+			description: "GlobalProtect portal prelogin XML response with version",
+			statusCode:  200,
+			headers: http.Header{
+				"Content-Type":              []string{"application/xml; charset=UTF-8"},
+				"X-Private-Pan-Sslvpn":      []string{"auth-ok"},
+				"Cache-Control":             []string{"no-store, no-cache, must-revalidate"},
+				"Strict-Transport-Security": []string{"max-age=31536000; includeSubDomains"},
+			},
+			body: `<?xml version="1.0" encoding="UTF-8" ?>
+<prelogin-response>
+<status>Success</status>
+<ccusername/>
+<autosubmit>false</autosubmit>
+<msg/>
+<newmsg/>
+<authentication-message>Enter login credentials</authentication-message>
+<username-label>Username</username-label>
+<password-label>Password</password-label>
+<panos-version>1</panos-version>
+<sw-version>10.2.4</sw-version>
+<region>Americas</region>
+<saml-default-browser>yes</saml-default-browser>
+<saml-auth-method>POST</saml-auth-method>
+</prelogin-response>`,
+			wantTech:    "palo-alto-globalprotect",
+			wantVersion: "10.2.4",
+		},
+		{
+			name:        "Shodan Vector 2: PAN-OS 11.0 with hotfix version",
+			description: "GlobalProtect with hotfix version in sw-version tag",
+			statusCode:  200,
+			headers: http.Header{
+				"Content-Type":         []string{"application/xml; charset=UTF-8"},
+				"X-Private-Pan-Sslvpn": []string{"auth-ok"},
+			},
+			body: `<?xml version="1.0" encoding="UTF-8" ?>
+<prelogin-response>
+<status>Success</status>
+<ccusername></ccusername>
+<autosubmit>false</autosubmit>
+<msg></msg>
+<newmsg></newmsg>
+<authentication-message>Please authenticate</authentication-message>
+<username-label>Username</username-label>
+<password-label>Password</password-label>
+<panos-version>1</panos-version>
+<sw-version>11.0.3-h1</sw-version>
+<app-version>11.0.3-h1</app-version>
+<saml-default-browser>yes</saml-default-browser>
+<saml-auth-method>REDIRECT</saml-auth-method>
+<saml-request></saml-request>
+</prelogin-response>`,
+			wantTech:    "palo-alto-globalprotect",
+			wantVersion: "11.0.3-h1",
+		},
+		{
+			name:        "Shodan Vector 3: GlobalProtect portal redirect",
+			description: "302 redirect to GlobalProtect login page",
+			statusCode:  302,
+			headers: http.Header{
+				"Location":                  []string{"/global-protect/login.esp"},
+				"Content-Type":              []string{"text/html; charset=UTF-8"},
+				"Cache-Control":             []string{"no-store, no-cache"},
+				"Strict-Transport-Security": []string{"max-age=31536000;"},
+				"X-Frame-Options":           []string{"DENY"},
+			},
+			body: `<script LANGUAGE="JavaScript">
+window.location="/global-protect/login.esp";
+</script>
+<html><head></head><body><p>JavaScript must be enabled to continue!</p></body></html>`,
+			wantTech:    "palo-alto-globalprotect",
+			wantVersion: "",
+		},
+		{
+			name:        "Shodan Vector 4: PAN-OS 10.1 with SAML auth status",
+			description: "GlobalProtect prelogin response with SAML authentication",
+			statusCode:  200,
+			headers: http.Header{
+				"Content-Type":         []string{"application/xml; charset=UTF-8"},
+				"X-Private-Pan-Sslvpn": []string{"auth-ok"},
+				"Connection":           []string{"keep-alive"},
+			},
+			body: `<?xml version="1.0" encoding="UTF-8" ?>
+<prelogin-response>
+<status>Success</status>
+<ccusername></ccusername>
+<autosubmit></autosubmit>
+<msg></msg>
+<newmsg></newmsg>
+<authentication-message></authentication-message>
+<username-label></username-label>
+<password-label></password-label>
+<panos-version>1</panos-version>
+<sw-version>10.1.11</sw-version>
+<saml-default-browser>yes</saml-default-browser>
+<krb-norm-username></krb-norm-username>
+<krb-auth-status>0</krb-auth-status>
+<cas-auth></cas-auth>
+<saml-auth-status>1</saml-auth-status>
+<saml-auth-method>POST</saml-auth-method>
+<saml-request-timeout>60</saml-request-timeout>
+<saml-request-id>ONELOGIN_abc123</saml-request-id>
+</prelogin-response>`,
+			wantTech:    "palo-alto-globalprotect",
+			wantVersion: "10.1.11",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := &http.Response{
+				StatusCode: tt.statusCode,
+				Header:     tt.headers,
+			}
+			result, err := f.Fingerprint(resp, []byte(tt.body))
+
+			if err != nil {
+				t.Errorf("Fingerprint() error = %v", err)
+				return
+			}
+
+			if result == nil {
+				t.Errorf("Fingerprint() returned nil for Shodan vector: %s", tt.description)
+				return
+			}
+
+			if result.Technology != tt.wantTech {
+				t.Errorf("Technology = %q, want %q", result.Technology, tt.wantTech)
+			}
+
+			if tt.wantVersion != "" && result.Version != tt.wantVersion {
+				t.Errorf("Version = %q, want %q", result.Version, tt.wantVersion)
 			}
 		})
 	}
