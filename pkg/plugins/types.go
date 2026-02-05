@@ -101,6 +101,7 @@ const (
 	ProtoSybase     = "sybase"
 	ProtoTelnet     = "telnet"
 	ProtoVNC        = "vnc"
+	ProtoNFS        = "nfs"
 	ProtoZooKeeper  = "zookeeper"
 	ProtoUnknown    = "unknown"
 )
@@ -334,6 +335,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoZooKeeper:
 		var p ServiceZooKeeper
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoNFS:
+		var p ServiceNFS
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	default:
@@ -838,3 +843,10 @@ type ServiceZooKeeper struct {
 }
 
 func (e ServiceZooKeeper) Type() string { return ProtoZooKeeper }
+
+type ServiceNFS struct {
+	Version          int   `json:"version"`          // Highest detected NFS version (4, 3, or 2)
+	DetectedVersions []int `json:"detectedVersions"` // All versions that responded successfully
+}
+
+func (e ServiceNFS) Type() string { return ProtoNFS }
