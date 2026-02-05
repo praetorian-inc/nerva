@@ -185,14 +185,129 @@ func TestFormatVersionString(t *testing.T) {
 }
 
 func TestPluginInterface(t *testing.T) {
-	p := &NFSPlugin{}
+	tcpPlugin := &NFSTCPPlugin{}
 
-	assert.Equal(t, "nfs", p.Name())
-	assert.Equal(t, plugins.TCP, p.Type())
-	assert.Equal(t, 350, p.Priority())
-	assert.True(t, p.PortPriority(2049))
-	assert.False(t, p.PortPriority(111))
-	assert.False(t, p.PortPriority(80))
+	assert.Equal(t, "nfs", tcpPlugin.Name())
+	assert.Equal(t, plugins.TCP, tcpPlugin.Type())
+	assert.Equal(t, 350, tcpPlugin.Priority())
+	assert.True(t, tcpPlugin.PortPriority(2049))
+	assert.False(t, tcpPlugin.PortPriority(111))
+	assert.False(t, tcpPlugin.PortPriority(80))
+
+	udpPlugin := &NFSUDPPlugin{}
+
+	assert.Equal(t, "nfs", udpPlugin.Name())
+	assert.Equal(t, plugins.UDP, udpPlugin.Type())
+	assert.Equal(t, 350, udpPlugin.Priority())
+	assert.True(t, udpPlugin.PortPriority(2049))
+	assert.False(t, udpPlugin.PortPriority(111))
+	assert.False(t, udpPlugin.PortPriority(80))
+}
+
+func TestBuildNFSNullCallUDP(t *testing.T) {
+	testCases := []struct {
+		name    string
+		xid     uint32
+		version uint32
+	}{
+		{"NFSv3", 0xAABBCCDD, 3},
+		{"NFSv2", 0x11111111, 2},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			packet := buildNFSNullCallUDP(tc.xid, tc.version)
+
+			// Check packet length (UDP has no record marker, so 40 bytes instead of 44)
+			assert.Equal(t, 40, len(packet), "UDP packet should be 40 bytes")
+
+			// Check XID (starts at offset 0 for UDP, no record marker)
+			xid := binary.BigEndian.Uint32(packet[0:4])
+			assert.Equal(t, tc.xid, xid, "XID mismatch")
+
+			// Check message type (CALL = 0)
+			msgType := binary.BigEndian.Uint32(packet[4:8])
+			assert.Equal(t, uint32(0), msgType, "Message type should be CALL (0)")
+
+			// Check RPC version (2)
+			rpcVersion := binary.BigEndian.Uint32(packet[8:12])
+			assert.Equal(t, uint32(2), rpcVersion, "RPC version should be 2")
+
+			// Check program number (NFS = 100003)
+			program := binary.BigEndian.Uint32(packet[12:16])
+			assert.Equal(t, uint32(100003), program, "Program should be NFS (100003)")
+
+			// Check version
+			version := binary.BigEndian.Uint32(packet[16:20])
+			assert.Equal(t, tc.version, version, "Version mismatch")
+
+			// Check procedure (NULL = 0)
+			procedure := binary.BigEndian.Uint32(packet[20:24])
+			assert.Equal(t, uint32(0), procedure, "Procedure should be NULL (0)")
+		})
+	}
+}
+
+func TestParseNFSReplyUDP(t *testing.T) {
+	testCases := []struct {
+		name     string
+		response []byte
+		xid      uint32
+		expected bool
+	}{
+		{
+			name: "valid NFSv3 UDP reply",
+			response: []byte{
+				0x12, 0x34, 0x56, 0x78, // XID (no record marker for UDP)
+				0x00, 0x00, 0x00, 0x01, // Message type (REPLY)
+				0x00, 0x00, 0x00, 0x00, // Reply stat (MSG_ACCEPTED)
+				0x00, 0x00, 0x00, 0x00, // Verifier flavor
+				0x00, 0x00, 0x00, 0x00, // Verifier length
+				0x00, 0x00, 0x00, 0x00, // Accept stat (SUCCESS)
+			},
+			xid:      0x12345678,
+			expected: true,
+		},
+		{
+			name:     "UDP response too short",
+			response: []byte{0x12, 0x34, 0x56, 0x78},
+			xid:      0x12345678,
+			expected: false,
+		},
+		{
+			name: "UDP XID mismatch",
+			response: []byte{
+				0xAA, 0xBB, 0xCC, 0xDD, // Different XID
+				0x00, 0x00, 0x00, 0x01, // Message type (REPLY)
+				0x00, 0x00, 0x00, 0x00, // Reply stat
+				0x00, 0x00, 0x00, 0x00, // Verifier flavor
+				0x00, 0x00, 0x00, 0x00, // Verifier length
+				0x00, 0x00, 0x00, 0x00, // Accept stat
+			},
+			xid:      0x12345678,
+			expected: false,
+		},
+		{
+			name: "UDP program mismatch (accept stat = 2)",
+			response: []byte{
+				0x12, 0x34, 0x56, 0x78,
+				0x00, 0x00, 0x00, 0x01, // REPLY
+				0x00, 0x00, 0x00, 0x00, // MSG_ACCEPTED
+				0x00, 0x00, 0x00, 0x00,
+				0x00, 0x00, 0x00, 0x00,
+				0x00, 0x00, 0x00, 0x02, // PROG_MISMATCH
+			},
+			xid:      0x12345678,
+			expected: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := parseNFSReplyUDP(tc.response, tc.xid)
+			assert.Equal(t, tc.expected, result)
+		})
+	}
 }
 
 // TestNFSMockServer tests the NFS plugin with a mock server that simulates
@@ -304,7 +419,7 @@ func TestNFS(t *testing.T) {
 		},
 	}
 
-	p := &NFSPlugin{}
+	p := &NFSTCPPlugin{}
 
 	for _, tc := range testcases {
 		tc := tc

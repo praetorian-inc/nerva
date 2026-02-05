@@ -25,8 +25,11 @@ import (
 	utils "github.com/praetorian-inc/nerva/pkg/plugins/pluginutils"
 )
 
-// NFSPlugin implements the plugins.Plugin interface for NFS detection
-type NFSPlugin struct{}
+// NFSTCPPlugin implements the plugins.Plugin interface for NFS detection over TCP
+type NFSTCPPlugin struct{}
+
+// NFSUDPPlugin implements the plugins.Plugin interface for NFS detection over UDP
+type NFSUDPPlugin struct{}
 
 // NFS is the protocol name constant
 const NFS = "nfs"
@@ -35,7 +38,8 @@ const NFS = "nfs"
 const NFSProgramNumber = 100003
 
 func init() {
-	plugins.RegisterPlugin(&NFSPlugin{})
+	plugins.RegisterPlugin(&NFSTCPPlugin{})
+	plugins.RegisterPlugin(&NFSUDPPlugin{})
 }
 
 // generateXID creates a random 32-bit transaction ID for RPC calls
@@ -97,6 +101,50 @@ func buildNFSNullCall(xid uint32, version uint32) []byte {
 	return buf
 }
 
+// buildNFSNullCallUDP creates an RPC NULL procedure call packet for the specified NFS version over UDP.
+// UDP RPC (RFC 5531) does NOT use the TCP record marker, so the packet is 40 bytes instead of 44.
+//
+// Packet structure (40 bytes total):
+//   - XID: 4 bytes (transaction ID)
+//   - Message type: 4 bytes (0 = CALL)
+//   - RPC version: 4 bytes (2)
+//   - Program number: 4 bytes (100003 = NFS)
+//   - Program version: 4 bytes (3 or 2, not 4 - NFSv4 is TCP-only per RFC 7530)
+//   - Procedure: 4 bytes (0 = NULL)
+//   - Credentials: 8 bytes (AUTH_NULL: flavor=0, len=0)
+//   - Verifier: 8 bytes (AUTH_NULL: flavor=0, len=0)
+func buildNFSNullCallUDP(xid uint32, version uint32) []byte {
+	buf := make([]byte, 40)
+
+	// XID (transaction ID) - starts at offset 0 (no record marker)
+	binary.BigEndian.PutUint32(buf[0:4], xid)
+
+	// Message type (CALL = 0)
+	binary.BigEndian.PutUint32(buf[4:8], 0)
+
+	// RPC version (2)
+	binary.BigEndian.PutUint32(buf[8:12], 2)
+
+	// Program number (NFS = 100003)
+	binary.BigEndian.PutUint32(buf[12:16], NFSProgramNumber)
+
+	// Program version
+	binary.BigEndian.PutUint32(buf[16:20], version)
+
+	// Procedure (NULL = 0)
+	binary.BigEndian.PutUint32(buf[20:24], 0)
+
+	// Credentials: AUTH_NULL (flavor=0, length=0)
+	binary.BigEndian.PutUint32(buf[24:28], 0)
+	binary.BigEndian.PutUint32(buf[28:32], 0)
+
+	// Verifier: AUTH_NULL (flavor=0, length=0)
+	binary.BigEndian.PutUint32(buf[32:36], 0)
+	binary.BigEndian.PutUint32(buf[36:40], 0)
+
+	return buf
+}
+
 // parseNFSReply validates an RPC reply message and checks if the NFS NULL procedure succeeded.
 // Returns true if the response indicates the NFS version is supported.
 //
@@ -151,6 +199,59 @@ func parseNFSReply(response []byte, expectedXID uint32) bool {
 	return true
 }
 
+// parseNFSReplyUDP validates an RPC reply message for UDP and checks if the NFS NULL procedure succeeded.
+// UDP replies do NOT include the record marker, so parsing starts at byte 0 instead of byte 4.
+//
+// RPC Reply structure (minimum 24 bytes):
+//   - XID: 4 bytes (must match request)
+//   - Message type: 4 bytes (1 = REPLY)
+//   - Reply stat: 4 bytes (0 = MSG_ACCEPTED)
+//   - Verifier: 8 bytes
+//   - Accept stat: 4 bytes (0 = SUCCESS)
+func parseNFSReplyUDP(response []byte, expectedXID uint32) bool {
+	// Minimum response size: XID (4) + msg_type (4) +
+	// reply_stat (4) + verifier (8) + accept_stat (4) = 24 bytes
+	if len(response) < 24 {
+		return false
+	}
+
+	// Start at offset 0 (no record marker for UDP)
+	offset := 0
+
+	// Check XID matches
+	xid := binary.BigEndian.Uint32(response[offset : offset+4])
+	if xid != expectedXID {
+		return false
+	}
+	offset += 4
+
+	// Check message type is REPLY (1)
+	msgType := binary.BigEndian.Uint32(response[offset : offset+4])
+	if msgType != 1 {
+		return false
+	}
+	offset += 4
+
+	// Check reply stat is MSG_ACCEPTED (0)
+	replyStat := binary.BigEndian.Uint32(response[offset : offset+4])
+	if replyStat != 0 {
+		return false
+	}
+	offset += 4
+
+	// Skip verifier (8 bytes: flavor + length)
+	offset += 8
+
+	// Check accept stat is SUCCESS (0)
+	// Non-zero means: PROG_UNAVAIL(1), PROG_MISMATCH(2), PROC_UNAVAIL(3), etc.
+	acceptStat := binary.BigEndian.Uint32(response[offset : offset+4])
+	if acceptStat != 0 {
+		return false
+	}
+
+	return true
+}
+
 // formatVersionString creates a version string from detected versions.
 // Returns highest version as primary, e.g., "4" or "3".
 func formatVersionString(versions []int) string {
@@ -161,10 +262,10 @@ func formatVersionString(versions []int) string {
 	return fmt.Sprintf("%d", versions[0])
 }
 
-// Run detects NFS service by sending RPC NULL procedure calls.
+// Run detects NFS service over TCP by sending RPC NULL procedure calls.
 // It probes versions in descending order (v4 -> v3 -> v2) and reports
 // the highest version that responds successfully.
-func (p *NFSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
+func (p *NFSTCPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
 	nfsService := plugins.ServiceNFS{}
 
 	// Generate a random XID for this detection session
@@ -209,22 +310,90 @@ func (p *NFSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 }
 
 // PortPriority returns true if this is the default NFS port
-func (p *NFSPlugin) PortPriority(i uint16) bool {
+func (p *NFSTCPPlugin) PortPriority(i uint16) bool {
 	return i == 2049
 }
 
 // Name returns the protocol name
-func (p *NFSPlugin) Name() string {
+func (p *NFSTCPPlugin) Name() string {
 	return NFS
 }
 
 // Type returns the transport protocol
-func (p *NFSPlugin) Type() plugins.Protocol {
+func (p *NFSTCPPlugin) Type() plugins.Protocol {
 	return plugins.TCP
 }
 
 // Priority returns the scan priority (higher = later)
 // NFS runs after RPC (300) since it uses RPC protocol
-func (p *NFSPlugin) Priority() int {
+func (p *NFSTCPPlugin) Priority() int {
+	return 350
+}
+
+// Run detects NFS service over UDP by sending RPC NULL procedure calls.
+// UDP only probes v3 and v2 (NFSv4 is TCP-only per RFC 7530).
+// It probes versions in descending order (v3 -> v2) and reports
+// the highest version that responds successfully.
+func (p *NFSUDPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
+	nfsService := plugins.ServiceNFS{}
+
+	// Generate a random XID for this detection session
+	xid := generateXID()
+
+	// Probe versions in descending order: 3, 2 (NFSv4 is TCP-only)
+	versions := []uint32{3, 2}
+
+	for _, version := range versions {
+		packet := buildNFSNullCallUDP(xid, version)
+
+		response, err := utils.SendRecv(conn, packet, timeout)
+		if err != nil {
+			// Write error - propagate
+			return nil, err
+		}
+
+		// Empty response - server didn't respond to this version
+		if len(response) == 0 {
+			continue
+		}
+
+		// Check if response indicates successful NULL procedure
+		if parseNFSReplyUDP(response, xid) {
+			nfsService.DetectedVersions = append(nfsService.DetectedVersions, int(version))
+
+			// Set highest version (first successful probe)
+			if nfsService.Version == 0 {
+				nfsService.Version = int(version)
+			}
+		}
+	}
+
+	// If no version responded successfully, not NFS
+	if len(nfsService.DetectedVersions) == 0 {
+		return nil, nil
+	}
+
+	versionStr := formatVersionString(nfsService.DetectedVersions)
+	return plugins.CreateServiceFrom(target, nfsService, false, versionStr, plugins.UDP), nil
+}
+
+// PortPriority returns true if this is the default NFS port
+func (p *NFSUDPPlugin) PortPriority(i uint16) bool {
+	return i == 2049
+}
+
+// Name returns the protocol name
+func (p *NFSUDPPlugin) Name() string {
+	return NFS
+}
+
+// Type returns the transport protocol
+func (p *NFSUDPPlugin) Type() plugins.Protocol {
+	return plugins.UDP
+}
+
+// Priority returns the scan priority (higher = later)
+// NFS runs after RPC (300) since it uses RPC protocol
+func (p *NFSUDPPlugin) Priority() int {
 	return 350
 }
