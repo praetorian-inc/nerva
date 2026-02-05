@@ -18,6 +18,7 @@ package scan
 // When a new plugin is added, this list should be updated.
 
 import (
+	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/amqp"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/cassandra"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/chromadb"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/couchdb"
@@ -28,6 +29,7 @@ import (
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/dns"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/echo"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/elasticsearch"
+	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/etcd"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/firebird"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/ftp"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/http"
@@ -54,6 +56,7 @@ import (
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/netbios"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/ntp"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/openvpn"
+	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/opcua"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/oracledb"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/pinecone"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/pop3"
@@ -73,4 +76,5 @@ import (
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/sybase"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/telnet"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/vnc"
+	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/zookeeper"
 )

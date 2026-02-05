@@ -37,13 +37,17 @@ const (
 const TypeService string = "service"
 
 const (
+	ProtoAMQP       = "amqp"
 	ProtoDNS        = "dns"
 	ProtoDHCP       = "dhcp"
 	ProtoDiameter   = "diameter"
+	ProtoDNP3       = "dnp3"
 	ProtoDB2        = "db2"
+	ProtoCODESYS    = "codesys"
 	ProtoCassandra  = "cassandra"
 	ProtoChromaDB   = "chromadb"
 	ProtoCouchDB    = "couchdb"
+	ProtoEtcd       = "etcd"
 	ProtoEcho          = "echo"
 	ProtoElasticsearch = "elasticsearch"
 	ProtoFirebird      = "firebird"
@@ -75,6 +79,7 @@ const (
 	ProtoNTP        = "ntp"
 	ProtoOracle     = "oracle"
 	ProtoOpenVPN    = "openvpn"
+	ProtoOPCUA      = "opcua"
 	ProtoPinecone   = "pinecone"
 	ProtoPOP3       = "pop3"
 	ProtoPOP3S      = "pop3s"
@@ -97,6 +102,7 @@ const (
 	ProtoSybase     = "sybase"
 	ProtoTelnet     = "telnet"
 	ProtoVNC        = "vnc"
+	ProtoZooKeeper  = "zookeeper"
 	ProtoUnknown    = "unknown"
 )
 
@@ -127,6 +133,10 @@ func (e Service) Metadata() Metadata {
 		var p ServiceDiameter
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
+	case ProtoDNP3:
+		var p ServiceDNP3
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
 	case ProtoDB2:
 		var p ServiceDB2
 		_ = json.Unmarshal(e.Raw, &p)
@@ -137,6 +147,14 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoChromaDB:
 		var p ServiceChromaDB
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoCODESYS:
+		var p ServiceCODESYS
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoEtcd:
+		var p ServiceEtcd
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoFirebird:
@@ -209,6 +227,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoOracle:
 		var p ServiceOracle
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoOPCUA:
+		var p ServiceOPCUA
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoPinecone:
@@ -309,6 +331,14 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoSNPP:
 		var p ServiceSNPP
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoAMQP:
+		var p ServiceAMQP
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoZooKeeper:
+		var p ServiceZooKeeper
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	default:
@@ -630,6 +660,15 @@ type ServiceOpenVPN struct{}
 
 func (e ServiceOpenVPN) Type() string { return ProtoOpenVPN }
 
+type ServiceOPCUA struct {
+	ApplicationName string   `json:"applicationName,omitempty"` // Server application name
+	ProductURI      string   `json:"productUri,omitempty"`      // Product URI from server
+	SecurityModes   []string `json:"securityModes,omitempty"`   // None, Sign, SignAndEncrypt
+	CPEs            []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceOPCUA) Type() string { return ProtoOPCUA }
+
 type ServiceMQTT struct{}
 
 func (e ServiceMQTT) Type() string { return ProtoMQTT }
@@ -703,6 +742,16 @@ type ServiceDiameter struct {
 
 func (e ServiceDiameter) Type() string { return ProtoDiameter }
 
+type ServiceDNP3 struct {
+	SourceAddress      uint16   `json:"sourceAddress,omitempty"`      // DNP3 source address
+	DestinationAddress uint16   `json:"destinationAddress,omitempty"` // DNP3 destination address
+	DeviceRole         string   `json:"deviceRole,omitempty"`         // "master" or "outstation"
+	FunctionCode       uint8    `json:"functionCode,omitempty"`       // Function code used in detection
+	CPEs               []string `json:"cpes,omitempty"`               // Common Platform Enumeration identifiers
+}
+
+func (e ServiceDNP3) Type() string { return ProtoDNP3 }
+
 type ServiceDB2 struct {
 	ServerName string   `json:"serverName,omitempty"` // DB2 instance name
 	CPEs       []string `json:"cpes,omitempty"`
@@ -726,6 +775,26 @@ type ServiceChromaDB struct {
 }
 
 func (e ServiceChromaDB) Type() string { return ProtoChromaDB }
+
+type ServiceCODESYS struct {
+	Version     string   `json:"version,omitempty"`
+	DeviceName  string   `json:"deviceName,omitempty"`
+	VendorName  string   `json:"vendorName,omitempty"`
+	OSType      string   `json:"osType,omitempty"`
+	OSName      string   `json:"osName,omitempty"`
+	AuthEnabled bool     `json:"authEnabled,omitempty"`
+	CPEs        []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceCODESYS) Type() string { return ProtoCODESYS }
+
+type ServiceEtcd struct {
+	CPEs           []string `json:"cpes,omitempty"`
+	ClusterVersion string   `json:"clusterVersion,omitempty"`
+	PortType       string   `json:"portType,omitempty"` // "client" or "peer"
+}
+
+func (e ServiceEtcd) Type() string { return ProtoEtcd }
 
 type ServiceEcho struct{}
 
@@ -771,3 +840,22 @@ type ServiceM3UA struct {
 }
 
 func (e ServiceM3UA) Type() string { return ProtoM3UA }
+
+type ServiceAMQP struct {
+	Product  string   `json:"product,omitempty"`  // e.g., "RabbitMQ"
+	Version  string   `json:"version,omitempty"`  // e.g., "3.12.0"
+	Platform string   `json:"platform,omitempty"` // e.g., "Erlang/OTP 26.0"
+	CPEs     []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceAMQP) Type() string { return ProtoAMQP }
+
+type ServiceZooKeeper struct {
+	CPEs        []string `json:"cpes,omitempty"`        // Common Platform Enumeration identifiers for vulnerability tracking
+	Mode        string   `json:"mode,omitempty"`        // ZooKeeper mode: standalone, leader, follower, observer
+	Connections int      `json:"connections,omitempty"` // Number of active connections
+	NodeCount   int      `json:"nodeCount,omitempty"`   // Number of ZNodes in the namespace
+	Restricted  bool     `json:"restricted,omitempty"`  // Whether commands are restricted by whitelist
+}
+
+func (e ServiceZooKeeper) Type() string { return ProtoZooKeeper }
