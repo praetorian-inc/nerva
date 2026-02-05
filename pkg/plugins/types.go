@@ -42,6 +42,7 @@ const (
 	ProtoDHCP       = "dhcp"
 	ProtoDiameter   = "diameter"
 	ProtoDNP3       = "dnp3"
+	ProtoDocker     = "docker"
 	ProtoDB2        = "db2"
 	ProtoCODESYS    = "codesys"
 	ProtoCassandra  = "cassandra"
@@ -135,6 +136,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoDNP3:
 		var p ServiceDNP3
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoDocker:
+		var p ServiceDocker
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoDB2:
@@ -747,6 +752,15 @@ type ServiceDNP3 struct {
 }
 
 func (e ServiceDNP3) Type() string { return ProtoDNP3 }
+
+type ServiceDocker struct {
+	ApiVersion string   `json:"apiVersion,omitempty"` // Docker API version (e.g., "1.43")
+	Os         string   `json:"os,omitempty"`         // Operating system (e.g., "linux")
+	Arch       string   `json:"arch,omitempty"`       // Architecture (e.g., "amd64")
+	CPEs       []string `json:"cpes,omitempty"`       // Common Platform Enumeration identifiers
+}
+
+func (e ServiceDocker) Type() string { return ProtoDocker }
 
 type ServiceDB2 struct {
 	ServerName string   `json:"serverName,omitempty"` // DB2 instance name

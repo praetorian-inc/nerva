@@ -27,6 +27,7 @@ import (
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/diameter"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/diametersctp"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/dns"
+	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/docker"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/echo"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/elasticsearch"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/etcd"
