@@ -97,6 +97,8 @@ const (
 	ProtoSMTPS      = "smtps"
 	ProtoSNMP       = "snmp"
 	ProtoSNPP       = "snpp"
+	ProtoSIP        = "sip"
+	ProtoSIPS       = "sips"
 	ProtoSSH        = "ssh"
 	ProtoStun       = "stun"
 	ProtoSybase     = "sybase"
