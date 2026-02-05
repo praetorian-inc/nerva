@@ -48,7 +48,8 @@ type VersionInfo struct {
 }
 
 func init() {
-	plugins.RegisterPlugin(&KubernetesPlugin{})
+	// TEMPORARILY DISABLED - Testing fingerprinter approach
+	// plugins.RegisterPlugin(&KubernetesPlugin{})
 }
 
 func (p *KubernetesPlugin) PortPriority(port uint16) bool {

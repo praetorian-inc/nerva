@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/praetorian-inc/nerva/pkg/plugins"
+	"github.com/praetorian-inc/nerva/pkg/plugins/fingerprinters"
 	utils "github.com/praetorian-inc/nerva/pkg/plugins/pluginutils"
 	wappalyzer "github.com/projectdiscovery/wappalyzergo"
 )
@@ -68,6 +69,7 @@ var (
 
 	commonHTTPSPorts = map[int]struct{}{
 		443:  {},
+		6443: {}, // Kubernetes API server default port
 		8443: {},
 		9443: {},
 	}
@@ -111,7 +113,8 @@ func (p *HTTPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 	}
 	defer resp.Body.Close()
 
-	technologies, cpes, _ := p.FingerprintResponse(resp)
+	baseURL := fmt.Sprintf("http://%s", conn.RemoteAddr().String())
+	technologies, cpes, _ := p.FingerprintResponse(resp, &client, baseURL)
 
 	payload := plugins.ServiceHTTP{
 		Status:          resp.Status,
@@ -170,7 +173,8 @@ func (p *HTTPSPlugin) Run(
 	}
 	defer resp.Body.Close()
 
-	technologies, cpes, _ := p.FingerprintResponse(resp)
+	baseURL := fmt.Sprintf("https://%s", conn.RemoteAddr().String())
+	technologies, cpes, _ := p.FingerprintResponse(resp, &client, baseURL)
 
 	payload := plugins.ServiceHTTPS{
 		Status:          resp.Status,
@@ -219,26 +223,71 @@ func (p *HTTPSPlugin) IsWeakMatch() bool {
 	return true
 }
 
-func (p *HTTPPlugin) FingerprintResponse(resp *http.Response) ([]string, []string, error) {
-	return fingerprint(resp, p.analyzer)
+func (p *HTTPPlugin) FingerprintResponse(resp *http.Response, client *http.Client, baseURL string) ([]string, []string, error) {
+	return fingerprint(resp, p.analyzer, client, baseURL)
 }
 
-func (p *HTTPSPlugin) FingerprintResponse(resp *http.Response) ([]string, []string, error) {
-	return fingerprint(resp, p.analyzer)
+func (p *HTTPSPlugin) FingerprintResponse(resp *http.Response, client *http.Client, baseURL string) ([]string, []string, error) {
+	return fingerprint(resp, p.analyzer, client, baseURL)
 }
 
-func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze) ([]string, []string, error) {
+func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *http.Client, baseURL string) ([]string, []string, error) {
 	var technologies, cpes []string
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	fingerprint := analyzer.FingerprintWithInfo(resp.Header, data)
-	for tech, appInfo := range fingerprint {
+	// Wappalyzer fingerprinting (existing)
+	fingerprintResult := analyzer.FingerprintWithInfo(resp.Header, data)
+	for tech, appInfo := range fingerprintResult {
 		technologies = append(technologies, tech)
 		if cpe := appInfo.CPE; cpe != "" {
 			cpes = append(cpes, cpe)
+		}
+	}
+
+	// Passive fingerprinters (work on root response)
+	for _, result := range fingerprinters.RunFingerprinters(resp, data) {
+		technologies = append(technologies, result.Technology)
+		cpes = append(cpes, result.CPEs...)
+	}
+
+	// Active fingerprinters (probe specific endpoints)
+	if client != nil && baseURL != "" {
+		for fpName, endpoint := range fingerprinters.GetProbeEndpoints() {
+			// Don't re-probe "/"
+			if endpoint == "" || endpoint == "/" {
+				continue
+			}
+
+			probeURL := baseURL + endpoint
+			probeReq, err := http.NewRequest("GET", probeURL, nil)
+			if err != nil {
+				continue
+			}
+			probeReq.Header.Set("Accept", "application/json")
+			probeReq.Header.Set("User-Agent", USERAGENT)
+
+			probeResp, err := client.Do(probeReq)
+			if err != nil {
+				continue
+			}
+
+			probeBody, err := io.ReadAll(probeResp.Body)
+			probeResp.Body.Close()
+			if err != nil {
+				continue
+			}
+
+			// Run the specific fingerprinter
+			fp := fingerprinters.GetFingerprinterByName(fpName)
+			if fp != nil && fp.Match(probeResp) {
+				if result, err := fp.Fingerprint(probeResp, probeBody); err == nil && result != nil {
+					technologies = append(technologies, result.Technology)
+					cpes = append(cpes, result.CPEs...)
+				}
+			}
 		}
 	}
 
