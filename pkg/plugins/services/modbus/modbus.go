@@ -17,7 +17,10 @@ package modbus
 import (
 	"bytes"
 	"crypto/rand"
+	"fmt"
 	"net"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/praetorian-inc/nerva/pkg/plugins"
@@ -25,9 +28,13 @@ import (
 )
 
 const (
-	ModbusHeaderLength      = 7
-	ModbusDiscreteInputCode = 0x2
-	ModbusErrorAddend       = 0x80
+	ModbusHeaderLength           = 7
+	ModbusDiscreteInputCode      = 0x2
+	ModbusErrorAddend            = 0x80
+	ModbusReadDeviceIDCode       = 0x2B
+	ModbusEncapsulatedInterface  = 0x0E
+	ModbusBasicDeviceID          = 0x01
+	ModbusStartObjectID          = 0x00
 )
 
 type MODBUSPlugin struct{}
@@ -105,10 +112,14 @@ func (p *MODBUSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.
 		// successful request, validate contents
 		if response[ModbusHeaderLength] == ModbusDiscreteInputCode {
 			if response[ModbusHeaderLength+1] == 1 && (response[ModbusHeaderLength+2]>>1) == 0x00 {
-				return plugins.CreateServiceFrom(target, plugins.ServiceModbus{}, false, "", plugins.TCP), nil
+				// Detection succeeded - attempt enrichment with device identification
+				serviceData := p.enrichDeviceIdentification(conn, timeout)
+				return plugins.CreateServiceFrom(target, serviceData, false, "", plugins.TCP), nil
 			}
 		} else if response[ModbusHeaderLength] == ModbusDiscreteInputCode+ModbusErrorAddend {
-			return plugins.CreateServiceFrom(target, plugins.ServiceModbus{}, false, "", plugins.TCP), nil
+			// Detection succeeded (error response is valid) - attempt enrichment
+			serviceData := p.enrichDeviceIdentification(conn, timeout)
+			return plugins.CreateServiceFrom(target, serviceData, false, "", plugins.TCP), nil
 		}
 	}
 	return nil, nil
@@ -123,4 +134,170 @@ func (p *MODBUSPlugin) Type() plugins.Protocol {
 
 func (p *MODBUSPlugin) Priority() int {
 	return 400
+}
+
+// buildReadDeviceIDRequest builds a Modbus Read Device Identification request (0x2B/0x0E)
+func buildReadDeviceIDRequest(transactionID []byte) []byte {
+	return append(transactionID, []byte{
+		// protocol ID (0)
+		0x00, 0x00,
+		// following byte length (5 bytes)
+		0x00, 0x05,
+		// unit ID
+		0x01,
+		// function code 0x2B (43)
+		ModbusReadDeviceIDCode,
+		// MEI type 0x0E (14) - Read Device Identification
+		ModbusEncapsulatedInterface,
+		// Device ID code 0x01 (Basic identification)
+		ModbusBasicDeviceID,
+		// Object ID 0x00 (start from VendorName)
+		ModbusStartObjectID,
+	}...)
+}
+
+// parseDeviceIDResponse parses Modbus Read Device Identification response
+// Returns map of object ID to value string
+func parseDeviceIDResponse(response []byte, transactionID []byte) map[byte]string {
+	objects := make(map[byte]string)
+
+	// Verify response length and transaction ID
+	if len(response) < ModbusHeaderLength+6 {
+		return objects
+	}
+
+	// Verify transaction ID match
+	if !bytes.Equal(response[:2], transactionID) {
+		return objects
+	}
+
+	// Verify function code (0x2B)
+	if response[ModbusHeaderLength] != ModbusReadDeviceIDCode {
+		return objects
+	}
+
+	// Verify MEI type (0x0E)
+	if response[ModbusHeaderLength+1] != ModbusEncapsulatedInterface {
+		return objects
+	}
+
+	// Parse response header
+	// [7] = function code 0x2B
+	// [8] = MEI type 0x0E
+	// [9] = Device ID code
+	// [10] = Conformity level
+	// [11] = More follows
+	// [12] = Next object ID
+	// [13] = Number of objects
+	numObjects := int(response[ModbusHeaderLength+6])
+
+	// Parse objects starting at byte 14
+	idx := ModbusHeaderLength + 7
+	for i := 0; i < numObjects && idx+2 < len(response); i++ {
+		objectID := response[idx]
+		objectLen := int(response[idx+1])
+
+		// Bounds check
+		if idx+2+objectLen > len(response) {
+			break
+		}
+
+		// Extract object value as string
+		objectValue := string(response[idx+2 : idx+2+objectLen])
+		objects[objectID] = objectValue
+
+		// Move to next object
+		idx += 2 + objectLen
+	}
+
+	return objects
+}
+
+// generateCPE generates CPE string from vendor, product, and version
+// Format: cpe:2.3:h:{vendor}:{product}:{version}:*:*:*:*:*:*:*
+func generateCPE(vendor, product, version string) string {
+	// Normalize vendor and product names (lowercase, replace spaces with underscores)
+	vendorNorm := normalizeCPEComponent(vendor)
+	productNorm := normalizeCPEComponent(product)
+
+	// Use wildcard if version is empty
+	versionNorm := version
+	if versionNorm == "" {
+		versionNorm = "*"
+	}
+
+	// Handle missing vendor or product
+	if vendorNorm == "" || productNorm == "" {
+		return ""
+	}
+
+	return fmt.Sprintf("cpe:2.3:h:%s:%s:%s:*:*:*:*:*:*:*", vendorNorm, productNorm, versionNorm)
+}
+
+// normalizeCPEComponent normalizes a string for use in CPE (lowercase, replace spaces with underscores)
+func normalizeCPEComponent(s string) string {
+	if s == "" {
+		return ""
+	}
+	s = strings.ToLower(s)
+	s = strings.ReplaceAll(s, " ", "_")
+	// Remove non-alphanumeric characters except underscores and hyphens
+	reg := regexp.MustCompile(`[^a-z0-9_-]`)
+	return reg.ReplaceAllString(s, "")
+}
+
+// enrichDeviceIdentification attempts to get device identification metadata
+// This is called after successful detection and is non-critical (failures are silent)
+func (p *MODBUSPlugin) enrichDeviceIdentification(conn net.Conn, timeout time.Duration) plugins.ServiceModbus {
+	serviceData := plugins.ServiceModbus{}
+
+	// Generate transaction ID for device identification request
+	transactionID := make([]byte, 2)
+	_, err := rand.Read(transactionID)
+	if err != nil {
+		return serviceData // Return empty struct on error
+	}
+
+	// Build and send Read Device Identification request
+	request := buildReadDeviceIDRequest(transactionID)
+	response, err := utils.SendRecv(conn, request, timeout)
+	if err != nil || len(response) == 0 {
+		return serviceData // Return empty struct on error
+	}
+
+	// Parse device identification response
+	objects := parseDeviceIDResponse(response, transactionID)
+
+	// Map object IDs to struct fields
+	if val, ok := objects[0x00]; ok {
+		serviceData.VendorName = val
+	}
+	if val, ok := objects[0x01]; ok {
+		serviceData.ProductCode = val
+	}
+	if val, ok := objects[0x02]; ok {
+		serviceData.Revision = val
+	}
+	if val, ok := objects[0x03]; ok {
+		serviceData.VendorURL = val
+	}
+	if val, ok := objects[0x04]; ok {
+		serviceData.ProductName = val
+	}
+	if val, ok := objects[0x05]; ok {
+		serviceData.ModelName = val
+	}
+
+	// Generate CPE from vendor, product, and version
+	// Prefer ProductName over ProductCode, and use Revision as version
+	product := serviceData.ProductName
+	if product == "" {
+		product = serviceData.ProductCode
+	}
+
+	if cpe := generateCPE(serviceData.VendorName, product, serviceData.Revision); cpe != "" {
+		serviceData.CPEs = []string{cpe}
+	}
+
+	return serviceData
 }

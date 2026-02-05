@@ -54,6 +54,7 @@ const (
 	ProtoEcho             = "echo"
 	ProtoElasticsearch    = "elasticsearch"
 	ProtoEtcd             = "etcd"
+	ProtoEthernetIP       = "ethernetip"
 	ProtoFirebird         = "firebird"
 	ProtoFTP              = "ftp"
 	ProtoH323             = "h323"
@@ -179,6 +180,10 @@ func (e Service) Metadata() Metadata {
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoEtcd:
+	case ProtoEthernetIP:
+		var p ServiceEthernetIP
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
 		var p ServiceEtcd
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
@@ -797,6 +802,19 @@ type ServiceSybase struct {
 
 func (e ServiceSybase) Type() string { return ProtoSybase }
 
+type ServiceEthernetIP struct {
+	VendorID    uint16   `json:"vendorId,omitempty"`
+	VendorName  string   `json:"vendorName,omitempty"`
+	DeviceType  uint16   `json:"deviceType,omitempty"`
+	ProductCode uint16   `json:"productCode,omitempty"`
+	Revision    string   `json:"revision,omitempty"`
+	Serial      string   `json:"serial,omitempty"`
+	ProductName string   `json:"productName,omitempty"`
+	CPEs        []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceEthernetIP) Type() string { return ProtoEthernetIP }
+
 type ServiceLDAP struct{}
 
 func (e ServiceLDAP) Type() string { return ProtoLDAP }
@@ -890,7 +908,15 @@ type ServiceMilvusMetrics struct {
 
 func (e ServiceMilvusMetrics) Type() string { return ProtoMilvusMetrics }
 
-type ServiceModbus struct{}
+type ServiceModbus struct {
+	VendorName  string   `json:"vendorName,omitempty"`  // Object ID 0x00: Vendor name
+	ProductCode string   `json:"productCode,omitempty"` // Object ID 0x01: Product code
+	Revision    string   `json:"revision,omitempty"`    // Object ID 0x02: Major.Minor revision
+	VendorURL   string   `json:"vendorUrl,omitempty"`   // Object ID 0x03: Vendor URL
+	ProductName string   `json:"productName,omitempty"` // Object ID 0x04: Product name
+	ModelName   string   `json:"modelName,omitempty"`   // Object ID 0x05: Model name
+	CPEs        []string `json:"cpes,omitempty"`        // Common Platform Enumeration identifiers
+}
 
 func (e ServiceModbus) Type() string { return ProtoModbus }
 

@@ -34,6 +34,7 @@ import (
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/dns"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/docker"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/echo"
+	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/ethernetip"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/firebird"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/ftp"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/http"
