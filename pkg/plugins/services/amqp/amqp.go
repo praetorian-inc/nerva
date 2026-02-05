@@ -301,7 +301,6 @@ func (p *AMQPPlugin) Type() plugins.Protocol {
 func (p *AMQPPlugin) Priority() int {
 	return 100
 }
-
 // TLSPlugin implements TLS AMQP detection
 func (p *TLSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
 	product, version, platform, detected, err := DetectAMQP(conn, timeout)

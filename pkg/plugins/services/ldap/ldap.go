@@ -181,7 +181,6 @@ func (p *LDAPPlugin) PortPriority(i uint16) bool {
 func (p *LDAPPlugin) Name() string {
 	return LDAP
 }
-
 func (p *LDAPPlugin) Type() plugins.Protocol {
 	return plugins.TCP
 }
@@ -213,7 +212,6 @@ func (p *TLSPlugin) Priority() int {
 func (p *TLSPlugin) Name() string {
 	return LDAPS
 }
-
 func (p *TLSPlugin) Type() plugins.Protocol {
 	return plugins.TCPTLS
 }

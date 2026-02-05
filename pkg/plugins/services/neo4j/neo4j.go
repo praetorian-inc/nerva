@@ -173,7 +173,6 @@ func (p *NEO4JPlugin) PortPriority(port uint16) bool {
 func (p *NEO4JPlugin) Name() string {
 	return NEO4J
 }
-
 func (p *NEO4JPlugin) Type() plugins.Protocol {
 	return plugins.TCP
 }
@@ -206,7 +205,6 @@ func (p *NEO4JTLSPlugin) PortPriority(port uint16) bool {
 func (p *NEO4JTLSPlugin) Name() string {
 	return NEO4J
 }
-
 func (p *NEO4JTLSPlugin) Type() plugins.Protocol {
 	return plugins.TCPTLS
 }

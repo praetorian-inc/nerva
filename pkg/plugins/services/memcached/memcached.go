@@ -343,7 +343,6 @@ func (p *MEMCACHEDPlugin) PortPriority(port uint16) bool {
 func (p *MEMCACHEDPlugin) Name() string {
 	return MEMCACHED
 }
-
 func (p *MEMCACHEDPlugin) Type() plugins.Protocol {
 	return plugins.TCP
 }

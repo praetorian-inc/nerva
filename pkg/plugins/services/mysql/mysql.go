@@ -145,7 +145,6 @@ func (p *MYSQLPlugin) PortPriority(port uint16) bool {
 func (p *MYSQLPlugin) Name() string {
 	return MYSQL
 }
-
 func (p *MYSQLPlugin) Type() plugins.Protocol {
 	return plugins.TCP
 }

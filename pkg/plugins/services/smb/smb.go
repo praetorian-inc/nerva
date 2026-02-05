@@ -365,7 +365,6 @@ func (p *SMBPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 func (p *SMBPlugin) Name() string {
 	return SMB
 }
-
 func (p *SMBPlugin) Type() plugins.Protocol {
 	return plugins.TCP
 }

@@ -180,7 +180,6 @@ func (p *TLSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 func (p *SMTPPlugin) Name() string {
 	return SMTP
 }
-
 func (p *SMTPPlugin) Type() plugins.Protocol {
 	return plugins.TCP
 }
@@ -188,7 +187,6 @@ func (p *SMTPPlugin) Type() plugins.Protocol {
 func (p *TLSPlugin) Name() string {
 	return SMTPS
 }
-
 func (p *TLSPlugin) Type() plugins.Protocol {
 	return plugins.TCPTLS
 }

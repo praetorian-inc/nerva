@@ -364,7 +364,6 @@ func (p *TLSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 func (p *RDPPlugin) Name() string {
 	return RDP
 }
-
 func (p *RDPPlugin) Type() plugins.Protocol {
 	return plugins.TCP
 }
@@ -372,7 +371,6 @@ func (p *RDPPlugin) Type() plugins.Protocol {
 func (p *TLSPlugin) Name() string {
 	return RDP
 }
-
 func (p *TLSPlugin) Type() plugins.Protocol {
 	return plugins.TCPTLS
 }

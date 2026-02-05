@@ -364,7 +364,6 @@ func (p *Plugin) PortPriority(i uint16) bool {
 func (p *Plugin) Name() string {
 	return DHCP
 }
-
 func (p *Plugin) PortReject(u uint16) bool {
 	return u != 67
 }

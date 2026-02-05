@@ -124,7 +124,6 @@ func (p *M3UAPlugin) PortPriority(port uint16) bool {
 func (p *M3UAPlugin) Name() string {
 	return M3UA_SCTP
 }
-
 // Type returns the protocol type (SCTP)
 func (p *M3UAPlugin) Type() plugins.Protocol {
 	return plugins.SCTP

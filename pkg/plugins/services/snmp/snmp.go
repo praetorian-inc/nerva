@@ -75,7 +75,6 @@ func (f *SNMPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 func (f *SNMPPlugin) Name() string {
 	return SNMP
 }
-
 func (f *SNMPPlugin) PortPriority(i uint16) bool {
 	return i == 161
 }

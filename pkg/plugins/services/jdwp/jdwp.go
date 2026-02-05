@@ -181,7 +181,6 @@ func (p *JDWPPlugin) PortPriority(port uint16) bool {
 func (p *JDWPPlugin) Name() string {
 	return JDWP
 }
-
 func (p *JDWPPlugin) Type() plugins.Protocol {
 	return plugins.TCP
 }

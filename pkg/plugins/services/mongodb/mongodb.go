@@ -1051,7 +1051,6 @@ func (p *MONGODBPlugin) PortPriority(port uint16) bool {
 func (p *MONGODBPlugin) Name() string {
 	return MONGODB
 }
-
 func (p *MONGODBPlugin) Type() plugins.Protocol {
 	return plugins.TCP
 }

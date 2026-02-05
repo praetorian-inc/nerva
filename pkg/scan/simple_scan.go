@@ -165,24 +165,27 @@ func (c *Config) SCTPScanTarget(target plugins.Target) (*plugins.Service, error)
 // only attempts to fingerprint services by mapping them to their default port.
 // The slow lane isn't as focused on performance and instead tries to be as
 // accurate as possible.
-func (c *Config) SimpleScanTarget(target plugins.Target) (*plugins.Service, error) {
+
+func (c *Config) SimpleScanTarget(target plugins.Target) ([]*plugins.Service, error) {
 	ip := target.Address.Addr().String()
 	port := target.Address.Port()
 
 	// first check the default port mappings for TCP / TLS
 	for _, plugin := range sortedTCPPlugins {
-		if plugin.PortPriority(port) {
-			conn, err := DialTCP(ip, port)
-			if err != nil {
-				return nil, fmt.Errorf("unable to connect, err = %w", err)
-			}
-			result, err := simplePluginRunner(conn, target, c, plugin)
-			if err != nil && c.Verbose {
-				log.Printf("error: %v scanning %v\n", err, target.Address.String())
-			}
-			if result != nil && err == nil {
-				return result, nil
-			}
+		if !plugin.PortPriority(port) {
+			continue
+		}
+
+		conn, err := DialTCP(ip, port)
+		if err != nil {
+			return nil, fmt.Errorf("unable to connect, err = %w", err)
+		}
+		result, err := simplePluginRunner(conn, target, c, plugin)
+		if err != nil && c.Verbose {
+			log.Printf("error: %v scanning %v\n", err, target.Address.String())
+		}
+		if result != nil && err == nil {
+			return []*plugins.Service{result}, nil
 		}
 	}
 
@@ -190,19 +193,21 @@ func (c *Config) SimpleScanTarget(target plugins.Target) (*plugins.Service, erro
 	isTLS := tlsErr == nil
 	if isTLS {
 		for _, plugin := range sortedTCPTLSPlugins {
-			if plugin.PortPriority(port) {
-				result, err := simplePluginRunner(tlsConn, target, c, plugin)
-				if err != nil && c.Verbose {
-					log.Printf("error: %v scanning %v\n", err, target.Address.String())
-				}
-				if result != nil && err == nil {
-					// identified plugin match
-					return result, nil
-				}
-				tlsConn, err = DialTLS(target)
-				if err != nil {
-					return nil, fmt.Errorf("error connecting via TLS, err = %w", err)
-				}
+			if !plugin.PortPriority(port) {
+				continue
+			}
+
+			result, err := simplePluginRunner(tlsConn, target, c, plugin)
+			if err != nil && c.Verbose {
+				log.Printf("error: %v scanning %v\n", err, target.Address.String())
+			}
+			if result != nil && err == nil {
+				return []*plugins.Service{result}, nil
+			}
+
+			tlsConn, err = DialTLS(target)
+			if err != nil {
+				return nil, fmt.Errorf("error connecting via TLS, err = %w", err)
 			}
 		}
 	}
@@ -225,8 +230,7 @@ func (c *Config) SimpleScanTarget(target plugins.Target) (*plugins.Service, erro
 				log.Printf("error: %v scanning %v\n", err, target.Address.String())
 			}
 			if result != nil && err == nil {
-				// identified plugin match
-				return result, nil
+				return []*plugins.Service{result}, nil
 			}
 		}
 	} else {
@@ -240,8 +244,7 @@ func (c *Config) SimpleScanTarget(target plugins.Target) (*plugins.Service, erro
 				log.Printf("error: %v scanning %v\n", err, target.Address.String())
 			}
 			if result != nil && err == nil {
-				// identified plugin match
-				return result, nil
+				return []*plugins.Service{result}, nil
 			}
 		}
 	}

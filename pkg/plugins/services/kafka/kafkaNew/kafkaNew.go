@@ -47,7 +47,6 @@ func (p *Plugin) PortPriority(i uint16) bool {
 func (p *Plugin) Name() string {
 	return KAFKA
 }
-
 func (p *Plugin) Priority() int {
 	return 200
 }
@@ -72,7 +71,6 @@ func (p *TLSPlugin) PortPriority(i uint16) bool {
 func (p *TLSPlugin) Name() string {
 	return KAFKATLS
 }
-
 func (p *TLSPlugin) Type() plugins.Protocol {
 	return plugins.TCPTLS
 }

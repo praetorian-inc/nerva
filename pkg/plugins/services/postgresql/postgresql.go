@@ -231,7 +231,6 @@ func (p *POSTGRESPlugin) Run(conn net.Conn, timeout time.Duration, target plugin
 func (p *POSTGRESPlugin) Name() string {
 	return POSTGRES
 }
-
 func (p *POSTGRESPlugin) Type() plugins.Protocol {
 	return plugins.TCP
 }

@@ -62,9 +62,11 @@ func ScanTargets(targets []plugins.Target, config Config) ([]plugins.Service, er
 	}
 
 	for _, target := range targets {
-		result, err := config.SimpleScanTarget(target)
-		if err == nil && result != nil {
-			results = append(results, *result)
+		targetResults, err := config.SimpleScanTarget(target)
+		if err == nil && len(targetResults) > 0 {
+			for _, r := range targetResults {
+				results = append(results, *r)
+			}
 		}
 		if config.Verbose && err != nil {
 			log.Printf("%s\n", err)

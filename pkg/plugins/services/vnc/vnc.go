@@ -93,7 +93,6 @@ func (p *VNCPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 func (p *VNCPlugin) Name() string {
 	return VNC
 }
-
 func (p *VNCPlugin) Type() plugins.Protocol {
 	return plugins.TCP
 }

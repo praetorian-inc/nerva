@@ -159,7 +159,6 @@ func (p *IMAPPlugin) PortPriority(i uint16) bool {
 func (p *IMAPPlugin) Name() string {
 	return IMAP
 }
-
 func (p *IMAPPlugin) Type() plugins.Protocol {
 	return plugins.TCP
 }
@@ -186,7 +185,6 @@ func (p *TLSPlugin) PortPriority(i uint16) bool {
 func (p *TLSPlugin) Name() string {
 	return IMAPS
 }
-
 func (p *IMAPPlugin) Priority() int {
 	return 191
 }
