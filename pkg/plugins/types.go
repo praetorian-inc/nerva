@@ -101,6 +101,7 @@ const (
 	ProtoSybase     = "sybase"
 	ProtoTelnet     = "telnet"
 	ProtoVNC        = "vnc"
+	ProtoZooKeeper  = "zookeeper"
 	ProtoUnknown    = "unknown"
 )
 
@@ -329,6 +330,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoAMQP:
 		var p ServiceAMQP
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoZooKeeper:
+		var p ServiceZooKeeper
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	default:
@@ -823,3 +828,13 @@ type ServiceAMQP struct {
 }
 
 func (e ServiceAMQP) Type() string { return ProtoAMQP }
+
+type ServiceZooKeeper struct {
+	CPEs        []string `json:"cpes,omitempty"`        // Common Platform Enumeration identifiers for vulnerability tracking
+	Mode        string   `json:"mode,omitempty"`        // ZooKeeper mode: standalone, leader, follower, observer
+	Connections int      `json:"connections,omitempty"` // Number of active connections
+	NodeCount   int      `json:"nodeCount,omitempty"`   // Number of ZNodes in the namespace
+	Restricted  bool     `json:"restricted,omitempty"`  // Whether commands are restricted by whitelist
+}
+
+func (e ServiceZooKeeper) Type() string { return ProtoZooKeeper }

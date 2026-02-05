@@ -76,4 +76,5 @@ import (
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/sybase"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/telnet"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/vnc"
+	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/zookeeper"
 )
