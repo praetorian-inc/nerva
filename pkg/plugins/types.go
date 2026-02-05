@@ -43,6 +43,7 @@ const (
 	ProtoDiameter   = "diameter"
 	ProtoDNP3       = "dnp3"
 	ProtoDB2        = "db2"
+	ProtoCODESYS    = "codesys"
 	ProtoCassandra  = "cassandra"
 	ProtoChromaDB   = "chromadb"
 	ProtoCouchDB    = "couchdb"
@@ -146,6 +147,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoChromaDB:
 		var p ServiceChromaDB
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoCODESYS:
+		var p ServiceCODESYS
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoEtcd:
@@ -766,6 +771,18 @@ type ServiceChromaDB struct {
 }
 
 func (e ServiceChromaDB) Type() string { return ProtoChromaDB }
+
+type ServiceCODESYS struct {
+	Version     string   `json:"version,omitempty"`
+	DeviceName  string   `json:"deviceName,omitempty"`
+	VendorName  string   `json:"vendorName,omitempty"`
+	OSType      string   `json:"osType,omitempty"`
+	OSName      string   `json:"osName,omitempty"`
+	AuthEnabled bool     `json:"authEnabled,omitempty"`
+	CPEs        []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceCODESYS) Type() string { return ProtoCODESYS }
 
 type ServiceEtcd struct {
 	CPEs           []string `json:"cpes,omitempty"`
