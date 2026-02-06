@@ -100,9 +100,11 @@ func sanitizeString(s string) string {
 
 // parseIAm parses a BACnet I-Am response and extracts device information.
 func parseIAm(data []byte, target plugins.Target) (*plugins.Service, error) {
-	// Minimum I-Am response: 4 (BVLC) + 2 (NPDU) + 19 (APDU with required fields) = 25 bytes
-	if len(data) < 25 {
-		return nil, fmt.Errorf("response too short: %d bytes (minimum 25)", len(data))
+	// Minimum to reach APDU header: 4 (BVLC) + 2 (NPDU minimum) + 2 (APDU header) = 8 bytes
+	// We use 12 as a reasonable minimum before field-specific validation
+	// (allows parsing through APDU type/service checks, then field-by-field bounds checks)
+	if len(data) < 12 {
+		return nil, fmt.Errorf("response too short: %d bytes (minimum 12)", len(data))
 	}
 
 	// Validate BVLC header
@@ -161,9 +163,10 @@ func parseIAm(data []byte, target plugins.Target) (*plugins.Service, error) {
 	}
 	offset += 2
 
-	// Parse required I-Am fields
-	if len(data) < offset+13 {
-		return nil, fmt.Errorf("truncated I-Am fields (need 13 bytes minimum)")
+	// Parse required I-Am fields (minimum sizes for all required fields)
+	// Object ID: 5 bytes, Max APDU: 2 bytes min, Segmentation: 2 bytes, Vendor ID: 2 bytes min = 11 bytes
+	if len(data) < offset+11 {
+		return nil, fmt.Errorf("truncated I-Am fields (need 11 bytes minimum)")
 	}
 
 	// Object Identifier [0]: Tag 0xC4 (context 0, application tag 4=object-id, length 4)
