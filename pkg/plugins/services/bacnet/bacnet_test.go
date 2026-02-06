@@ -105,9 +105,12 @@ func TestParseValidIAm(t *testing.T) {
 		Host:    "test.local",
 	}
 
-	service, err := parseIAm(validIAm, target)
+	service, deviceInstance, err := parseIAmWithInstance(validIAm, target)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if deviceInstance != 1 {
+		t.Errorf("expected deviceInstance 1, got %d", deviceInstance)
 	}
 
 	if service == nil {
@@ -161,7 +164,7 @@ func TestParseInvalidIAm(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := parseIAm(tt.data, target)
+			_, _, err := parseIAmWithInstance(tt.data, target)
 			if err == nil {
 				t.Error("expected error, got nil")
 			}
