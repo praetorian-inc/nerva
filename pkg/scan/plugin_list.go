@@ -23,6 +23,7 @@ import (
 
 	// Standalone plugins for binary protocol detection
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/amqp"
+	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/bacnet"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/cassandra"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/db2"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/dhcp"
