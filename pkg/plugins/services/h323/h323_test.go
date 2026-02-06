@@ -240,6 +240,7 @@ func TestExtractMetadata(t *testing.T) {
 				VendorID:    "Polycom",
 				ProductName: "Polycom VSX 7000",
 				Version:     "8.0.1",
+				CPEs:        []string{"cpe:2.3:h:polycom:polycom_vsx_7000:8.0.1:*:*:*:*:*:*:*"},
 			},
 		},
 		{
@@ -249,6 +250,7 @@ func TestExtractMetadata(t *testing.T) {
 				VendorID:    "Cisco",
 				ProductName: "Cisco Device",
 				Version:     "",
+				CPEs:        []string{"cpe:2.3:h:cisco:cisco_device:*:*:*:*:*:*:*:*"},
 			},
 		},
 		{
@@ -258,6 +260,7 @@ func TestExtractMetadata(t *testing.T) {
 				VendorID:    "",
 				ProductName: "",
 				Version:     "",
+				CPEs:        nil,
 			},
 		},
 	}
@@ -495,6 +498,105 @@ func TestPluginRun(t *testing.T) {
 				}
 			} else {
 				assert.Nil(t, result)
+			}
+		})
+	}
+}
+
+func TestBuildH323CPE(t *testing.T) {
+	tests := []struct {
+		name     string
+		vendor   string
+		product  string
+		version  string
+		expected string
+	}{
+		{
+			name:     "Polycom with version",
+			vendor:   "Polycom",
+			product:  "HDX 7000",
+			version:  "3.1.5",
+			expected: "cpe:2.3:h:polycom:hdx_7000:3.1.5:*:*:*:*:*:*:*",
+		},
+		{
+			name:     "Cisco with version",
+			vendor:   "Cisco",
+			product:  "TelePresence",
+			version:  "9.15.0",
+			expected: "cpe:2.3:h:cisco:telepresence:9.15.0:*:*:*:*:*:*:*",
+		},
+		{
+			name:     "Unknown vendor returns empty",
+			vendor:   "UnknownVendor",
+			product:  "SomeProduct",
+			version:  "1.0",
+			expected: "",
+		},
+		{
+			name:     "Empty vendor returns empty",
+			vendor:   "",
+			product:  "Product",
+			version:  "1.0",
+			expected: "",
+		},
+		{
+			name:     "Missing product uses wildcard",
+			vendor:   "Polycom",
+			product:  "",
+			version:  "3.1.5",
+			expected: "cpe:2.3:h:polycom:*:3.1.5:*:*:*:*:*:*:*",
+		},
+		{
+			name:     "Missing version uses wildcard",
+			vendor:   "Cisco",
+			product:  "TelePresence",
+			version:  "",
+			expected: "cpe:2.3:h:cisco:telepresence:*:*:*:*:*:*:*:*",
+		},
+		{
+			name:     "LifeSize vendor",
+			vendor:   "LifeSize",
+			product:  "Team 220",
+			version:  "4.7.18",
+			expected: "cpe:2.3:h:lifesize:team_220:4.7.18:*:*:*:*:*:*:*",
+		},
+		{
+			name:     "Tandberg vendor",
+			vendor:   "Tandberg",
+			product:  "Codec C60",
+			version:  "TC7.3.6",
+			expected: "cpe:2.3:h:tandberg:codec_c60:TC7.3.6:*:*:*:*:*:*:*",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := buildH323CPE(tt.vendor, tt.product, tt.version)
+			if result != tt.expected {
+				t.Errorf("buildH323CPE(%q, %q, %q) = %q, want %q",
+					tt.vendor, tt.product, tt.version, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestNormalizeForCPE(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"HDX 7000", "hdx_7000"},
+		{"TelePresence", "telepresence"},
+		{"Team-220", "team_220"},
+		{"  Spaced  ", "spaced"},
+		{"", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			result := normalizeForCPE(tt.input)
+			if result != tt.expected {
+				t.Errorf("normalizeForCPE(%q) = %q, want %q", tt.input, result, tt.expected)
 			}
 		})
 	}

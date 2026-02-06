@@ -15,8 +15,10 @@
 package h323
 
 import (
+	"fmt"
 	"net"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/praetorian-inc/nerva/pkg/plugins"
@@ -147,6 +149,14 @@ var vendorSignatures = map[string]string{
 	"\x00\xa0\x01": "Tandberg",
 }
 
+// cpeVendorMap maps detected vendor names to official CPE vendor identifiers
+var cpeVendorMap = map[string]string{
+	"Polycom":  "polycom",
+	"Cisco":    "cisco",
+	"LifeSize": "lifesize",
+	"Tandberg": "tandberg",
+}
+
 // Version pattern: X.Y or X.Y.Z or X.Y.Z.W
 var versionPattern = regexp.MustCompile(`(\d+\.\d+(?:\.\d+)*)`)
 
@@ -242,11 +252,59 @@ func extractVersion(response []byte) string {
 	return longestVersion
 }
 
+// buildH323CPE generates a CPE string for H.323 endpoints
+// CPE format: cpe:2.3:h:{vendor}:{product}:{version}:*:*:*:*:*:*:*
+// Returns empty string if vendor is unknown (can't generate reliable CPE)
+func buildH323CPE(vendor, product, version string) string {
+	vendor = strings.TrimSpace(vendor)
+	if vendor == "" {
+		return ""
+	}
+
+	cpeVendor, ok := cpeVendorMap[vendor]
+	if !ok {
+		return "" // Unknown vendor, can't generate reliable CPE
+	}
+
+	// Normalize product name for CPE (lowercase, underscores)
+	cpeProduct := normalizeForCPE(product)
+	if cpeProduct == "" {
+		cpeProduct = "*"
+	}
+
+	// Use wildcard for empty version
+	cpeVersion := strings.TrimSpace(version)
+	if cpeVersion == "" {
+		cpeVersion = "*"
+	}
+
+	return fmt.Sprintf("cpe:2.3:h:%s:%s:%s:*:*:*:*:*:*:*", cpeVendor, cpeProduct, cpeVersion)
+}
+
+// normalizeForCPE converts a product name to CPE format (lowercase, spaces to underscores)
+func normalizeForCPE(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.ToLower(s)
+	s = strings.ReplaceAll(s, " ", "_")
+	s = strings.ReplaceAll(s, "-", "_")
+	return s
+}
+
 // extractMetadata attempts to extract vendor/version from H.225 payload
 func extractMetadata(response []byte) plugins.ServiceH323 {
+	vendor := extractVendor(response)
+	product := extractProductName(response)
+	version := extractVersion(response)
+
+	var cpes []string
+	if cpe := buildH323CPE(vendor, product, version); cpe != "" {
+		cpes = []string{cpe}
+	}
+
 	return plugins.ServiceH323{
-		VendorID:    extractVendor(response),
-		ProductName: extractProductName(response),
-		Version:     extractVersion(response),
+		VendorID:    vendor,
+		ProductName: product,
+		Version:     version,
+		CPEs:        cpes,
 	}
 }
