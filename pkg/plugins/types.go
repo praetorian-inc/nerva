@@ -91,6 +91,7 @@ const (
 	ProtoRMI        = "java-rmi"
 	ProtoRsync      = "rsync"
 	ProtoRtsp       = "rtsp"
+	ProtoS7comm     = "s7comm"
 	ProtoSMB        = "smb"
 	ProtoSMPP       = "smpp"
 	ProtoSMTP       = "smtp"
@@ -295,6 +296,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoRtsp:
 		var p ServiceRtsp
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoS7comm:
+		var p ServiceS7comm
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoIMAPS:
@@ -712,6 +717,20 @@ type ServiceRtsp struct {
 }
 
 func (e ServiceRtsp) Type() string { return ProtoRtsp }
+
+type ServiceS7comm struct {
+	PLCType         string   `json:"plcType,omitempty"`         // "S7-300", "S7-400", "S7-1200", "S7-1500"
+	ModuleType      string   `json:"moduleType,omitempty"`      // Module type identifier from SZL
+	OrderCode       string   `json:"orderCode,omitempty"`       // 6ES7 XXX-XXXXX-XXXX
+	SerialNumber    string   `json:"serialNumber,omitempty"`    // Hardware serial number
+	FirmwareVersion string   `json:"firmwareVersion,omitempty"` // V1.2.3 format
+	ProtectionLevel uint8    `json:"protectionLevel,omitempty"` // 1=none, 2=read, 3=full
+	ModuleName      string   `json:"moduleName,omitempty"`      // PLC module name
+	PlantID         string   `json:"plantId,omitempty"`         // Plant/system identifier
+	CPEs            []string `json:"cpes,omitempty"`            // CPE identifiers
+}
+
+func (e ServiceS7comm) Type() string { return ProtoS7comm }
 
 type ServiceDNS struct{}
 
