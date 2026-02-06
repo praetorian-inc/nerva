@@ -343,6 +343,13 @@ func TestS7comm_ParseSZL001CResponse(t *testing.T) {
 			expectedFW:     "",
 			expectedModule: "",
 		},
+		{
+			name:           "real siemens firmware format",
+			response:       []byte("Module: 6ES7 315-2AG10-0AB0  v.2.6.6\nBasic Firmware: v.2.6.6\nModule name: CPU 315-2 DP"),
+			expectedOrder:  "6ES7 315-2AG10-0AB0",
+			expectedFW:     "v.2.6.6",
+			expectedModule: "CPU 315-2 DP",
+		},
 	}
 
 	for _, tt := range tests {

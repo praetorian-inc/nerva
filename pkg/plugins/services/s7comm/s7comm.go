@@ -357,8 +357,8 @@ func parseSZL001CResponse(response []byte, serviceData plugins.ServiceS7comm) pl
 		serviceData.OrderCode = matches
 	}
 
-	// Look for firmware version pattern: V1.2.3 or 1.2.3
-	fwVersionRegex := regexp.MustCompile(`V?\d+\.\d+\.\d+`)
+	// Look for firmware version pattern: V4.4.0, v.2.6.6, 4.4.0, v4.4.0
+	fwVersionRegex := regexp.MustCompile(`[Vv]?\.?\d+\.\d+\.\d+`)
 	if matches := fwVersionRegex.FindString(responseStr); matches != "" {
 		serviceData.FirmwareVersion = matches
 	}
