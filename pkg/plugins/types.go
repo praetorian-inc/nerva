@@ -50,6 +50,7 @@ const (
 	ProtoHTTP          = "http"
 	ProtoHTTPS      = "https"
 	ProtoHTTP2      = "http2"
+	ProtoIEC104     = "iec104"
 	ProtoIMAP       = "imap"
 	ProtoIMAPS      = "imaps"
 	ProtoInfluxDB   = "influxdb"
@@ -303,6 +304,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoSNPP:
 		var p ServiceSNPP
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoIEC104:
+		var p ServiceIEC104
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	default:
@@ -731,6 +736,10 @@ func (e ServiceFirebird) Type() string { return ProtoFirebird }
 type ServiceIPMI struct{}
 
 func (e ServiceIPMI) Type() string { return ProtoIPMI }
+
+type ServiceIEC104 struct{}
+
+func (e ServiceIEC104) Type() string { return ProtoIEC104 }
 
 type ServiceRsync struct{}
 
