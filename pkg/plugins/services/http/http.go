@@ -60,6 +60,7 @@ var (
 		8001: {},
 		8080: {},
 		8081: {},
+		8082: {}, // JFrog Platform Router
 		8888: {},
 		9001: {},
 		9080: {},
@@ -114,7 +115,7 @@ func (p *HTTPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 	defer resp.Body.Close()
 
 	baseURL := fmt.Sprintf("http://%s", conn.RemoteAddr().String())
-	technologies, cpes, _ := p.FingerprintResponse(resp, &client, baseURL)
+	technologies, cpes, _ := p.FingerprintResponse(resp, &client, baseURL, target.Host)
 
 	payload := plugins.ServiceHTTP{
 		Status:          resp.Status,
@@ -174,7 +175,7 @@ func (p *HTTPSPlugin) Run(
 	defer resp.Body.Close()
 
 	baseURL := fmt.Sprintf("https://%s", conn.RemoteAddr().String())
-	technologies, cpes, _ := p.FingerprintResponse(resp, &client, baseURL)
+	technologies, cpes, _ := p.FingerprintResponse(resp, &client, baseURL, target.Host)
 
 	payload := plugins.ServiceHTTPS{
 		Status:          resp.Status,
@@ -213,15 +214,15 @@ func (p *HTTPPlugin) Name() string {
 func (p *HTTPSPlugin) Name() string {
 	return HTTPS
 }
-func (p *HTTPPlugin) FingerprintResponse(resp *http.Response, client *http.Client, baseURL string) ([]string, []string, error) {
-	return fingerprint(resp, p.analyzer, client, baseURL)
+func (p *HTTPPlugin) FingerprintResponse(resp *http.Response, client *http.Client, baseURL string, host string) ([]string, []string, error) {
+	return fingerprint(resp, p.analyzer, client, baseURL, host)
 }
 
-func (p *HTTPSPlugin) FingerprintResponse(resp *http.Response, client *http.Client, baseURL string) ([]string, []string, error) {
-	return fingerprint(resp, p.analyzer, client, baseURL)
+func (p *HTTPSPlugin) FingerprintResponse(resp *http.Response, client *http.Client, baseURL string, host string) ([]string, []string, error) {
+	return fingerprint(resp, p.analyzer, client, baseURL, host)
 }
 
-func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *http.Client, baseURL string) ([]string, []string, error) {
+func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *http.Client, baseURL string, host string) ([]string, []string, error) {
 	var technologies, cpes []string
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -258,6 +259,9 @@ func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *ht
 			}
 			probeReq.Header.Set("Accept", "application/json")
 			probeReq.Header.Set("User-Agent", USERAGENT)
+			if host != "" {
+				probeReq.Host = host
+			}
 
 			probeResp, err := client.Do(probeReq)
 			if err != nil {
