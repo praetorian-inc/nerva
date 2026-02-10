@@ -38,6 +38,7 @@ import (
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/http"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/h323"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/imap"
+	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/ikev2"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/influxdb"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/ipmi"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/ipsec"

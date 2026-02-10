@@ -61,6 +61,7 @@ const (
 	ProtoIMAP       = "imap"
 	ProtoIMAPS      = "imaps"
 	ProtoInfluxDB   = "influxdb"
+	ProtoIKEv2      = "ikev2"
 	ProtoIPMI       = "ipmi"
 	ProtoIPSEC      = "ipsec"
 	ProtoJDWP       = "jdwp"
@@ -324,6 +325,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoInfluxDB:
 		var p ServiceInfluxDB
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoIKEv2:
+		var p ServiceIKEv2
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoMQTT:
@@ -594,6 +599,14 @@ type ServiceInfluxDB struct {
 }
 
 func (e ServiceInfluxDB) Type() string { return ProtoInfluxDB }
+
+type ServiceIKEv2 struct {
+	ResponderSPI string `json:"responderSPI"`
+	MessageID    string `json:"messageID"`
+	Vendor       string `json:"vendor,omitempty"`
+}
+
+func (e ServiceIKEv2) Type() string { return "IKEv2" }
 
 type ServiceIPSEC struct {
 	ResponderISP string `json:"responderISP"`
