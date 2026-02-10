@@ -22,7 +22,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ory/dockertest/v3"
 	"github.com/praetorian-inc/nerva/pkg/plugins"
+	"github.com/praetorian-inc/nerva/pkg/test"
 )
 
 // TestIKEv2ValidResponse tests that a valid IKEv2 response is correctly parsed
@@ -242,6 +244,41 @@ func TestPluginMethods(t *testing.T) {
 	// Test Type
 	if p.Type() != plugins.UDP {
 		t.Errorf("Expected Type() to return UDP, got %v", p.Type())
+	}
+}
+
+// TestIKEv2Docker tests against a real IKEv2 server using Docker
+func TestIKEv2Docker(t *testing.T) {
+	testcases := []test.Testcase{
+		{
+			Description: "ikev2",
+			Port:        500,
+			Protocol:    plugins.UDP,
+			Expected: func(res *plugins.Service) bool {
+				return res != nil
+			},
+			RunConfig: dockertest.RunOptions{
+				Repository: "hwdsl2/ipsec-vpn-server",
+				Mounts: []string{
+					"ikev2-vpn-data:/etc/ipsec.d",
+					"/lib/modules:/lib/modules:ro",
+				},
+				Privileged: true,
+			},
+		},
+	}
+
+	var p *Plugin
+
+	for _, tc := range testcases {
+		tc := tc
+		t.Run(tc.Description, func(t *testing.T) {
+			t.Parallel()
+			err := test.RunTest(t, tc, p)
+			if err != nil {
+				t.Errorf("test failed: %v", err)
+			}
+		})
 	}
 }
 
