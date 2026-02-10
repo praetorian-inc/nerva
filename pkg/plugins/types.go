@@ -37,15 +37,16 @@ const (
 const TypeService string = "service"
 
 const (
-	ProtoAMQP       = "amqp"
-	ProtoDNS        = "dns"
-	ProtoDHCP       = "dhcp"
-	ProtoDiameter   = "diameter"
-	ProtoDNP3       = "dnp3"
-	ProtoDocker     = "docker"
-	ProtoDB2        = "db2"
-	ProtoCODESYS    = "codesys"
-	ProtoCassandra  = "cassandra"
+	ProtoActiveMQOpenWire = "activemq-openwire"
+	ProtoAMQP             = "amqp"
+	ProtoDNS              = "dns"
+	ProtoDHCP             = "dhcp"
+	ProtoDiameter         = "diameter"
+	ProtoDNP3             = "dnp3"
+	ProtoDocker           = "docker"
+	ProtoDB2              = "db2"
+	ProtoCODESYS          = "codesys"
+	ProtoCassandra        = "cassandra"
 	ProtoChromaDB   = "chromadb"
 	ProtoCouchDB    = "couchdb"
 	ProtoEtcd       = "etcd"
@@ -357,6 +358,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoSIPS:
 		var p ServiceSIPS
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoActiveMQOpenWire:
+		var p ServiceActiveMQOpenWire
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoAMQP:
@@ -917,6 +922,13 @@ type ServiceM3UA struct {
 }
 
 func (e ServiceM3UA) Type() string { return ProtoM3UA }
+
+type ServiceActiveMQOpenWire struct {
+	Version int      `json:"version,omitempty"` // OpenWire protocol version (1-12)
+	CPEs    []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceActiveMQOpenWire) Type() string { return ProtoActiveMQOpenWire }
 
 type ServiceAMQP struct {
 	Product  string   `json:"product,omitempty"`  // e.g., "RabbitMQ"

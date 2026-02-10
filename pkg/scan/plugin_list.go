@@ -22,6 +22,7 @@ import (
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/fingerprinters"
 
 	// Standalone plugins for binary protocol detection
+	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/activemq"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/amqp"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/cassandra"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/db2"
