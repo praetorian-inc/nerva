@@ -31,6 +31,19 @@ func init() {
 }
 
 func (p *Plugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
+	// Extract the target address before closing - needed because TFTP servers
+	// respond from an ephemeral port, not port 69, so we need to create an
+	// unconnected socket but still know where to send the probe.
+	targetAddr := conn.RemoteAddr()
+	conn.Close()
+
+	// Create an unconnected UDP socket to accept responses from any source port
+	pconn, err := net.ListenPacket("udp", ":0")
+	if err != nil {
+		return nil, err
+	}
+	defer pconn.Close()
+
 	// TFTP RRQ (Read Request) for non-existent file
 	// RFC 1350: RRQ format: [opcode=0x00,0x01][filename][0x00][mode="octet"][0x00]
 	probe := []byte{
@@ -43,7 +56,7 @@ func (p *Plugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target
 		0x00, // Null terminator for mode
 	}
 
-	response, err := utils.SendRecv(conn, probe, timeout)
+	response, _, err := utils.SendRecvFrom(pconn, probe, targetAddr, timeout)
 	if err != nil {
 		return nil, err
 	}
