@@ -107,6 +107,7 @@ const (
 	ProtoStun       = "stun"
 	ProtoSybase     = "sybase"
 	ProtoTelnet     = "telnet"
+	ProtoTFTP       = "tftp"
 	ProtoVNC        = "vnc"
 	ProtoNFS        = "nfs"
 	ProtoZooKeeper  = "zookeeper"
@@ -351,6 +352,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoSNPP:
 		var p ServiceSNPP
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoTFTP:
+		var p ServiceTFTP
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoSIP:
@@ -612,6 +617,12 @@ type ServiceTelnet struct {
 }
 
 func (e ServiceTelnet) Type() string { return ProtoTelnet }
+
+type ServiceTFTP struct {
+	ErrorMessage string `json:"errorMessage,omitempty"`
+}
+
+func (e ServiceTFTP) Type() string { return ProtoTFTP }
 
 type ServiceRedis struct {
 	AuthRequired bool     `json:"authRequired:"`
