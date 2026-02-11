@@ -39,11 +39,85 @@ const TypeService string = "service"
 const (
 	ProtoActiveMQOpenWire = "activemq-openwire"
 	ProtoAMQP             = "amqp"
-	ProtoDNS              = "dns"
+	ProtoBACnet           = "bacnet"
+	ProtoCassandra        = "cassandra"
+	ProtoChromaDB         = "chromadb"
+	ProtoCODESYS          = "codesys"
+	ProtoCouchDB          = "couchdb"
+	ProtoDB2              = "db2"
 	ProtoDHCP             = "dhcp"
 	ProtoDiameter         = "diameter"
 	ProtoDNP3             = "dnp3"
+	ProtoDNS              = "dns"
 	ProtoDocker           = "docker"
+	ProtoEcho             = "echo"
+	ProtoElasticsearch    = "elasticsearch"
+	ProtoEtcd             = "etcd"
+	ProtoFirebird         = "firebird"
+	ProtoFTP              = "ftp"
+	ProtoH323             = "h323"
+	ProtoHTTP             = "http"
+	ProtoHTTP2            = "http2"
+	ProtoHTTPS            = "https"
+	ProtoIEC104           = "iec104"
+	ProtoIKEv2            = "ikev2"
+	ProtoIMAP             = "imap"
+	ProtoIMAPS            = "imaps"
+	ProtoInfluxDB         = "influxdb"
+	ProtoIPMI             = "ipmi"
+	ProtoIPSEC            = "ipsec"
+	ProtoJDWP             = "jdwp"
+	ProtoKafka            = "kafka"
+	ProtoKubernetes       = "kubernetes"
+	ProtoL2TP             = "l2tp"
+	ProtoLDAP             = "ldap"
+	ProtoLDAPS            = "ldaps"
+	ProtoM3UA             = "m3ua"
+	ProtoMemcached        = "memcached"
+	ProtoMilvus           = "milvus"
+	ProtoMilvusMetrics    = "milvus-metrics"
+	ProtoModbus           = "modbus"
+	ProtoMongoDB          = "mongodb"
+	ProtoMQTT             = "mqtt"
+	ProtoMSSQL            = "mssql"
+	ProtoMySQL            = "mysql"
+	ProtoNeo4j            = "neo4j"
+	ProtoNetbios          = "netbios"
+	ProtoNFS              = "nfs"
+	ProtoNTP              = "ntp"
+	ProtoOPCUA            = "opcua"
+	ProtoOpenVPN          = "openvpn"
+	ProtoOracle           = "oracle"
+	ProtoPinecone         = "pinecone"
+	ProtoPOP3             = "pop3"
+	ProtoPOP3S            = "pop3s"
+	ProtoPostgreSQL       = "postgresql"
+	ProtoPulsar           = "pulsar"
+	ProtoPulsarAdmin      = "pulsar-admin"
+	ProtoRDP              = "rdp"
+	ProtoRedis            = "redis"
+	ProtoRedisTLS         = "redis"
+	ProtoRMI              = "java-rmi"
+	ProtoRPC              = "rpc"
+	ProtoRsync            = "rsync"
+	ProtoRtsp             = "rtsp"
+	ProtoS7comm           = "s7comm"
+	ProtoSIP              = "sip"
+	ProtoSIPS             = "sips"
+	ProtoSMB              = "smb"
+	ProtoSMPP             = "smpp"
+	ProtoSMTP             = "smtp"
+	ProtoSMTPS            = "smtps"
+	ProtoSNMP             = "snmp"
+	ProtoSNPP             = "snpp"
+	ProtoSSH              = "ssh"
+	ProtoStun             = "stun"
+	ProtoSybase           = "sybase"
+	ProtoTelnet           = "telnet"
+	ProtoTFTP             = "tftp"
+	ProtoVNC              = "vnc"
+	ProtoZooKeeper        = "zookeeper"
+	ProtoUnknown          = "unknown"
 	ProtoDB2              = "db2"
 	ProtoCODESYS          = "codesys"
 	ProtoCassandra        = "cassandra"
@@ -245,6 +319,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoKubernetes:
 		var p ServiceKubernetes
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoL2TP:
+		var p ServiceL2TP
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoOracle:
@@ -537,10 +615,10 @@ type ServiceSMB struct {
 func (e ServiceSMB) Type() string { return ProtoSMB }
 
 type ServiceMySQL struct {
-	PacketType   string   `json:"packetType"`       // the type of packet returned by the server (i.e. handshake or error)
-	ErrorMessage string   `json:"errorMsg"`         // error message if the server returns an error packet
-	ErrorCode    int      `json:"errorCode"`        // error code returned if the server returns an error packet
-	CPEs         []string `json:"cpes,omitempty"`   // Common Platform Enumeration identifiers for vulnerability tracking
+	PacketType   string   `json:"packetType"`     // the type of packet returned by the server (i.e. handshake or error)
+	ErrorMessage string   `json:"errorMsg"`       // error message if the server returns an error packet
+	ErrorCode    int      `json:"errorCode"`      // error code returned if the server returns an error packet
+	CPEs         []string `json:"cpes,omitempty"` // Common Platform Enumeration identifiers for vulnerability tracking
 }
 
 func (e ServiceMySQL) Type() string { return ProtoMySQL }
@@ -770,6 +848,18 @@ type ServiceKubernetes struct {
 
 func (e ServiceKubernetes) Type() string { return ProtoKubernetes }
 
+type ServiceL2TP struct {
+	ProtocolVersion  string `json:"protocolVersion,omitempty"`
+	HostName         string `json:"hostName,omitempty"`
+	VendorName       string `json:"vendorName,omitempty"`
+	FirmwareRevision uint16 `json:"firmwareRevision,omitempty"`
+	AssignedTunnelID uint16 `json:"assignedTunnelId,omitempty"`
+	FramingCaps      uint32 `json:"framingCaps,omitempty"`
+	BearerCaps       uint32 `json:"bearerCaps,omitempty"`
+}
+
+func (e ServiceL2TP) Type() string { return ProtoL2TP }
+
 type ServiceOracle struct {
 	Info string `json:"info"`
 }
@@ -777,7 +867,7 @@ type ServiceOracle struct {
 func (e ServiceOracle) Type() string { return ProtoOracle }
 
 type ServicePinecone struct {
-	CPEs       []string `json:"cpes,omitempty"`  // Common Platform Enumeration with wildcard version
+	CPEs       []string `json:"cpes,omitempty"`       // Common Platform Enumeration with wildcard version
 	APIVersion string   `json:"apiVersion,omitempty"` // Pinecone API version from x-pinecone-api-version header
 }
 
