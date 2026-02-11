@@ -56,10 +56,10 @@ const (
 	ProtoFirebird         = "firebird"
 	ProtoFTP              = "ftp"
 	ProtoH323             = "h323"
+	ProtoIAX2             = "iax2"
 	ProtoHTTP             = "http"
 	ProtoHTTP2            = "http2"
 	ProtoHTTPS            = "https"
-	ProtoIAX2             = "iax2"
 	ProtoIEC104           = "iec104"
 	ProtoIKEv2            = "ikev2"
 	ProtoIMAP             = "imap"
@@ -103,6 +103,7 @@ const (
 	ProtoRsync            = "rsync"
 	ProtoRtsp             = "rtsp"
 	ProtoS7comm           = "s7comm"
+	ProtoSCCP             = "sccp"
 	ProtoSIP              = "sip"
 	ProtoSIPS             = "sips"
 	ProtoSMB              = "smb"
@@ -117,9 +118,9 @@ const (
 	ProtoSybase           = "sybase"
 	ProtoTelnet           = "telnet"
 	ProtoTFTP             = "tftp"
-	ProtoUnknown          = "unknown"
 	ProtoVNC              = "vnc"
 	ProtoZooKeeper        = "zookeeper"
+	ProtoUnknown          = "unknown"
 )
 
 // Used as a key for maps to plugins.
@@ -327,6 +328,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoS7comm:
 		var p ServiceS7comm
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoSCCP:
+		var p ServiceSCCP
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoIMAPS:
@@ -1070,3 +1075,12 @@ type ServiceBACnet struct {
 }
 
 func (e ServiceBACnet) Type() string { return ProtoBACnet }
+
+type ServiceSCCP struct {
+	DeviceType      string `json:"deviceType,omitempty"`
+	ProtocolVersion string `json:"protocolVersion,omitempty"`
+	MaxStreams      int    `json:"maxStreams,omitempty"`
+	DeviceName      string `json:"deviceName,omitempty"`
+}
+
+func (e ServiceSCCP) Type() string { return ProtoSCCP }
