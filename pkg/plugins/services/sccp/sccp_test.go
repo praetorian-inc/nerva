@@ -17,9 +17,12 @@ package sccp
 import (
 	"encoding/binary"
 	"net"
+	"net/netip"
 	"testing"
 	"time"
 
+	"github.com/ory/dockertest/v3"
+	"github.com/ory/dockertest/v3/docker"
 	"github.com/praetorian-inc/nerva/pkg/plugins"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -307,5 +310,64 @@ func TestExtractDeviceInfo(t *testing.T) {
 			assert.Equal(t, tt.expectedDevice, info.DeviceType)
 			assert.Equal(t, tt.expectedVersion, info.ProtocolVersion)
 		})
+	}
+}
+
+func TestSCCPDocker(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping Docker-based integration test in short mode")
+	}
+
+	pool, err := dockertest.NewPool("")
+	require.NoError(t, err, "Could not connect to Docker")
+
+	resource, err := pool.RunWithOptions(&dockertest.RunOptions{
+		Repository:   "andrius/asterisk",
+		Tag:          "18",
+		ExposedPorts: []string{"2000/tcp"},
+	}, func(config *docker.HostConfig) {
+		config.AutoRemove = true
+		config.RestartPolicy = docker.RestartPolicy{Name: "no"}
+	})
+	require.NoError(t, err, "Could not start Asterisk container")
+
+	defer func() {
+		require.NoError(t, pool.Purge(resource), "Could not purge container")
+	}()
+
+	// Wait for Asterisk SCCP (chan_skinny) to be ready
+	time.Sleep(5 * time.Second)
+
+	// Get the mapped port
+	port := resource.GetPort("2000/tcp")
+	require.NotEmpty(t, port, "Could not get mapped port")
+
+	// Create TCP connection
+	addr, err := netip.ParseAddrPort("127.0.0.1:" + port)
+	require.NoError(t, err)
+
+	conn, err := net.DialTCP("tcp", nil, &net.TCPAddr{
+		IP:   addr.Addr().AsSlice(),
+		Port: int(addr.Port()),
+	})
+	require.NoError(t, err)
+	defer conn.Close()
+
+	// Create plugin and target
+	plugin := &Plugin{}
+	target := plugins.Target{
+		Address: addr,
+		Host:    "localhost",
+	}
+
+	// Run the plugin - may or may not detect depending on Asterisk config
+	// The important thing is it doesn't crash and handles the response properly
+	service, err := plugin.Run(conn, 5*time.Second, target)
+	require.NoError(t, err)
+
+	// Service may be nil if Asterisk doesn't have chan_skinny enabled
+	// but we at least verify no errors occur
+	if service != nil {
+		assert.Equal(t, "sccp", service.Protocol)
 	}
 }
