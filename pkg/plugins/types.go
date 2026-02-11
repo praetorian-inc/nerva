@@ -182,6 +182,7 @@ const (
 	ProtoSNPP       = "snpp"
 	ProtoSIP        = "sip"
 	ProtoSIPS       = "sips"
+	ProtoSonarQube  = "sonarqube"
 	ProtoSSH        = "ssh"
 	ProtoStun       = "stun"
 	ProtoSybase     = "sybase"
@@ -469,6 +470,10 @@ func (e Service) Metadata() Metadata {
 		var p ServiceSIPS
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
+	case ProtoSonarQube:
+		var p ServiceSonarQube
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
 	case ProtoActiveMQOpenWire:
 		var p ServiceActiveMQOpenWire
 		_ = json.Unmarshal(e.Raw, &p)
@@ -682,6 +687,14 @@ type ServiceSIPS struct {
 }
 
 func (e ServiceSIPS) Type() string { return ProtoSIPS }
+
+type ServiceSonarQube struct {
+	Status          string   `json:"status,omitempty"`
+	AnonymousAccess bool     `json:"anonymousAccess,omitempty"`
+	CPEs            []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceSonarQube) Type() string { return ProtoSonarQube }
 
 type ServiceNTP struct{}
 

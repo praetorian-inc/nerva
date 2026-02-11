@@ -81,6 +81,7 @@ import (
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/sip"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/snmp"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/snpp"
+	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/sonarqube"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/ssh"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/stun"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/sybase"
