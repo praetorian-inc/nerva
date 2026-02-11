@@ -15,30 +15,47 @@
 /*
 SonarQube HTTP API Fingerprinting
 
-This plugin implements SonarQube fingerprinting using the HTTP REST API status endpoint.
+This plugin implements SonarQube fingerprinting using the HTTP REST API endpoints.
 SonarQube is a code quality and security analysis platform that exposes version information
-through dedicated system status endpoints.
+and configuration details through dedicated system status endpoints.
 
-Detection Strategy:
-  DETECTION (determines if the service is SonarQube):
-    PRIMARY METHOD (GET /api/system/status): Works on all modern SonarQube versions
-      - Send GET /api/system/status HTTP request
-      - Validate HTTP 200 OK response
-      - Parse JSON response: {"id":"...","version":"10.3.0.82913","status":"UP"}
-      - Validate required fields: id, version, status (all non-empty)
-      - Validate status is one of: UP, DOWN, STARTING, RESTARTING,
-        DB_MIGRATION_NEEDED, DB_MIGRATION_RUNNING
-      - Distinguishes SonarQube from other code quality platforms
+Detection Strategy (3-Phase):
+  Phase 1: PRIMARY DETECTION (GET /api/system/status)
+    - Send GET /api/system/status HTTP request
+    - Validate HTTP 200 OK response
+    - Parse JSON response: {"id":"...","version":"10.3.0.82913","status":"UP"}
+    - Validate required fields: id (non-empty) and status (one of valid status values)
+    - NOTE: version field may be empty in newer versions (>9.9.1 removed from unauthenticated responses)
+    - Distinguishes SonarQube from other code quality platforms
 
-Expected /api/system/status Response Structure:
+  Phase 2: FALLBACK/ENRICHMENT (GET /api/server/version)
+    - Used when version is missing from Phase 1, or as fallback if Phase 1 fails
+    - Returns plain text version string (NOT JSON): "10.3.0.82913"
+    - Content-Type: text/html;charset=utf-8
+    - Validates format with regex: digits and dots only
+
+  Phase 3: ANONYMOUS ACCESS CHECK (GET /api/components/search)
+    - Tests if anonymous access is enabled
+    - HTTP 200 = anonymous access enabled
+    - HTTP 401/403 = authentication required
+    - Best-effort enrichment (does not block detection)
+
+Expected Response Structures:
+
+/api/system/status:
   HTTP/1.1 200 OK
   Content-Type: application/json
+  {"id":"unique-server-id","version":"10.3.0.82913","status":"UP"}
+  (version may be empty string in newer SonarQube versions)
 
-  {
-    "id": "unique-server-id",
-    "version": "10.3.0.82913",
-    "status": "UP"
-  }
+/api/server/version:
+  HTTP/1.1 200 OK
+  Content-Type: text/html;charset=utf-8
+  10.3.0.82913
+
+/api/components/search:
+  HTTP/1.1 200 OK = anonymous access enabled
+  HTTP/1.1 401/403 = authentication required
 
 Version Format:
   - SonarQube versions: MAJOR.MINOR.PATCH.BUILD (e.g., "10.3.0.82913")
@@ -47,31 +64,51 @@ Version Format:
 
 Version Compatibility:
   - SonarQube 8.x+: /api/system/status endpoint available
-  - Earlier versions may not have this endpoint
+  - SonarQube >9.9.1: version removed from unauthenticated /api/system/status responses
+  - /api/server/version: Available on all modern versions
 
 False Positive Mitigation:
-  - Require all three fields (id, version, status) to be non-empty
+  - Require id field (non-empty) in /api/system/status response
   - Validate status is one of the known SonarQube status values
   - Distinguish from Grafana, Jenkins, and other platforms with /api endpoints
   - JSON structure validation prevents matching generic HTTP servers
+  - Version validation ensures plain text response contains only digits and dots
 */
 
 package sonarqube
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/praetorian-inc/nerva/pkg/plugins"
-	utils "github.com/praetorian-inc/nerva/pkg/plugins/pluginutils"
 )
 
 const (
-	SONARQUBE           = "sonarqube"
+	SONARQUBE            = "sonarqube"
 	DefaultSonarQubePort = 9000
+)
+
+var (
+	// validStatuses contains all known SonarQube status values
+	validStatuses = map[string]bool{
+		"UP":                   true,
+		"DOWN":                 true,
+		"STARTING":             true,
+		"RESTARTING":           true,
+		"DB_MIGRATION_NEEDED":  true,
+		"DB_MIGRATION_RUNNING": true,
+	}
+
+	// versionPattern validates version strings (digits and dots only)
+	versionPattern = regexp.MustCompile(`^\d+\.\d+(\.\d+)*$`)
 )
 
 type SonarQubePlugin struct{}
@@ -83,72 +120,133 @@ func init() {
 // sonarQubeStatusResponse represents the JSON structure returned by GET /api/system/status
 type sonarQubeStatusResponse struct {
 	ID      string `json:"id"`
-	Version string `json:"version"`
+	Version string `json:"version"` // May be empty in newer versions
 	Status  string `json:"status"`
 }
 
-// buildSonarQubeHTTPRequest constructs an HTTP/1.1 GET request for the specified path
-func buildSonarQubeHTTPRequest(path, host string) string {
-	return fmt.Sprintf(
-		"GET %s HTTP/1.1\r\n"+
-			"Host: %s\r\n"+
-			"User-Agent: nerva/1.0\r\n"+
-			"Connection: close\r\n"+
-			"\r\n",
-		path, host)
+// createHTTPClient creates an http.Client that wraps the provided net.Conn
+// This enables multiple HTTP requests over the same connection via HTTP/1.1 keep-alive
+func createHTTPClient(conn net.Conn, timeout time.Duration) *http.Client {
+	return &http.Client{
+		Timeout: timeout,
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				return conn, nil
+			},
+		},
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse // Don't follow redirects
+		},
+	}
 }
 
-// extractHTTPHeaders parses HTTP response and extracts headers into a map
-func extractHTTPHeaders(response []byte) map[string]string {
-	headers := make(map[string]string)
-
-	// Convert to string for easier parsing
-	responseStr := string(response)
-
-	// Split into lines
-	lines := strings.Split(responseStr, "\r\n")
-	if len(lines) == 0 {
-		return headers
+// doGet performs a GET request with User-Agent header
+func doGet(client *http.Client, url string) (*http.Response, error) {
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
 	}
-
-	// Skip status line, parse headers until blank line
-	for i := 1; i < len(lines); i++ {
-		line := lines[i]
-		if line == "" {
-			// End of headers
-			break
-		}
-
-		// Parse "Key: Value" format
-		parts := strings.SplitN(line, ": ", 2)
-		if len(parts) == 2 {
-			// Normalize header name to lowercase for case-insensitive lookup
-			headerName := strings.ToLower(strings.TrimSpace(parts[0]))
-			headerValue := strings.TrimSpace(parts[1])
-			headers[headerName] = headerValue
-		}
-	}
-
-	return headers
+	req.Header.Set("User-Agent", "nerva/1.0")
+	return client.Do(req)
 }
 
-// extractHTTPBody extracts the body from an HTTP response (after \r\n\r\n separator)
-func extractHTTPBody(response []byte) []byte {
-	// Find the header/body separator
-	bodyStart := 0
-	for i := 0; i < len(response)-3; i++ {
-		if response[i] == '\r' && response[i+1] == '\n' && response[i+2] == '\r' && response[i+3] == '\n' {
-			bodyStart = i + 4
-			break
-		}
+// detectViaSystemStatus performs Phase 1 detection using /api/system/status endpoint
+// Returns: (version, status, detected, error)
+// NOTE: version may be empty string if newer SonarQube version (>9.9.1)
+func detectViaSystemStatus(client *http.Client, baseURL string) (string, string, bool, error) {
+	resp, err := doGet(client, baseURL+"/api/system/status")
+	if err != nil {
+		return "", "", false, err
+	}
+	defer resp.Body.Close()
+
+	// Require HTTP 200
+	if resp.StatusCode != 200 {
+		return "", "", false, nil
 	}
 
-	// If separator found and body exists, return body
-	if bodyStart > 0 && bodyStart < len(response) {
-		return response[bodyStart:]
+	// Parse JSON response
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", "", false, err
 	}
 
-	return nil
+	var statusResponse sonarQubeStatusResponse
+	err = json.Unmarshal(body, &statusResponse)
+	if err != nil {
+		// Not valid JSON or not SonarQube format
+		return "", "", false, nil
+	}
+
+	// Validate SonarQube-specific JSON structure
+	// id and status must be non-empty (version can be empty in newer versions)
+	if statusResponse.ID == "" || statusResponse.Status == "" {
+		// Missing required fields
+		return "", "", false, nil
+	}
+
+	// Validate status is one of the known SonarQube status values
+	if !validStatuses[statusResponse.Status] {
+		// Invalid status value
+		return "", "", false, nil
+	}
+
+	// SonarQube detected! Clean version for CPE (may be empty string)
+	cleanedVersion := ""
+	if statusResponse.Version != "" {
+		cleanedVersion = cleanSonarQubeVersion(statusResponse.Version)
+	}
+
+	return cleanedVersion, statusResponse.Status, true, nil
+}
+
+// detectViaServerVersion performs Phase 2 detection/enrichment using /api/server/version endpoint
+// Returns: (version, detected, error)
+func detectViaServerVersion(client *http.Client, baseURL string) (string, bool, error) {
+	resp, err := doGet(client, baseURL+"/api/server/version")
+	if err != nil {
+		return "", false, err
+	}
+	defer resp.Body.Close()
+
+	// Require HTTP 200
+	if resp.StatusCode != 200 {
+		return "", false, nil
+	}
+
+	// Read plain text response
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", false, err
+	}
+
+	versionStr := strings.TrimSpace(string(body))
+
+	// Validate version format (digits and dots only)
+	if !versionPattern.MatchString(versionStr) {
+		return "", false, nil
+	}
+
+	// Clean version for CPE
+	cleanedVersion := cleanSonarQubeVersion(versionStr)
+	return cleanedVersion, true, nil
+}
+
+// checkAnonymousAccess performs Phase 3 check using /api/components/search endpoint
+// Returns: true if anonymous access enabled, false otherwise
+func checkAnonymousAccess(client *http.Client, baseURL string) bool {
+	resp, err := doGet(client, baseURL+"/api/components/search")
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+
+	// Drain response body so connection can be reused
+	io.Copy(io.Discard, resp.Body)
+
+	// HTTP 200 = anonymous access enabled
+	// HTTP 401/403 = authentication required
+	return resp.StatusCode == 200
 }
 
 // cleanSonarQubeVersion removes build number from version string for CPE generation
@@ -172,93 +270,44 @@ func buildSonarQubeCPE(version string) string {
 	return fmt.Sprintf("cpe:2.3:a:sonarsource:sonarqube:%s:*:*:*:*:*:*:*", version)
 }
 
-// detectSonarQube performs SonarQube detection using the /api/system/status endpoint
-// Returns: (version, status, detected, error)
-func detectSonarQube(conn net.Conn, target plugins.Target, timeout time.Duration) (string, string, bool, error) {
-	// Build HTTP GET /api/system/status request
-	host := fmt.Sprintf("%s:%d", target.Host, target.Address.Port())
-	request := buildSonarQubeHTTPRequest("/api/system/status", host)
-
-	// Send request and receive response
-	response, err := utils.SendRecv(conn, []byte(request), timeout)
-	if err != nil {
-		return "", "", false, err
-	}
-	if len(response) == 0 {
-		return "", "", false, nil
-	}
-
-	// Parse HTTP response
-	responseStr := string(response)
-
-	// Check for HTTP 200 OK
-	hasOKStatus := strings.Contains(responseStr, "HTTP/1.1 200") ||
-		strings.Contains(responseStr, "HTTP/1.0 200")
-
-	if !hasOKStatus {
-		// Not a successful response
-		return "", "", false, nil
-	}
-
-	// Extract JSON body
-	body := extractHTTPBody(response)
-	if body == nil || len(body) == 0 {
-		return "", "", false, nil
-	}
-
-	// Parse JSON response
-	var statusResponse sonarQubeStatusResponse
-	err = json.Unmarshal(body, &statusResponse)
-	if err != nil {
-		// Not valid JSON or not SonarQube format
-		return "", "", false, nil
-	}
-
-	// Validate SonarQube-specific JSON structure
-	// All three fields must be non-empty
-	if statusResponse.ID == "" || statusResponse.Version == "" || statusResponse.Status == "" {
-		// Missing required fields
-		return "", "", false, nil
-	}
-
-	// Validate status is one of the known SonarQube status values
-	validStatuses := map[string]bool{
-		"UP":                     true,
-		"DOWN":                   true,
-		"STARTING":               true,
-		"RESTARTING":             true,
-		"DB_MIGRATION_NEEDED":    true,
-		"DB_MIGRATION_RUNNING":   true,
-	}
-
-	if !validStatuses[statusResponse.Status] {
-		// Invalid status value
-		return "", "", false, nil
-	}
-
-	// SonarQube detected! Clean version for CPE
-	cleanedVersion := cleanSonarQubeVersion(statusResponse.Version)
-	return cleanedVersion, statusResponse.Status, true, nil
-}
-
 func (p *SonarQubePlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
-	// Detection via /api/system/status
-	version, status, detected, err := detectSonarQube(conn, target, timeout)
+	client := createHTTPClient(conn, timeout)
+	baseURL := fmt.Sprintf("http://%s:%d", target.Host, target.Address.Port())
+
+	// Phase 1: Primary detection via /api/system/status
+	version, status, detected, err := detectViaSystemStatus(client, baseURL)
 	if err != nil {
 		return nil, err
 	}
-	if detected {
-		// SonarQube detected
-		cpe := buildSonarQubeCPE(version)
-		payload := plugins.ServiceSonarQube{
-			Status: status,
-			CPEs:   []string{cpe},
+
+	// Phase 2: Fallback/enrichment via /api/server/version
+	if !detected || version == "" {
+		if v, ok, _ := detectViaServerVersion(client, baseURL); ok {
+			if !detected {
+				detected = true
+				// If system/status didn't work, assume status is UP
+				status = "UP"
+			}
+			if version == "" {
+				version = v
+			}
 		}
-		return plugins.CreateServiceFrom(target, payload, false, version, plugins.TCP), nil
 	}
 
-	// Not detected
-	return nil, nil
+	if !detected {
+		return nil, nil
+	}
+
+	// Phase 3: Check anonymous access (best-effort enrichment)
+	anonAccess := checkAnonymousAccess(client, baseURL)
+
+	cpe := buildSonarQubeCPE(version)
+	payload := plugins.ServiceSonarQube{
+		Status:          status,
+		AnonymousAccess: anonAccess,
+		CPEs:            []string{cpe},
+	}
+	return plugins.CreateServiceFrom(target, payload, false, version, plugins.TCP), nil
 }
 
 func (p *SonarQubePlugin) PortPriority(port uint16) bool {

@@ -578,8 +578,9 @@ type ServiceSIPS struct {
 func (e ServiceSIPS) Type() string { return ProtoSIPS }
 
 type ServiceSonarQube struct {
-	Status string   `json:"status,omitempty"`
-	CPEs   []string `json:"cpes,omitempty"`
+	Status          string   `json:"status,omitempty"`
+	AnonymousAccess bool     `json:"anonymousAccess,omitempty"`
+	CPEs            []string `json:"cpes,omitempty"`
 }
 
 func (e ServiceSonarQube) Type() string { return ProtoSonarQube }

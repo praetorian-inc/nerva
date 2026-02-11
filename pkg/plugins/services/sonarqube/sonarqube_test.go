@@ -15,9 +15,13 @@
 package sonarqube
 
 import (
+	"encoding/json"
 	"fmt"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"net/netip"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -98,266 +102,377 @@ func TestBuildSonarQubeCPE(t *testing.T) {
 	}
 }
 
-func TestExtractHTTPHeaders(t *testing.T) {
-	tests := []struct {
-		name     string
-		response []byte
-		expected map[string]string
-	}{
-		{
-			name: "typical HTTP response",
-			response: []byte("HTTP/1.1 200 OK\r\n" +
-				"Content-Type: application/json\r\n" +
-				"Content-Length: 123\r\n" +
-				"\r\n" +
-				"body"),
-			expected: map[string]string{
-				"content-type":   "application/json",
-				"content-length": "123",
-			},
-		},
-		{
-			name:     "empty response",
-			response: []byte(""),
-			expected: map[string]string{},
-		},
-		{
-			name: "no headers (status line only)",
-			response: []byte("HTTP/1.1 200 OK\r\n" +
-				"\r\n"),
-			expected: map[string]string{},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := extractHTTPHeaders(tt.response)
-			if len(result) != len(tt.expected) {
-				t.Errorf("extractHTTPHeaders() returned %d headers, expected %d", len(result), len(tt.expected))
-			}
-			for key, expectedValue := range tt.expected {
-				if actualValue, ok := result[key]; !ok {
-					t.Errorf("extractHTTPHeaders() missing header %q", key)
-				} else if actualValue != expectedValue {
-					t.Errorf("extractHTTPHeaders() header %q = %q, expected %q", key, actualValue, expectedValue)
-				}
-			}
-		})
-	}
-}
-
-func TestExtractHTTPBody(t *testing.T) {
-	tests := []struct {
-		name     string
-		response []byte
-		expected []byte
-	}{
-		{
-			name: "response with body",
-			response: []byte("HTTP/1.1 200 OK\r\n" +
-				"Content-Type: application/json\r\n" +
-				"\r\n" +
-				`{"id":"abc","version":"10.3.0","status":"UP"}`),
-			expected: []byte(`{"id":"abc","version":"10.3.0","status":"UP"}`),
-		},
-		{
-			name: "response without body (empty)",
-			response: []byte("HTTP/1.1 204 No Content\r\n" +
-				"Content-Type: application/json\r\n" +
-				"\r\n"),
-			expected: nil,
-		},
-		{
-			name:     "no separator (malformed)",
-			response: []byte("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"),
-			expected: nil,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := extractHTTPBody(tt.response)
-			if tt.expected == nil {
-				if result != nil {
-					t.Errorf("extractHTTPBody() = %q, expected nil", result)
-				}
-			} else {
-				if string(result) != string(tt.expected) {
-					t.Errorf("extractHTTPBody() = %q, expected %q", result, tt.expected)
-				}
-			}
-		})
-	}
-}
-
-// buildMockSonarQubeStatusResponse creates a mock HTTP response for GET /api/system/status
-func buildMockSonarQubeStatusResponse(version, status string) []byte {
-	jsonBody := `{"id":"unique-server-id","version":"` + version + `","status":"` + status + `"}`
-	response := "HTTP/1.1 200 OK\r\n" +
-		"Content-Type: application/json\r\n" +
-		"Content-Length: " + fmt.Sprintf("%d", len(jsonBody)) + "\r\n" +
-		"\r\n" +
-		jsonBody
-	return []byte(response)
-}
-
-// buildMockGrafanaResponse creates a mock Grafana response (false positive test)
-func buildMockGrafanaResponse() []byte {
-	jsonBody := `{"database":"ok","version":"9.5.3"}`
-	response := "HTTP/1.1 200 OK\r\n" +
-		"Content-Type: application/json\r\n" +
-		"\r\n" +
-		jsonBody
-	return []byte(response)
-}
-
-// buildMock404Response creates a mock 404 response
-func buildMock404Response() []byte {
-	response := "HTTP/1.1 404 Not Found\r\n" +
-		"Content-Type: text/html\r\n" +
-		"\r\n" +
-		"<html><body>Not Found</body></html>"
-	return []byte(response)
-}
-
-func TestBuildSonarQubeHTTPRequest(t *testing.T) {
-	path := "/api/system/status"
-	host := "localhost:9000"
-
-	result := buildSonarQubeHTTPRequest(path, host)
-
-	// Verify request structure
-	expectedSubstrings := []string{
-		"GET /api/system/status HTTP/1.1",
-		"Host: localhost:9000",
-		"User-Agent: nerva/1.0",
-		"Connection: close",
-	}
-
-	for _, substr := range expectedSubstrings {
-		if !strings.Contains(result, substr) {
-			t.Errorf("buildSonarQubeHTTPRequest() missing %q", substr)
-		}
-	}
-}
-
-// TestDetectSonarQube tests the core detection function with various response scenarios
-func TestDetectSonarQube(t *testing.T) {
+func TestDetectViaSystemStatus(t *testing.T) {
 	tests := []struct {
 		name            string
-		mockResponse    []byte
+		handler         http.HandlerFunc
 		expectedVersion string
 		expectedStatus  string
 		expectedDetect  bool
-		expectError     bool
 	}{
 		{
-			name:            "valid SonarQube response",
-			mockResponse:    buildMockSonarQubeStatusResponse("10.3.0.82913", "UP"),
+			name: "valid SonarQube response with version",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				fmt.Fprintf(w, `{"id":"abc","version":"10.3.0.82913","status":"UP"}`)
+			},
 			expectedVersion: "10.3.0",
 			expectedStatus:  "UP",
 			expectedDetect:  true,
-			expectError:     false,
 		},
 		{
-			name:            "Grafana response (missing id field)",
-			mockResponse:    buildMockGrafanaResponse(),
+			name: "valid SonarQube with empty version (newer >9.9.1)",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				fmt.Fprintf(w, `{"id":"abc","version":"","status":"UP"}`)
+			},
+			expectedVersion: "",
+			expectedStatus:  "UP",
+			expectedDetect:  true,
+		},
+		{
+			name: "Grafana response (missing id field)",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				fmt.Fprintf(w, `{"database":"ok","version":"9.5.3"}`)
+			},
 			expectedVersion: "",
 			expectedStatus:  "",
 			expectedDetect:  false,
-			expectError:     false,
 		},
 		{
-			name:            "404 response",
-			mockResponse:    buildMock404Response(),
+			name: "404 response",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(404)
+				fmt.Fprintf(w, "Not Found")
+			},
 			expectedVersion: "",
 			expectedStatus:  "",
 			expectedDetect:  false,
-			expectError:     false,
-		},
-		{
-			name:            "empty response (connection closed)",
-			mockResponse:    []byte(""),
-			expectedVersion: "",
-			expectedStatus:  "",
-			expectedDetect:  false,
-			expectError:     true, // EOF error expected
 		},
 		{
 			name: "invalid JSON",
-			mockResponse: []byte("HTTP/1.1 200 OK\r\n" +
-				"Content-Type: application/json\r\n" +
-				"\r\n" +
-				"{invalid json}"),
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				fmt.Fprintf(w, "{invalid json}")
+			},
 			expectedVersion: "",
 			expectedStatus:  "",
 			expectedDetect:  false,
-			expectError:     false,
 		},
 		{
-			name: "valid JSON but invalid status value",
-			mockResponse: []byte("HTTP/1.1 200 OK\r\n" +
-				"Content-Type: application/json\r\n" +
-				"\r\n" +
-				`{"id":"abc","version":"10.3.0","status":"INVALID_STATUS"}`),
+			name: "invalid status value",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				fmt.Fprintf(w, `{"id":"abc","version":"10.3.0","status":"INVALID_STATUS"}`)
+			},
 			expectedVersion: "",
 			expectedStatus:  "",
 			expectedDetect:  false,
-			expectError:     false,
-		},
-		{
-			name: "valid JSON but empty version",
-			mockResponse: []byte("HTTP/1.1 200 OK\r\n" +
-				"Content-Type: application/json\r\n" +
-				"\r\n" +
-				`{"id":"abc","version":"","status":"UP"}`),
-			expectedVersion: "",
-			expectedStatus:  "",
-			expectedDetect:  false,
-			expectError:     false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create mock connection using net.Pipe
-			client, server := net.Pipe()
-			defer client.Close()
+			server := httptest.NewServer(tt.handler)
 			defer server.Close()
 
-			// Target for detection
-			target := plugins.Target{
-				Host:    "localhost",
-				Address: netip.MustParseAddrPort("127.0.0.1:9000"),
+			client := server.Client()
+			version, status, detected, err := detectViaSystemStatus(client, server.URL)
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.expectedDetect, detected)
+			if tt.expectedDetect {
+				assert.Equal(t, tt.expectedVersion, version)
+				assert.Equal(t, tt.expectedStatus, status)
 			}
-
-			// Goroutine to simulate server response
-			go func() {
-				defer server.Close()
-				// Read the request (discard it)
-				buf := make([]byte, 512)
-				_, _ = server.Read(buf)
-
-				// Send mock response
-				if len(tt.mockResponse) > 0 {
-					_, _ = server.Write(tt.mockResponse)
-				}
-			}()
-
-			// Run detection
-			version, status, detected, err := detectSonarQube(client, target, 5*time.Second)
-
-			// Verify results
-			if tt.expectError {
-				assert.Error(t, err, "expected error but got none")
-			} else {
-				require.NoError(t, err)
-			}
-			assert.Equal(t, tt.expectedDetect, detected, "detection result mismatch")
-			assert.Equal(t, tt.expectedVersion, version, "version mismatch")
-			assert.Equal(t, tt.expectedStatus, status, "status mismatch")
 		})
 	}
+}
+
+func TestDetectViaServerVersion(t *testing.T) {
+	tests := []struct {
+		name            string
+		handler         http.HandlerFunc
+		expectedVersion string
+		expectedDetect  bool
+	}{
+		{
+			name: "valid version string",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/html;charset=utf-8")
+				fmt.Fprintf(w, "10.3.0.82913")
+			},
+			expectedVersion: "10.3.0",
+			expectedDetect:  true,
+		},
+		{
+			name: "version with whitespace",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/html;charset=utf-8")
+				fmt.Fprintf(w, "  10.3.0.82913  \n")
+			},
+			expectedVersion: "10.3.0",
+			expectedDetect:  true,
+		},
+		{
+			name: "HTML error page",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/html")
+				fmt.Fprintf(w, "<html><body>Error</body></html>")
+			},
+			expectedVersion: "",
+			expectedDetect:  false,
+		},
+		{
+			name: "404 response",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(404)
+				fmt.Fprintf(w, "Not Found")
+			},
+			expectedVersion: "",
+			expectedDetect:  false,
+		},
+		{
+			name: "empty body",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/html;charset=utf-8")
+				// Empty body
+			},
+			expectedVersion: "",
+			expectedDetect:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(tt.handler)
+			defer server.Close()
+
+			client := server.Client()
+			version, detected, err := detectViaServerVersion(client, server.URL)
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.expectedDetect, detected)
+			if tt.expectedDetect {
+				assert.Equal(t, tt.expectedVersion, version)
+			}
+		})
+	}
+}
+
+func TestCheckAnonymousAccess(t *testing.T) {
+	tests := []struct {
+		name           string
+		handler        http.HandlerFunc
+		expectedResult bool
+	}{
+		{
+			name: "200 response (anonymous enabled)",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(200)
+				fmt.Fprintf(w, `{"paging":{"total":0},"components":[]}`)
+			},
+			expectedResult: true,
+		},
+		{
+			name: "401 response (auth required)",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(401)
+				fmt.Fprintf(w, "Unauthorized")
+			},
+			expectedResult: false,
+		},
+		{
+			name: "403 response (forbidden)",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(403)
+				fmt.Fprintf(w, "Forbidden")
+			},
+			expectedResult: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(tt.handler)
+			defer server.Close()
+
+			client := server.Client()
+			result := checkAnonymousAccess(client, server.URL)
+
+			assert.Equal(t, tt.expectedResult, result)
+		})
+	}
+}
+
+// parseTestServerAddr parses httptest server URL into netip.AddrPort
+func parseTestServerAddr(t *testing.T, serverURL string) netip.AddrPort {
+	t.Helper()
+	hostPort := strings.TrimPrefix(serverURL, "http://")
+	host, portStr, err := net.SplitHostPort(hostPort)
+	require.NoError(t, err)
+	port, err := strconv.Atoi(portStr)
+	require.NoError(t, err)
+	return netip.AddrPortFrom(netip.MustParseAddr(host), uint16(port))
+}
+
+func TestSonarQubePlugin_Run_FullDetection(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/system/status":
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintf(w, `{"id":"abc","version":"10.3.0.82913","status":"UP"}`)
+		case "/api/components/search":
+			w.WriteHeader(200)
+			fmt.Fprintf(w, `{"paging":{"total":0},"components":[]}`)
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer server.Close()
+
+	// Dial real TCP connection to test server
+	addr := parseTestServerAddr(t, server.URL)
+	conn, err := net.DialTimeout("tcp", strings.TrimPrefix(server.URL, "http://"), 5*time.Second)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	target := plugins.Target{
+		Host:    addr.Addr().String(),
+		Address: addr,
+	}
+
+	plugin := &SonarQubePlugin{}
+	service, err := plugin.Run(conn, 5*time.Second, target)
+
+	require.NoError(t, err)
+	require.NotNil(t, service)
+
+	// Verify payload
+	var sonarqubeService plugins.ServiceSonarQube
+	err = json.Unmarshal(service.Raw, &sonarqubeService)
+	require.NoError(t, err, "failed to unmarshal service payload")
+	assert.Equal(t, "UP", sonarqubeService.Status)
+	assert.True(t, sonarqubeService.AnonymousAccess)
+	assert.Len(t, sonarqubeService.CPEs, 1)
+	assert.Equal(t, "cpe:2.3:a:sonarsource:sonarqube:10.3.0:*:*:*:*:*:*:*", sonarqubeService.CPEs[0])
+}
+
+func TestSonarQubePlugin_Run_VersionFallback(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/system/status":
+			// Status returns empty version (newer SonarQube)
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintf(w, `{"id":"abc","version":"","status":"UP"}`)
+		case "/api/server/version":
+			// Version endpoint provides version
+			w.Header().Set("Content-Type", "text/html;charset=utf-8")
+			fmt.Fprintf(w, "10.3.0.82913")
+		case "/api/components/search":
+			w.WriteHeader(401)
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer server.Close()
+
+	// Dial real TCP connection to test server
+	addr := parseTestServerAddr(t, server.URL)
+	conn, err := net.DialTimeout("tcp", strings.TrimPrefix(server.URL, "http://"), 5*time.Second)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	target := plugins.Target{
+		Host:    addr.Addr().String(),
+		Address: addr,
+	}
+
+	plugin := &SonarQubePlugin{}
+	service, err := plugin.Run(conn, 5*time.Second, target)
+
+	require.NoError(t, err)
+	require.NotNil(t, service)
+
+	// Verify payload
+	var sonarqubeService plugins.ServiceSonarQube
+	err = json.Unmarshal(service.Raw, &sonarqubeService)
+	require.NoError(t, err, "failed to unmarshal service payload")
+	assert.Equal(t, "UP", sonarqubeService.Status)
+	assert.False(t, sonarqubeService.AnonymousAccess)
+	assert.Len(t, sonarqubeService.CPEs, 1)
+	assert.Equal(t, "cpe:2.3:a:sonarsource:sonarqube:10.3.0:*:*:*:*:*:*:*", sonarqubeService.CPEs[0])
+}
+
+func TestSonarQubePlugin_Run_OnlyVersionEndpoint(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/system/status":
+			// Status endpoint returns 404
+			w.WriteHeader(404)
+		case "/api/server/version":
+			// Only version endpoint works
+			w.Header().Set("Content-Type", "text/html;charset=utf-8")
+			fmt.Fprintf(w, "10.3.0")
+		case "/api/components/search":
+			w.WriteHeader(403)
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer server.Close()
+
+	// Dial real TCP connection to test server
+	addr := parseTestServerAddr(t, server.URL)
+	conn, err := net.DialTimeout("tcp", strings.TrimPrefix(server.URL, "http://"), 5*time.Second)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	target := plugins.Target{
+		Host:    addr.Addr().String(),
+		Address: addr,
+	}
+
+	plugin := &SonarQubePlugin{}
+	service, err := plugin.Run(conn, 5*time.Second, target)
+
+	require.NoError(t, err)
+	require.NotNil(t, service)
+
+	// Verify payload
+	var sonarqubeService plugins.ServiceSonarQube
+	err = json.Unmarshal(service.Raw, &sonarqubeService)
+	require.NoError(t, err, "failed to unmarshal service payload")
+	assert.Equal(t, "UP", sonarqubeService.Status) // Default status when version-only detection
+	assert.False(t, sonarqubeService.AnonymousAccess)
+	assert.Len(t, sonarqubeService.CPEs, 1)
+	assert.Equal(t, "cpe:2.3:a:sonarsource:sonarqube:10.3.0:*:*:*:*:*:*:*", sonarqubeService.CPEs[0])
+}
+
+func TestSonarQubePlugin_Run_NotDetected(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Everything returns 404
+		w.WriteHeader(404)
+	}))
+	defer server.Close()
+
+	// Dial real TCP connection to test server
+	addr := parseTestServerAddr(t, server.URL)
+	conn, err := net.DialTimeout("tcp", strings.TrimPrefix(server.URL, "http://"), 5*time.Second)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	target := plugins.Target{
+		Host:    addr.Addr().String(),
+		Address: addr,
+	}
+
+	plugin := &SonarQubePlugin{}
+	service, err := plugin.Run(conn, 5*time.Second, target)
+
+	require.NoError(t, err)
+	assert.Nil(t, service)
 }
 
 // TestSonarQubePlugin_PortPriority tests the PortPriority method
@@ -411,4 +526,3 @@ func TestSonarQubePlugin_Priority(t *testing.T) {
 	plugin := &SonarQubePlugin{}
 	assert.Equal(t, 100, plugin.Priority())
 }
-
