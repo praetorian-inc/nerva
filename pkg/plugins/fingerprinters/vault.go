@@ -70,6 +70,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 )
 
@@ -78,12 +79,16 @@ type VaultFingerprinter struct{}
 
 // vaultHealthResponse represents the JSON structure from /v1/sys/health
 type vaultHealthResponse struct {
-	Initialized bool   `json:"initialized"`
-	Sealed      bool   `json:"sealed"`
+	Initialized *bool  `json:"initialized"`
+	Sealed      *bool  `json:"sealed"`
 	Version     string `json:"version"`
 	ClusterName string `json:"cluster_name"`
 	Enterprise  bool   `json:"enterprise"`
 }
+
+// vaultVersionRegex validates Vault version format
+// Accepts: 1.12.3 (OSS), 1.12.3+ent (Enterprise), 1.12.3+ent.hsm (Enterprise HSM)
+var vaultVersionRegex = regexp.MustCompile(`^\d+\.\d+\.\d+(\+ent(\.hsm)?)?$`)
 
 func init() {
 	Register(&VaultFingerprinter{})
@@ -111,16 +116,21 @@ func (f *VaultFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fin
 		return nil, nil // Not Vault format
 	}
 
-	// Validate it's actually Vault by checking version field
-	// Vault health endpoint always returns version
-	if health.Version == "" {
+	// Validate it's actually Vault by checking version field and required boolean fields
+	// Vault health endpoint always returns version, initialized, and sealed
+	if health.Version == "" || health.Initialized == nil || health.Sealed == nil {
+		return nil, nil
+	}
+
+	// Validate version format to prevent CPE injection
+	if !vaultVersionRegex.MatchString(health.Version) {
 		return nil, nil
 	}
 
 	// Build metadata
 	metadata := map[string]any{
-		"sealed":      health.Sealed,
-		"initialized": health.Initialized,
+		"sealed":      *health.Sealed,
+		"initialized": *health.Initialized,
 		"enterprise":  health.Enterprise,
 	}
 

@@ -146,6 +146,21 @@ func TestVaultFingerprinter_Fingerprint_Valid(t *testing.T) {
 			wantEnterprise:       false,
 			wantClusterNameExist: false,
 		},
+		{
+			name: "Enterprise HSM vault",
+			body: `{
+				"initialized": true,
+				"sealed": false,
+				"version": "1.16.1+ent.hsm",
+				"cluster_name": "enterprise-hsm-vault",
+				"enterprise": true
+			}`,
+			wantVersion:          "1.16.1+ent.hsm",
+			wantSealed:           false,
+			wantInitialized:      true,
+			wantEnterprise:       true,
+			wantClusterNameExist: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -219,6 +234,18 @@ func TestVaultFingerprinter_Fingerprint_Invalid(t *testing.T) {
 		{
 			name: "Empty string",
 			body: "",
+		},
+		{
+			name: "Version with CPE injection attempt",
+			body: `{"initialized": true, "sealed": false, "version": "1.0.0:*:*:*:*:*:*:*"}`,
+		},
+		{
+			name: "Missing sealed field (false positive risk)",
+			body: `{"initialized": true, "version": "1.12.3"}`,
+		},
+		{
+			name: "Missing initialized field (false positive risk)",
+			body: `{"sealed": false, "version": "1.12.3"}`,
 		},
 	}
 
