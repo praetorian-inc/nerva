@@ -372,6 +372,8 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoIEC104:
 		var p ServiceIEC104
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
 	case ProtoTFTP:
 		var p ServiceTFTP
 		_ = json.Unmarshal(e.Raw, &p)
