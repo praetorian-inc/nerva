@@ -61,6 +61,7 @@ var (
 		8080: {},
 		8081: {},
 		8082: {}, // JFrog Platform Router
+		8200: {}, // HashiCorp Vault
 		8888: {},
 		9001: {},
 		9080: {},
