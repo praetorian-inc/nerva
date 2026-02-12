@@ -229,6 +229,10 @@ func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *ht
 	if err != nil {
 		return nil, nil, err
 	}
+	// Close body to release connection for reuse by active fingerprinters.
+	// Without this, the transport may not return the connection to the idle pool,
+	// causing subsequent probe requests (e.g., /varz, /version) to fail.
+	resp.Body.Close()
 
 	// Wappalyzer fingerprinting (existing)
 	fingerprintResult := analyzer.FingerprintWithInfo(resp.Header, data)
