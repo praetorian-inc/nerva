@@ -23,6 +23,7 @@ go.work
 # Dev folders
 .vscode
 .idea
+.claude
 
 # Fingerprintx binary
 /fingerprintx
@@ -33,3 +34,5 @@ coverage-sctp.out
 /testdata/freediameter/*.pem
 /testdata/freediameter/*.key
 /nerva
+
+code-quality-review.md
