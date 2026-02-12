@@ -910,7 +910,8 @@ type ServiceNeo4j struct {
 func (e ServiceNeo4j) Type() string { return ProtoNeo4j }
 
 type ServiceNRPE struct {
-	CPEs []string `json:"cpes,omitempty"`
+	CommandArgsEnabled *bool    `json:"commandArgsEnabled,omitempty"`
+	CPEs               []string `json:"cpes,omitempty"`
 }
 
 func (e ServiceNRPE) Type() string { return ProtoNRPE }

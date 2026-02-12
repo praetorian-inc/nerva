@@ -22,9 +22,9 @@ import (
 	"github.com/praetorian-inc/nerva/pkg/plugins"
 )
 
-// buildMockNRPEResponse constructs a mock NRPE v2 response for testing
+// buildMockNRPEResponse constructs a mock NRPE v2 response for testing (1036 bytes)
 func buildMockNRPEResponse(message string) []byte {
-	response := make([]byte, PacketSize)
+	response := make([]byte, 1036) // Updated to 1036 bytes
 
 	// Packet version: 2
 	binary.BigEndian.PutUint16(response[0:2], PacketVersion2)
@@ -118,8 +118,8 @@ func TestIsValidNRPEResponse(t *testing.T) {
 			expected: false,
 		},
 		{
-			name:     "response too short (1033 bytes - one byte short)",
-			response: buildMockNRPEResponse("NRPE v4.1.3")[0:1033],
+			name:     "response too short (1035 bytes - one byte short)",
+			response: buildMockNRPEResponse("NRPE v4.1.3")[0:1035],
 			expected: false,
 		},
 		{
@@ -160,9 +160,19 @@ func TestParseNRPEVersion(t *testing.T) {
 		expected string
 	}{
 		{
-			name:     "version 4.1.3",
+			name:     "version 4.1.3 (latest)",
 			response: buildMockNRPEResponse("NRPE v4.1.3"),
 			expected: "4.1.3",
+		},
+		{
+			name:     "version 4.0.3",
+			response: buildMockNRPEResponse("NRPE v4.0.3"),
+			expected: "4.0.3",
+		},
+		{
+			name:     "version 3.2.1",
+			response: buildMockNRPEResponse("NRPE v3.2.1"),
+			expected: "3.2.1",
 		},
 		{
 			name:     "version 3.0",
@@ -170,7 +180,12 @@ func TestParseNRPEVersion(t *testing.T) {
 			expected: "3.0",
 		},
 		{
-			name:     "version 2.15",
+			name:     "version 2.16",
+			response: buildMockNRPEResponse("NRPE v2.16"),
+			expected: "2.16",
+		},
+		{
+			name:     "version 2.15 (ancient but common)",
 			response: buildMockNRPEResponse("NRPE v2.15"),
 			expected: "2.15",
 		},
@@ -299,5 +314,46 @@ func TestPluginName(t *testing.T) {
 	}
 	if tlsPlugin.Name() != NRPE {
 		t.Errorf("Expected name '%s', got '%s'", NRPE, tlsPlugin.Name())
+	}
+}
+
+// TestBuildNRPEQueryWithArgument verifies NRPE query packet with command argument
+func TestBuildNRPEQueryWithArgument(t *testing.T) {
+	command := "_NRPE_CHECK!test"
+	packet := buildNRPEQueryWithCommand(command)
+
+	// Verify total length (should be 1036 bytes)
+	if len(packet) != 1036 {
+		t.Errorf("Expected packet length 1036, got %d", len(packet))
+	}
+
+	// Verify packet version
+	version := binary.BigEndian.Uint16(packet[0:2])
+	if version != PacketVersion2 {
+		t.Errorf("Expected packet version %d, got %d", PacketVersion2, version)
+	}
+
+	// Verify packet type (Query)
+	packetType := binary.BigEndian.Uint16(packet[2:4])
+	if packetType != QueryPacket {
+		t.Errorf("Expected packet type %d, got %d", QueryPacket, packetType)
+	}
+
+	// Verify buffer contains the command
+	bufferEnd := 10 + len(command)
+	extractedCommand := string(packet[10:bufferEnd])
+	if extractedCommand != command {
+		t.Errorf("Expected command '%s', got '%s'", command, extractedCommand)
+	}
+
+	// Verify CRC32 is valid
+	storedCRC := binary.BigEndian.Uint32(packet[4:8])
+	packetCopy := make([]byte, len(packet))
+	copy(packetCopy, packet)
+	binary.BigEndian.PutUint32(packetCopy[4:8], 0)
+	calculatedCRC := crc32.ChecksumIEEE(packetCopy)
+
+	if storedCRC != calculatedCRC {
+		t.Errorf("CRC32 mismatch: stored=%d, calculated=%d", storedCRC, calculatedCRC)
 	}
 }
