@@ -136,6 +136,7 @@ const (
 	ProtoTURN             = "turn"
 	ProtoVNC              = "vnc"
 	ProtoWireGuard        = "wireguard"
+	ProtoX2AP             = "x2ap"
 	ProtoZabbixAgent      = "zabbix-agent"
 	ProtoZooKeeper        = "zookeeper"
 	ProtoUnknown          = "unknown"
@@ -242,6 +243,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoWireGuard:
 		var p ServiceWireGuard
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoX2AP:
+		var p ServiceX2AP
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoTelnet:
@@ -1338,6 +1343,14 @@ type ServiceSCCP struct {
 }
 
 func (e ServiceSCCP) Type() string { return ProtoSCCP }
+
+type ServiceX2AP struct {
+	ProcedureCode uint8 `json:"procedureCode,omitempty"`
+	Criticality   uint8 `json:"criticality,omitempty"`
+	MessageType   uint8 `json:"messageType,omitempty"` // 0=Initiating, 1=Successful, 2=Unsuccessful
+}
+
+func (e ServiceX2AP) Type() string { return ProtoX2AP }
 
 type ServiceZabbixAgent struct {
 	RemoteCommandsEnabled bool     `json:"remoteCommandsEnabled"`
