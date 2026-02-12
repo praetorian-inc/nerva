@@ -72,6 +72,7 @@ import (
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/pop3"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/pulsar"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/postgresql"
+	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/profinet"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/rdp"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/redis"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/rsync"
