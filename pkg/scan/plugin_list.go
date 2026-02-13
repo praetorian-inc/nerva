@@ -53,6 +53,7 @@ import (
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/jdwp"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/kafka/kafkaNew"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/kafka/kafkaOld"
+	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/knxip"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/l2tp"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/ldap"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/linuxrpc"

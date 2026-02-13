@@ -74,6 +74,7 @@ const (
 	ProtoIUA              = "iua"
 	ProtoJDWP             = "jdwp"
 	ProtoKafka            = "kafka"
+	ProtoKNXIP            = "knxip"
 	ProtoKubernetes       = "kubernetes"
 	ProtoL2TP             = "l2tp"
 	ProtoLDAP             = "ldap"
@@ -126,7 +127,7 @@ const (
 	ProtoTelnet           = "telnet"
 	ProtoTFTP             = "tftp"
 	ProtoVNC              = "vnc"
-  ProtoWireGuard        = "wireguard"
+	ProtoWireGuard        = "wireguard"
 	ProtoZabbixAgent      = "zabbix-agent"
 	ProtoZooKeeper        = "zookeeper"
 	ProtoUnknown          = "unknown"
@@ -269,6 +270,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoKafka:
 		var p ServiceKafka
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoKNXIP:
+		var p ServiceKNXIP
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoKubernetes:
@@ -856,6 +861,17 @@ func (e ServiceLDAPS) Type() string { return ProtoLDAPS }
 type ServiceKafka struct{}
 
 func (e ServiceKafka) Type() string { return ProtoKafka }
+
+type ServiceKNXIP struct {
+	DeviceName      string   `json:"deviceName"`                // Friendly name (30 chars max)
+	KNXAddress      string   `json:"knxAddress"`                // Individual address "area.line.device"
+	SerialNumber    string   `json:"serialNumber"`              // 6-byte hex string
+	MACAddress      string   `json:"macAddress"`                // XX:XX:XX:XX:XX:XX
+	KNXMedium       string   `json:"knxMedium,omitempty"`       // "TP1", "PL110", "RF", "IP"
+	ServiceFamilies []string `json:"serviceFamilies,omitempty"` // ["Core", "Tunnelling", "Routing"]
+}
+
+func (e ServiceKNXIP) Type() string { return ProtoKNXIP }
 
 type ServiceKubernetes struct {
 	CPEs         []string `json:"cpes,omitempty"`
