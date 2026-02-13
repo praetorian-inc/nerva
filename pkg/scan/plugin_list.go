@@ -25,6 +25,7 @@ import (
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/activemq"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/amqp"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/bacnet"
+	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/bgp"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/cassandra"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/db2"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/dhcp"

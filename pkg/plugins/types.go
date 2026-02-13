@@ -40,6 +40,7 @@ const (
 	ProtoActiveMQOpenWire = "activemq-openwire"
 	ProtoAMQP             = "amqp"
 	ProtoBACnet           = "bacnet"
+	ProtoBGP              = "bgp"
 	ProtoCassandra        = "cassandra"
 	ProtoChromaDB         = "chromadb"
 	ProtoCODESYS          = "codesys"
@@ -431,6 +432,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoBACnet:
 		var p ServiceBACnet
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoBGP:
+		var p ServiceBGP
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoZooKeeper:
@@ -1128,6 +1133,13 @@ type ServiceBACnet struct {
 }
 
 func (e ServiceBACnet) Type() string { return ProtoBACnet }
+
+type ServiceBGP struct {
+	Version  uint8 `json:"version"`
+	Detected bool  `json:"detected"`
+}
+
+func (e ServiceBGP) Type() string { return ProtoBGP }
 
 type ServiceSCCP struct {
 	DeviceType      string `json:"deviceType,omitempty"`
