@@ -124,6 +124,7 @@ const (
 	ProtoTFTP             = "tftp"
 	ProtoVNC              = "vnc"
   ProtoWireGuard        = "wireguard"
+	ProtoZabbixAgent      = "zabbix-agent"
 	ProtoZooKeeper        = "zookeeper"
 	ProtoUnknown          = "unknown"
 )
@@ -180,11 +181,11 @@ func (e Service) Metadata() Metadata {
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoEtcd:
-	case ProtoEthernetIP:
-		var p ServiceEthernetIP
+		var p ServiceEtcd
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
-		var p ServiceEtcd
+	case ProtoEthernetIP:
+		var p ServiceEthernetIP
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoFirebird:
@@ -441,6 +442,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoBGP:
 		var p ServiceBGP
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoZabbixAgent:
+		var p ServiceZabbixAgent
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoZooKeeper:
@@ -1175,3 +1180,10 @@ type ServiceSCCP struct {
 }
 
 func (e ServiceSCCP) Type() string { return ProtoSCCP }
+
+type ServiceZabbixAgent struct {
+	RemoteCommandsEnabled bool     `json:"remoteCommandsEnabled"`
+	CPEs                  []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceZabbixAgent) Type() string { return ProtoZabbixAgent }
