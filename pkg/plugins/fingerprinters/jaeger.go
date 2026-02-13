@@ -25,7 +25,7 @@ represent a security concern due to:
   - Query capabilities that could reveal sensitive information
   - Administrative endpoints that may be exposed
 
-Detection uses a two-pronged approach:
+Detection uses a two-ponged approach:
 1. Passive: Check for Content-Type: application/json header (weak pre-filter)
 2. Active: Query /api/services endpoint (no authentication required)
 
@@ -41,12 +41,36 @@ The /api/services endpoint returns JSON without authentication:
 	  "total": 4
 	}
 
+Fresh instances with no traced services may return:
+
+	{
+	  "data": null,
+	  "errors": null,
+	  "limit": 0,
+	  "offset": 0,
+	  "total": 0
+	}
+
+Or:
+
+	{
+	  "data": [],
+	  "errors": null,
+	  "limit": 0,
+	  "offset": 0,
+	  "total": 0
+	}
+
 Format breakdown:
-  - data: Array of service name strings (required, must be non-empty for detection)
+  - data: Array of service name strings, or null on fresh instances (required field)
   - errors: Error field, typically null (required field to exist - distinguishes from other JSON APIs)
-  - total: Total count of services (optional, helps disambiguate)
-  - limit: Pagination limit (optional)
-  - offset: Pagination offset (optional)
+  - total: Total count of services (required field)
+  - limit: Pagination limit (required field)
+  - offset: Pagination offset (required field)
+
+Detection is based on the structural signature: the presence of all 5 fields
+(data, errors, total, limit, offset) uniquely identifies Jaeger's /api/services
+endpoint. No other common HTTP API returns this exact structure.
 
 # Port Configuration
 
@@ -78,11 +102,11 @@ type JaegerFingerprinter struct{}
 
 // jaegerServicesResponse represents the JSON structure from /api/services
 type jaegerServicesResponse struct {
-	Data   []string `json:"data"`
-	Errors any      `json:"errors"`
-	Limit  int      `json:"limit"`
-	Offset int      `json:"offset"`
-	Total  int      `json:"total"`
+	Data   json.RawMessage `json:"data"`   // Can be null, [], or ["service1", ...]
+	Errors json.RawMessage `json:"errors"` // Can be null or error object
+	Limit  *int            `json:"limit"`  // Pointer to distinguish missing vs 0
+	Offset *int            `json:"offset"` // Pointer to distinguish missing vs 0
+	Total  *int            `json:"total"`  // Pointer to distinguish missing vs 0
 }
 
 func init() {
@@ -105,40 +129,51 @@ func (f *JaegerFingerprinter) Match(resp *http.Response) bool {
 }
 
 func (f *JaegerFingerprinter) Fingerprint(resp *http.Response, body []byte) (*FingerprintResult, error) {
-	// Try to parse as Jaeger services response
+	// First, verify structural signature: parse to map to check all 5 fields exist
+	var rawMap map[string]json.RawMessage
+	if err := json.Unmarshal(body, &rawMap); err != nil {
+		return nil, nil // Not valid JSON
+	}
+
+	// Jaeger structural signature: all 5 fields must be present
+	// The combination of these exact fields is unique to Jaeger's /api/services
+	requiredFields := []string{"data", "errors", "total", "limit", "offset"}
+	for _, field := range requiredFields {
+		if _, exists := rawMap[field]; !exists {
+			return nil, nil // Missing required field, not Jaeger
+		}
+	}
+
+	// Now parse as typed structure
 	var services jaegerServicesResponse
 	if err := json.Unmarshal(body, &services); err != nil {
-		return nil, nil // Not Jaeger format
+		return nil, nil // Failed to parse with expected types
 	}
 
-	// Validate it's actually Jaeger by checking required fields
-	// Jaeger services endpoint always returns data array and errors field
-	// The presence of data array + errors field + total field is the signature
-	if services.Data == nil {
-		return nil, nil
-	}
-
-	// Require non-empty services list for positive detection
-	// Empty list could be other JSON APIs
-	if len(services.Data) == 0 {
-		return nil, nil
-	}
-
-	// Build metadata
+	// All 5 fields present = positive Jaeger detection
+	// Now extract services if data is a non-null array
 	metadata := map[string]any{
-		"services":     services.Data,
-		"serviceCount": len(services.Data),
+		"serviceCount": 0,
 	}
 
-	// Add optional fields if present
-	if services.Total > 0 {
-		metadata["total"] = services.Total
+	// Try to parse data as []string if it's not null
+	if string(services.Data) != "null" && len(services.Data) > 0 {
+		var serviceList []string
+		if err := json.Unmarshal(services.Data, &serviceList); err == nil && len(serviceList) > 0 {
+			metadata["services"] = serviceList
+			metadata["serviceCount"] = len(serviceList)
+		}
 	}
-	if services.Limit > 0 {
-		metadata["limit"] = services.Limit
+
+	// Add optional numeric fields if their values are > 0
+	if services.Total != nil && *services.Total > 0 {
+		metadata["total"] = *services.Total
 	}
-	if services.Offset > 0 {
-		metadata["offset"] = services.Offset
+	if services.Limit != nil && *services.Limit > 0 {
+		metadata["limit"] = *services.Limit
+	}
+	if services.Offset != nil && *services.Offset > 0 {
+		metadata["offset"] = *services.Offset
 	}
 
 	return &FingerprintResult{

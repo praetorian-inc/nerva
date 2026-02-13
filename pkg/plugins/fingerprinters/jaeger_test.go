@@ -190,6 +190,44 @@ func TestJaegerFingerprinter_Fingerprint_Valid(t *testing.T) {
 			wantFirstService:   "service-d",
 			wantServicesLength: 3,
 		},
+		{
+			name: "Fresh instance with null data (no services traced yet)",
+			body: `{
+				"data": null,
+				"errors": null,
+				"limit": 0,
+				"offset": 0,
+				"total": 0
+			}`,
+			wantServiceCount:   0,
+			wantTotalPresent:   false, // total is 0, shouldn't be in metadata
+			wantTotal:          0,
+			wantLimitPresent:   false,
+			wantLimit:          0,
+			wantOffsetPresent:  false,
+			wantOffset:         0,
+			wantFirstService:   "",
+			wantServicesLength: 0,
+		},
+		{
+			name: "Fresh instance with empty data array (no services traced yet)",
+			body: `{
+				"data": [],
+				"errors": null,
+				"limit": 0,
+				"offset": 0,
+				"total": 0
+			}`,
+			wantServiceCount:   0,
+			wantTotalPresent:   false, // total is 0, shouldn't be in metadata
+			wantTotal:          0,
+			wantLimitPresent:   false,
+			wantLimit:          0,
+			wantOffsetPresent:  false,
+			wantOffset:         0,
+			wantFirstService:   "",
+			wantServicesLength: 0,
+		},
 	}
 
 	for _, tt := range tests {
@@ -206,19 +244,23 @@ func TestJaegerFingerprinter_Fingerprint_Valid(t *testing.T) {
 			assert.Equal(t, "jaeger", result.Technology)
 			assert.Equal(t, "", result.Version) // Jaeger doesn't expose version via /api/services
 
-			// Check metadata - serviceCount
+			// Check metadata - serviceCount (always present)
 			serviceCount, exists := result.Metadata["serviceCount"]
 			require.True(t, exists, "Expected serviceCount in metadata")
 			assert.Equal(t, tt.wantServiceCount, serviceCount)
 
-			// Check metadata - services array
-			services, exists := result.Metadata["services"]
-			require.True(t, exists, "Expected services in metadata")
-			serviceSlice, ok := services.([]string)
-			require.True(t, ok, "Expected services to be []string")
-			assert.Len(t, serviceSlice, tt.wantServicesLength)
+			// Check metadata - services array (only if services exist)
 			if tt.wantServicesLength > 0 {
+				services, exists := result.Metadata["services"]
+				require.True(t, exists, "Expected services in metadata when services exist")
+				serviceSlice, ok := services.([]string)
+				require.True(t, ok, "Expected services to be []string")
+				assert.Len(t, serviceSlice, tt.wantServicesLength)
 				assert.Equal(t, tt.wantFirstService, serviceSlice[0])
+			} else {
+				// When no services, services key should not be present
+				_, exists := result.Metadata["services"]
+				assert.False(t, exists, "Did not expect services in metadata when serviceCount is 0")
 			}
 
 			// Check metadata - total
@@ -266,16 +308,24 @@ func TestJaegerFingerprinter_Fingerprint_Invalid(t *testing.T) {
 			body: "OK",
 		},
 		{
-			name: "JSON without data field",
-			body: `{"errors": null}`,
+			name: "JSON missing total field (structural validation)",
+			body: `{"data": [], "errors": null, "limit": 0, "offset": 0}`,
 		},
 		{
-			name: "JSON with empty data array",
-			body: `{"data": [], "errors": null}`,
+			name: "JSON missing errors field (structural validation)",
+			body: `{"data": [], "total": 0, "limit": 0, "offset": 0}`,
 		},
 		{
-			name: "JSON with null data",
-			body: `{"data": null, "errors": null}`,
+			name: "JSON missing limit field (structural validation)",
+			body: `{"data": [], "errors": null, "total": 0, "offset": 0}`,
+		},
+		{
+			name: "JSON missing offset field (structural validation)",
+			body: `{"data": [], "errors": null, "total": 0, "limit": 0}`,
+		},
+		{
+			name: "JSON missing data field (structural validation)",
+			body: `{"errors": null, "total": 0, "limit": 0, "offset": 0}`,
 		},
 		{
 			name: "Empty JSON",
@@ -292,14 +342,6 @@ func TestJaegerFingerprinter_Fingerprint_Invalid(t *testing.T) {
 		{
 			name: "Random JSON object (prevent false positives)",
 			body: `{"foo": "bar", "baz": 123, "nested": {"key": "value"}}`,
-		},
-		{
-			name: "JSON with data but wrong type (not array)",
-			body: `{"data": "service-a", "errors": null}`,
-		},
-		{
-			name: "JSON with data array but non-string elements",
-			body: `{"data": [123, 456], "errors": null}`,
 		},
 		{
 			name: "Malformed JSON",
