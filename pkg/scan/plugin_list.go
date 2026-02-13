@@ -35,7 +35,6 @@ import (
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/echo"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/firebird"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/ftp"
-	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/grafana"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/http"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/h323"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/iax2"
