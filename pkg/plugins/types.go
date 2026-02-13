@@ -97,6 +97,7 @@ const (
 	ProtoOpenVPN          = "openvpn"
 	ProtoOracle           = "oracle"
 	ProtoPinecone         = "pinecone"
+	ProtoPCWorx           = "pcworx"
 	ProtoPOP3             = "pop3"
 	ProtoPOP3S            = "pop3s"
 	ProtoPostgreSQL       = "postgresql"
@@ -289,6 +290,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoPinecone:
 		var p ServicePinecone
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoPCWorx:
+		var p ServicePCWorx
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoMySQL:
@@ -914,6 +919,18 @@ type ServiceOPCUA struct {
 }
 
 func (e ServiceOPCUA) Type() string { return ProtoOPCUA }
+
+type ServicePCWorx struct {
+	PLCType         string   `json:"plcType,omitempty"`
+	FirmwareVersion string   `json:"firmwareVersion,omitempty"`
+	FirmwareDate    string   `json:"firmwareDate,omitempty"`
+	FirmwareTime    string   `json:"firmwareTime,omitempty"`
+	ModelNumber     string   `json:"modelNumber,omitempty"`
+	CPEs            []string `json:"cpes,omitempty"`
+}
+
+func (e ServicePCWorx) Type() string { return ProtoPCWorx }
+
 
 type ServiceMQTT struct{}
 

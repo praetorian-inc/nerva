@@ -73,6 +73,7 @@ import (
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/ntp"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/opcua"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/openvpn"
+	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/pcworx"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/oracledb"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/pop3"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/pulsar"
