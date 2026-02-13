@@ -183,7 +183,12 @@ func parseResponse(response []byte) (*plugins.ServiceTURN, bool) {
 			}
 		}
 
-		idx += attrLen
+		// Advance past attribute value with padding to 4-byte boundary (RFC 5389 §15)
+		paddedLen := attrLen
+		if attrLen%4 != 0 {
+			paddedLen += 4 - (attrLen % 4)
+		}
+		idx += paddedLen
 	}
 
 	// Must have error code 401 or 437 to be a TURN server

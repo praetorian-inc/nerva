@@ -94,7 +94,7 @@ func buildTURNAllocateError(realm, nonce, software string, errorCode uint16) []b
 		code := byte(errorCode % 100)
 		errorCodeData[2] = class
 		errorCodeData[3] = code
-		// Add reason phrase (length chosen to avoid padding bug in parseResponse)
+		// Add reason phrase
 		reasonPhrase := "Unauthorized" // 12 bytes + 4 header = 16 (no padding)
 		if errorCode == 437 {
 			reasonPhrase = "Mismatch" // 8 bytes + 4 header = 12 (no padding)
@@ -624,6 +624,98 @@ func TestTURNDocker(t *testing.T) {
 			err := test.RunTest(t, tc, p)
 			if err != nil {
 				t.Errorf("%s", err.Error())
+			}
+		})
+	}
+}
+
+// TestTURNPaddedAttributes tests parsing attributes with non-4-byte-aligned value lengths
+func TestTURNPaddedAttributes(t *testing.T) {
+	plugin := &Plugin{}
+
+	// Use attribute values that require padding:
+	// realm: "test.io" (7 bytes, needs 1 byte padding)
+	// nonce: "abc12" (5 bytes, needs 3 bytes padding)
+	// software: "Coturn-4.5.2 extra" (18 bytes, needs 2 bytes padding)
+	tests := []struct {
+		name             string
+		realm            string
+		nonce            string
+		software         string
+		expectedRealm    string
+		expectedNonce    string
+		expectedSoftware string
+	}{
+		{
+			name:             "7-byte realm",
+			realm:            "test.io",
+			nonce:            "abc12",
+			software:         "Coturn-4.5.2 extra",
+			expectedRealm:    "test.io",
+			expectedNonce:    "abc12",
+			expectedSoftware: "Coturn-4.5.2 extra",
+		},
+		{
+			name:             "5-byte nonce",
+			realm:            "example",
+			nonce:            "abc12",
+			software:         "Test",
+			expectedRealm:    "example",
+			expectedNonce:    "abc12",
+			expectedSoftware: "Test",
+		},
+		{
+			name:             "18-byte software",
+			realm:            "test",
+			nonce:            "nonce",
+			software:         "Coturn-4.5.2 extra",
+			expectedRealm:    "test",
+			expectedNonce:    "nonce",
+			expectedSoftware: "Coturn-4.5.2 extra",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockResponse := buildTURNAllocateError(tt.realm, tt.nonce, tt.software, 401)
+			conn := &mockConn{
+				readData:               mockResponse,
+				autoMatchTransactionID: true,
+			}
+
+			target := plugins.Target{
+				Address: netip.MustParseAddrPort("127.0.0.1:3478"),
+			}
+
+			service, err := plugin.Run(conn, 5*time.Second, target)
+			if err != nil {
+				t.Fatalf("Run() error = %v, want nil", err)
+			}
+
+			if service == nil {
+				t.Fatal("Run() returned nil service")
+			}
+
+			if service.Protocol != "turn" {
+				t.Errorf("service.Protocol = %s, want turn", service.Protocol)
+			}
+
+			// Verify metadata was parsed correctly despite padding
+			var metadata plugins.ServiceTURN
+			if err := json.Unmarshal(service.Raw, &metadata); err != nil {
+				t.Fatalf("Failed to unmarshal metadata: %v", err)
+			}
+
+			if metadata.Realm != tt.expectedRealm {
+				t.Errorf("metadata.Realm = %s, want %s", metadata.Realm, tt.expectedRealm)
+			}
+
+			if metadata.Nonce != tt.expectedNonce {
+				t.Errorf("metadata.Nonce = %s, want %s", metadata.Nonce, tt.expectedNonce)
+			}
+
+			if metadata.Software != tt.expectedSoftware {
+				t.Errorf("metadata.Software = %s, want %s", metadata.Software, tt.expectedSoftware)
 			}
 		})
 	}
