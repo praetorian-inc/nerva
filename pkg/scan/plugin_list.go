@@ -65,6 +65,7 @@ import (
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/nats"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/mysql"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/neo4j"
+	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/nrpe"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/netbios"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/nfs"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/ntp"

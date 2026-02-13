@@ -87,6 +87,7 @@ const (
 	ProtoMySQL            = "mysql"
 	ProtoNATS             = "nats"
 	ProtoNeo4j            = "neo4j"
+	ProtoNRPE             = "nrpe"
 	ProtoNetbios          = "netbios"
 	ProtoNFS              = "nfs"
 	ProtoNTP              = "ntp"
@@ -310,6 +311,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoNeo4j:
 		var p ServiceNeo4j
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoNRPE:
+		var p ServiceNRPE
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoLDAPS:
@@ -939,6 +944,13 @@ type ServiceNeo4j struct {
 }
 
 func (e ServiceNeo4j) Type() string { return ProtoNeo4j }
+
+type ServiceNRPE struct {
+	CommandArgsEnabled *bool    `json:"commandArgsEnabled,omitempty"`
+	CPEs               []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceNRPE) Type() string { return ProtoNRPE }
 
 type ServiceNATS struct {
 	ServerID     string   `json:"serverId,omitempty"`
