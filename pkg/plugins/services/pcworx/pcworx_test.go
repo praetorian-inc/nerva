@@ -233,6 +233,7 @@ func TestNormalizePLCType(t *testing.T) {
 		{"ILC151ETH", "ilc151eth"},
 		{"ILC  151  ETH", "ilc__151__eth"},
 		{"", ""},
+		{"ILC:151;ETH", "ilc151eth"},
 	}
 
 	for _, tt := range tests {
@@ -267,6 +268,12 @@ func TestGenerateCPE(t *testing.T) {
 			plcType:     "ILC151ETH",
 			fwVersion:   "2.3.4",
 			expectedCPE: "cpe:2.3:h:phoenixcontact:ilc151eth:2.3.4:*:*:*:*:*:*:*",
+		},
+		{
+			name:        "sanitizes special characters",
+			plcType:     "ILC:151;ETH",
+			fwVersion:   "4.60:injected",
+			expectedCPE: "cpe:2.3:h:phoenixcontact:ilc151eth:4.60injected:*:*:*:*:*:*:*",
 		},
 	}
 

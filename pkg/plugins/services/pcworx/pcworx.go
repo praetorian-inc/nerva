@@ -60,6 +60,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"regexp"
 	"strings"
 	"time"
 
@@ -235,9 +236,13 @@ func extractNullTerminatedString(data []byte, offset int) string {
 	return string(data[offset:end])
 }
 
-// normalizePLCType converts PLC type to CPE-safe format (lowercase, spaces to underscores)
+// cpeComponentRegex strips characters that are not safe for CPE 2.3 fields
+var cpeComponentRegex = regexp.MustCompile(`[^a-z0-9_.-]`)
+
+// normalizePLCType converts PLC type to CPE-safe format
 func normalizePLCType(plcType string) string {
-	return strings.ToLower(strings.ReplaceAll(plcType, " ", "_"))
+	s := strings.ToLower(strings.ReplaceAll(plcType, " ", "_"))
+	return cpeComponentRegex.ReplaceAllString(s, "")
 }
 
 // generateCPE builds a CPE 2.3 identifier for the detected Phoenix Contact PLC
@@ -245,7 +250,10 @@ func generateCPE(plcType, fwVersion string) string {
 	product := normalizePLCType(plcType)
 	version := "*"
 	if fwVersion != "" {
-		version = fwVersion
+		version = cpeComponentRegex.ReplaceAllString(strings.ToLower(fwVersion), "")
+	}
+	if product == "" {
+		return ""
 	}
 	return fmt.Sprintf("cpe:2.3:h:phoenixcontact:%s:%s:*:*:*:*:*:*:*", product, version)
 }
