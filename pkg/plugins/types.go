@@ -58,6 +58,7 @@ const (
 	ProtoFirebird         = "firebird"
 	ProtoFTP              = "ftp"
 	ProtoH323             = "h323"
+	ProtoHARTIP           = "hartip"
 	ProtoIAX2             = "iax2"
 	ProtoHTTP             = "http"
 	ProtoHTTP2            = "http2"
@@ -199,6 +200,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoH323:
 		var p ServiceH323
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoHARTIP:
+		var p ServiceHARTIP
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoPostgreSQL:
@@ -545,6 +550,16 @@ type ServiceH323 struct {
 }
 
 func (e ServiceH323) Type() string { return ProtoH323 }
+
+type ServiceHARTIP struct {
+	Version       uint8  `json:"version"`       // HART-IP protocol version (0x01)
+	MessageType   uint8  `json:"messageType"`   // Message type (0x01=Response, 0x03=Error, 0x0F=NAK)
+	Status        uint8  `json:"status"`        // Status code
+	StatusDesc    string `json:"statusDesc"`    // Status description (Success/Error/NAK)
+	TransactionID uint16 `json:"transactionID"` // Transaction ID echoed from request
+}
+
+func (e ServiceHARTIP) Type() string { return ProtoHARTIP }
 
 type ServiceRDP struct {
 	OSFingerprint       string `json:"fingerprint,omitempty"` // e.g. Windows Server 2016 or 2019

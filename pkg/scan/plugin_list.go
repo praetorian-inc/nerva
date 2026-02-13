@@ -39,6 +39,7 @@ import (
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/ftp"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/http"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/h323"
+	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/hartip"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/iax2"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/imap"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/ikev2"
