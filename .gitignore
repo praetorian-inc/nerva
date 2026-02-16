@@ -24,6 +24,8 @@ go.work
 .vscode
 .idea
 .claude
+.worktrees/
+.nerva-development/
 
 # Fingerprintx binary
 /fingerprintx
