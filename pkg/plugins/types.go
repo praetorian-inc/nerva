@@ -38,6 +38,7 @@ const TypeService string = "service"
 
 const (
 	ProtoActiveMQOpenWire = "activemq-openwire"
+	ProtoATG              = "atg"
 	ProtoAMQP             = "amqp"
 	ProtoBACnet           = "bacnet"
 	ProtoBGP              = "bgp"
@@ -455,6 +456,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoActiveMQOpenWire:
 		var p ServiceActiveMQOpenWire
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoATG:
+		var p ServiceATG
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoAMQP:
@@ -1190,6 +1195,15 @@ type ServiceActiveMQOpenWire struct {
 }
 
 func (e ServiceActiveMQOpenWire) Type() string { return ProtoActiveMQOpenWire }
+
+type ServiceATG struct {
+	StationName string   `json:"stationName,omitempty"`
+	TankCount   int      `json:"tankCount,omitempty"`
+	Products    []string `json:"products,omitempty"`
+	CPEs        []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceATG) Type() string { return ProtoATG }
 
 type ServiceAMQP struct {
 	Product  string   `json:"product,omitempty"`  // e.g., "RabbitMQ"
