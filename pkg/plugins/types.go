@@ -59,6 +59,7 @@ const (
 	ProtoEthernetIP       = "ethernetip"
 	ProtoFirebird         = "firebird"
 	ProtoFTP              = "ftp"
+	ProtoGTPC             = "gtpc"
 	ProtoGTPPrime         = "gtpprime"
 	ProtoH323             = "h323"
 	ProtoHARTIP           = "hartip"
@@ -213,6 +214,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoFTP:
 		var p ServiceFTP
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoGTPC:
+		var p ServiceGTPC
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoGTPPrime:
@@ -823,6 +828,12 @@ type ServiceElasticsearch struct {
 }
 
 func (e ServiceElasticsearch) Type() string { return ProtoElasticsearch }
+
+type ServiceGTPC struct {
+	Version string `json:"version"` // "GTPv1" or "GTPv2"
+}
+
+func (e ServiceGTPC) Type() string { return ProtoGTPC }
 
 type ServiceGTPPrime struct{}
 
