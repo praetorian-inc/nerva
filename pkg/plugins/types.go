@@ -82,6 +82,7 @@ const (
 	ProtoLDAP             = "ldap"
 	ProtoLDAPS            = "ldaps"
 	ProtoM3UA             = "m3ua"
+	ProtoMegaco           = "megaco"
 	ProtoMemcached        = "memcached"
 	ProtoMelsecQ          = "melsec-q"
 	ProtoMilvus           = "milvus"
@@ -420,6 +421,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoMelsecQ:
 		var p ServiceMelsecQ
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoMegaco:
+		var p ServiceMegaco
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoMemcached:
@@ -995,6 +1000,15 @@ func (e ServicePCWorx) Type() string { return ProtoPCWorx }
 type ServiceMQTT struct{}
 
 func (e ServiceMQTT) Type() string { return ProtoMQTT }
+
+type ServiceMegaco struct {
+	Version   string `json:"version,omitempty"`
+	MID       string `json:"mid,omitempty"`
+	Profile   string `json:"profile,omitempty"`
+	ErrorCode int    `json:"errorCode,omitempty"`
+}
+
+func (e ServiceMegaco) Type() string { return ProtoMegaco }
 
 type ServiceMemcached struct {
 	Version string   `json:"version,omitempty"`
