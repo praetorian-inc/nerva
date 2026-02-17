@@ -97,6 +97,8 @@ func TestJaegerFingerprinter_Fingerprint_Valid(t *testing.T) {
 		wantOffset         int
 		wantFirstService   string
 		wantServicesLength int
+		wantGitCommit      string
+		wantBuildDate      string
 	}{
 		{
 			name: "Full response with multiple services, total, limit, offset",
@@ -281,6 +283,8 @@ func TestJaegerFingerprinter_Fingerprint_Valid(t *testing.T) {
 			wantOffset:         0,
 			wantFirstService:   "",
 			wantServicesLength: 0,
+			wantGitCommit:      "63b27e1810a710ac54dc4522da0538e540bdc545",
+			wantBuildDate:      "2025-12-03T16:07:08Z",
 		},
 		{
 			name:               "Jaeger v1 root HTML (minified) with version",
@@ -296,6 +300,8 @@ func TestJaegerFingerprinter_Fingerprint_Valid(t *testing.T) {
 			wantOffset:         0,
 			wantFirstService:   "",
 			wantServicesLength: 0,
+			wantGitCommit:      "abc123",
+			wantBuildDate:      "2024-01-15T10:30:00Z",
 		},
 		{
 			name: "HTML with version but no gitCommit",
@@ -323,6 +329,7 @@ func TestJaegerFingerprinter_Fingerprint_Valid(t *testing.T) {
 			wantOffset:         0,
 			wantFirstService:   "",
 			wantServicesLength: 0,
+			wantBuildDate:      "2025-01-10T12:00:00Z",
 		},
 		{
 			name: "HTML without JAEGER_VERSION function",
@@ -438,6 +445,20 @@ func TestJaegerFingerprinter_Fingerprint_Valid(t *testing.T) {
 			} else {
 				_, exists := result.Metadata["offset"]
 				assert.False(t, exists, "Did not expect offset in metadata when offset=0")
+			}
+
+			// Check metadata - gitCommit
+			if tt.wantGitCommit != "" {
+				gitCommit, exists := result.Metadata["gitCommit"]
+				assert.True(t, exists, "Expected gitCommit in metadata")
+				assert.Equal(t, tt.wantGitCommit, gitCommit)
+			}
+
+			// Check metadata - buildDate
+			if tt.wantBuildDate != "" {
+				buildDate, exists := result.Metadata["buildDate"]
+				assert.True(t, exists, "Expected buildDate in metadata")
+				assert.Equal(t, tt.wantBuildDate, buildDate)
 			}
 
 			// Check CPE
