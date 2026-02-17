@@ -81,7 +81,7 @@ func (f *GlobalProtectFingerprinter) Match(resp *http.Response) bool {
 		return true
 	}
 
-	return true // Allow body-based detection in Fingerprint
+	return false // Only match if header indicators found; body-only detection is too prone to false positives
 }
 
 func (f *GlobalProtectFingerprinter) Fingerprint(resp *http.Response, body []byte) (*FingerprintResult, error) {
