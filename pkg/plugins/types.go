@@ -131,6 +131,7 @@ const (
 	ProtoSybase           = "sybase"
 	ProtoTelnet           = "telnet"
 	ProtoTFTP             = "tftp"
+	ProtoTURN             = "turn"
 	ProtoVNC              = "vnc"
   ProtoWireGuard        = "wireguard"
 	ProtoZabbixAgent      = "zabbix-agent"
@@ -459,6 +460,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoTFTP:
 		var p ServiceTFTP
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoTURN:
+		var p ServiceTURN
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoSIP:
@@ -792,6 +797,14 @@ type ServiceTFTP struct {
 }
 
 func (e ServiceTFTP) Type() string { return ProtoTFTP }
+
+type ServiceTURN struct {
+	Software string `json:"software,omitempty"`
+	Realm    string `json:"realm,omitempty"`
+	Nonce    string `json:"nonce,omitempty"`
+}
+
+func (e ServiceTURN) Type() string { return ProtoTURN }
 
 type ServiceRedis struct {
 	AuthRequired bool     `json:"authRequired:"`
