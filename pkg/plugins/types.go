@@ -130,6 +130,7 @@ const (
 	ProtoSonarQube        = "sonarqube"
 	ProtoSSH              = "ssh"
 	ProtoStun             = "stun"
+	ProtoSVN              = "svn"
 	ProtoSybase           = "sybase"
 	ProtoTelnet           = "telnet"
 	ProtoTFTP             = "tftp"
@@ -370,6 +371,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoSSH:
 		var p ServiceSSH
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoSVN:
+		var p ServiceSVN
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoSybase:
@@ -889,6 +894,15 @@ type ServiceSSH struct {
 }
 
 func (e ServiceSSH) Type() string { return ProtoSSH }
+
+type ServiceSVN struct {
+	MinVersion   int      `json:"minVersion"`
+	MaxVersion   int      `json:"maxVersion"`
+	AuthMechs    []string `json:"authMechs"`
+	Capabilities []string `json:"capabilities"`
+}
+
+func (e ServiceSVN) Type() string { return ProtoSVN }
 
 type ServiceSybase struct {
 	CPEs    []string `json:"cpes,omitempty"`
