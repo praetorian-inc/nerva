@@ -133,7 +133,7 @@ const (
 	ProtoTFTP             = "tftp"
 	ProtoTURN             = "turn"
 	ProtoVNC              = "vnc"
-  ProtoWireGuard        = "wireguard"
+	ProtoWireGuard        = "wireguard"
 	ProtoZabbixAgent      = "zabbix-agent"
 	ProtoZooKeeper        = "zookeeper"
 	ProtoUnknown          = "unknown"
