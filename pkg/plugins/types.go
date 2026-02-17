@@ -76,6 +76,7 @@ const (
 	ProtoIUA              = "iua"
 	ProtoJDWP             = "jdwp"
 	ProtoKafka            = "kafka"
+	ProtoKerberos         = "kerberos"
 	ProtoKubernetes       = "kubernetes"
 	ProtoL2TP             = "l2tp"
 	ProtoLDAP             = "ldap"
@@ -281,6 +282,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoKafka:
 		var p ServiceKafka
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoKerberos:
+		var p ServiceKerberos
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoKubernetes:
@@ -880,6 +885,14 @@ func (e ServiceLDAPS) Type() string { return ProtoLDAPS }
 type ServiceKafka struct{}
 
 func (e ServiceKafka) Type() string { return ProtoKafka }
+
+type ServiceKerberos struct {
+	Realm     string `json:"realm,omitempty"`
+	ErrorCode int    `json:"errorCode,omitempty"`
+	ErrorText string `json:"errorText,omitempty"`
+}
+
+func (e ServiceKerberos) Type() string { return ProtoKerberos }
 
 type ServiceKubernetes struct {
 	CPEs         []string `json:"cpes,omitempty"`
