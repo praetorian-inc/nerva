@@ -97,6 +97,7 @@ const (
 	ProtoOPCUA            = "opcua"
 	ProtoOpenVPN          = "openvpn"
 	ProtoOracle           = "oracle"
+	ProtoPCOM             = "pcom"
 	ProtoPinecone         = "pinecone"
 	ProtoPCWorx           = "pcworx"
 	ProtoPOP3             = "pop3"
@@ -291,6 +292,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoOPCUA:
 		var p ServiceOPCUA
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoPCOM:
+		var p ServicePCOM
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoPinecone:
@@ -901,6 +906,16 @@ type ServiceOracle struct {
 }
 
 func (e ServiceOracle) Type() string { return ProtoOracle }
+
+type ServicePCOM struct {
+	Model     string   `json:"model,omitempty"`
+	HWVersion string   `json:"hwVersion,omitempty"`
+	OSVersion string   `json:"osVersion,omitempty"`
+	UnitID    string   `json:"unitId,omitempty"`
+	CPEs      []string `json:"cpes,omitempty"`
+}
+
+func (e ServicePCOM) Type() string { return ProtoPCOM }
 
 type ServicePinecone struct {
 	CPEs       []string `json:"cpes,omitempty"`       // Common Platform Enumeration with wildcard version
