@@ -109,6 +109,7 @@ const (
 	ProtoPOP3             = "pop3"
 	ProtoPOP3S            = "pop3s"
 	ProtoPostgreSQL       = "postgresql"
+	ProtoPROFINET         = "profinet"
 	ProtoPulsar           = "pulsar"
 	ProtoPulsarAdmin      = "pulsar-admin"
 	ProtoRDP              = "rdp"
@@ -236,6 +237,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoPostgreSQL:
 		var p ServicePostgreSQL
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoPROFINET:
+		var p ServicePROFINET
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoVNC:
@@ -1134,6 +1139,15 @@ type ServiceS7comm struct {
 }
 
 func (e ServiceS7comm) Type() string { return ProtoS7comm }
+
+type ServicePROFINET struct {
+	DeviceName string   `json:"deviceName,omitempty"`
+	DeviceType string   `json:"deviceType,omitempty"`
+	Vendor     string   `json:"vendor,omitempty"`
+	CPEs       []string `json:"cpes,omitempty"`
+}
+
+func (e ServicePROFINET) Type() string { return ProtoPROFINET }
 
 type ServiceDNS struct{}
 
