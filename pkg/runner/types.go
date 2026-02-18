@@ -15,14 +15,15 @@
 package runner
 
 type cliConfig struct {
-	outputFile      string
-	outputJSON      bool
-	outputCSV       bool
-	overwriteOutput bool
-	fastMode        bool
-	timeout         int
-	useUDP          bool
-	useSCTP         bool
-	verbose         bool
-	showErrors      bool
+	outputFile       string
+	outputJSON       bool
+	outputCSV        bool
+	overwriteOutput  bool
+	fastMode         bool
+	timeout          int
+	useUDP           bool
+	useSCTP          bool
+	verbose          bool
+	showErrors       bool
+	showCapabilities bool
 }

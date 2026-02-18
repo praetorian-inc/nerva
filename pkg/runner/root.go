@@ -31,6 +31,11 @@ var (
 			"The port is assumed to be open.\n\tHOST:PORT or IP:PORT\nEXAMPLES:\n\tnerva -t praetorian.com:80\n" +
 			"\tnerva -l input-file.txt\n\tnerva --json -t praetorian.com:80,127.0.0.1:8000",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if config.showCapabilities {
+				printCapabilities()
+				return nil
+			}
+
 			configErr := checkConfig(config)
 			if configErr != nil {
 				return configErr
@@ -75,6 +80,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVarP(&config.verbose, "verbose", "v", false, "verbose mode")
 	rootCmd.PersistentFlags().
 		IntVarP(&config.timeout, "timeout", "w", 2000, "timeout (milliseconds)")
+	rootCmd.PersistentFlags().BoolVarP(&config.showCapabilities, "capabilities", "c", false, "list available capabilities and exit")
 }
 
 func Execute() {
