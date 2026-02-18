@@ -79,6 +79,7 @@ const (
 	ProtoJDWP             = "jdwp"
 	ProtoKafka            = "kafka"
 	ProtoKerberos         = "kerberos"
+	ProtoKNXIP            = "knxip"
 	ProtoKubernetes       = "kubernetes"
 	ProtoL2TP             = "l2tp"
 	ProtoLDAP             = "ldap"
@@ -306,6 +307,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoKerberos:
 		var p ServiceKerberos
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoKNXIP:
+		var p ServiceKNXIP
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoKubernetes:
@@ -949,6 +954,17 @@ type ServiceKerberos struct {
 }
 
 func (e ServiceKerberos) Type() string { return ProtoKerberos }
+
+type ServiceKNXIP struct {
+	DeviceName      string   `json:"deviceName"`                // Friendly name (30 chars max)
+	KNXAddress      string   `json:"knxAddress"`                // Individual address "area.line.device"
+	SerialNumber    string   `json:"serialNumber"`              // 6-byte hex string
+	MACAddress      string   `json:"macAddress"`                // XX:XX:XX:XX:XX:XX
+	KNXMedium       string   `json:"knxMedium,omitempty"`       // "TP1", "PL110", "RF", "IP"
+	ServiceFamilies []string `json:"serviceFamilies,omitempty"` // ["Core", "Tunnelling", "Routing"]
+}
+
+func (e ServiceKNXIP) Type() string { return ProtoKNXIP }
 
 type ServiceKubernetes struct {
 	CPEs         []string `json:"cpes,omitempty"`
