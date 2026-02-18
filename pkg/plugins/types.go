@@ -38,6 +38,7 @@ const TypeService string = "service"
 
 const (
 	ProtoActiveMQOpenWire = "activemq-openwire"
+	ProtoATG              = "atg"
 	ProtoAMQP             = "amqp"
 	ProtoBACnet           = "bacnet"
 	ProtoBGP              = "bgp"
@@ -60,6 +61,7 @@ const (
 	ProtoFirebird         = "firebird"
 	ProtoFTP              = "ftp"
 	ProtoGTPC             = "gtpc"
+	ProtoGESRTP           = "gesrtp"
 	ProtoGTPPrime         = "gtpprime"
 	ProtoH323             = "h323"
 	ProtoHARTIP           = "hartip"
@@ -78,6 +80,7 @@ const (
 	ProtoJDWP             = "jdwp"
 	ProtoKafka            = "kafka"
 	ProtoKerberos         = "kerberos"
+	ProtoKNXIP            = "knxip"
 	ProtoKubernetes       = "kubernetes"
 	ProtoL2TP             = "l2tp"
 	ProtoLDAP             = "ldap"
@@ -108,6 +111,7 @@ const (
 	ProtoPOP3             = "pop3"
 	ProtoPOP3S            = "pop3s"
 	ProtoPostgreSQL       = "postgresql"
+	ProtoPROFINET         = "profinet"
 	ProtoPulsar           = "pulsar"
 	ProtoPulsarAdmin      = "pulsar-admin"
 	ProtoRDP              = "rdp"
@@ -119,6 +123,7 @@ const (
 	ProtoRtsp             = "rtsp"
 	ProtoS7comm           = "s7comm"
 	ProtoSCCP             = "sccp"
+	ProtoSGsAP            = "sgsap"
 	ProtoSIP              = "sip"
 	ProtoSIPS             = "sips"
 	ProtoSMB              = "smb"
@@ -136,6 +141,7 @@ const (
 	ProtoTURN             = "turn"
 	ProtoVNC              = "vnc"
 	ProtoWireGuard        = "wireguard"
+	ProtoX2AP             = "x2ap"
 	ProtoZabbixAgent      = "zabbix-agent"
 	ProtoZooKeeper        = "zookeeper"
 	ProtoUnknown          = "unknown"
@@ -218,6 +224,8 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoGTPC:
 		var p ServiceGTPC
+	case ProtoGESRTP:
+		var p ServiceGESRTP
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoGTPPrime:
@@ -236,12 +244,20 @@ func (e Service) Metadata() Metadata {
 		var p ServicePostgreSQL
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
+	case ProtoPROFINET:
+		var p ServicePROFINET
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
 	case ProtoVNC:
 		var p ServiceVNC
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoWireGuard:
 		var p ServiceWireGuard
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoX2AP:
+		var p ServiceX2AP
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoTelnet:
@@ -294,6 +310,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoKerberos:
 		var p ServiceKerberos
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoKNXIP:
+		var p ServiceKNXIP
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoKubernetes:
@@ -400,6 +420,10 @@ func (e Service) Metadata() Metadata {
 		var p ServiceSCCP
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
+	case ProtoSGsAP:
+		var p ServiceSGsAP
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
 	case ProtoIMAPS:
 		var p ServiceIMAPS
 		_ = json.Unmarshal(e.Raw, &p)
@@ -490,6 +514,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoActiveMQOpenWire:
 		var p ServiceActiveMQOpenWire
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoATG:
+		var p ServiceATG
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoAMQP:
@@ -847,6 +875,14 @@ type ServiceFTP struct {
 
 func (e ServiceFTP) Type() string { return ProtoFTP }
 
+type ServiceGESRTP struct {
+	PLCName         string   `json:"plcName,omitempty"`
+	DeviceIndicator uint8    `json:"deviceIndicator,omitempty"`
+	CPEs            []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceGESRTP) Type() string { return ProtoGESRTP }
+
 type ServiceSMPP struct {
 	CPEs            []string `json:"cpes,omitempty"`            // Common Platform Enumeration identifiers for vulnerability tracking
 	ProtocolVersion string   `json:"protocolVersion,omitempty"` // SMPP protocol version (e.g., "3.4", "5.0")
@@ -927,6 +963,17 @@ type ServiceKerberos struct {
 }
 
 func (e ServiceKerberos) Type() string { return ProtoKerberos }
+
+type ServiceKNXIP struct {
+	DeviceName      string   `json:"deviceName"`                // Friendly name (30 chars max)
+	KNXAddress      string   `json:"knxAddress"`                // Individual address "area.line.device"
+	SerialNumber    string   `json:"serialNumber"`              // 6-byte hex string
+	MACAddress      string   `json:"macAddress"`                // XX:XX:XX:XX:XX:XX
+	KNXMedium       string   `json:"knxMedium,omitempty"`       // "TP1", "PL110", "RF", "IP"
+	ServiceFamilies []string `json:"serviceFamilies,omitempty"` // ["Core", "Tunnelling", "Routing"]
+}
+
+func (e ServiceKNXIP) Type() string { return ProtoKNXIP }
 
 type ServiceKubernetes struct {
 	CPEs         []string `json:"cpes,omitempty"`
@@ -1123,6 +1170,15 @@ type ServiceS7comm struct {
 
 func (e ServiceS7comm) Type() string { return ProtoS7comm }
 
+type ServicePROFINET struct {
+	DeviceName string   `json:"deviceName,omitempty"`
+	DeviceType string   `json:"deviceType,omitempty"`
+	Vendor     string   `json:"vendor,omitempty"`
+	CPEs       []string `json:"cpes,omitempty"`
+}
+
+func (e ServicePROFINET) Type() string { return ProtoPROFINET }
+
 type ServiceDNS struct{}
 
 func (e ServiceDNS) Type() string { return ProtoDNS }
@@ -1282,6 +1338,15 @@ type ServiceActiveMQOpenWire struct {
 
 func (e ServiceActiveMQOpenWire) Type() string { return ProtoActiveMQOpenWire }
 
+type ServiceATG struct {
+	StationName string   `json:"stationName,omitempty"`
+	TankCount   int      `json:"tankCount,omitempty"`
+	Products    []string `json:"products,omitempty"`
+	CPEs        []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceATG) Type() string { return ProtoATG }
+
 type ServiceAMQP struct {
 	Product  string   `json:"product,omitempty"`  // e.g., "RabbitMQ"
 	Version  string   `json:"version,omitempty"`  // e.g., "3.12.0"
@@ -1336,6 +1401,21 @@ type ServiceSCCP struct {
 }
 
 func (e ServiceSCCP) Type() string { return ProtoSCCP }
+
+type ServiceX2AP struct {
+	ProcedureCode uint8 `json:"procedureCode,omitempty"`
+	Criticality   uint8 `json:"criticality,omitempty"`
+	MessageType   uint8 `json:"messageType,omitempty"` // 0=Initiating, 1=Successful, 2=Unsuccessful
+}
+
+func (e ServiceX2AP) Type() string { return ProtoX2AP }
+
+type ServiceSGsAP struct {
+	MessageType uint8  `json:"messageType,omitempty"`
+	SGsCause    uint8  `json:"sgsCause,omitempty"`
+}
+
+func (e ServiceSGsAP) Type() string { return ProtoSGsAP }
 
 type ServiceZabbixAgent struct {
 	RemoteCommandsEnabled bool     `json:"remoteCommandsEnabled"`
