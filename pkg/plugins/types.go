@@ -121,6 +121,7 @@ const (
 	ProtoRtsp             = "rtsp"
 	ProtoS7comm           = "s7comm"
 	ProtoSCCP             = "sccp"
+	ProtoSGsAP            = "sgsap"
 	ProtoSIP              = "sip"
 	ProtoSIPS             = "sips"
 	ProtoSMB              = "smb"
@@ -409,6 +410,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoSCCP:
 		var p ServiceSCCP
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoSGsAP:
+		var p ServiceSGsAP
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoIMAPS:
@@ -1379,6 +1384,13 @@ type ServiceX2AP struct {
 }
 
 func (e ServiceX2AP) Type() string { return ProtoX2AP }
+
+type ServiceSGsAP struct {
+	MessageType uint8  `json:"messageType,omitempty"`
+	SGsCause    uint8  `json:"sgsCause,omitempty"`
+}
+
+func (e ServiceSGsAP) Type() string { return ProtoSGsAP }
 
 type ServiceZabbixAgent struct {
 	RemoteCommandsEnabled bool     `json:"remoteCommandsEnabled"`
