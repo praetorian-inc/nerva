@@ -62,7 +62,6 @@ const (
 	ProtoFirebird         = "firebird"
 	ProtoFox              = "fox"
 	ProtoFTP              = "ftp"
-	ProtoFox              = "fox"
 	ProtoGESRTP           = "gesrtp"
 	ProtoGTPC             = "gtpc"
 	ProtoGTPPrime         = "gtpprime"
@@ -154,6 +153,7 @@ const (
 	ProtoTURN             = "turn"
 	ProtoVNC              = "vnc"
 	ProtoWireGuard        = "wireguard"
+	ProtoX11              = "x11"
 	ProtoX2AP             = "x2ap"
 	ProtoZabbixAgent      = "zabbix-agent"
 	ProtoZooKeeper        = "zookeeper"
@@ -605,6 +605,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoPFCP:
 		var p ServicePFCP
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoX11:
+		var p ServiceX11
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	default:
@@ -1598,3 +1602,13 @@ type ServiceZabbixAgent struct {
 }
 
 func (e ServiceZabbixAgent) Type() string { return ProtoZabbixAgent }
+
+type ServiceX11 struct {
+	MajorVersion  uint16 `json:"majorVersion"`
+	MinorVersion  uint16 `json:"minorVersion"`
+	Vendor        string `json:"vendor,omitempty"`
+	AccessGranted bool   `json:"accessGranted"`
+	DisplayNumber int    `json:"displayNumber,omitempty"`
+}
+
+func (e ServiceX11) Type() string { return ProtoX11 }

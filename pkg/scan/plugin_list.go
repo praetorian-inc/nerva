@@ -123,6 +123,7 @@ import (
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/unitronics"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/vnc"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/wireguard"
+	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/x11"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/x2ap"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/zabbix"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/zookeeper"
