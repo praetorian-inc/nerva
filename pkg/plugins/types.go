@@ -103,6 +103,7 @@ const (
 	ProtoNetbios          = "netbios"
 	ProtoNFS              = "nfs"
 	ProtoNTP              = "ntp"
+	ProtoOMRONFINS        = "omron-fins"
 	ProtoOPCUA            = "opcua"
 	ProtoOpenVPN          = "openvpn"
 	ProtoOracle           = "oracle"
@@ -335,6 +336,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoOracle:
 		var p ServiceOracle
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoOMRONFINS:
+		var p ServiceOMRONFINS
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoOPCUA:
@@ -1072,6 +1077,14 @@ type ServiceWireGuard struct {
 }
 
 func (e ServiceWireGuard) Type() string { return ProtoWireGuard }
+
+type ServiceOMRONFINS struct {
+	ControllerModel   string   `json:"controllerModel,omitempty"`
+	ControllerVersion string   `json:"controllerVersion,omitempty"`
+	CPEs              []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceOMRONFINS) Type() string { return ProtoOMRONFINS }
 
 type ServiceOPCUA struct {
 	ApplicationName string   `json:"applicationName,omitempty"` // Server application name

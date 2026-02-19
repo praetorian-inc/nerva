@@ -81,6 +81,7 @@ import (
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/netbios"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/nfs"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/ntp"
+	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/omronfins"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/opcua"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/openvpn"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/pcworx"
