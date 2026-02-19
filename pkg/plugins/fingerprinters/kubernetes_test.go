@@ -290,6 +290,34 @@ func TestBuildK8sCPE(t *testing.T) {
 	}
 }
 
+func TestKubernetesFingerprinter_Fingerprint_GrafanaFalsePositive(t *testing.T) {
+	fp := &KubernetesFingerprinter{}
+	resp := &http.Response{
+		StatusCode: 200,
+		Header: http.Header{
+			"Content-Type": []string{"application/json"},
+		},
+	}
+
+	// Grafana's /version endpoint returns a response that matches the k8sVersionResponse
+	// struct but with a non-standard gitTreeState (not "clean", "dirty", or "archive").
+	// The fingerprinter must NOT detect this as Kubernetes.
+	body := []byte(`{
+		"major": "1",
+		"minor": "32",
+		"gitVersion": "1.32.0+grafana-v11.5.2",
+		"gitTreeState": "grafana v11.5.2",
+		"goVersion": "go1.23.5",
+		"compiler": "gc",
+		"platform": "linux/arm64"
+	}`)
+
+	result, err := fp.Fingerprint(resp, body)
+
+	assert.Nil(t, result, "Grafana /version response must not be detected as Kubernetes")
+	assert.Nil(t, err)
+}
+
 func TestKubernetesFingerprinter_Integration(t *testing.T) {
 	// Clear registry
 	httpFingerprinters = nil

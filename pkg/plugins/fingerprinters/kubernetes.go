@@ -67,6 +67,12 @@ func (f *KubernetesFingerprinter) Fingerprint(resp *http.Response, body []byte) 
 		return nil, nil
 	}
 
+	// Validate gitTreeState — real K8s API servers use clean/dirty/archive
+	validGitTreeStates := map[string]bool{"clean": true, "dirty": true, "archive": true}
+	if !validGitTreeStates[version.GitTreeState] {
+		return nil, nil
+	}
+
 	// GitVersion format: "v1.29.0" - strip the "v" prefix for CPE
 	versionStr := strings.TrimPrefix(version.GitVersion, "v")
 
