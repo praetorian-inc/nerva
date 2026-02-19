@@ -57,6 +57,7 @@ import (
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/ipsec"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/iua"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/javarmi"
+	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/jetdirect"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/jdwp"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/kafka/kafkaNew"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/kafka/kafkaOld"
