@@ -76,6 +76,7 @@ const (
 	ProtoIMAPS            = "imaps"
 	ProtoInfluxDB         = "influxdb"
 	ProtoIPMI             = "ipmi"
+	ProtoIPP              = "ipp"
 	ProtoIPSEC            = "ipsec"
 	ProtoIUA              = "iua"
 	ProtoJDWP             = "jdwp"
@@ -457,6 +458,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoIKEv2:
 		var p ServiceIKEv2
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoIPP:
+		var p ServiceIPP
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoIUA:
@@ -1295,6 +1300,18 @@ type ServiceDB2 struct {
 }
 
 func (e ServiceDB2) Type() string { return ProtoDB2 }
+
+type ServiceIPP struct {
+	PrinterMakeAndModel string   `json:"printerMakeAndModel,omitempty"`
+	FirmwareVersion     string   `json:"firmwareVersion,omitempty"`
+	PrinterState        string   `json:"printerState,omitempty"`
+	IPPVersions         []string `json:"ippVersions,omitempty"`
+	PrinterName         string   `json:"printerName,omitempty"`
+	PrinterURI          string   `json:"printerUri,omitempty"`
+	CPEs                []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceIPP) Type() string { return ProtoIPP }
 
 type ServiceCassandra struct {
 	Product          string   `json:"product,omitempty"`          // "Apache Cassandra", "ScyllaDB", "DataStax Enterprise"
