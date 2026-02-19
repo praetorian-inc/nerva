@@ -125,6 +125,12 @@ func TestExtractVendorModel(t *testing.T) {
 		{"Lexmark", "Lexmark MS812de", "lexmark", "MS812de"},
 		{"Epson", "EPSON AL-M400DN", "epson", "AL-M400DN"},
 		{"Samsung", "Samsung CLX-9301", "samsung", "CLX-9301"},
+		{"Sharp", "SHARP MX-3070N", "sharp", "MX-3070N"},
+		{"Oki", "OKI C844", "oki", "C844"},
+		{"Dell", "Dell Color Laser 3110cn", "dell", "Color Laser 3110cn"},
+		{"Toshiba", "TOSHIBA e-STUDIO5560C", "toshiba", "e-STUDIO5560C"},
+		{"Zebra", "Zebra ZT410", "zebra", "ZT410"},
+		{"Pantum", "Pantum M6800FDW", "pantum", "M6800FDW"},
 		{"Unknown vendor", "SomeUnknown Printer Model", "", "SomeUnknown Printer Model"},
 		{"Empty string", "", "", ""},
 	}
@@ -302,6 +308,50 @@ func TestEnrichFilesystemAccess(t *testing.T) {
 	}
 }
 
+func TestEnrichFirmwareFromConfig(t *testing.T) {
+	timeout := 5 * time.Second
+
+	tests := []struct {
+		name         string
+		responses    [][]byte
+		wantFirmware string
+	}{
+		{
+			name:         "HP firmware datecode",
+			responses:    [][]byte{[]byte("@PJL INFO CONFIG\r\nFIRMWARE DATECODE=20150327\r\nPAGES=12345\r\n")},
+			wantFirmware: "20150327",
+		},
+		{
+			name:         "firmware version format",
+			responses:    [][]byte{[]byte("FIRMWARE=V4.2.1\r\n")},
+			wantFirmware: "V4.2.1",
+		},
+		{
+			name:         "empty response",
+			responses:    [][]byte{{}},
+			wantFirmware: "",
+		},
+		{
+			name:         "no firmware in config",
+			responses:    [][]byte{[]byte("@PJL INFO CONFIG\r\nPAPERSIZE=LETTER\r\n")},
+			wantFirmware: "",
+		},
+		{
+			name:         "EOF",
+			responses:    [][]byte{},
+			wantFirmware: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			conn := &mockConn{readData: tt.responses}
+			got := enrichFirmwareFromConfig(conn, timeout)
+			assert.Equal(t, tt.wantFirmware, got)
+		})
+	}
+}
+
 func TestRunPlugin(t *testing.T) {
 	plugin := &JetDirectPlugin{}
 	timeout := 5 * time.Second
@@ -315,6 +365,8 @@ func TestRunPlugin(t *testing.T) {
 			readData: [][]byte{
 				// Phase 1: PJL INFO ID response
 				[]byte("@PJL INFO ID\r\n\"HP LaserJet 4250\"\r\n"),
+				// Phase 2 firmware fallback: PJL INFO CONFIG response (no firmware found)
+				[]byte("@PJL INFO CONFIG\r\nPAPERSIZE=LETTER\r\n"),
 				// Phase 2a: PJL INFO STATUS response
 				[]byte("@PJL INFO STATUS\r\nCODE=10001\r\nDISPLAY=\"Ready\"\r\n"),
 				// Phase 2b: FSDIRLIST response

@@ -59,6 +59,12 @@ var vendorPatterns = []struct {
 	{"samsung", regexp.MustCompile(`(?i)^Samsung\s+(.+)`)},
 	{"konica_minolta", regexp.MustCompile(`(?i)^KONICA MINOLTA\s+(.+)`)},
 	{"kyocera", regexp.MustCompile(`(?i)^KYOCERA\s+(.+)`)},
+	{"sharp", regexp.MustCompile(`(?i)^SHARP\s+(.+)`)},
+	{"oki", regexp.MustCompile(`(?i)^OKI\s+(.+)`)},
+	{"dell", regexp.MustCompile(`(?i)^Dell\s+(.+)`)},
+	{"toshiba", regexp.MustCompile(`(?i)^TOSHIBA\s+(.+)`)},
+	{"zebra", regexp.MustCompile(`(?i)^Zebra\s+(.+)`)},
+	{"pantum", regexp.MustCompile(`(?i)^Pantum\s+(.+)`)},
 }
 
 // firmwarePattern extracts firmware version from Brother-style IDs (e.g., "Ver.b.26")
@@ -157,6 +163,25 @@ func enrichStatus(conn net.Conn, timeout time.Duration) string {
 	return ""
 }
 
+// pjlFirmwareConfigPattern extracts firmware version from PJL INFO CONFIG response
+// Matches patterns like: FIRMWARE DATECODE=20150327 or FIRMWARE=V4.2.1
+var pjlFirmwareConfigPattern = regexp.MustCompile(`(?i)FIRMWARE(?:\s+DATECODE)?[=\s]+([^\r\n]+)`)
+
+// enrichFirmwareFromConfig sends PJL INFO CONFIG and extracts firmware version.
+// This is useful for HP printers that don't include firmware in INFO ID.
+func enrichFirmwareFromConfig(conn net.Conn, timeout time.Duration) string {
+	probe := append(append(append([]byte{}, uel...), []byte("@PJL INFO CONFIG\r\n")...), uel...)
+	response, err := utils.SendRecv(conn, probe, timeout)
+	if err != nil || len(response) == 0 {
+		return ""
+	}
+	matches := pjlFirmwareConfigPattern.FindSubmatch(response)
+	if len(matches) >= 2 {
+		return strings.TrimSpace(string(matches[1]))
+	}
+	return ""
+}
+
 // enrichFilesystemAccess sends PJL FSDIRLIST and returns true if filesystem is accessible.
 func enrichFilesystemAccess(conn net.Conn, timeout time.Duration) bool {
 	probe := append(append(append([]byte{}, uel...), []byte("@PJL FSDIRLIST NAME=\"0:\\\" COUNT=1\r\n")...), uel...)
@@ -185,6 +210,10 @@ func (p *JetDirectPlugin) Run(conn net.Conn, timeout time.Duration, target plugi
 	// Phase 2: Enrichment
 	vendor, model := extractVendorModel(rawID)
 	firmware := extractFirmware(rawID)
+	// If firmware not in ID string, try INFO CONFIG (common for HP)
+	if firmware == "" {
+		firmware = enrichFirmwareFromConfig(conn, timeout)
+	}
 	cpe := buildJetDirectCPE(vendor, model, firmware)
 
 	status := enrichStatus(conn, timeout)
