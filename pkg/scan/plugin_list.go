@@ -40,6 +40,7 @@ import (
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/ethernetip"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/firebird"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/ftp"
+	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/fox"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/gesrtp"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/gtpprime"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/http"
