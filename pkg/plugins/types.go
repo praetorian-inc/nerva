@@ -60,6 +60,7 @@ const (
 	ProtoEthernetIP       = "ethernetip"
 	ProtoFirebird         = "firebird"
 	ProtoFTP              = "ftp"
+	ProtoFox              = "fox"
 	ProtoGESRTP           = "gesrtp"
 	ProtoGTPC             = "gtpc"
 	ProtoGTPPrime         = "gtpprime"
@@ -225,6 +226,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoFTP:
 		var p ServiceFTP
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoFox:
+		var p ServiceFox
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoGTPC:
@@ -923,6 +928,22 @@ type ServiceFTP struct {
 }
 
 func (e ServiceFTP) Type() string { return ProtoFTP }
+
+type ServiceFox struct {
+	Version     string   `json:"version,omitempty"`     // Fox protocol version
+	HostName    string   `json:"hostName,omitempty"`    // Device hostname
+	HostAddress string   `json:"hostAddress,omitempty"` // Device IP address
+	AppName     string   `json:"appName,omitempty"`     // Application name
+	AppVersion  string   `json:"appVersion,omitempty"`  // Application version
+	VMName      string   `json:"vmName,omitempty"`      // Virtual machine name
+	VMVersion   string   `json:"vmVersion,omitempty"`   // VM version
+	OSName      string   `json:"osName,omitempty"`      // Operating system name
+	StationName string   `json:"stationName,omitempty"` // Station name
+	BrandId     string   `json:"brandId,omitempty"`     // Brand identifier
+	CPEs        []string `json:"cpes,omitempty"`        // Common Platform Enumeration identifiers for vulnerability tracking
+}
+
+func (e ServiceFox) Type() string { return ProtoFox }
 
 type ServiceGESRTP struct {
 	PLCName         string   `json:"plcName,omitempty"`
