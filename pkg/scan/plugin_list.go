@@ -42,6 +42,7 @@ import (
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/ftp"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/gesrtp"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/gtpprime"
+	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/gtpu"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/http"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/h323"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/hartip"
