@@ -125,6 +125,8 @@ const (
 	ProtoSGsAP            = "sgsap"
 	ProtoSIP              = "sip"
 	ProtoSIPS             = "sips"
+	ProtoSOCKS4           = "socks4"
+	ProtoSOCKS5           = "socks5"
 	ProtoSMB              = "smb"
 	ProtoSMPP             = "smpp"
 	ProtoSMTP             = "smtp"
@@ -505,6 +507,14 @@ func (e Service) Metadata() Metadata {
 		var p ServiceSIPS
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
+	case ProtoSOCKS4:
+		var p ServiceSOCKS4
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoSOCKS5:
+		var p ServiceSOCKS5
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
 	case ProtoSonarQube:
 		var p ServiceSonarQube
 		_ = json.Unmarshal(e.Raw, &p)
@@ -744,6 +754,24 @@ type ServiceSIPS struct {
 }
 
 func (e ServiceSIPS) Type() string { return ProtoSIPS }
+
+type ServiceSOCKS5 struct {
+	SelectedMethod  string   `json:"selectedMethod"`
+	OfferedMethods  []string `json:"offeredMethods,omitempty"`
+	AnonymousAccess bool     `json:"anonymousAccess"`
+	CPEs            []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceSOCKS5) Type() string { return ProtoSOCKS5 }
+
+type ServiceSOCKS4 struct {
+	Status          string   `json:"status"`
+	SOCKS4a         bool     `json:"socks4a"`
+	AnonymousAccess bool     `json:"anonymousAccess"`
+	CPEs            []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceSOCKS4) Type() string { return ProtoSOCKS4 }
 
 type ServiceSonarQube struct {
 	Status          string   `json:"status,omitempty"`
