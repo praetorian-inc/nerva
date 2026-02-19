@@ -71,6 +71,23 @@ services:
       timeout: 5s
       retries: 5
 
+  # ProConOS mock server for ICS testing
+  proconos-mock:
+    build:
+      context: ./testdata/proconos
+      dockerfile: Dockerfile
+    container_name: proconos-mock-server
+    hostname: proconos.local
+    networks:
+      - sctp-test-network
+    ports:
+      - "20547:20547"
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "20547"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   # Open5GS HSS (Optional - for realistic 5G/LTE testing)
   # Enable with: docker-compose --profile full up
   open5gs-hss:

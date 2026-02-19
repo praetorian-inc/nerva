@@ -9,6 +9,11 @@ testdata/
 ├── freediameter/           # FreeDiameter server for Diameter protocol testing
 │   ├── Dockerfile          # FreeDiameter container image
 │   └── freediameter.conf   # Minimal Diameter server configuration
+├── osmo-stp/               # OsmoSTP for M3UA/SIGTRAN testing
+│   └── Dockerfile          # OsmoSTP container image
+├── proconos/               # ProConOS mock server for ICS/SCADA testing
+│   ├── Dockerfile          # ProConOS mock container image
+│   └── server.go           # Go-based mock ProConOS server
 ├── open5gs/                # Optional Open5GS HSS for realistic 5G/LTE testing
 │   └── hss.yaml            # HSS configuration (Diameter S6a interface)
 └── README.md               # This file
@@ -26,6 +31,8 @@ make sctp-up
 This starts:
 - **nerva-dev**: Development container with SCTP kernel module and tools
 - **freediameter**: FreeDiameter server listening on port 3868 (SCTP/TCP)
+- **osmo-stp**: OsmoSTP server listening on port 2905 (M3UA/SCTP)
+- **proconos-mock**: ProConOS mock server listening on port 20547 (TCP)
 
 ### 2. Enter the Development Container
 
@@ -69,6 +76,63 @@ nc -zv freediameter 3868  # TCP connectivity test
 # SCTP connectivity (requires SCTP tools)
 checksctp -H freediameter -p 3868
 ```
+
+### OsmoSTP (SIGTRAN M3UA Testing)
+
+**Purpose**: Provides an Osmocom SIGTRAN Transfer Point for testing M3UA and SCTP-based SS7 protocols.
+
+**Ports**:
+- `2905`: M3UA (SCTP)
+- `14001`: SUA (SCTP)
+- `4239`: VTY telnet interface
+
+**Configuration**: Uses OsmoSTP with point code 1.2.3
+
+**Testing**:
+```bash
+# Inside development container
+nc -zv osmo-stp 2905  # M3UA connectivity test
+
+# SCTP connectivity
+checksctp -H osmo-stp.local -p 2905
+```
+
+### ProConOS (ICS/SCADA PLC Runtime Testing)
+
+**Purpose**: Mock ProConOS PLC runtime engine for testing industrial control system service fingerprinting.
+
+**Ports**:
+- `20547`: ProConOS protocol (TCP)
+
+**Protocol Details**:
+- Probe: 10-byte proprietary packet (signature 0xcc)
+- Response: ~150 bytes with metadata at fixed offsets
+- Extracts: Ladder Logic Runtime version, PLC Type, Project Name, Boot Project, Source Code
+
+**Testing**:
+```bash
+# Inside development container or from host
+nc -zv localhost 20547  # TCP connectivity test
+
+# Test ProConOS detection with nerva
+./nerva scan -target localhost:20547
+
+# Run integration tests
+go test -v -tags integration ./pkg/plugins/services/proconos/...
+```
+
+**Mock Server Response**:
+- Ladder Logic Runtime: `3.5.0.10`
+- PLC Type: `ProConOS`
+- Project Name: `TestProject`
+- Boot Project: `BootProj`
+- Project Source Code: `Source.pro`
+
+**ICS Safety**:
+- Read-only detection (no PLC memory writes)
+- Non-disruptive protocol handshake only
+- Graceful error handling
+- Timeout enforcement
 
 ### Open5GS HSS (Optional - Full Stack)
 

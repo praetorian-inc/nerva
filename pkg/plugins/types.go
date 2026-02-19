@@ -116,6 +116,7 @@ const (
 	ProtoPOP3             = "pop3"
 	ProtoPOP3S            = "pop3s"
 	ProtoPostgreSQL       = "postgresql"
+	ProtoProConOS         = "proconos"
 	ProtoPROFINET         = "profinet"
 	ProtoPulsar           = "pulsar"
 	ProtoPulsarAdmin      = "pulsar-admin"
@@ -261,6 +262,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoPostgreSQL:
 		var p ServicePostgreSQL
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoProConOS:
+		var p ServiceProConOS
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoPROFINET:
@@ -741,6 +746,17 @@ type ServicePostgreSQL struct {
 	AuthRequired bool     `json:"authRequired"`
 	CPEs         []string `json:"cpes,omitempty"`
 }
+
+type ServiceProConOS struct {
+	LadderLogicRuntime string `json:"ladderLogicRuntime,omitempty"` // Version from offset 13
+	PLCType            string `json:"plcType,omitempty"`            // PLC type from offset 45
+	ProjectName        string `json:"projectName,omitempty"`        // Project name from offset 78
+	BootProject        string `json:"bootProject,omitempty"`        // Boot project (variable offset)
+	ProjectSourceCode  string `json:"projectSourceCode,omitempty"`  // Source code file (variable offset)
+	CPEs               []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceProConOS) Type() string { return ProtoProConOS }
 
 type ServicePOP3 struct {
 	Banner string `json:"banner"`
