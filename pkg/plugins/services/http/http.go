@@ -56,6 +56,7 @@ var (
 		3000: {},
 		4567: {},
 		5000: {},
+		5985: {}, // WinRM HTTP
 		8000: {},
 		8001: {},
 		8080: {},
@@ -71,6 +72,7 @@ var (
 
 	commonHTTPSPorts = map[int]struct{}{
 		443:  {},
+		5986: {}, // WinRM HTTPS
 		6443: {}, // Kubernetes API server default port
 		8443: {},
 		9443: {},
