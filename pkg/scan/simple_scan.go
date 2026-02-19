@@ -260,6 +260,8 @@ func simplePluginRunner(
 	config *Config,
 	plugin plugins.Plugin,
 ) (*plugins.Service, error) {
+	defer conn.Close()
+
 	// Log probe start.
 	if config.Verbose {
 		log.Printf("%v %v-> scanning %v\n",
