@@ -228,6 +228,8 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoFox:
 		var p ServiceFox
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
 	case ProtoGTPC:
 		var p ServiceGTPC
 		_ = json.Unmarshal(e.Raw, &p)
