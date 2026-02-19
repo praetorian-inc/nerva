@@ -84,6 +84,7 @@ References:
 package ipp
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"net"
@@ -269,7 +270,18 @@ func extractHTTPBody(response []byte) []byte {
 }
 
 // parseIPPResponse parses the binary IPP response body and returns detection result.
-// Returns nil if the response is not valid IPP.
+// Returns nil if the response is not a valid IPP response.
+//
+// A valid IPP response is identified by:
+//   - At least 8 bytes (IPP header length)
+//   - A reasonable IPP version (major version 1 or 2)
+//
+// The presence of Content-Type: application/ipp plus a structurally valid IPP
+// binary response is sufficient proof of an IPP server, even when the status
+// code indicates an error (e.g. 0x0406 client-error-not-found returned by CUPS
+// when no specific printer is configured at /ipp/print). Printer attributes are
+// only parsed for successful responses (status <= 0x00FF); error responses will
+// not carry printer attribute data.
 func parseIPPResponse(body []byte) *ippDetectionResult {
 	if len(body) < 8 {
 		return nil
@@ -279,19 +291,27 @@ func parseIPPResponse(body []byte) *ippDetectionResult {
 	// Bytes 0-1: version
 	// Bytes 2-3: status-code
 	// Bytes 4-7: request-id
+	versionMajor := body[0]
 	statusCode := binary.BigEndian.Uint16(body[2:4])
 
-	// Status codes 0x0000-0x00FF are successful
-	if statusCode > ippStatusSuccessMax {
+	// Validate IPP version is reasonable (1.x or 2.x)
+	if versionMajor < 1 || versionMajor > 2 {
 		return nil
 	}
-
-	// Parse attributes starting at byte 8
-	attrs := parseIPPAttributes(body[8:])
 
 	result := &ippDetectionResult{
 		detected: true,
 	}
+
+	// Only parse printer attributes for successful responses.
+	// Error responses (e.g. 0x0406 client-error-not-found) still confirm IPP
+	// detection but will not contain printer attribute data.
+	if statusCode > ippStatusSuccessMax {
+		return result
+	}
+
+	// Parse attributes starting at byte 8
+	attrs := parseIPPAttributes(body[8:])
 
 	if v, ok := attrs["printer-make-and-model"]; ok {
 		result.printerMakeAndModel = v
@@ -438,9 +458,50 @@ func normalizeCPEComponent(s string) string {
 	return reg.ReplaceAllString(s, "")
 }
 
+// sendRecvHTTP sends data and reads the response in a loop to ensure we get
+// both HTTP headers and body. Standard Recv does a single read which may only
+// return headers if the body arrives in a separate TCP segment.
+func sendRecvHTTP(conn net.Conn, data []byte, timeout time.Duration) ([]byte, error) {
+	err := utils.Send(conn, data, timeout)
+	if err != nil {
+		return nil, err
+	}
+
+	_ = conn.SetReadDeadline(time.Now().Add(timeout))
+
+	var buf []byte
+	tmp := make([]byte, 4096)
+	for {
+		n, readErr := conn.Read(tmp)
+		if n > 0 {
+			buf = append(buf, tmp[:n]...)
+		}
+
+		// Check if we have complete headers + some body
+		if idx := bytes.Index(buf, []byte("\r\n\r\n")); idx >= 0 {
+			bodyStart := idx + 4
+			if len(buf) > bodyStart {
+				break
+			}
+		}
+
+		if readErr != nil {
+			break
+		}
+
+		if len(buf) > 8192 {
+			break
+		}
+	}
+
+	return buf, nil
+}
 // detectIPP sends an IPP Get-Printer-Attributes probe and parses the response.
 func detectIPP(conn net.Conn, target plugins.Target, timeout time.Duration, tls bool) (*plugins.Service, error) {
 	host := target.Host
+	if host == "" {
+		host = target.Address.Addr().String()
+	}
 	port := int(target.Address.Port())
 
 	// Build the binary IPP request body
@@ -450,7 +511,7 @@ func detectIPP(conn net.Conn, target plugins.Target, timeout time.Duration, tls 
 	requestBytes := buildIPPHTTPRequest(host, port, ippBody)
 
 	// Send request and receive response
-	response, err := utils.SendRecv(conn, requestBytes, timeout)
+	response, err := sendRecvHTTP(conn, requestBytes, timeout)
 	if err != nil {
 		return nil, err
 	}

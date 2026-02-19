@@ -200,22 +200,36 @@ func TestParseIPPResponse(t *testing.T) {
 		assert.True(t, result.detected)
 	})
 
-	t.Run("error status code (0x0400) returns nil", func(t *testing.T) {
+	t.Run("error status code (0x0400) still detects IPP server", func(t *testing.T) {
 		body := buildIPPResponseBytes(0x0400, nil)
 		result := parseIPPResponse(body)
-		assert.Nil(t, result)
+		assert.NotNil(t, result)
+		assert.True(t, result.detected)
+		assert.Empty(t, result.printerMakeAndModel, "error responses should have no printer attributes")
 	})
 
-	t.Run("client error status code (0x0401) returns nil", func(t *testing.T) {
+	t.Run("client error status code (0x0401) still detects IPP server", func(t *testing.T) {
 		body := buildIPPResponseBytes(0x0401, nil)
 		result := parseIPPResponse(body)
-		assert.Nil(t, result)
+		assert.NotNil(t, result)
+		assert.True(t, result.detected)
+		assert.Empty(t, result.printerMakeAndModel, "error responses should have no printer attributes")
 	})
 
-	t.Run("server error status code (0x0500) returns nil", func(t *testing.T) {
+	t.Run("server error status code (0x0500) still detects IPP server", func(t *testing.T) {
 		body := buildIPPResponseBytes(0x0500, nil)
 		result := parseIPPResponse(body)
-		assert.Nil(t, result)
+		assert.NotNil(t, result)
+		assert.True(t, result.detected)
+		assert.Empty(t, result.printerMakeAndModel, "error responses should have no printer attributes")
+	})
+
+	t.Run("client-error-not-found (0x0406) detects IPP server (CUPS no printer configured)", func(t *testing.T) {
+		body := buildIPPResponseBytes(0x0406, nil)
+		result := parseIPPResponse(body)
+		assert.NotNil(t, result)
+		assert.True(t, result.detected)
+		assert.Empty(t, result.printerMakeAndModel, "not-found error should have no printer attributes")
 	})
 
 	t.Run("empty response returns nil", func(t *testing.T) {
