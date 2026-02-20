@@ -120,8 +120,9 @@ func DetectMilvusMetrics(conn net.Conn, target plugins.Target, timeout time.Dura
 		return "", false, fmt.Errorf("metrics endpoint returned status %d", resp.StatusCode)
 	}
 
-	// Read response body
-	body, err := io.ReadAll(resp.Body)
+	// Read response body with 10MB limit to prevent memory exhaustion attacks
+	maxResponseSize := int64(10 * 1024 * 1024) // 10MB limit
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
 	if err != nil {
 		return "", false, err
 	}

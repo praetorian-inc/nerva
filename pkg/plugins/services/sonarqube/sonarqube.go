@@ -166,7 +166,8 @@ func detectViaSystemStatus(client *http.Client, baseURL string) (string, string,
 	}
 
 	// Parse JSON response
-	body, err := io.ReadAll(resp.Body)
+	maxResponseSize := int64(10 * 1024 * 1024) // 10MB limit
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
 	if err != nil {
 		return "", "", false, err
 	}
@@ -215,7 +216,8 @@ func detectViaServerVersion(client *http.Client, baseURL string) (string, bool, 
 	}
 
 	// Read plain text response
-	body, err := io.ReadAll(resp.Body)
+	maxResponseSize := int64(10 * 1024 * 1024) // 10MB limit
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
 	if err != nil {
 		return "", false, err
 	}

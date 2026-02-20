@@ -100,21 +100,22 @@ CPE Format:
 */
 
 const (
-	DIAMETER_SCTP      = "diameter-sctp"
-	DIAMETER_PORT      = 3868
-	DIAMETER_VERSION   = 1
-	CER_COMMAND_CODE   = 257
-	R_BIT              = 0x80 // Request bit
-	DIAMETER_SUCCESS   = 2001
-	AVP_RESULT_CODE    = 268
-	AVP_ORIGIN_HOST    = 264
-	AVP_ORIGIN_REALM   = 296
-	AVP_HOST_IP_ADDR   = 257
-	AVP_VENDOR_ID      = 266
-	AVP_PRODUCT_NAME   = 269
-	AVP_FIRMWARE_REV   = 267
-	AVP_ERROR_MESSAGE  = 281
-	M_BIT              = 0x40 // Mandatory bit
+	DIAMETER_SCTP        = "diameter-sctp"
+	DIAMETER_PORT        = 3868
+	DIAMETER_VERSION     = 1
+	CER_COMMAND_CODE     = 257
+	R_BIT                = 0x80 // Request bit
+	DIAMETER_SUCCESS     = 2001
+	AVP_RESULT_CODE      = 268
+	AVP_ORIGIN_HOST      = 264
+	AVP_ORIGIN_REALM     = 296
+	AVP_HOST_IP_ADDR     = 257
+	AVP_VENDOR_ID        = 266
+	AVP_PRODUCT_NAME     = 269
+	AVP_FIRMWARE_REV     = 267
+	AVP_ERROR_MESSAGE    = 281
+	M_BIT                = 0x40 // Mandatory bit
+	maxDiameterMessage   = 16 * 1024 * 1024 // 16MB reasonable maximum for Diameter messages
 )
 
 type DIAMETERSCTPPlugin struct{}
@@ -330,10 +331,13 @@ func validateCEA(response []byte) error {
 
 	// Check message length (bytes 1-3, 24-bit big-endian)
 	msgLength := (uint32(response[1]) << 16) | (uint32(response[2]) << 8) | uint32(response[3])
-	if len(response) < int(msgLength) {
+
+	// Check for overflow: on 32-bit systems, large uint32 becomes negative int
+	// Also validate against reasonable maximum message size (16MB)
+	if msgLength > uint32(len(response)) || msgLength > maxDiameterMessage {
 		return &utils.InvalidResponseErrorInfo{
 			Service: DIAMETER_SCTP,
-			Info:    fmt.Sprintf("incomplete response: got %d bytes, expected %d", len(response), msgLength),
+			Info:    "invalid message length",
 		}
 	}
 
@@ -380,15 +384,20 @@ func enrichDiameter(cea []byte) (string, uint32, string, string, string, error) 
 		flags := cea[offset+4]
 		avpLength := (uint32(cea[offset+5]) << 16) | (uint32(cea[offset+6]) << 8) | uint32(cea[offset+7])
 
+		// Validate AVP length to prevent overflow and ensure reasonable bounds
+		if avpLength > uint32(len(cea)-offset) || avpLength > maxDiameterMessage {
+			break
+		}
+
 		// Calculate data offset (skip Vendor-ID if V-bit set)
 		dataOffset := offset + 8
 		if flags&0x80 != 0 { // V-bit set
 			dataOffset += 4
 		}
 
-		// Extract data length
+		// Extract data length with overflow protection
 		dataLength := int(avpLength) - (dataOffset - offset)
-		if dataOffset+dataLength > len(cea) {
+		if dataLength < 0 || dataOffset+dataLength > len(cea) {
 			break
 		}
 

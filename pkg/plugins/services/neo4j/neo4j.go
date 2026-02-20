@@ -413,8 +413,10 @@ func extractServerField(data []byte) string {
 				return string(data[valuePos+2 : valuePos+2+strLen])
 			}
 		} else if marker == 0xD1 && valuePos+3 <= len(data) {
-			strLen := int(binary.BigEndian.Uint16(data[valuePos+1 : valuePos+3]))
-			if valuePos+3+strLen <= len(data) {
+			strLenU16 := binary.BigEndian.Uint16(data[valuePos+1 : valuePos+3])
+			strLen := int(strLenU16)
+			// Defensive check: ensure strLen is positive and within bounds
+			if strLen >= 0 && valuePos+3+strLen <= len(data) {
 				return string(data[valuePos+3 : valuePos+3+strLen])
 			}
 		}

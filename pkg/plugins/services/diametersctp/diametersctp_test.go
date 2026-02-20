@@ -355,7 +355,7 @@ func TestValidateCEA(t *testing.T) {
 				cea[3] = 0xC8 // 200 in hex
 				return cea
 			},
-			expectedError: "incomplete response",
+			expectedError: "invalid message length",
 		},
 	}
 
@@ -595,5 +595,123 @@ func TestBuildCER(t *testing.T) {
 		if !foundAVPs[code] {
 			t.Errorf("CER missing mandatory AVP: %s (code %d)", name, code)
 		}
+	}
+}
+
+// TestValidateCEAOverflowProtection verifies message length overflow validation
+func TestValidateCEAOverflowProtection(t *testing.T) {
+	tests := []struct {
+		name          string
+		buildResponse func() []byte
+		expectedError string
+	}{
+		{
+			name: "Message length exceeds maximum (16MB)",
+			buildResponse: func() []byte {
+				cea := buildMockCEA("test", 0, false)
+				// Set message length to 17MB (exceeds 16MB limit)
+				// 17MB = 17 * 1024 * 1024 = 17825792 = 0x01100000
+				cea[1] = 0x01
+				cea[2] = 0x10
+				cea[3] = 0x00
+				return cea
+			},
+			expectedError: "invalid message length",
+		},
+		{
+			name: "Message length larger than response buffer",
+			buildResponse: func() []byte {
+				cea := buildMockCEA("test", 0, false)
+				// Set message length to claim 1000 bytes but response is ~200 bytes
+				cea[1] = 0x00
+				cea[2] = 0x03
+				cea[3] = 0xE8 // 1000 bytes
+				return cea
+			},
+			expectedError: "invalid message length",
+		},
+		{
+			name: "Valid message at boundary (exactly buffer size)",
+			buildResponse: func() []byte {
+				cea := buildMockCEA("test", 0, false)
+				// Message length should match actual size (valid)
+				actualLength := len(cea)
+				cea[1] = byte((actualLength >> 16) & 0xFF)
+				cea[2] = byte((actualLength >> 8) & 0xFF)
+				cea[3] = byte(actualLength & 0xFF)
+				return cea
+			},
+			expectedError: "", // No error expected
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			response := tt.buildResponse()
+			err := validateCEA(response)
+
+			if tt.expectedError == "" {
+				if err != nil {
+					t.Errorf("validateCEA() error = %v, want nil", err)
+				}
+			} else {
+				if err == nil {
+					t.Errorf("validateCEA() error = nil, want error containing %q", tt.expectedError)
+				} else if !contains(err.Error(), tt.expectedError) {
+					t.Errorf("validateCEA() error = %q, want error containing %q", err.Error(), tt.expectedError)
+				}
+			}
+		})
+	}
+}
+
+// TestEnrichDiameterAVPOverflowProtection verifies AVP length overflow validation
+func TestEnrichDiameterAVPOverflowProtection(t *testing.T) {
+	tests := []struct {
+		name          string
+		buildCEA      func() []byte
+		expectedError bool
+		description   string
+	}{
+		{
+			name: "AVP length exceeds message bounds",
+			buildCEA: func() []byte {
+				// Build a valid CEA first
+				cea := buildMockCEA("test", 10500, true)
+				// Corrupt the first AVP length (Result-Code AVP at offset 20)
+				// Set AVP length to claim 1000 bytes (will exceed message)
+				cea[25] = 0x00 // High byte of 24-bit length
+				cea[26] = 0x03 // Mid byte
+				cea[27] = 0xE8 // Low byte (1000 decimal)
+				return cea
+			},
+			expectedError: true, // Parser stops early, won't find required AVPs
+			description:   "Parser should stop at invalid AVP without crashing",
+		},
+		{
+			name: "Valid CEA with multiple AVPs",
+			buildCEA: func() []byte {
+				return buildMockCEA("freeDiameter", 10500, true)
+			},
+			expectedError: false,
+			description:   "Valid message should parse successfully",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cea := tt.buildCEA()
+			_, _, _, _, _, err := enrichDiameter(cea)
+
+			if tt.expectedError {
+				if err == nil {
+					t.Errorf("enrichDiameter() error = nil, want error (%s)", tt.description)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("enrichDiameter() error = %v, want nil (%s)", err, tt.description)
+				}
+			}
+		})
 	}
 }

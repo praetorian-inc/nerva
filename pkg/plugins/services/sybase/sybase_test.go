@@ -173,6 +173,61 @@ func TestParseTDSOptionTokens(t *testing.T) {
 			shouldErr: true,
 			errInfo:   "terminated",
 		},
+		{
+			name: "uint32 wraparound - large offset",
+			response: func() []byte {
+				// Create a minimal response with a malicious large offset
+				// that could cause issues if arithmetic happens before validation
+				totalLength := uint16(8 + 10) // Header + minimal body
+				header := []byte{
+					0x04,                                    // Type: Tabular Response
+					0x01,                                    // Status: EOM
+					byte(totalLength >> 8), byte(totalLength), // Length
+					0x00, 0x00, // SPID: 0
+					0x01, // PacketID: 1
+					0x00, // Window: 0
+				}
+				// Malicious token: huge offset (0xFFF0 = 65520) that when added to 8
+				// gives dataStart=65528, exceeding our small 18-byte buffer
+				body := []byte{
+					0x00,       // Token type
+					0xFF, 0xF0, // plOffset = 65520 (exceeds buffer)
+					0x00, 0x05, // plOptionLength = 5
+					0xFF, // Terminator
+					0x00, 0x00, 0x00, // Padding
+				}
+				return append(header, body...)
+			}(),
+			shouldErr: true,
+			errInfo:   "offset",
+		},
+		{
+			name: "uint32 wraparound - large length",
+			response: func() []byte {
+				// Create response where dataStart is valid but
+				// plOptionLength would make dataEnd exceed buffer
+				totalLength := uint16(8 + 10)
+				header := []byte{
+					0x04,                                    // Type: Tabular Response
+					0x01,                                    // Status: EOM
+					byte(totalLength >> 8), byte(totalLength), // Length
+					0x00, 0x00, // SPID: 0
+					0x01, // PacketID: 1
+					0x00, // Window: 0
+				}
+				// Token with small offset but huge length
+				body := []byte{
+					0x00,       // Token type
+					0x00, 0x00, // plOffset = 0
+					0xFF, 0xFF, // plOptionLength = 65535 (way exceeds buffer)
+					0xFF,       // Terminator
+					0x00, 0x00, 0x00, // Padding
+				}
+				return append(header, body...)
+			}(),
+			shouldErr: true,
+			errInfo:   "length",
+		},
 	}
 
 	for _, tt := range tests {

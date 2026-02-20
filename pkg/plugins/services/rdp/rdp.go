@@ -276,6 +276,10 @@ func DetectRDPAuth(conn net.Conn, timeout time.Duration) (*plugins.ServiceRDP, b
 	if targetNameLen > 0 {
 		startIdx := int(responseData.TargetNameBufferOffset)
 		endIdx := startIdx + targetNameLen
+		// Validate bounds before slice access
+		if startIdx > len(response) || endIdx > len(response) || endIdx < startIdx {
+			return &info, true, &utils.InvalidResponseErrorInfo{Service: RDP, Info: "invalid target name bounds"}
+		}
 		targetName := strings.ReplaceAll(string(response[startIdx:endIdx]), "\x00", "")
 		info.TargetName = targetName
 	}
@@ -308,8 +312,13 @@ func DetectRDPAuth(conn net.Conn, timeout time.Duration) (*plugins.ServiceRDP, b
 		}
 		currIdx := startIdx
 		for avPair.AvID != 0 {
+			// Validate bounds before slice access
+			valueEnd := currIdx + avPairLen + int(avPair.AvLen)
+			if currIdx < 0 || currIdx+avPairLen > len(response) || valueEnd > len(response) || valueEnd < currIdx {
+				return &info, true, &utils.InvalidResponseErrorInfo{Service: RDP, Info: "invalid AV_PAIR bounds"}
+			}
 			if field, exists := AvIDMap[avPair.AvID]; exists {
-				value := strings.ReplaceAll(string(response[currIdx+avPairLen:currIdx+avPairLen+int(avPair.AvLen)]), "\x00", "")
+				value := strings.ReplaceAll(string(response[currIdx+avPairLen:valueEnd]), "\x00", "")
 				switch field {
 				case "netbiosComputerName":
 					info.NetBIOSComputerName = value

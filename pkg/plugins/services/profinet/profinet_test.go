@@ -162,15 +162,29 @@ func TestExtractAnnotation(t *testing.T) {
 			expected: "",
 		},
 		{
+			name: "annotation length exceeds buffer bounds (uint32 overflow protection)",
+			response: func() []byte {
+				response := make([]byte, 200)
+				// Remaining buffer after offset 173 is only 27 bytes (200-173)
+				// Set annotation length to 1000 which exceeds remaining buffer
+				// This tests protection against uint32→int overflow on 32-bit systems
+				binary.LittleEndian.PutUint32(response[169:173], 1000)
+				copy(response[173:], []byte("Short"))
+				return response
+			}(),
+			expected: "",
+		},
+		{
 			name: "annotation length exceeds response size",
 			response: func() []byte {
 				response := make([]byte, 200)
 				// Set annotation length to 100 but response only has 27 bytes after offset 173
+				// With bounds validation fix, this is now rejected to prevent overflow
 				binary.LittleEndian.PutUint32(response[169:173], 100)
 				copy(response[173:], []byte("Short text"))
 				return response
 			}(),
-			expected: "Short text",
+			expected: "", // Changed from "Short text" - now properly rejects invalid lengths
 		},
 		{
 			name: "annotation with null terminator",

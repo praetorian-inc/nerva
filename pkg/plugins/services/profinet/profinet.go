@@ -127,7 +127,8 @@ func extractAnnotation(response []byte) string {
 	}
 
 	annotationLen := binary.LittleEndian.Uint32(response[169:173])
-	if annotationLen == 0 || annotationLen > 1024 {
+	// Validate against actual remaining buffer size to prevent overflow
+	if annotationLen == 0 || annotationLen > uint32(len(response)-173) || annotationLen > 1024 {
 		return ""
 	}
 

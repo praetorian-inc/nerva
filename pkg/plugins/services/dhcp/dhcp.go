@@ -193,8 +193,15 @@ func getSignatures() map[int]string {
 func hostnameParse(options []byte) []string {
 	var ret string
 	var retList []string
-	wholePacket := options[2 : 2+int(options[1])]
+
+	// Bounds check before slicing with network-controlled length
+	optLen := int(options[1])
+	if len(options) < optLen+2 {
+		return retList
+	}
+	wholePacket := options[2 : 2+optLen]
 	packet := wholePacket
+
 	for len(packet) != 0 {
 		length := int(packet[0])
 		if len(packet) < length+1 {
@@ -214,7 +221,13 @@ func hostnameParse(options []byte) []string {
 				ret += "."
 			}
 			if packet[0] == 0xc0 && len(packet) == 2 {
-				wholePacket = wholePacket[int(packet[1]) : len(wholePacket)-(4+length)]
+				// Validate compression pointer bounds
+				compressionOffset := int(packet[1])
+				endOffset := 4 + length
+				if compressionOffset >= len(wholePacket) || endOffset > len(wholePacket) {
+					return retList
+				}
+				wholePacket = wholePacket[compressionOffset : len(wholePacket)-endOffset]
 				packet = wholePacket
 			}
 		}
@@ -224,10 +237,22 @@ func hostnameParse(options []byte) []string {
 }
 
 func ipParse(options []byte) []string {
-	ipLen := int(options[1]) / 4
-	ipList := options[2 : 2+int(options[1])]
 	var ipStrList []string
+
+	// Bounds check before slicing with network-controlled length
+	optLen := int(options[1])
+	if len(options) < optLen+2 {
+		return ipStrList
+	}
+
+	ipLen := optLen / 4
+	ipList := options[2 : 2+optLen]
+
 	for ipLen != 0 {
+		// Ensure we have at least 4 bytes for a full IP address
+		if len(ipList) < 4 {
+			return ipStrList
+		}
 		ip := fmt.Sprintf("%d.%d.%d.%d", int(ipList[0]), int(ipList[1]), int(ipList[2]), int(ipList[3]))
 		ipStrList = append(ipStrList, ip)
 		ipLen--

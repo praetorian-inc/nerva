@@ -322,15 +322,22 @@ func parseTDSOptionTokens(response []byte) ([]OptionToken, error) {
 		// Extract option data
 		var plOptionData []byte
 		if plOptionLength > 0 {
-			dataStart := 8 + plOffset // Offset is relative to body start (after header)
-			dataEnd := dataStart + plOptionLength
-
-			if dataEnd > uint32(len(response)) {
+			// Validate before arithmetic to prevent wraparound
+			responseLen := uint32(len(response))
+			if plOffset > responseLen-8 {
 				return nil, &utils.InvalidResponseErrorInfo{
 					Service: SYBASE,
-					Info:    "option token data extends beyond packet",
+					Info:    "invalid offset",
 				}
 			}
+			dataStart := 8 + plOffset
+			if plOptionLength > responseLen-dataStart {
+				return nil, &utils.InvalidResponseErrorInfo{
+					Service: SYBASE,
+					Info:    "invalid option length",
+				}
+			}
+			dataEnd := dataStart + plOptionLength
 
 			plOptionData = response[dataStart:dataEnd]
 		}
