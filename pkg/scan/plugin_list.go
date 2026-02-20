@@ -71,6 +71,7 @@ import (
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/linuxrpc"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/m3ua"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/megaco"
+	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/mgcp"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/melsecq"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/memcached"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/milvus"
