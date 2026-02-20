@@ -388,3 +388,21 @@ func TestS7comm_ParseSZL001CResponseEmpty(t *testing.T) {
 		})
 	}
 }
+
+// TestS7comm_ValidateS7SetupResponseBoundsCheck verifies CWE-125 fix
+// An 8-byte malicious response should be rejected before out-of-bounds read at response[8]
+func TestS7comm_ValidateS7SetupResponseBoundsCheck(t *testing.T) {
+	// Malicious 8-byte response that would cause out-of-bounds read
+	// if bounds check incorrectly allows len(response)=8
+	// s7Offset=7, so accessing response[7] and response[8] requires len>=9
+	maliciousResponse := []byte{
+		0x03, 0x00, 0x00, 0x08, // TPKT: valid header, length=8
+		0x02, 0xF0, 0x80,       // COTP DT header (3 bytes)
+		0x32,                   // S7 Protocol ID at offset 7
+		// Missing byte at offset 8 - would trigger out-of-bounds read
+	}
+
+	// Should safely reject without panic or out-of-bounds access
+	assert.False(t, validateS7SetupResponse(maliciousResponse),
+		"8-byte response must be rejected to prevent out-of-bounds read at response[8]")
+}

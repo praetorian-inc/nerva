@@ -51,7 +51,9 @@ func Report(services []plugins.Service) error {
 	} else {
 		log.SetOutput(os.Stdout)
 	}
-	defer writeFile.Close()
+	if writeFile != nil {
+		defer writeFile.Close()
+	}
 
 	if config.outputJSON {
 		outputFormat = JSON

@@ -15,13 +15,67 @@
 package modbus
 
 import (
+	"net"
 	"testing"
+	"time"
 
 	"github.com/ory/dockertest/v3"
 	"github.com/praetorian-inc/nerva/pkg/plugins"
 	"github.com/praetorian-inc/nerva/pkg/test"
 	"github.com/stretchr/testify/assert"
 )
+
+// mockModbusConn is a mock net.Conn for testing
+type mockModbusConn struct {
+	responseData []byte
+	readIndex    int
+	writeData    []byte
+}
+
+func (m *mockModbusConn) Read(b []byte) (n int, err error) {
+	// Build response with transaction ID from write (if we have write data)
+	if len(m.writeData) >= 2 && m.readIndex == 0 {
+		// Echo back transaction ID (first 2 bytes from write) plus rest of response
+		m.responseData = append(m.writeData[:2], m.responseData[2:]...)
+	}
+
+	if m.readIndex >= len(m.responseData) {
+		return 0, nil
+	}
+	n = copy(b, m.responseData[m.readIndex:])
+	m.readIndex += n
+	return n, nil
+}
+
+func (m *mockModbusConn) Write(b []byte) (n int, err error) {
+	m.writeData = make([]byte, len(b))
+	copy(m.writeData, b)
+	return len(b), nil
+}
+
+func (m *mockModbusConn) Close() error {
+	return nil
+}
+
+func (m *mockModbusConn) LocalAddr() net.Addr {
+	return &net.TCPAddr{}
+}
+
+func (m *mockModbusConn) RemoteAddr() net.Addr {
+	return &net.TCPAddr{}
+}
+
+func (m *mockModbusConn) SetDeadline(t time.Time) error {
+	return nil
+}
+
+func (m *mockModbusConn) SetReadDeadline(t time.Time) error {
+	return nil
+}
+
+func (m *mockModbusConn) SetWriteDeadline(t time.Time) error {
+	return nil
+}
 
 func TestModbus(t *testing.T) {
 	testcases := []test.Testcase{
@@ -218,4 +272,32 @@ func TestGenerateCPE(t *testing.T) {
 			assert.Equal(t, tt.expected, result)
 		})
 	}
+}
+
+// TestRunWithShortResponse tests the vulnerability fix for CWE-125 (out-of-bounds read)
+// A malicious Modbus server could send a response shorter than expected (e.g., 8 bytes),
+// which would cause an out-of-bounds read when accessing response[ModbusHeaderLength+2] (index 9).
+func TestRunWithShortResponse(t *testing.T) {
+	// This test validates that the code handles short responses gracefully
+	// without panicking. The vulnerability was that after checking len(response) == 0,
+	// the code accessed response[7], response[8], and response[9] without verifying
+	// the response was at least 10 bytes long.
+
+	// Create a mock connection that returns an 8-byte response
+	// This response is long enough to pass initial checks but not long enough
+	// for the vulnerable code path that accesses response[9]
+	// Format: [0-1: txID (echoed), 2-3: protocol ID, 4-5: length, 6: unit ID, 7: function code]
+	mockConn := &mockModbusConn{
+		responseData: []byte{0xFF, 0xFF, 0x00, 0x00, 0x00, 0x02, 0x01, 0x02},
+	}
+
+	plugin := &MODBUSPlugin{}
+	target := plugins.Target{Host: "127.0.0.1"}
+
+	// This should not panic even with a short response
+	result, err := plugin.Run(mockConn, 5*time.Second, target)
+
+	// Expected: function returns nil without panicking
+	assert.Nil(t, result, "should return nil for invalid short response")
+	assert.Nil(t, err, "should not return error for short response")
 }

@@ -107,6 +107,13 @@ func (p *MODBUSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.
 		return nil, nil
 	}
 
+	// Minimum response length: 2 (transaction ID) + 5 (header) + 3 (data) = 10 bytes
+	// Required for accessing response[ModbusHeaderLength+2] (index 9)
+	const MinModbusResponseLength = 10
+	if len(response) < MinModbusResponseLength {
+		return nil, nil
+	}
+
 	// transaction ID was echoed correctly
 	if bytes.Equal(response[:2], transactionID) {
 		// successful request, validate contents

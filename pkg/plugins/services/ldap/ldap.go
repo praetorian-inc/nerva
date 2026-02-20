@@ -16,8 +16,8 @@ package ldap
 
 import (
 	"bytes"
+	"crypto/rand"
 	"encoding/binary"
-	"math/rand"
 	"net"
 	"time"
 
@@ -83,17 +83,23 @@ func generateRandomString(length int) []byte {
 	result := make([]byte, length)
 
 	for i := range result {
-		result[i] = charset[rand.Intn(len(charset))] //nolint:gosec
+		var b [1]byte
+		_, _ = rand.Read(b[:])
+		result[i] = charset[int(b[0])%len(charset)]
 	}
 	return result
 }
 
 func generateBindRequestAndID() [2][]byte {
-	rand.Seed(time.Now().UnixNano())
 	sequenceBERHeader := [2]byte{0x30, 0x3a}
-	messageID := uint32(rand.Int31()) //nolint:gosec
-	messageIDBytes := [4]byte{}
-	binary.BigEndian.PutUint32(messageIDBytes[:], messageID)
+	messageIDBytes := make([]byte, 4)
+	_, _ = rand.Read(messageIDBytes)
+	messageID := binary.BigEndian.Uint32(messageIDBytes)
+	// Ensure non-zero (LDAP requires non-zero message ID)
+	if messageID == 0 {
+		messageID = 1
+	}
+	binary.BigEndian.PutUint32(messageIDBytes, messageID)
 	messageIDBERHeader := [2]byte{0x02, 0x04}
 	finalMessageIDBER := make([]byte, 6)
 	copy(finalMessageIDBER[:2], messageIDBERHeader[:])

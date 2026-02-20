@@ -68,13 +68,13 @@ func CheckDNS(conn net.Conn, timeout time.Duration) (bool, error) {
 		}
 
 		if conn.RemoteAddr().Network() == "udp" {
-			if !bytes.Equal(transactionID[0:1], response[0:1]) {
+			if !bytes.Equal(transactionID[0:2], response[0:2]) {
 				return false, nil
 			}
 		}
 
 		if conn.RemoteAddr().Network() == "tcp" {
-			if !bytes.Equal(transactionID[0:1], response[2:3]) {
+			if !bytes.Equal(transactionID[0:2], response[2:4]) {
 				return false, nil
 			}
 		}

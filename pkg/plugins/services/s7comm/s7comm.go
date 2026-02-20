@@ -267,7 +267,7 @@ func validateS7SetupResponse(response []byte) bool {
 	// TPKT(4) + COTP DT header length varies, but typically at offset 7
 	s7Offset := 7 // Common offset after TPKT(4) + COTP DT(3)
 
-	if len(response) <= s7Offset+1 {
+	if len(response) < s7Offset+2 {
 		return false
 	}
 

@@ -32,6 +32,9 @@ type TLSPlugin struct{}
 const KAFKA = "kafkaOld"
 const KAFKATLS = "KafkaOldTLS"
 
+// MaxBrokers limits the number of brokers processed to prevent DoS attacks
+const MaxBrokers = 100
+
 func init() {
 	plugins.RegisterPlugin(&Plugin{})
 	plugins.RegisterPlugin(&TLSPlugin{})
@@ -215,6 +218,10 @@ func checkMetadataQuery(conn net.Conn, timeout time.Duration) (bool, error) {
 	/* through the array to accurately skip over the brokers section. */
 	brokerIndex := uint16(8)
 	brokerCount := binary.BigEndian.Uint32(response[brokerIndex : brokerIndex+4])
+	// Limit broker count to prevent DoS attacks from malicious servers
+	if brokerCount > MaxBrokers {
+		brokerCount = MaxBrokers
+	}
 
 	index := brokerIndex + 4
 	for i := uint32(0); i < brokerCount; i++ {
@@ -233,8 +240,18 @@ func checkMetadataQuery(conn net.Conn, timeout time.Duration) (bool, error) {
 	/* always the second field. */
 	topicsIndex += 4 // for topics_count  (INT32)
 	topicsIndex += 2 // for status code   (INT16)
+
+	// Bounds check: ensure we have enough bytes for topic name length
+	if topicsIndex+2 > uint16(len(response)) {
+		return false, nil // Not enough bytes for topic length
+	}
 	topicNameLength := binary.BigEndian.Uint16(response[topicsIndex : topicsIndex+2])
 	topicsIndex += 2 // for string length (INT16)
+
+	// Bounds check: ensure we have enough bytes for topic name string
+	if topicsIndex+topicNameLength > uint16(len(response)) {
+		return false, nil // Not enough bytes for topic name
+	}
 	tName := string(response[topicsIndex : topicsIndex+topicNameLength])
 
 	if tName != topicName {

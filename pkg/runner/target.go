@@ -54,7 +54,9 @@ func readTargets(inputFile string, verbose bool) ([]plugins.Target, error) {
 		}
 		readFile = file
 	}
-	defer readFile.Close()
+	if readFile != nil {
+		defer readFile.Close()
+	}
 
 	scanner := bufio.NewScanner(readFile)
 	for scanner.Scan() {
