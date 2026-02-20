@@ -1,0 +1,140 @@
+version: '3.8'
+
+services:
+  # Main development container with SCTP support
+  nerva-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.devcontainer
+    container_name: nerva-sctp-dev
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+      - SYS_ADMIN
+    networks:
+      - sctp-test-network
+    volumes:
+      - .:/workspace:cached
+      - go-cache:/go/pkg/mod
+      - go-build-cache:/root/.cache/go-build
+    environment:
+      - SCTP_ENABLED=true
+      - FREEDIAMETER_HOST=freediameter
+      - FREEDIAMETER_PORT=3868
+      - NERVA_TEST_MODE=integration
+    depends_on:
+      - freediameter
+    command: sleep infinity
+
+  # FreeDiameter server for SCTP testing (Diameter protocol)
+  freediameter:
+    build:
+      context: ./testdata/freediameter
+      dockerfile: Dockerfile
+    container_name: freediameter-server
+    hostname: freediameter.local
+    networks:
+      - sctp-test-network
+    ports:
+      - "3868:3868"        # Diameter SCTP
+      - "3868:3868/udp"    # Diameter UDP (if needed)
+      - "3869:3869"        # Diameter TCP
+      - "5868:5868"        # Diameter TLS (optional)
+    environment:
+      - DIAMETER_REALM=local
+      - DIAMETER_IDENTITY=freediameter.local
+    healthcheck:
+      test: ["CMD", "netstat", "-an", "|", "grep", "3868"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # OsmoSTP for M3UA/SIGTRAN testing
+  osmo-stp:
+    build:
+      context: ./testdata/osmo-stp
+      dockerfile: Dockerfile
+    container_name: osmo-stp-server
+    hostname: osmo-stp.local
+    networks:
+      - sctp-test-network
+    ports:
+      - "2905:2905"        # M3UA SCTP
+      - "14001:14001"      # SUA SCTP
+      - "4239:4239"        # VTY telnet
+    environment:
+      - OSMO_STP_PC=1.2.3
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "2905"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ProConOS mock server for ICS testing
+  proconos-mock:
+    build:
+      context: ./testdata/proconos
+      dockerfile: Dockerfile
+    container_name: proconos-mock-server
+    hostname: proconos.local
+    networks:
+      - sctp-test-network
+    ports:
+      - "20547:20547"
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "20547"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Open5GS HSS (Optional - for realistic 5G/LTE testing)
+  # Enable with: docker-compose --profile full up
+  open5gs-hss:
+    image: open5gs/open5gs:latest
+    container_name: open5gs-hss
+    hostname: hss.open5gs.local
+    profiles:
+      - full
+    networks:
+      - sctp-test-network
+    ports:
+      - "3870:3870"        # S6a Diameter interface (SCTP)
+      - "7777:7777"        # REST API
+    environment:
+      - DB_URI=mongodb://mongo/open5gs
+      - HSS_REALM=open5gs.local
+    depends_on:
+      - mongo
+    volumes:
+      - ./testdata/open5gs/hss.yaml:/open5gs/config-map/hss.yaml:ro
+    command: open5gs-hssd -c /open5gs/config-map/hss.yaml
+
+  # MongoDB for Open5GS (Optional)
+  mongo:
+    image: mongo:6
+    container_name: open5gs-mongo
+    profiles:
+      - full
+    networks:
+      - sctp-test-network
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    environment:
+      - MONGO_INITDB_DATABASE=open5gs
+
+networks:
+  sctp-test-network:
+    driver: bridge
+    driver_opts:
+      com.docker.network.driver.mtu: 9000  # Jumbo frames for testing
+
+volumes:
+  go-cache:
+    driver: local
+  go-build-cache:
+    driver: local
+  mongo-data:
+    driver: local

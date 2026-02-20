@@ -1,0 +1,34 @@
+{
+  "name": "Nerva SCTP Testing",
+  "build": {
+    "dockerfile": "../Dockerfile.devcontainer"
+  },
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+  },
+  "containerEnv": {
+    "SCTP_ENABLED": "true",
+    "NERVA_TEST_MODE": "integration"
+  },
+  "runArgs": [
+    "--privileged",
+    "--cap-add=NET_ADMIN",
+    "--cap-add=SYS_MODULE"
+  ],
+  "postCreateCommand": "sudo modprobe sctp 2>/dev/null || true && go mod download",
+  "forwardPorts": [3868, 3869, 5868],
+  "portsAttributes": {
+    "3868": { "label": "Diameter (SCTP/TCP)", "onAutoForward": "notify" },
+    "3869": { "label": "Diameter Alt", "onAutoForward": "notify" },
+    "5868": { "label": "Diameter TLS", "onAutoForward": "notify" }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": ["golang.go", "ms-vscode.makefile-tools"],
+      "settings": {
+        "go.testFlags": ["-v", "-tags=linux,integration"],
+        "go.buildTags": "linux,integration"
+      }
+    }
+  }
+}

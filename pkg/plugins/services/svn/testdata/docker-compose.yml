@@ -1,0 +1,5 @@
+services:
+  svn-mock:
+    build: .
+    ports:
+      - "3690:3690"

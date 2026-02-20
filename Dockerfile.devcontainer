@@ -1,0 +1,48 @@
+# Dockerfile.devcontainer - Development container with SCTP support
+FROM golang:1.25-bookworm
+
+# Install SCTP development libraries and tools
+RUN apt-get update && apt-get install -y \
+    libsctp-dev \
+    lksctp-tools \
+    netcat-openbsd \
+    iproute2 \
+    iputils-ping \
+    tcpdump \
+    net-tools \
+    vim \
+    git \
+    make \
+    build-essential \
+    kmod \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Go development tools
+RUN go install golang.org/x/tools/gopls@latest && \
+    go install github.com/go-delve/delve/cmd/dlv@latest && \
+    go install honnef.co/go/tools/cmd/staticcheck@latest && \
+    go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+
+# Set working directory
+WORKDIR /workspace
+
+# Load SCTP kernel module on container startup
+# Note: This requires --privileged or --cap-add=SYS_MODULE
+RUN echo '#!/bin/bash\n\
+set -e\n\
+# Load SCTP kernel module\n\
+if ! lsmod | grep -q sctp; then\n\
+  modprobe sctp 2>/dev/null || echo "Warning: Could not load SCTP module (may already be loaded or unavailable)"\n\
+fi\n\
+# Verify SCTP support\n\
+if [ -f /proc/net/sctp/snmp ]; then\n\
+  echo "SCTP support verified: /proc/net/sctp/snmp exists"\n\
+else\n\
+  echo "Warning: SCTP support may not be available"\n\
+fi\n\
+exec "$@"\n\
+' > /usr/local/bin/docker-entrypoint.sh && \
+    chmod +x /usr/local/bin/docker-entrypoint.sh
+
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+CMD ["/bin/bash"]

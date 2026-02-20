@@ -1,0 +1,179 @@
+# Makefile.sctp - SCTP testing infrastructure for Nerva
+# Include this from main Makefile with: include Makefile.sctp
+
+.PHONY: sctp-up sctp-down sctp-test sctp-logs sctp-clean sctp-shell sctp-status sctp-full-up m3ua-up m3ua-test m3ua-logs
+
+# SCTP test environment variables
+COMPOSE_FILE := docker-compose.dev.yml
+COMPOSE_CMD := docker-compose -f $(COMPOSE_FILE)
+COMPOSE_CMD_FULL := docker-compose -f $(COMPOSE_FILE) --profile full
+
+# Start SCTP test services (minimal: nerva-dev + freediameter)
+sctp-up:
+	@echo "Starting SCTP test environment..."
+	$(COMPOSE_CMD) up -d nerva-dev freediameter
+	@echo ""
+	@echo "Waiting for services to be ready..."
+	@sleep 5
+	@echo ""
+	@echo "SCTP test environment started!"
+	@echo "  - FreeDiameter: localhost:3868"
+	@echo "  - Development container: nerva-sctp-dev"
+	@echo ""
+	@echo "Enter development container with: make sctp-shell"
+	@echo "Run tests with: make sctp-test"
+
+# Start SCTP test services with full stack (includes Open5GS HSS + MongoDB)
+sctp-full-up:
+	@echo "Starting full SCTP test environment (with Open5GS HSS)..."
+	$(COMPOSE_CMD_FULL) up -d
+	@echo ""
+	@echo "Waiting for services to be ready..."
+	@sleep 10
+	@echo ""
+	@echo "Full SCTP test environment started!"
+	@echo "  - FreeDiameter:  localhost:3868"
+	@echo "  - Open5GS HSS:   localhost:3870"
+	@echo "  - MongoDB:       localhost:27017"
+	@echo "  - Development container: nerva-sctp-dev"
+	@echo ""
+	@echo "Enter development container with: make sctp-shell"
+
+# Stop SCTP test services
+sctp-down:
+	@echo "Stopping SCTP test environment..."
+	$(COMPOSE_CMD_FULL) down
+	@echo "SCTP test environment stopped"
+
+# Run SCTP integration tests inside development container
+sctp-test:
+	@echo "Running SCTP integration tests..."
+	$(COMPOSE_CMD) exec -T nerva-dev go test -v -tags linux,sctp,integration \
+		./pkg/plugins/services/diameter/... \
+		./pkg/plugins/services/sctp/... \
+		-timeout 5m
+	@echo ""
+	@echo "SCTP tests completed"
+
+# View FreeDiameter logs
+sctp-logs:
+	@echo "Viewing FreeDiameter logs (Ctrl+C to exit)..."
+	$(COMPOSE_CMD) logs -f freediameter
+
+# View all SCTP service logs
+sctp-logs-all:
+	@echo "Viewing all SCTP service logs (Ctrl+C to exit)..."
+	$(COMPOSE_CMD_FULL) logs -f
+
+# Show status of SCTP services
+sctp-status:
+	@echo "SCTP Test Environment Status:"
+	@echo ""
+	$(COMPOSE_CMD_FULL) ps
+	@echo ""
+	@echo "Network connectivity:"
+	@$(COMPOSE_CMD) exec -T nerva-dev nc -zv freediameter 3868 2>&1 || echo "  ⚠ FreeDiameter not reachable"
+	@echo ""
+	@echo "SCTP kernel module:"
+	@$(COMPOSE_CMD) exec -T nerva-dev lsmod | grep sctp || echo "  ⚠ SCTP module not loaded"
+
+# Shell into development container
+sctp-shell:
+	@echo "Entering SCTP development container..."
+	@echo "(Type 'exit' to leave)"
+	@echo ""
+	$(COMPOSE_CMD) exec nerva-dev /bin/bash
+
+# Clean SCTP test environment (stop containers and remove volumes)
+sctp-clean:
+	@echo "Cleaning SCTP test environment..."
+	$(COMPOSE_CMD_FULL) down -v
+	@echo "SCTP test environment cleaned (volumes removed)"
+
+# Rebuild SCTP test containers
+sctp-rebuild:
+	@echo "Rebuilding SCTP test containers..."
+	$(COMPOSE_CMD_FULL) build --no-cache
+	@echo "SCTP test containers rebuilt"
+
+# Run SCTP tests with coverage
+sctp-test-coverage:
+	@echo "Running SCTP tests with coverage..."
+	$(COMPOSE_CMD) exec -T nerva-dev go test -v -tags linux,sctp,integration \
+		-coverprofile=coverage-sctp.out \
+		-covermode=atomic \
+		./pkg/plugins/services/diameter/... \
+		./pkg/plugins/services/sctp/... \
+		-timeout 5m
+	@echo ""
+	@echo "Coverage report generated: coverage-sctp.out"
+	@$(COMPOSE_CMD) exec -T nerva-dev go tool cover -func=coverage-sctp.out
+
+# Verify SCTP connectivity manually
+sctp-verify:
+	@echo "Verifying SCTP connectivity..."
+	@echo ""
+	@echo "1. SCTP kernel module:"
+	@$(COMPOSE_CMD) exec -T nerva-dev lsmod | grep sctp || echo "   ⚠ Not loaded"
+	@echo ""
+	@echo "2. SCTP proc filesystem:"
+	@$(COMPOSE_CMD) exec -T nerva-dev test -f /proc/net/sctp/snmp && echo "   ✓ /proc/net/sctp/snmp exists" || echo "   ⚠ Not found"
+	@echo ""
+	@echo "3. FreeDiameter TCP connectivity:"
+	@$(COMPOSE_CMD) exec -T nerva-dev nc -zv -w 2 freediameter 3868 2>&1
+	@echo ""
+	@echo "4. FreeDiameter process:"
+	@$(COMPOSE_CMD) exec -T freediameter ps aux | grep freeDiameterd | grep -v grep || echo "   ⚠ Not running"
+
+# Start M3UA test environment (OsmoSTP only)
+m3ua-up:
+	@echo "Starting M3UA test environment..."
+	$(COMPOSE_CMD) up -d osmo-stp
+	@echo ""
+	@echo "Waiting for OsmoSTP to be ready..."
+	@sleep 5
+	@echo ""
+	@echo "M3UA test environment started!"
+	@echo "  - OsmoSTP M3UA: localhost:2905"
+	@echo "  - OsmoSTP VTY:  localhost:4239"
+
+# Run M3UA plugin tests
+m3ua-test:
+	@echo "Running M3UA plugin tests..."
+	$(COMPOSE_CMD) exec -T nerva-dev go test -v \
+		./pkg/plugins/services/m3ua/... \
+		-timeout 2m
+	@echo ""
+	@echo "M3UA tests completed"
+
+# View OsmoSTP logs
+m3ua-logs:
+	@echo "Viewing OsmoSTP logs (Ctrl+C to exit)..."
+	$(COMPOSE_CMD) logs -f osmo-stp
+
+# Help target
+sctp-help:
+	@echo "SCTP Testing Makefile Targets:"
+	@echo ""
+	@echo "  sctp-up           - Start minimal SCTP test environment (FreeDiameter)"
+	@echo "  sctp-full-up      - Start full SCTP test environment (with Open5GS HSS)"
+	@echo "  sctp-down         - Stop SCTP test environment"
+	@echo "  sctp-test         - Run SCTP integration tests"
+	@echo "  sctp-test-coverage- Run SCTP tests with coverage report"
+	@echo "  sctp-logs         - View FreeDiameter logs"
+	@echo "  sctp-logs-all     - View all service logs"
+	@echo "  sctp-status       - Show status of SCTP services"
+	@echo "  sctp-shell        - Shell into development container"
+	@echo "  sctp-verify       - Verify SCTP connectivity and services"
+	@echo "  sctp-clean        - Stop and remove all containers and volumes"
+	@echo "  sctp-rebuild      - Rebuild all SCTP test containers"
+	@echo ""
+	@echo "M3UA Testing Targets:"
+	@echo "  m3ua-up           - Start M3UA test environment (OsmoSTP)"
+	@echo "  m3ua-test         - Run M3UA plugin tests"
+	@echo "  m3ua-logs         - View OsmoSTP logs"
+	@echo ""
+	@echo "Environment variables:"
+	@echo "  FREEDIAMETER_HOST - FreeDiameter hostname (default: freediameter)"
+	@echo "  FREEDIAMETER_PORT - FreeDiameter port (default: 3868)"
+	@echo "  SCTP_ENABLED      - Enable SCTP support (default: true)"

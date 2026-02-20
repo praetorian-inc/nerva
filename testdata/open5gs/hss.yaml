@@ -1,0 +1,55 @@
+# Open5GS HSS Configuration for SCTP Testing
+# This provides a realistic 5G/LTE HSS for testing Diameter/SCTP protocols
+
+db_uri: mongodb://mongo/open5gs
+
+logger:
+  file: /var/log/open5gs/hss.log
+  level: info
+
+hss:
+  freeDiameter:
+    # Identity and realm
+    identity: hss.open5gs.local
+    realm: open5gs.local
+
+    # Listen address
+    listen_on: 0.0.0.0
+
+    # Port configuration
+    port: 3870
+    sec_port: 5870
+
+    # SCTP configuration
+    no_sctp: false  # Enable SCTP
+    prefer_tcp: false
+
+    # Load dictionary extensions
+    load_extension:
+      - module: dict_nasreq.so
+      - module: dict_eap.so
+      - module: dict_s6a.so
+
+    # Peer configuration (optional - for connecting to MME)
+    # connect_peer:
+    #   - identity: mme.open5gs.local
+    #     address: 192.168.1.10
+
+  # S6a interface configuration (Diameter over SCTP)
+  s6a:
+    # Server configuration
+    server:
+      - address: 0.0.0.0
+        port: 3870
+
+    # Client configuration (optional)
+    # client:
+    #   mme:
+    #     - address: 192.168.1.10
+    #       port: 3868
+
+# Subscriber database configuration
+# For testing, Open5GS will use MongoDB to store subscriber profiles
+parameter:
+  # Use default Open5GS subscriber database
+  use_mongodb: true
