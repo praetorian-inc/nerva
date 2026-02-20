@@ -121,7 +121,7 @@ func TestAnyConnectFingerprinter_Fingerprint(t *testing.T) {
 			statusCode: 200,
 			headers:    http.Header{},
 			body:       `<html><body>Welcome to WebVPN Portal</body></html>`,
-			wantResult: true,
+			wantResult: false,
 			wantTech:   "cisco-anyconnect",
 		},
 		{
@@ -129,7 +129,7 @@ func TestAnyConnectFingerprinter_Fingerprint(t *testing.T) {
 			statusCode: 200,
 			headers:    http.Header{},
 			body:       `<html><script src="/+CSCOE+/scripts.js"></script></html>`,
-			wantResult: true,
+			wantResult: false,
 			wantTech:   "cisco-anyconnect",
 		},
 		{
@@ -137,7 +137,7 @@ func TestAnyConnectFingerprinter_Fingerprint(t *testing.T) {
 			statusCode: 200,
 			headers:    http.Header{},
 			body:       `<html><body>Please install AnyConnect VPN client</body></html>`,
-			wantResult: true,
+			wantResult: false,
 			wantTech:   "cisco-anyconnect",
 		},
 		{
@@ -225,6 +225,93 @@ func TestAnyConnectFingerprinter_Fingerprint(t *testing.T) {
 						t.Errorf("CPE = %q, want prefix %q", result.CPEs[0], tt.wantCPEPrefix)
 					}
 				}
+			}
+		})
+	}
+}
+
+// TestAnyConnectFingerprinter_FalsePositives tests that body-only matches
+// do NOT produce false positives. This was a bug where generic body patterns
+// like "Portal" or "asa" would match non-VPN websites.
+func TestAnyConnectFingerprinter_FalsePositives(t *testing.T) {
+	f := &AnyConnectFingerprinter{}
+
+	tests := []struct {
+		name       string
+		statusCode int
+		headers    http.Header
+		body       string
+		wantResult bool
+	}{
+		{
+			name:       "does not match generic 'Portal' text without header indicators",
+			statusCode: 200,
+			headers:    http.Header{},
+			body:       `<html><body><a href="/support">Support Portal</a></body></html>`,
+			wantResult: false,
+		},
+		{
+			name:       "does not match 'ASA' abbreviation in non-VPN context",
+			statusCode: 200,
+			headers:    http.Header{},
+			body:       `<html><body>Welcome to ASA Conference 2024</body></html>`,
+			wantResult: false,
+		},
+		{
+			name:       "does not match 'firepower' keyword on marketing site",
+			statusCode: 200,
+			headers:    http.Header{},
+			body:       `<html><body>Cisco Firepower is a great product for security</body></html>`,
+			wantResult: false,
+		},
+		{
+			name:       "does not match 'vpn' keyword alone",
+			statusCode: 200,
+			headers:    http.Header{},
+			body:       `<html><body>Best VPN services compared</body></html>`,
+			wantResult: false,
+		},
+		{
+			name:       "still matches with header indicator present",
+			statusCode: 200,
+			headers: http.Header{
+				"X-Asa-Version": []string{"9.16(4)"},
+			},
+			body:       `<html><body>Welcome</body></html>`,
+			wantResult: true,
+		},
+		{
+			name:       "still matches with webvpn cookie and body content",
+			statusCode: 200,
+			headers: http.Header{
+				"Set-Cookie": []string{"webvpnlogin=1; path=/"},
+			},
+			body:       `<html><body>AnyConnect VPN</body></html>`,
+			wantResult: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := &http.Response{
+				StatusCode: tt.statusCode,
+				Header:     tt.headers,
+			}
+			result, err := f.Fingerprint(resp, []byte(tt.body))
+
+			if err != nil {
+				t.Errorf("Fingerprint() error = %v", err)
+				return
+			}
+
+			if tt.wantResult && result == nil {
+				t.Error("Fingerprint() returned nil, expected result")
+				return
+			}
+
+			if !tt.wantResult && result != nil {
+				t.Errorf("Fingerprint() returned result for false positive case, expected nil")
+				return
 			}
 		})
 	}

@@ -116,9 +116,12 @@ func (f *GlobalProtectFingerprinter) Fingerprint(resp *http.Response, body []byt
 		}
 	}
 
-	if !bodyMatch && !headerMatch {
+	// Require header indicators for detection; body-only matches produce false positives
+	// (e.g., marketing sites mentioning "Palo Alto" or "<portal>" in content)
+	if !headerMatch {
 		return nil, nil
 	}
+	_ = bodyMatch // Body patterns contribute to confidence but are not sufficient alone
 
 	// Extract version
 	version := extractGlobalProtectVersion(body, resp.Header)

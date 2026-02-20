@@ -152,9 +152,12 @@ func (f *AnyConnectFingerprinter) Fingerprint(resp *http.Response, body []byte) 
 		}
 	}
 
-	if !bodyMatch && !headerMatch {
+	// Require header indicators for detection; body-only matches produce false positives
+	// (e.g., marketing sites mentioning "firepower" or "ASA" in content)
+	if !headerMatch {
 		return nil, nil
 	}
+	_ = bodyMatch // Body patterns contribute to confidence but are not sufficient alone
 
 	// Extract version
 	version := extractAnyConnectVersion(body, resp.Header)

@@ -117,7 +117,7 @@ func TestGlobalProtectFingerprinter_Fingerprint(t *testing.T) {
 <status>Success</status>
 <sw-version>10.2.3</sw-version>
 </prelogin-response>`,
-			wantResult:    true,
+			wantResult:    false,
 			wantTech:      "palo-alto-globalprotect",
 			wantVersion:   "10.2.3",
 			wantCPEPrefix: "cpe:2.3:o:paloaltonetworks:pan-os:10.2.3",
@@ -131,7 +131,7 @@ func TestGlobalProtectFingerprinter_Fingerprint(t *testing.T) {
 <status>Success</status>
 <sw-version>10.1.9-h1</sw-version>
 </prelogin-response>`,
-			wantResult:    true,
+			wantResult:    false,
 			wantTech:      "palo-alto-globalprotect",
 			wantVersion:   "10.1.9-h1",
 			wantCPEPrefix: "cpe:2.3:o:paloaltonetworks:pan-os:10.1.9-h1",
@@ -141,7 +141,7 @@ func TestGlobalProtectFingerprinter_Fingerprint(t *testing.T) {
 			statusCode: 200,
 			headers:    http.Header{},
 			body:       `<html><body>GlobalProtect Portal</body></html>`,
-			wantResult: true,
+			wantResult: false,
 			wantTech:   "palo-alto-globalprotect",
 		},
 		{
@@ -149,7 +149,7 @@ func TestGlobalProtectFingerprinter_Fingerprint(t *testing.T) {
 			statusCode: 200,
 			headers:    http.Header{},
 			body:       `<html><form name="PAN_FORM" method="POST"></form></html>`,
-			wantResult: true,
+			wantResult: false,
 			wantTech:   "palo-alto-globalprotect",
 		},
 		{
@@ -157,7 +157,7 @@ func TestGlobalProtectFingerprinter_Fingerprint(t *testing.T) {
 			statusCode: 200,
 			headers:    http.Header{},
 			body:       `<html><body>Powered by Palo Alto Networks</body></html>`,
-			wantResult: true,
+			wantResult: false,
 			wantTech:   "palo-alto-globalprotect",
 		},
 		{
@@ -233,6 +233,102 @@ func TestGlobalProtectFingerprinter_Fingerprint(t *testing.T) {
 						t.Errorf("CPE = %q, want prefix %q", result.CPEs[0], tt.wantCPEPrefix)
 					}
 				}
+			}
+		})
+	}
+}
+
+// TestGlobalProtectFingerprinter_FalsePositives tests that body-only matches
+// do NOT produce false positives. This was a bug where generic body patterns
+// like "<portal>" or "palo alto" would match non-VPN websites.
+func TestGlobalProtectFingerprinter_FalsePositives(t *testing.T) {
+	f := &GlobalProtectFingerprinter{}
+
+	tests := []struct {
+		name       string
+		statusCode int
+		headers    http.Header
+		body       string
+		wantResult bool
+	}{
+		{
+			name:       "does not match generic '<portal>' tag without header indicators",
+			statusCode: 200,
+			headers:    http.Header{},
+			body:       `<html><portal>Employee Portal</portal></html>`,
+			wantResult: false,
+		},
+		{
+			name:       "does not match 'Palo Alto' company name in marketing content",
+			statusCode: 200,
+			headers:    http.Header{},
+			body:       `<html><body>We partner with Palo Alto Networks for security</body></html>`,
+			wantResult: false,
+		},
+		{
+			name:       "does not match 'global-protect' keyword in documentation",
+			statusCode: 200,
+			headers:    http.Header{},
+			body:       `<html><body>Learn about Global-Protect VPN configuration</body></html>`,
+			wantResult: false,
+		},
+		{
+			name:       "does not match 'PAN' keyword alone",
+			statusCode: 200,
+			headers:    http.Header{},
+			body:       `<html><body>PAN card application form</body></html>`,
+			wantResult: false,
+		},
+		{
+			name:       "still matches with header indicator present",
+			statusCode: 200,
+			headers: http.Header{
+				"X-Private-Pan-Sslvpn": []string{"auth-ok"},
+			},
+			body:       `<html><body>Welcome</body></html>`,
+			wantResult: true,
+		},
+		{
+			name:       "still matches with PAN-OS Server header",
+			statusCode: 200,
+			headers: http.Header{
+				"Server": []string{"PAN-OS 10.2.3"},
+			},
+			body:       `<html><body>Login</body></html>`,
+			wantResult: true,
+		},
+		{
+			name:       "still matches with global-protect Location redirect",
+			statusCode: 302,
+			headers: http.Header{
+				"Location": []string{"/global-protect/login.esp"},
+			},
+			body:       ``,
+			wantResult: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := &http.Response{
+				StatusCode: tt.statusCode,
+				Header:     tt.headers,
+			}
+			result, err := f.Fingerprint(resp, []byte(tt.body))
+
+			if err != nil {
+				t.Errorf("Fingerprint() error = %v", err)
+				return
+			}
+
+			if tt.wantResult && result == nil {
+				t.Error("Fingerprint() returned nil, expected result")
+				return
+			}
+
+			if !tt.wantResult && result != nil {
+				t.Errorf("Fingerprint() returned result for false positive case, expected nil")
+				return
 			}
 		})
 	}
