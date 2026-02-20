@@ -68,25 +68,17 @@ func (f *AnyConnectFingerprinter) Match(resp *http.Response) bool {
 		return false
 	}
 
-	// Check Location header for AnyConnect redirect paths
-	location := strings.ToLower(resp.Header.Get("Location"))
-	if strings.Contains(location, "cscoe") || strings.Contains(location, "webvpn") {
+	// Check for definitive header indicators first (these are reliable)
+	if resp.Header.Get("X-ASA-Version") != "" {
+		return true
+	}
+	if resp.Header.Get("X-Transcend-Version") != "" {
 		return true
 	}
 
 	// Check Server header for Cisco
 	serverHeader := strings.ToLower(resp.Header.Get("Server"))
 	if strings.Contains(serverHeader, "cisco") {
-		return true
-	}
-
-	// Check for X-ASA-Version header (definitive indicator)
-	if resp.Header.Get("X-ASA-Version") != "" {
-		return true
-	}
-
-	// Check for X-Transcend-Version header (another ASA indicator)
-	if resp.Header.Get("X-Transcend-Version") != "" {
 		return true
 	}
 
@@ -101,7 +93,16 @@ func (f *AnyConnectFingerprinter) Match(resp *http.Response) bool {
 		}
 	}
 
-	return false // Only match if header indicators found; body-only detection is too prone to false positives
+	// For 2xx responses, check Location header
+	// For 3xx redirects, Location alone is NOT sufficient (may just echo the requested path)
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		location := strings.ToLower(resp.Header.Get("Location"))
+		if strings.Contains(location, "cscoe") || strings.Contains(location, "webvpn") {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (f *AnyConnectFingerprinter) Fingerprint(resp *http.Response, body []byte) (*FingerprintResult, error) {

@@ -73,10 +73,36 @@ func TestGlobalProtectFingerprinter_Match(t *testing.T) {
 			want:       false,
 		},
 		{
-			name:       "matches 302 redirect with global-protect in Location",
+			name:       "matches 302 redirect with global-protect in Location and PAN-OS Server header",
 			statusCode: 302,
 			headers: http.Header{
 				"Location": []string{"/global-protect/login.esp"},
+				"Server":   []string{"PAN-OS 10.2.3"},
+			},
+			want: true,
+		},
+		{
+			name:       "does not match 301 redirect that echoes back requested path without additional headers",
+			statusCode: 301,
+			headers: http.Header{
+				"Location": []string{"https://www.example.com/global-protect/prelogin.esp"},
+			},
+			want: false,
+		},
+		{
+			name:       "does not match 302 redirect with global-protect in Location but no other indicators",
+			statusCode: 302,
+			headers: http.Header{
+				"Location": []string{"https://www.example.com/global-protect/login.esp"},
+			},
+			want: false,
+		},
+		{
+			name:       "matches 301 redirect with global-protect in Location AND PAN-OS Server header",
+			statusCode: 301,
+			headers: http.Header{
+				"Location": []string{"https://vpn.example.com/global-protect/prelogin.esp"},
+				"Server":   []string{"PAN-OS 10.2.3"},
 			},
 			want: true,
 		},
@@ -180,10 +206,11 @@ func TestGlobalProtectFingerprinter_Fingerprint(t *testing.T) {
 			wantResult: false,
 		},
 		{
-			name:       "detects from 302 redirect with global-protect Location",
+			name:       "detects from 302 redirect with global-protect Location and PAN-OS Server header",
 			statusCode: 302,
 			headers: http.Header{
 				"Location": []string{"/global-protect/login.esp"},
+				"Server":   []string{"PAN-OS 10.2.3"},
 			},
 			body:       ``,
 			wantResult: true,

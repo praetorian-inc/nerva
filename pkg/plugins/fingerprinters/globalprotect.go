@@ -64,9 +64,8 @@ func (f *GlobalProtectFingerprinter) Match(resp *http.Response) bool {
 		return false
 	}
 
-	// Check Location header for GlobalProtect redirect (common pattern)
-	location := strings.ToLower(resp.Header.Get("Location"))
-	if strings.Contains(location, "global-protect") {
+	// Check for definitive header indicators first (these are reliable)
+	if resp.Header.Get("X-Private-Pan-Sslvpn") != "" {
 		return true
 	}
 
@@ -76,12 +75,16 @@ func (f *GlobalProtectFingerprinter) Match(resp *http.Response) bool {
 		return true
 	}
 
-	// Check for X-Private-Pan-Sslvpn header (PAN-specific)
-	if resp.Header.Get("X-Private-Pan-Sslvpn") != "" {
-		return true
+	// For 2xx responses, check Location header
+	// For 3xx redirects, Location alone is NOT sufficient (may just echo the requested path)
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		location := strings.ToLower(resp.Header.Get("Location"))
+		if strings.Contains(location, "global-protect") {
+			return true
+		}
 	}
 
-	return false // Only match if header indicators found; body-only detection is too prone to false positives
+	return false
 }
 
 func (f *GlobalProtectFingerprinter) Fingerprint(resp *http.Response, body []byte) (*FingerprintResult, error) {

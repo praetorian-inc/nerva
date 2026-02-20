@@ -81,10 +81,36 @@ func TestAnyConnectFingerprinter_Match(t *testing.T) {
 			want:       false,
 		},
 		{
-			name:       "matches 302 redirect with CSCOE in Location",
+			name:       "matches 302 redirect with CSCOE in Location and Cisco Server header",
 			statusCode: 302,
 			headers: http.Header{
 				"Location": []string{"/+CSCOE+/logon.html"},
+				"Server":   []string{"Cisco ASA"},
+			},
+			want: true,
+		},
+		{
+			name:       "does not match 301 redirect that echoes back requested path without additional headers",
+			statusCode: 301,
+			headers: http.Header{
+				"Location": []string{"https://www.example.com/+CSCOE+/logon.html"},
+			},
+			want: false,
+		},
+		{
+			name:       "does not match 302 redirect with webvpn in Location but no other indicators",
+			statusCode: 302,
+			headers: http.Header{
+				"Location": []string{"https://www.example.com/webvpn/login"},
+			},
+			want: false,
+		},
+		{
+			name:       "matches 301 redirect with CSCOE in Location AND Cisco Server header",
+			statusCode: 301,
+			headers: http.Header{
+				"Location": []string{"https://vpn.example.com/+CSCOE+/logon.html"},
+				"Server":   []string{"Cisco ASA"},
 			},
 			want: true,
 		},
@@ -172,10 +198,11 @@ func TestAnyConnectFingerprinter_Fingerprint(t *testing.T) {
 			wantResult: false,
 		},
 		{
-			name:       "detects from 302 redirect with CSCOE Location",
+			name:       "detects from 302 redirect with CSCOE Location and Cisco Server header",
 			statusCode: 302,
 			headers: http.Header{
 				"Location": []string{"/+CSCOE+/logon.html"},
+				"Server":   []string{"Cisco ASA"},
 			},
 			body:       ``,
 			wantResult: true,
