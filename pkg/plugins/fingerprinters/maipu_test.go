@@ -16,9 +16,45 @@ package fingerprinters
 
 import (
 	"net/http"
-	"os"
 	"testing"
 )
+
+// realMaipuLoginHTML is a representative sample of a real Maipu login page
+// containing all 6 scoring indicators (maipu.com, form endpoints, CSS paths, i18n).
+const realMaipuLoginHTML = `<!DOCTYPE html>
+<html>
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <title data-i18n="loginPageTitle"></title>
+    <link rel="stylesheet" type="text/css" href="/assets/css/login.css" />
+    <link rel="stylesheet" type="text/css" href="/assets/css/ui-dialog.css" />
+</head>
+<body>
+<div>
+    <div class="main">
+        <div class="pub-width btn">
+            <input type="submit" id="loginBtn" value="登录" data-i18n="login" />
+        </div>
+    </div>
+</div>
+<div class="copyright">
+    <!-- Copyright &copy; 2014 Maipu Communication Technology Co., Ltd. All Rights Reserved. -->
+</div>
+<script>
+function loadVersion(){
+    $.get('/form/formDeviceVerGet', function(data){
+        var regHardware = /Hardware\s+Model\s*:\s*(\S+)\(\S+\)?\s*with/g;
+    });
+}
+function checkForm(){
+    $("#loginform").attr("action","/form/formUserLogin");
+    return true;
+}
+</script>
+<label data-i18n="website"></label>http://www.maipu.com
+<label data-i18n="mail"></label>support@maipu.com
+</body>
+</html>`
 
 func TestMaipuFingerprinter_Name(t *testing.T) {
 	fp := &MaipuFingerprinter{}
@@ -109,12 +145,6 @@ func TestMaipuFingerprinter_Match(t *testing.T) {
 }
 
 func TestMaipuFingerprinter_Fingerprint_Valid(t *testing.T) {
-	// Read the real Maipu login page HTML
-	realHTML, err := os.ReadFile("/tmp/hunt-palig/maipu-login.html")
-	if err != nil {
-		t.Fatalf("Failed to read real Maipu HTML: %v", err)
-	}
-
 	tests := []struct {
 		name         string
 		body         string
@@ -124,7 +154,7 @@ func TestMaipuFingerprinter_Fingerprint_Valid(t *testing.T) {
 	}{
 		{
 			name:         "Real Maipu login page (all indicators)",
-			body:         string(realHTML),
+			body:         realMaipuLoginHTML,
 			wantTech:     "maipu-network-device",
 			wantVersion:  "",
 			scoreAtLeast: 3, // Should have maipu.com + forms + CSS = 5 points
@@ -355,19 +385,13 @@ func TestMaipuFingerprinter_Integration(t *testing.T) {
 	fp := &MaipuFingerprinter{}
 	Register(fp)
 
-	// Read the real Maipu login page
-	realHTML, err := os.ReadFile("/tmp/hunt-palig/maipu-login.html")
-	if err != nil {
-		t.Fatalf("Failed to read real Maipu HTML: %v", err)
-	}
-
 	resp := &http.Response{
 		StatusCode: 200,
 		Header:     make(http.Header),
 	}
 	resp.Header.Set("Content-Type", "text/html; charset=utf-8")
 
-	results := RunFingerprinters(resp, realHTML)
+	results := RunFingerprinters(resp, []byte(realMaipuLoginHTML))
 
 	// Should find at least the Maipu fingerprinter
 	found := false
