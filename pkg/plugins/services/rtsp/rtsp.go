@@ -88,7 +88,11 @@ func (p *RTSPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 		}
 
 		cseqValueStart := cseqStart + RtspCseqHeaderLength
-		if response[cseqValueStart:cseqValueStart+len(cseq)+RtspNewlineLength] != cseq+"\r\n" {
+		cseqValueEnd := cseqValueStart + len(cseq) + RtspNewlineLength
+		if cseqValueEnd > len(response) {
+			return nil, nil
+		}
+		if response[cseqValueStart:cseqValueEnd] != cseq+"\r\n" {
 			return nil, nil
 		}
 
