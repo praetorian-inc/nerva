@@ -1,0 +1,67 @@
+protocol_name: "Express.js"
+protocol_slug: "expressjs"
+orchestration_skill: "orchestrating-nerva-development"
+created_at: "2026-02-26T00:00:00Z"
+description: |
+  Express.js/Node.js HTTP fingerprinting plugin for Nerva. Detects Express.js
+  applications via X-Powered-By header and default error page patterns. Uses
+  active probing to detect Express even when X-Powered-By is disabled. Detects
+  dev mode via stack trace patterns and extracts version from traces.
+
+status: "complete"
+current_phase: 19
+current_phase_name: "complete"
+work_type: "MEDIUM"
+
+phases:
+  1_setup:
+    status: "complete"
+  2_triage:
+    status: "complete"
+  3_codebase_discovery:
+    status: "complete"
+  9_implementation:
+    status: "complete"
+  15_testing:
+    status: "complete"
+    test_count: 21
+
+plugin_type: "closed-source"
+fingerprinter_type: "active"
+default_ports: [80, 443, 3000, 8080]
+
+protocol_research:
+  detection_strategy: "X-Powered-By header + error page probe"
+  detection_signals:
+    - signal: "X-Powered-By: Express header"
+      type: "passive"
+    - signal: "Cannot GET / error page body"
+      type: "active"
+      probe: "/nerva-fp-nonexistent-path"
+    - signal: "Stack trace in error response"
+      type: "enrichment"
+      metadata_key: "devMode"
+  banner_patterns:
+    - "X-Powered-By: Express"
+    - "Cannot GET /"
+  shodan_queries:
+    - '"X-Powered-By: Express"'
+    - '"X-Powered-By: Express" port:443'
+    - '"X-Powered-By: Express" port:3000'
+  test_hosts:
+    - host: "jsonplaceholder.typicode.com"
+      expected: "expressjs"
+      signal: "X-Powered-By header"
+    - host: "fakestoreapi.com"
+      expected: "expressjs"
+      signal: "X-Powered-By header"
+    - host: "my-json-server.typicode.com"
+      expected: "expressjs"
+      signal: "X-Powered-By header"
+    - host: "node-hnapi.herokuapp.com"
+      expected: "expressjs"
+      signal: "X-Powered-By header + Cannot GET body"
+
+worktree:
+  path: ".worktrees/expressjs-fingerprintx"
+  pre_plugin_commit: "10d3142"
