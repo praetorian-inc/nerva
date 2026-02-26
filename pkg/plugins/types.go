@@ -63,6 +63,7 @@ const (
 	ProtoFox              = "fox"
 	ProtoFTP              = "ftp"
 	ProtoGESRTP           = "gesrtp"
+	ProtoGit              = "git"
 	ProtoGTPC             = "gtpc"
 	ProtoGTPPrime         = "gtpprime"
 	ProtoGTPU             = "gtpu"
@@ -245,6 +246,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoFox:
 		var p ServiceFox
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoGit:
+		var p ServiceGit
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoGTPC:
@@ -1088,6 +1093,17 @@ type ServiceGESRTP struct {
 }
 
 func (e ServiceGESRTP) Type() string { return ProtoGESRTP }
+
+// ServiceGit contains metadata extracted from a Git daemon ref advertisement.
+type ServiceGit struct {
+	ProtocolVersion int      `json:"protocolVersion,omitempty"` // 0=implicit, 1=explicit v1, 2=v2
+	HeadRef         string   `json:"headRef,omitempty"`         // SHA-1 hash of HEAD
+	Branches        []string `json:"branches,omitempty"`        // Branch names (without refs/heads/ prefix)
+	Tags            []string `json:"tags,omitempty"`            // Tag names (without refs/tags/ prefix)
+	Capabilities    []string `json:"capabilities,omitempty"`    // Server capabilities from ref advertisement
+}
+
+func (e ServiceGit) Type() string { return ProtoGit }
 
 type ServiceSMPP struct {
 	CPEs            []string `json:"cpes,omitempty"`            // Common Platform Enumeration identifiers for vulnerability tracking
