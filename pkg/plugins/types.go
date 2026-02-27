@@ -93,6 +93,7 @@ const (
 	ProtoL2TP             = "l2tp"
 	ProtoLDAP             = "ldap"
 	ProtoLDAPS            = "ldaps"
+	ProtoLibreChat        = "librechat"
 	ProtoM3UA             = "m3ua"
 	ProtoMegaco           = "megaco"
 	ProtoMGCP             = "mgcp"
@@ -438,6 +439,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoLDAPS:
 		var p ServiceLDAPS
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoLibreChat:
+		var p ServiceLibreChat
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoM3UA:
@@ -1216,6 +1221,14 @@ func (e ServiceLDAP) Type() string { return ProtoLDAP }
 type ServiceLDAPS struct{}
 
 func (e ServiceLDAPS) Type() string { return ProtoLDAPS }
+
+type ServiceLibreChat struct {
+	ConfigVersion string   `json:"configVersion,omitempty"`
+	HasHealth     bool     `json:"hasHealth,omitempty"`
+	CPEs          []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceLibreChat) Type() string { return ProtoLibreChat }
 
 type ServiceKafka struct{}
 
