@@ -2,7 +2,7 @@
 <h1 align="center">
   Nerva
   <br>
-  <sub>Fast Service Fingerprinting CLI</sub>
+  <sub>Nerva: Fast Service Fingerprinting CLI</sub>
 </h1>
 
 <p align="center">
