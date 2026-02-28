@@ -51,10 +51,10 @@ func TestTomcatFingerprinter_Match(t *testing.T) {
 			want:   true,
 		},
 		{
-			name:   "Tomcat error page in body returns true",
+			name:   "Tomcat error page in body returns false (Match only checks headers)",
 			server: "",
 			body:   "<h3>Apache Tomcat/9.0.98</h3>",
-			want:   true,
+			want:   false,
 		},
 		{
 			name:   "Server: nginx returns false",
@@ -79,16 +79,7 @@ func TestTomcatFingerprinter_Match(t *testing.T) {
 				resp.Header.Set("Server", tt.server)
 			}
 
-			// Match() may need body for detection, but the interface only provides resp
-			// We'll need to check body in Fingerprint() instead
 			if got := fp.Match(resp); got != tt.want {
-				// If body is provided but Match only checks headers, this will fail
-				// Let's adjust the test to match the actual interface constraints
-				if tt.body != "" && tt.server == "" {
-					// Body-based detection happens in Fingerprint(), not Match()
-					// Match() should return false here, test expectation is wrong
-					t.Skipf("Body-based detection requires Fingerprint(), skipping Match() test")
-				}
 				t.Errorf("Match() = %v, want %v", got, tt.want)
 			}
 		})
@@ -282,6 +273,12 @@ func TestBuildTomcatCPE(t *testing.T) {
 }
 
 func TestTomcatFingerprinter_Integration(t *testing.T) {
+	// Save current registry state and restore after test
+	originalCount := len(GetFingerprinters())
+	t.Cleanup(func() {
+		httpFingerprinters = httpFingerprinters[:originalCount]
+	})
+
 	// Register the fingerprinter (should happen in init(), but we test it anyway)
 	fp := &TomcatFingerprinter{}
 	Register(fp)
