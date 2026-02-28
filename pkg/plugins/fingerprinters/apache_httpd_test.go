@@ -97,6 +97,8 @@ func TestApacheHTTPDFingerprinter_Fingerprint_Valid(t *testing.T) {
 		serverHdr   string
 		phpHdr      string
 		wantVersion string
+		wantOS      string
+		wantModules map[string]string
 		wantPHP     string
 	}{
 		{
@@ -105,9 +107,10 @@ func TestApacheHTTPDFingerprinter_Fingerprint_Valid(t *testing.T) {
 			wantVersion: "2.4.52",
 		},
 		{
-			name:        "Apache/2.4.52 (Ubuntu)",
+			name:        "Apache/2.4.52 (Ubuntu) with OS",
 			serverHdr:   "Apache/2.4.52 (Ubuntu)",
 			wantVersion: "2.4.52",
+			wantOS:      "Ubuntu",
 		},
 		{
 			name:        "Apache/2.2.15",
@@ -120,11 +123,34 @@ func TestApacheHTTPDFingerprinter_Fingerprint_Valid(t *testing.T) {
 			wantVersion: "",
 		},
 		{
-			name:        "Apache with PHP module",
+			name:        "Apache with PHP module via X-Powered-By",
 			serverHdr:   "Apache/2.4.52 (Ubuntu)",
 			phpHdr:      "PHP/8.1.2",
 			wantVersion: "2.4.52",
+			wantOS:      "Ubuntu",
 			wantPHP:     "8.1.2",
+		},
+		{
+			name:        "Full Server header with modules",
+			serverHdr:   "Apache/2.2.31 (Unix) mod_ssl/2.2.31 OpenSSL/1.0.1e-fips Resin/3.1.6",
+			wantVersion: "2.2.31",
+			wantOS:      "Unix",
+			wantModules: map[string]string{
+				"mod_ssl": "2.2.31",
+				"OpenSSL": "1.0.1e-fips",
+				"Resin":   "3.1.6",
+			},
+		},
+		{
+			name:        "Server header with mod_perl",
+			serverHdr:   "Apache/2.4.6 (CentOS) OpenSSL/1.0.2k-fips mod_perl/2.0.11 Perl/v5.16.3",
+			wantVersion: "2.4.6",
+			wantOS:      "CentOS",
+			wantModules: map[string]string{
+				"OpenSSL":  "1.0.2k-fips",
+				"mod_perl": "2.0.11",
+				"Perl":     "v5.16.3",
+			},
 		},
 	}
 
@@ -154,10 +180,40 @@ func TestApacheHTTPDFingerprinter_Fingerprint_Valid(t *testing.T) {
 				t.Errorf("Version = %q, want %q", result.Version, tt.wantVersion)
 			}
 
+			// Check OS metadata
+			if tt.wantOS != "" {
+				if os, ok := result.Metadata["os"].(string); !ok || os != tt.wantOS {
+					t.Errorf("Metadata[os] = %v, want %v", result.Metadata["os"], tt.wantOS)
+				}
+			}
+
+			// Check modules metadata
+			if tt.wantModules != nil {
+				modulesRaw, ok := result.Metadata["modules"]
+				if !ok {
+					t.Fatal("Metadata[modules] not found")
+				}
+				modules, ok := modulesRaw.(map[string]string)
+				if !ok {
+					t.Fatalf("Metadata[modules] is %T, want map[string]string", modulesRaw)
+				}
+				for name, wantVer := range tt.wantModules {
+					if gotVer, exists := modules[name]; !exists {
+						t.Errorf("Module %q not found in metadata", name)
+					} else if gotVer != wantVer {
+						t.Errorf("Module %q version = %q, want %q", name, gotVer, wantVer)
+					}
+				}
+				// Check no extra modules
+				if len(modules) != len(tt.wantModules) {
+					t.Errorf("Got %d modules, want %d: %v", len(modules), len(tt.wantModules), modules)
+				}
+			}
+
 			// Check PHP metadata if present
 			if tt.wantPHP != "" {
 				if php, ok := result.Metadata["php_version"].(string); !ok || php != tt.wantPHP {
-					t.Errorf("Metadata[php_version] = %v, want %v", php, tt.wantPHP)
+					t.Errorf("Metadata[php_version] = %v, want %v", result.Metadata["php_version"], tt.wantPHP)
 				}
 			}
 
@@ -252,6 +308,12 @@ func TestBuildApacheHTTPDCPE(t *testing.T) {
 }
 
 func TestApacheHTTPDFingerprinter_Integration(t *testing.T) {
+	// Save current registry state and restore after test
+	originalCount := len(GetFingerprinters())
+	t.Cleanup(func() {
+		httpFingerprinters = httpFingerprinters[:originalCount]
+	})
+
 	// Register the fingerprinter (should happen in init(), but we test it anyway)
 	fp := &ApacheHTTPDFingerprinter{}
 	Register(fp)

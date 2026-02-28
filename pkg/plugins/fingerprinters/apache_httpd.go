@@ -20,21 +20,17 @@ Package fingerprinters provides HTTP fingerprinting for Apache HTTP Server.
 Apache HTTP Server (httpd) is the most widely deployed web server. Detection uses:
   - Server header: "Apache/X.Y.Z" or "Apache"
   - Excludes Apache Tomcat (Java servlet container) and Apache-Coyote
+  - Extracts OS from parenthetical (e.g., "(Ubuntu)")
+  - Extracts loaded modules from Server header (e.g., "mod_ssl/2.2.31")
   - Optional PHP detection via X-Powered-By header
 
 # Server Header Format
 
-The Server header varies by configuration:
-  - "Apache/2.4.52" - Version exposed
-  - "Apache/2.4.52 (Ubuntu)" - Version with OS
+The Server header varies by ServerTokens configuration:
+  - "Apache/2.4.52" - Version exposed (ServerTokens Major/Minor/Min)
+  - "Apache/2.4.52 (Ubuntu)" - Version with OS (ServerTokens OS)
+  - "Apache/2.4.52 (Ubuntu) mod_ssl/2.4.52 OpenSSL/3.0.2" - Full (ServerTokens Full)
   - "Apache" - Version hidden (ServerTokens Prod)
-
-# Port Configuration
-
-Apache HTTP Server typically runs on:
-  - 80: Default HTTP port
-  - 443: HTTPS in production
-  - 8080: Alternative HTTP port
 
 # Example Usage
 
@@ -65,6 +61,18 @@ var apacheVersionRegex = regexp.MustCompile(`^Apache/(\d+\.\d+\.\d+)`)
 // apacheVersionValidateRegex validates extracted version format to prevent CPE injection
 // Accepts: 2.4.52, 2.2.15 (standard semantic versioning)
 var apacheVersionValidateRegex = regexp.MustCompile(`^\d+\.\d+\.\d+$`)
+
+// apacheOSRegex extracts OS from parenthetical in Server header
+// Matches: (Ubuntu), (Debian), (CentOS), (Unix), (Win64)
+var apacheOSRegex = regexp.MustCompile(`\(([^)]+)\)`)
+
+// moduleVersionRegex extracts module name/version pairs from Server header
+// Matches: mod_ssl/2.4.52, OpenSSL/3.0.2, PHP/8.1.2, Resin/3.1.6
+var moduleVersionRegex = regexp.MustCompile(`(\w+)/([\w.-]+)`)
+
+// moduleVersionValidateRegex validates module version format
+// Accepts: 2.4.52, 3.0.2-fips, 1.0.1e-fips (alphanumeric with dots/hyphens)
+var moduleVersionValidateRegex = regexp.MustCompile(`^[\w][\w.-]*$`)
 
 // phpVersionRegex extracts PHP version from X-Powered-By header
 // Matches: PHP/8.1.2, PHP/7.4.3
@@ -100,8 +108,6 @@ func (f *ApacheHTTPDFingerprinter) Match(resp *http.Response) bool {
 func (f *ApacheHTTPDFingerprinter) Fingerprint(resp *http.Response, body []byte) (*FingerprintResult, error) {
 	server := resp.Header.Get("Server")
 
-	// Validate this is Apache httpd (not Tomcat or Coyote)
-
 	// Reject any Server header containing colons (CPE injection attempt)
 	if strings.Contains(server, ":") {
 		return nil, nil
@@ -126,6 +132,41 @@ func (f *ApacheHTTPDFingerprinter) Fingerprint(resp *http.Response, body []byte)
 
 	// Build metadata
 	metadata := make(map[string]any)
+
+	// Extract OS from parenthetical in Server header
+	osMatches := apacheOSRegex.FindStringSubmatch(server)
+	if len(osMatches) > 1 {
+		metadata["os"] = osMatches[1]
+	}
+
+	// Extract modules from Server header
+	// Server header format: Apache/2.4.52 (Ubuntu) mod_ssl/2.4.52 OpenSSL/3.0.2
+	// We skip "Apache" (it's the main product) and "PHP" (handled via X-Powered-By)
+	modules := make(map[string]string)
+	moduleMatches := moduleVersionRegex.FindAllStringSubmatch(server, -1)
+	for _, m := range moduleMatches {
+		if len(m) < 3 {
+			continue
+		}
+		name := m[1]
+		ver := m[2]
+
+		// Skip "Apache" (it's the main product, already extracted)
+		if strings.EqualFold(name, "Apache") {
+			continue
+		}
+		// Skip "PHP" (handled via X-Powered-By header below)
+		if strings.EqualFold(name, "PHP") {
+			continue
+		}
+		// Validate module version format
+		if moduleVersionValidateRegex.MatchString(ver) {
+			modules[name] = ver
+		}
+	}
+	if len(modules) > 0 {
+		metadata["modules"] = modules
+	}
 
 	// Check for PHP module via X-Powered-By header
 	xPoweredBy := resp.Header.Get("X-Powered-By")
