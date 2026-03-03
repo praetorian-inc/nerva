@@ -124,6 +124,9 @@ EXAMPLES:
 | `--sctp` | `-S` | Run SCTP plugins (Linux only) | false |
 | `--timeout` | `-w` | Timeout in milliseconds | 2000 |
 | `--verbose` | `-v` | Verbose output to stderr | false |
+| `--workers` | `-W` | Concurrent scan workers | 50 |
+| `--max-host-conn` | `-H` | Max concurrent connections per host IP (0=unlimited) | 0 |
+| `--rate-limit` | `-R` | Max scans per second globally (0=unlimited) | 0 |
 
 ### Examples
 
