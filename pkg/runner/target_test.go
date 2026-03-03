@@ -16,6 +16,7 @@ package runner
 
 import (
 	"net/netip"
+	"strings"
 	"testing"
 )
 
@@ -111,6 +112,20 @@ func TestParseTarget(t *testing.T) {
 			wantErr:     true,
 			errContains: "invalid target",
 		},
+		{
+			name:     "whitespace around target",
+			input:    "  192.168.1.1:80  ",
+			wantAddr: "192.168.1.1:80",
+			wantHost: "",
+			wantErr:  false,
+		},
+		{
+			name:     "port zero",
+			input:    "192.168.1.1:0",
+			wantAddr: "192.168.1.1:0",
+			wantHost: "",
+			wantErr:  false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -122,7 +137,7 @@ func TestParseTarget(t *testing.T) {
 					t.Errorf("parseTarget(%q) expected error containing %q, got nil", tt.input, tt.errContains)
 					return
 				}
-				if tt.errContains != "" && !containsString(err.Error(), tt.errContains) {
+				if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
 					t.Errorf("parseTarget(%q) error = %q, want error containing %q", tt.input, err.Error(), tt.errContains)
 				}
 				return
@@ -148,18 +163,4 @@ func TestParseTarget(t *testing.T) {
 			}
 		})
 	}
-}
-
-func containsString(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
-		(len(s) > 0 && len(substr) > 0 && stringContains(s, substr)))
-}
-
-func stringContains(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
