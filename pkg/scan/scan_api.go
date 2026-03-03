@@ -21,6 +21,10 @@ import (
 	"github.com/praetorian-inc/nerva/pkg/plugins"
 )
 
+// TODO: integrate SCTP/UDP scan paths with worker pool. Currently sequential because:
+// 1. Different return types (*Service vs []*Service) need separate scanFunc adapters
+// 2. Different transport semantics (kernel SCTP, connectionless UDP)
+// 3. Rarely used at scale — primary parallelism benefit is TCP fingerprinting
 // SCTPScan performs SCTP scanning on all targets.
 func SCTPScan(ctx context.Context, targets []plugins.Target, config Config) ([]plugins.Service, error) {
 	var results []plugins.Service

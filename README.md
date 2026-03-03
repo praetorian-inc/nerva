@@ -372,6 +372,7 @@ Import Nerva into your Go applications:
 package main
 
 import (
+    "context"
     "fmt"
     "log"
     "net/netip"
@@ -397,7 +398,7 @@ func main() {
     }
 
     // Run scan
-    results, err := scan.ScanTargets([]plugins.Target{target}, config)
+    results, err := scan.ScanTargets(context.Background(), []plugins.Target{target}, config)
     if err != nil {
         log.Fatal(err)
     }

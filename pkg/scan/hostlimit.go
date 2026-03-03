@@ -1,4 +1,4 @@
-// Copyright 2022 Praetorian Security, Inc.
+// Copyright 2026 Praetorian Security, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -31,6 +31,9 @@ type hostState struct {
 // HostLimiter enforces per-host concurrency limits for scan connections.
 type HostLimiter struct {
 	limit int64
+	// hosts maps IP strings to their semaphore state. Entries are created lazily
+	// and never removed. For typical scan workloads this is fine; each entry is
+	// a semaphore + int64 (~40 bytes).
 	hosts map[string]*hostState
 	mu    sync.RWMutex
 }

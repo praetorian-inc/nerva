@@ -1,4 +1,4 @@
-// Copyright 2022 Praetorian Security, Inc.
+// Copyright 2026 Praetorian Security, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -27,6 +27,9 @@ import (
 	"github.com/praetorian-inc/nerva/pkg/plugins"
 )
 
+// scanFunc is the per-target scan function. It does not accept context.Context,
+// so once a scan starts it runs to completion (bounded by Config.DefaultTimeout).
+// Cancellation only prevents new targets from being dispatched.
 type scanFunc func(plugins.Target) ([]plugins.Service, error)
 
 // ScanPool manages a pool of workers that concurrently scan targets.
@@ -37,7 +40,7 @@ type ScanPool struct {
 	verbose     bool
 	completed   atomic.Int64
 	failed      atomic.Int64
-	total       int64
+	total       atomic.Int64
 }
 
 // NewScanPool constructs a ScanPool from the provided Config.
@@ -72,14 +75,14 @@ func (p *ScanPool) Run(ctx context.Context, targets []plugins.Target, fn scanFun
 
 	p.completed.Store(0)
 	p.failed.Store(0)
-	p.total = int64(len(targets))
+	p.total.Store(int64(len(targets)))
 
 	bufSize := len(targets)
 	if p.workers < bufSize {
 		bufSize = p.workers
 	}
 	jobCh := make(chan plugins.Target, bufSize)
-	resultCh := make(chan []plugins.Service, len(targets))
+	resultCh := make(chan []plugins.Service, p.workers*2)
 
 	var stopProgress func()
 	if p.verbose {
@@ -179,9 +182,10 @@ func (p *ScanPool) startProgressTicker(ctx context.Context, interval time.Durati
 			case <-ticker.C:
 				completed := p.completed.Load()
 				failed := p.failed.Load()
-				remaining := p.total - completed - failed
+				total := p.total.Load()
+				remaining := total - completed - failed
 				fmt.Fprintf(log.Writer(), "[progress] %d/%d completed, %d failed, %d remaining\n",
-					completed, p.total, failed, remaining)
+					completed, total, failed, remaining)
 			}
 		}
 	}()
@@ -190,8 +194,9 @@ func (p *ScanPool) startProgressTicker(ctx context.Context, interval time.Durati
 		close(done)
 		completed := p.completed.Load()
 		failed := p.failed.Load()
-		remaining := p.total - completed - failed
+		total := p.total.Load()
+		remaining := total - completed - failed
 		fmt.Fprintf(log.Writer(), "[progress] %d/%d completed, %d failed, %d remaining\n",
-			completed, p.total, failed, remaining)
+			completed, total, failed, remaining)
 	}
 }
