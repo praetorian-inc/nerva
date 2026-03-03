@@ -58,8 +58,11 @@ import (
 	"strings"
 )
 
-// KeycloakFingerprinter detects Keycloak via OIDC discovery endpoint
+// KeycloakFingerprinter detects Keycloak via OIDC discovery endpoint (Quarkus distro, KC >= 19)
 type KeycloakFingerprinter struct{}
+
+// KeycloakWildFlyFingerprinter detects Keycloak via OIDC discovery endpoint (WildFly distro, KC < 19)
+type KeycloakWildFlyFingerprinter struct{}
 
 type keycloakOIDCConfig struct {
 	Issuer                         string   `json:"issuer"`
@@ -71,6 +74,7 @@ type keycloakOIDCConfig struct {
 
 func init() {
 	Register(&KeycloakFingerprinter{})
+	Register(&KeycloakWildFlyFingerprinter{})
 }
 
 func (f *KeycloakFingerprinter) Name() string {
@@ -178,4 +182,51 @@ func detectKeycloakVersion(config keycloakOIDCConfig, distribution string) (stri
 func buildKeycloakCPE(version string) string {
 	// Always use "*" since we return version ranges, not exact versions
 	return "cpe:2.3:a:redhat:keycloak:*:*:*:*:*:*:*:*"
+}
+
+// KeycloakWildFlyFingerprinter methods
+
+func (f *KeycloakWildFlyFingerprinter) Name() string {
+	return "keycloak-wildfly"
+}
+
+func (f *KeycloakWildFlyFingerprinter) ProbeEndpoint() string {
+	return "/auth/realms/master/.well-known/openid-configuration"
+}
+
+func (f *KeycloakWildFlyFingerprinter) Match(resp *http.Response) bool {
+	return strings.Contains(resp.Header.Get("Content-Type"), "application/json")
+}
+
+func (f *KeycloakWildFlyFingerprinter) Fingerprint(resp *http.Response, body []byte) (*FingerprintResult, error) {
+	var config keycloakOIDCConfig
+	if err := json.Unmarshal(body, &config); err != nil {
+		return nil, nil
+	}
+
+	// Key indicator: issuer must contain "/realms/"
+	if config.Issuer == "" || !strings.Contains(config.Issuer, "/realms/") {
+		return nil, nil
+	}
+
+	// Detect distribution based on /auth/ prefix
+	distribution := "quarkus"
+	if strings.Contains(config.Issuer, "/auth/realms/") {
+		distribution = "wildfly"
+	}
+
+	// Detect version based on features
+	version, features := detectKeycloakVersion(config, distribution)
+
+	metadata := map[string]any{
+		"distribution":     distribution,
+		"detected_features": features,
+	}
+
+	return &FingerprintResult{
+		Technology: "keycloak",
+		Version:    version,
+		CPEs:       []string{buildKeycloakCPE(version)},
+		Metadata:   metadata,
+	}, nil
 }

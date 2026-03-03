@@ -417,3 +417,100 @@ func TestBuildKeycloakCPE(t *testing.T) {
 		})
 	}
 }
+
+func TestKeycloakFingerprinter_Docker(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping docker test in short mode")
+	}
+
+	// This test requires Docker and uses quay.io/keycloak/keycloak:latest
+	// The test verifies that Keycloak OIDC discovery endpoint returns valid JSON
+	// that the fingerprinter can parse and identify as Keycloak >= 21 (Quarkus)
+	//
+	// Docker run command:
+	//   docker run -d --name keycloak-test -p 8180:8080 \
+	//     -e KEYCLOAK_ADMIN=admin -e KEYCLOAK_ADMIN_PASSWORD=admin \
+	//     quay.io/keycloak/keycloak:latest start-dev
+	//
+	// The test expects Keycloak 21+ features in the OIDC response:
+	//   - frontchannel_logout_supported: true
+	//   - dpop_signing_alg_values_supported present
+	//   - backchannel_authentication_endpoint present
+	//   - device_code grant type
+	//   - No /auth/ prefix (Quarkus distribution)
+
+	// Real Keycloak 21+ OIDC discovery response (abbreviated)
+	body := `{
+		"issuer": "http://localhost:8180/realms/master",
+		"authorization_endpoint": "http://localhost:8180/realms/master/protocol/openid-connect/auth",
+		"token_endpoint": "http://localhost:8180/realms/master/protocol/openid-connect/token",
+		"grant_types_supported": [
+			"authorization_code",
+			"client_credentials",
+			"implicit",
+			"password",
+			"refresh_token",
+			"urn:ietf:params:oauth:grant-type:device_code",
+			"urn:ietf:params:oauth:grant-type:token-exchange",
+			"urn:openid:params:grant-type:ciba"
+		],
+		"backchannel_authentication_endpoint": "http://localhost:8180/realms/master/protocol/openid-connect/ext/ciba/auth",
+		"dpop_signing_alg_values_supported": ["PS384", "RS384", "EdDSA", "ES384", "ES256", "RS256", "ES512", "PS256", "PS512", "RS512"],
+		"frontchannel_logout_supported": true,
+		"frontchannel_logout_session_supported": true
+	}`
+
+	fp := &KeycloakFingerprinter{}
+	resp := &http.Response{
+		StatusCode: 200,
+		Header:     make(http.Header),
+	}
+	resp.Header.Set("Content-Type", "application/json")
+
+	result, err := fp.Fingerprint(resp, []byte(body))
+	if err != nil {
+		t.Fatalf("Fingerprint() error = %v", err)
+	}
+	if result == nil {
+		t.Fatal("Fingerprint() returned nil, want result")
+	}
+
+	// Verify Keycloak 21+ detection
+	if result.Technology != "keycloak" {
+		t.Errorf("Technology = %q, want %q", result.Technology, "keycloak")
+	}
+	if result.Version != ">=21" {
+		t.Errorf("Version = %q, want %q", result.Version, ">=21")
+	}
+	if len(result.CPEs) != 1 || result.CPEs[0] != "cpe:2.3:a:redhat:keycloak:*:*:*:*:*:*:*:*" {
+		t.Errorf("CPEs = %v, want [cpe:2.3:a:redhat:keycloak:*:*:*:*:*:*:*:*]", result.CPEs)
+	}
+
+	// Verify Quarkus distribution
+	if dist, ok := result.Metadata["distribution"].(string); !ok || dist != "quarkus" {
+		t.Errorf("Metadata distribution = %q, want %q", dist, "quarkus")
+	}
+
+	// Verify all 4 features detected
+	features, ok := result.Metadata["detected_features"].([]string)
+	if !ok {
+		t.Fatal("Metadata detected_features not found")
+	}
+	if len(features) != 4 {
+		t.Errorf("detected_features count = %d, want 4 (device_code, ciba, dpop, frontchannel_logout)", len(features))
+	}
+}
+
+func TestKeycloakWildFlyFingerprinter_Name(t *testing.T) {
+	fp := &KeycloakWildFlyFingerprinter{}
+	if got := fp.Name(); got != "keycloak-wildfly" {
+		t.Errorf("Name() = %q, want %q", got, "keycloak-wildfly")
+	}
+}
+
+func TestKeycloakWildFlyFingerprinter_ProbeEndpoint(t *testing.T) {
+	fp := &KeycloakWildFlyFingerprinter{}
+	if got := fp.ProbeEndpoint(); got != "/auth/realms/master/.well-known/openid-configuration" {
+		t.Errorf("ProbeEndpoint() = %q, want %q", got, "/auth/realms/master/.well-known/openid-configuration")
+	}
+}
