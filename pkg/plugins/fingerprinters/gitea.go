@@ -36,9 +36,14 @@ type giteaVersionResponse struct {
 }
 
 // versionRegex validates Gitea version format and extracts semver prefix.
-// Valid formats: "1.21.0", "1.26.0+dev-489-gc9a038bc4e", "14.0.0-103-5e0b41b3+gitea-1.22.0"
-// Extracts: X.Y.Z from the beginning
-var giteaVersionRegex = regexp.MustCompile(`^(\d+\.\d+\.\d+)`)
+// Valid formats: "1.21.0", "v1.21.0", "1.26.0+dev-489-gc9a038bc4e", "14.0.0-103-5e0b41b3+gitea-1.22.0"
+// Handles optional 'v' prefix and extracts: X.Y.Z from the beginning
+var giteaVersionRegex = regexp.MustCompile(`^v?(\d+\.\d+\.\d+)`)
+
+// forkGiteaVersionRegex extracts the actual Gitea version from fork version strings.
+// Fork formats: "14.0.0-103-5e0b41b3+gitea-1.22.0" (Codeberg), "7.0.0+gitea-1.21.0" (Forgejo)
+// Extracts: X.Y.Z after "+gitea-"
+var forkGiteaVersionRegex = regexp.MustCompile(`\+gitea-v?(\d+\.\d+\.\d+)`)
 
 // safeVersionRegex validates that the entire version string only contains safe characters.
 // Allows: digits, dots, hyphens, plus signs, and letters (for git hashes)
@@ -91,6 +96,17 @@ func (f *GiteaFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fin
 	// Build metadata with raw version string
 	metadata := map[string]any{
 		"raw_version": data.Version,
+	}
+
+	// Check if this is a fork (Codeberg, Forgejo, etc.) with "+gitea-X.Y.Z" pattern
+	// For forks, we want the actual Gitea version for CPE matching, not the fork version
+	forkMatches := forkGiteaVersionRegex.FindStringSubmatch(data.Version)
+	if len(forkMatches) >= 2 {
+		// This is a fork - extract the actual Gitea version
+		giteaVersion := forkMatches[1]
+		metadata["is_fork"] = true
+		metadata["fork_version"] = version // Store the fork's version (e.g., "14.0.0")
+		version = giteaVersion             // Use Gitea version for CPE (e.g., "1.22.0")
 	}
 
 	return &FingerprintResult{

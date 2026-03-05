@@ -88,6 +88,8 @@ func TestGiteaFingerprinter_Fingerprint_ValidGitea(t *testing.T) {
 		expectedVersion string
 		expectedCPE     string
 		expectedRawVer  string
+		expectedIsFork  bool
+		expectedForkVer string
 	}{
 		{
 			name:            "gitea 1.21.0",
@@ -96,6 +98,16 @@ func TestGiteaFingerprinter_Fingerprint_ValidGitea(t *testing.T) {
 			expectedVersion: "1.21.0",
 			expectedCPE:     "cpe:2.3:a:gitea:gitea:1.21.0:*:*:*:*:*:*:*",
 			expectedRawVer:  "1.21.0",
+			expectedIsFork:  false,
+		},
+		{
+			name:            "gitea v1.21.0 with v prefix",
+			body:            `{"version":"v1.21.0"}`,
+			expectedTech:    "gitea",
+			expectedVersion: "1.21.0",
+			expectedCPE:     "cpe:2.3:a:gitea:gitea:1.21.0:*:*:*:*:*:*:*",
+			expectedRawVer:  "v1.21.0",
+			expectedIsFork:  false,
 		},
 		{
 			name:            "gitea 1.26.0 with dev suffix",
@@ -104,14 +116,27 @@ func TestGiteaFingerprinter_Fingerprint_ValidGitea(t *testing.T) {
 			expectedVersion: "1.26.0",
 			expectedCPE:     "cpe:2.3:a:gitea:gitea:1.26.0:*:*:*:*:*:*:*",
 			expectedRawVer:  "1.26.0+dev-489-gc9a038bc4e",
+			expectedIsFork:  false,
 		},
 		{
 			name:            "codeberg fork version",
 			body:            `{"version":"14.0.0-103-5e0b41b3+gitea-1.22.0"}`,
 			expectedTech:    "gitea",
-			expectedVersion: "14.0.0",
-			expectedCPE:     "cpe:2.3:a:gitea:gitea:14.0.0:*:*:*:*:*:*:*",
+			expectedVersion: "1.22.0",
+			expectedCPE:     "cpe:2.3:a:gitea:gitea:1.22.0:*:*:*:*:*:*:*",
 			expectedRawVer:  "14.0.0-103-5e0b41b3+gitea-1.22.0",
+			expectedIsFork:  true,
+			expectedForkVer: "14.0.0",
+		},
+		{
+			name:            "forgejo fork version",
+			body:            `{"version":"7.0.0+gitea-1.21.0"}`,
+			expectedTech:    "gitea",
+			expectedVersion: "1.21.0",
+			expectedCPE:     "cpe:2.3:a:gitea:gitea:1.21.0:*:*:*:*:*:*:*",
+			expectedRawVer:  "7.0.0+gitea-1.21.0",
+			expectedIsFork:  true,
+			expectedForkVer: "7.0.0",
 		},
 		{
 			name:            "gitea 1.20.5",
@@ -120,6 +145,7 @@ func TestGiteaFingerprinter_Fingerprint_ValidGitea(t *testing.T) {
 			expectedVersion: "1.20.5",
 			expectedCPE:     "cpe:2.3:a:gitea:gitea:1.20.5:*:*:*:*:*:*:*",
 			expectedRawVer:  "1.20.5",
+			expectedIsFork:  false,
 		},
 	}
 
@@ -146,6 +172,16 @@ func TestGiteaFingerprinter_Fingerprint_ValidGitea(t *testing.T) {
 			// Check raw_version in metadata
 			if tt.expectedRawVer != "" {
 				assert.Equal(t, tt.expectedRawVer, result.Metadata["raw_version"])
+			}
+
+			// Check fork metadata
+			if tt.expectedIsFork {
+				assert.Equal(t, true, result.Metadata["is_fork"])
+				assert.Equal(t, tt.expectedForkVer, result.Metadata["fork_version"])
+			} else {
+				// For non-forks, these fields should not be present
+				_, hasFork := result.Metadata["is_fork"]
+				assert.False(t, hasFork, "is_fork should not be present for non-fork versions")
 			}
 		})
 	}
