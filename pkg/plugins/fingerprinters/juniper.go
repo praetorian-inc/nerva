@@ -52,6 +52,8 @@ var juniperBodyPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)/jweb/`),
 	regexp.MustCompile(`(?i)junos\s+web`),
 	regexp.MustCompile(`(?i)SRX\d{2,4}`),
+	regexp.MustCompile(`(?i)Juniper\s+Web\s+Device\s+Manager`),
+	regexp.MustCompile(`(?i)/stylesheet/juniper\.css`),
 }
 
 // Junos REST API body detection patterns
@@ -85,6 +87,10 @@ var (
 
 // SRX model extraction pattern
 var srxModelPattern = regexp.MustCompile(`(?i)(SRX\d{2,4}[A-Z]?)`)
+
+// juniperModelJSPattern extracts the model from the J-Web login page JavaScript variable.
+// Matches: var modelphpStr = "srx345-dc"
+var juniperModelJSPattern = regexp.MustCompile(`(?i)modelphpStr\s*=\s*"(SRX\d{2,4}[A-Z]?)`)
 
 func (f *JuniperFingerprinter) Name() string {
 	return "juniper-srx"
@@ -121,6 +127,12 @@ func (f *JuniperFingerprinter) Match(resp *http.Response) bool {
 	// Check Server header for Juniper indicators
 	serverHeader := strings.ToLower(resp.Header.Get("Server"))
 	if strings.Contains(serverHeader, "juniper") || strings.Contains(serverHeader, "junos") {
+		return true
+	}
+
+	// Embedthis-Appweb is the embedded web server used by Junos J-Web interface.
+	// Matching here allows Fingerprint() to run body analysis for proper validation.
+	if strings.Contains(serverHeader, "embedthis-appweb") {
 		return true
 	}
 
@@ -215,7 +227,10 @@ func (f *JuniperFingerprinter) Fingerprint(resp *http.Response, body []byte) (*F
 	}
 
 	// Extract platform model (SRX300, SRX1500, etc.)
-	if matches := srxModelPattern.FindStringSubmatch(bodyStr); len(matches) > 1 {
+	// Try the J-Web modelphpStr JavaScript variable first (more reliable on real devices).
+	if matches := juniperModelJSPattern.FindStringSubmatch(bodyStr); len(matches) > 1 {
+		metadata["model"] = strings.ToUpper(matches[1])
+	} else if matches := srxModelPattern.FindStringSubmatch(bodyStr); len(matches) > 1 {
 		metadata["model"] = matches[1]
 	}
 

@@ -154,6 +154,12 @@ func TestJuniperFingerprinter_Match(t *testing.T) {
 			},
 			want: false,
 		},
+		{
+			name:       "matches with Embedthis-Appweb server header (J-Web web server)",
+			statusCode: 200,
+			headers:    http.Header{"Server": []string{"Embedthis-Appweb/3.2.3"}},
+			want:       true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -374,6 +380,22 @@ func TestJuniperFingerprinter_Fingerprint(t *testing.T) {
 			body:       `<rpc-reply><output>some junos output</output></rpc-reply>`,
 			wantResult: true,
 			wantTech:   "juniper-srx",
+		},
+		{
+			name:       "detects Juniper J-Web from real device response",
+			statusCode: 200,
+			headers:    http.Header{"Server": []string{"Embedthis-Appweb/3.2.3"}},
+			body: `<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<html><head>
+<link rel="stylesheet" href="/stylesheet/juniper.css" type="text/css"/>
+<title>Log In - Juniper Web Device Manager</title>
+</head><body>
+<div class="jweb-title uppercase"> - srx345-dc</div>
+<script>var modelphpStr = "srx345-dc";</script>
+</body></html>`,
+			wantResult: true,
+			wantTech:   "juniper-srx",
+			wantJWeb:   true,
 		},
 	}
 
@@ -719,6 +741,28 @@ func TestJuniperFingerprinter_ShodanVectors(t *testing.T) {
 			wantTech:    "juniper-srx",
 			wantVersion: "23.1R1-S1",
 			wantJWeb:    true,
+		},
+		{
+			name:        "Shodan Vector 5a: Real J-Web SRX345 login page (103.233.58.86 pattern)",
+			description: "Juniper SRX345 with Embedthis-Appweb server, real device pattern",
+			statusCode:  200,
+			headers: http.Header{
+				"Server":        []string{"Embedthis-Appweb/3.2.3"},
+				"Cache-Control": []string{"no-cache"},
+				"Content-Type":  []string{"text/html"},
+			},
+			body: `<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<html><head>
+<meta http-equiv="Content-Type" content="text/html"/>
+<style id="antiClickjack">body{display:none !important;}</style>
+<link rel="stylesheet" href="/stylesheet/juniper.css" type="text/css"/>
+<title>Log In - Juniper Web Device Manager</title>
+</head><body id='loginbody'>
+<div class="jweb-title uppercase"> - srx345-dc</div>
+<script>var modelphpStr = "srx345-dc";var useKey = "1";</script>
+</body></html>`,
+			wantTech: "juniper-srx",
+			wantJWeb: true,
 		},
 		{
 			name:        "Shodan Vector 5: Junos REST API XML on /api/ endpoint",
