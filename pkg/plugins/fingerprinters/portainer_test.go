@@ -238,7 +238,10 @@ func TestBuildPortainerCPE(t *testing.T) {
 }
 
 func TestPortainerFingerprinter_Integration(t *testing.T) {
-	// init() already registers the fingerprinter, so just run the pipeline
+	// Clear registry and register only this fingerprinter
+	httpFingerprinters = nil
+	Register(&PortainerFingerprinter{})
+
 	body := []byte(`{
 		"Version": "2.21.0",
 		"InstanceID": "299ab403-70a8-4c05-92f7-bf7a994d50df"
