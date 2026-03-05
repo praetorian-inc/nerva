@@ -146,8 +146,62 @@ func TestProcessFingerprintResult_EmptyTechnology(t *testing.T) {
 
 	tech, cpes, metadata := processFingerprintResult(result)
 
-	// Even with empty technology, it should still format correctly
+	// Empty technology with version still produces ":1.0.0"
+	// but the caller should guard against appending empty technologies
 	assert.Equal(t, ":1.0.0", tech)
 	assert.Empty(t, cpes)
 	assert.Nil(t, metadata)
+}
+
+func TestFingerprintPipeline_Integration(t *testing.T) {
+	// Test that the full pipeline correctly processes fingerprint results
+	// including version in technology and metadata collection
+
+	// Create a mock FingerprintResult
+	mockResults := []*fingerprinters.FingerprintResult{
+		{
+			Technology: "kubernetes",
+			Version:    "1.29.0",
+			CPEs:       []string{"cpe:2.3:a:kubernetes:kubernetes:1.29.0:*:*:*:*:*:*:*"},
+			Metadata: map[string]any{
+				"platform":  "linux/amd64",
+				"goVersion": "go1.21.5",
+			},
+		},
+		{
+			Technology: "nginx",
+			Version:    "1.24.0",
+			CPEs:       []string{"cpe:2.3:a:nginx:nginx:1.24.0:*:*:*:*:*:*:*"},
+			Metadata:   nil,
+		},
+	}
+
+	var technologies []string
+	var cpes []string
+	fingerprintMetadata := make(map[string]map[string]any)
+
+	for _, result := range mockResults {
+		tech, resultCPEs, metadata := processFingerprintResult(result)
+		if tech != "" {
+			technologies = append(technologies, tech)
+		}
+		cpes = append(cpes, resultCPEs...)
+		if metadata != nil {
+			fingerprintMetadata[result.Technology] = metadata
+		}
+	}
+
+	// Verify technologies include versions
+	assert.Contains(t, technologies, "kubernetes:1.29.0")
+	assert.Contains(t, technologies, "nginx:1.24.0")
+	assert.Len(t, technologies, 2)
+
+	// Verify CPEs are collected
+	assert.Len(t, cpes, 2)
+
+	// Verify metadata is collected for kubernetes but not nginx
+	assert.Len(t, fingerprintMetadata, 1)
+	assert.NotNil(t, fingerprintMetadata["kubernetes"])
+	assert.Equal(t, "linux/amd64", fingerprintMetadata["kubernetes"]["platform"])
+	assert.Nil(t, fingerprintMetadata["nginx"])
 }
