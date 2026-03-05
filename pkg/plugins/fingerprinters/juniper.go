@@ -111,11 +111,6 @@ func (f *JuniperFingerprinter) Match(resp *http.Response) bool {
 		return true
 	}
 
-	// antiCSRFToken header is set by J-Web
-	if resp.Header.Get("Anticsrftoken") != "" {
-		return true
-	}
-
 	// Check Set-Cookie for J-Web session cookies
 	for _, cookie := range resp.Header.Values("Set-Cookie") {
 		cookieLower := strings.ToLower(cookie)
@@ -132,6 +127,7 @@ func (f *JuniperFingerprinter) Match(resp *http.Response) bool {
 
 	// Embedthis-Appweb is the embedded web server used by Junos J-Web interface.
 	// Matching here allows Fingerprint() to run body analysis for proper validation.
+	// Anticsrftoken alone is insufficient; it must appear alongside Embedthis-Appweb.
 	if strings.Contains(serverHeader, "embedthis-appweb") {
 		return true
 	}
@@ -159,9 +155,6 @@ func (f *JuniperFingerprinter) Fingerprint(resp *http.Response, body []byte) (*F
 	headerMatch := false
 
 	if resp.Header.Get("X-Juniper-Version") != "" {
-		headerMatch = true
-	}
-	if resp.Header.Get("Anticsrftoken") != "" {
 		headerMatch = true
 	}
 

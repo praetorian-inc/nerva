@@ -51,10 +51,11 @@ func TestJuniperFingerprinter_Match(t *testing.T) {
 			want: true,
 		},
 		{
-			name:       "matches with antiCSRFToken header",
+			name:       "matches with antiCSRFToken header combined with Embedthis-Appweb",
 			statusCode: 200,
 			headers: http.Header{
 				"Anticsrftoken": []string{"abc123def456"},
+				"Server":        []string{"Embedthis-Appweb/3.2.3"},
 			},
 			want: true,
 		},
