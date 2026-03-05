@@ -119,7 +119,7 @@ func (p *HTTPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 	defer resp.Body.Close()
 
 	baseURL := fmt.Sprintf("http://%s", conn.RemoteAddr().String())
-	technologies, cpes, _ := p.FingerprintResponse(resp, &client, baseURL, target.Host)
+	technologies, cpes, fpResults, _ := p.FingerprintResponse(resp, &client, baseURL, target.Host)
 
 	payload := plugins.ServiceHTTP{
 		Status:          resp.Status,
@@ -131,6 +131,9 @@ func (p *HTTPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 	}
 	if len(cpes) > 0 {
 		payload.CPEs = cpes
+	}
+	if len(fpResults) > 0 {
+		payload.Fingerprints = fpResults
 	}
 
 	return plugins.CreateServiceFrom(target, payload, false, resp.Header.Get("Server"), plugins.TCP), nil
@@ -179,7 +182,7 @@ func (p *HTTPSPlugin) Run(
 	defer resp.Body.Close()
 
 	baseURL := fmt.Sprintf("https://%s", conn.RemoteAddr().String())
-	technologies, cpes, _ := p.FingerprintResponse(resp, &client, baseURL, target.Host)
+	technologies, cpes, fpResults, _ := p.FingerprintResponse(resp, &client, baseURL, target.Host)
 
 	payload := plugins.ServiceHTTPS{
 		Status:          resp.Status,
@@ -191,6 +194,9 @@ func (p *HTTPSPlugin) Run(
 	}
 	if len(cpes) > 0 {
 		payload.CPEs = cpes
+	}
+	if len(fpResults) > 0 {
+		payload.Fingerprints = fpResults
 	}
 
 	return plugins.CreateServiceFrom(target, payload, true, resp.Header.Get("Server"), plugins.TCP), nil
@@ -218,20 +224,21 @@ func (p *HTTPPlugin) Name() string {
 func (p *HTTPSPlugin) Name() string {
 	return HTTPS
 }
-func (p *HTTPPlugin) FingerprintResponse(resp *http.Response, client *http.Client, baseURL string, host string) ([]string, []string, error) {
+func (p *HTTPPlugin) FingerprintResponse(resp *http.Response, client *http.Client, baseURL string, host string) ([]string, []string, []plugins.HTTPFingerprint, error) {
 	return fingerprint(resp, p.analyzer, client, baseURL, host)
 }
 
-func (p *HTTPSPlugin) FingerprintResponse(resp *http.Response, client *http.Client, baseURL string, host string) ([]string, []string, error) {
+func (p *HTTPSPlugin) FingerprintResponse(resp *http.Response, client *http.Client, baseURL string, host string) ([]string, []string, []plugins.HTTPFingerprint, error) {
 	return fingerprint(resp, p.analyzer, client, baseURL, host)
 }
 
-func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *http.Client, baseURL string, host string) ([]string, []string, error) {
+func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *http.Client, baseURL string, host string) ([]string, []string, []plugins.HTTPFingerprint, error) {
 	var technologies, cpes []string
+	var fps []plugins.HTTPFingerprint
 	maxResponseSize := int64(10 * 1024 * 1024) // 10MB limit
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	// Close body to release connection for reuse by active fingerprinters.
 	// Without this, the transport may not return the connection to the idle pool,
@@ -251,6 +258,12 @@ func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *ht
 	for _, result := range fingerprinters.RunFingerprinters(resp, data) {
 		technologies = append(technologies, result.Technology)
 		cpes = append(cpes, result.CPEs...)
+		fps = append(fps, plugins.HTTPFingerprint{
+			Technology: result.Technology,
+			Version:    result.Version,
+			CPEs:       result.CPEs,
+			Metadata:   result.Metadata,
+		})
 	}
 
 	// Active fingerprinters (probe specific endpoints)
@@ -289,10 +302,16 @@ func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *ht
 				if result, err := fp.Fingerprint(probeResp, probeBody); err == nil && result != nil {
 					technologies = append(technologies, result.Technology)
 					cpes = append(cpes, result.CPEs...)
+					fps = append(fps, plugins.HTTPFingerprint{
+						Technology: result.Technology,
+						Version:    result.Version,
+						CPEs:       result.CPEs,
+						Metadata:   result.Metadata,
+					})
 				}
 			}
 		}
 	}
 
-	return technologies, cpes, nil
+	return technologies, cpes, fps, nil
 }

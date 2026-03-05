@@ -719,22 +719,33 @@ type Service struct {
 	Raw       json.RawMessage `json:"metadata"`
 }
 
+// HTTPFingerprint contains the full detection result from an HTTP fingerprinter,
+// including version and metadata that were previously discarded by the pipeline.
+type HTTPFingerprint struct {
+	Technology string         `json:"technology"`
+	Version    string         `json:"version,omitempty"`
+	CPEs       []string       `json:"cpes,omitempty"`
+	Metadata   map[string]any `json:"metadata,omitempty"`
+}
+
 type ServiceHTTP struct {
-	Status          string      `json:"status"`     // e.g. "200 OK"
-	StatusCode      int         `json:"statusCode"` // e.g. 200
-	ResponseHeaders http.Header `json:"responseHeaders"`
-	Technologies    []string    `json:"technologies,omitempty"`
-	CPEs            []string    `json:"cpes,omitempty"`
+	Status          string             `json:"status"`     // e.g. "200 OK"
+	StatusCode      int                `json:"statusCode"` // e.g. 200
+	ResponseHeaders http.Header        `json:"responseHeaders"`
+	Technologies    []string           `json:"technologies,omitempty"`
+	CPEs            []string           `json:"cpes,omitempty"`
+	Fingerprints    []HTTPFingerprint  `json:"fingerprints,omitempty"`
 }
 
 func (e ServiceHTTP) Type() string { return ProtoHTTP }
 
 type ServiceHTTPS struct {
-	Status          string      `json:"status"`     // e.g. "200 OK"
-	StatusCode      int         `json:"statusCode"` // e.g. 200
-	ResponseHeaders http.Header `json:"responseHeaders"`
-	Technologies    []string    `json:"technologies,omitempty"`
-	CPEs            []string    `json:"cpes,omitempty"`
+	Status          string             `json:"status"`     // e.g. "200 OK"
+	StatusCode      int                `json:"statusCode"` // e.g. 200
+	ResponseHeaders http.Header        `json:"responseHeaders"`
+	Technologies    []string           `json:"technologies,omitempty"`
+	CPEs            []string           `json:"cpes,omitempty"`
+	Fingerprints    []HTTPFingerprint  `json:"fingerprints,omitempty"`
 }
 
 func (e ServiceHTTPS) Type() string { return ProtoHTTPS }
