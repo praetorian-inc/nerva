@@ -29,7 +29,8 @@ import (
 //
 //  1. Server Header: "SonicWALL" in Server header (definitive indicator)
 //  2. Login Page: /cgi-bin/welcome — SonicWall-specific login page patterns
-//  3. Body Patterns: SonicWall branding, NetExtender/Virtual Office references,
+//  3. API Endpoint: /api/sonicos — SonicOS REST API responses with version info
+//  4. Body Patterns: SonicWall branding, NetExtender/Virtual Office references,
 //     SonicOS version strings, product model identifiers
 //
 // Security Risks:
@@ -53,6 +54,8 @@ var (
 	sonicOSVersionPattern = regexp.MustCompile(`(?i)SonicOS\s+(?:Enhanced\s+)?([0-9]+(?:\.[0-9]+){2,4}(?:-[0-9a-zA-Z]+)?)`)
 	// Matches: firmware-version="7.0.1-5035" or firmware_version: "7.0.1"
 	sonicWallFirmwarePattern = regexp.MustCompile(`(?i)firmware[_-]version[=:]["']?\s*([0-9]+(?:\.[0-9]+){2,4}(?:-[0-9a-zA-Z]+)?)`)
+	// Matches: "firmware_version":"7.0.1-5035" in SonicOS API JSON responses
+	sonicOSAPIVersionPattern = regexp.MustCompile(`(?i)"firmware_version"\s*:\s*"([0-9]+(?:\.[0-9]+){2,4}(?:-[0-9a-zA-Z]+)?)"`)
 )
 
 // SonicWall product model patterns
@@ -67,6 +70,8 @@ var sonicWallBodyPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)SonicOS`),
 	regexp.MustCompile(`(?i)swl_portal`),
 	regexp.MustCompile(`(?i)sslvpn/login`),
+	regexp.MustCompile(`(?i)/api/sonicos`),
+	regexp.MustCompile(`(?i)sonicos_api`),
 }
 
 func (f *SonicWallFingerprinter) Name() string {
@@ -159,6 +164,12 @@ func (f *SonicWallFingerprinter) Fingerprint(resp *http.Response, body []byte) (
 		metadata["managementInterface"] = "ssl-vpn"
 	}
 
+	// Detect SonicOS REST API responses
+	if strings.Contains(bodyStr, "/api/sonicos") || strings.Contains(bodyStr, "sonicos_api") ||
+		strings.Contains(bodyStr, `"status"`) && strings.Contains(bodyStr, `"sonicos"`) {
+		metadata["managementInterface"] = "rest-api"
+	}
+
 	result := &FingerprintResult{
 		Technology: "sonicwall",
 		Version:    version,
@@ -178,6 +189,11 @@ func extractSonicWallVersion(body []byte) string {
 
 	// Try firmware version pattern
 	if matches := sonicWallFirmwarePattern.FindSubmatch(body); len(matches) > 1 {
+		return string(matches[1])
+	}
+
+	// Try SonicOS API JSON response pattern
+	if matches := sonicOSAPIVersionPattern.FindSubmatch(body); len(matches) > 1 {
 		return string(matches[1])
 	}
 

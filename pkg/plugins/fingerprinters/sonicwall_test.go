@@ -284,6 +284,34 @@ func TestSonicWallFingerprinter_Fingerprint(t *testing.T) {
 			wantResult: true,
 			wantTech:   "sonicwall",
 		},
+		{
+			name:       "detects SonicOS API JSON response with version",
+			statusCode: 200,
+			headers: http.Header{
+				"Server":       []string{"SonicWALL"},
+				"Content-Type": []string{"application/json"},
+			},
+			body:          `{"status":"success","sonicos":{"firmware_version":"7.0.1-5035","model":"TZ 370"}}`,
+			wantResult:    true,
+			wantTech:      "sonicwall",
+			wantVersion:   "7.0.1-5035",
+			wantCPEPrefix: "cpe:2.3:o:sonicwall:sonicos:7.0.1-5035",
+		},
+		{
+			name:       "detects SonicOS API endpoint reference in body (2+ body patterns)",
+			statusCode: 200,
+			headers:    http.Header{},
+			body:       `<html><body><a href="/api/sonicos/version">API</a><p>SonicWALL Management</p></body></html>`,
+			wantResult: true,
+			wantTech:   "sonicwall",
+		},
+		{
+			name:       "does not detect single NetExtender mention without header",
+			statusCode: 200,
+			headers:    http.Header{},
+			body:       `<html><body>Download the NetExtender client from the vendor site</body></html>`,
+			wantResult: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -621,6 +649,30 @@ var model="SonicWall SuperMassive 9600";
 			wantVersion: "7.1.1-7040",
 			wantModel:   "SuperMassive 9600",
 		},
+		{
+			name:        "Shodan Vector 5: SonicOS REST API JSON response",
+			description: "SonicOS REST API returning JSON with firmware version and model info",
+			statusCode:  200,
+			headers: http.Header{
+				"Server":                    []string{"SonicWALL"},
+				"Content-Type":              []string{"application/json; charset=UTF-8"},
+				"Cache-Control":             []string{"no-cache, no-store"},
+				"Strict-Transport-Security": []string{"max-age=31536000"},
+			},
+			body: `{
+  "status": "success",
+  "sonicos": {
+    "firmware_version": "7.0.1-5058",
+    "model": "SonicWall TZ 470",
+    "serial_number": "XXXXXXXXXXXX",
+    "uptime": 8640000,
+    "api_version": "sonicos_api/v1"
+  }
+}`,
+			wantTech:    "sonicwall",
+			wantVersion: "7.0.1-5058",
+			wantModel:   "TZ 470",
+		},
 	}
 
 	for _, tt := range tests {
@@ -684,6 +736,11 @@ func TestExtractSonicWallVersion(t *testing.T) {
 			name: "extracts firmware version",
 			body: `firmware_version="7.1.1-7040"`,
 			want: "7.1.1-7040",
+		},
+		{
+			name: "extracts version from API JSON response",
+			body: `{"sonicos":{"firmware_version":"7.0.1-5058"}}`,
+			want: "7.0.1-5058",
 		},
 		{
 			name: "no version found",
