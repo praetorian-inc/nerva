@@ -129,6 +129,7 @@ const (
 	ProtoPROFINET         = "profinet"
 	ProtoPulsar           = "pulsar"
 	ProtoPulsarAdmin      = "pulsar-admin"
+	ProtoQdrant           = "qdrant"
 	ProtoRDP              = "rdp"
 	ProtoRedis            = "redis"
 	ProtoRedisTLS         = "redis"
@@ -588,6 +589,10 @@ func (e Service) Metadata() Metadata {
 		var p ServicePulsarAdmin
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
+	case ProtoQdrant:
+		var p ServiceQdrant
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
 	case ProtoSNPP:
 		var p ServiceSNPP
 		_ = json.Unmarshal(e.Raw, &p)
@@ -852,6 +857,12 @@ type ServicePulsarAdmin struct {
 }
 
 func (e ServicePulsarAdmin) Type() string { return ProtoPulsarAdmin }
+
+type ServiceQdrant struct {
+	CPEs []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceQdrant) Type() string { return ProtoQdrant }
 
 type ServiceSNMP struct{}
 
