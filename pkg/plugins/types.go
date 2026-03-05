@@ -720,21 +720,23 @@ type Service struct {
 }
 
 type ServiceHTTP struct {
-	Status          string      `json:"status"`     // e.g. "200 OK"
-	StatusCode      int         `json:"statusCode"` // e.g. 200
-	ResponseHeaders http.Header `json:"responseHeaders"`
-	Technologies    []string    `json:"technologies,omitempty"`
-	CPEs            []string    `json:"cpes,omitempty"`
+	Status              string                    `json:"status"`     // e.g. "200 OK"
+	StatusCode          int                       `json:"statusCode"` // e.g. 200
+	ResponseHeaders     http.Header               `json:"responseHeaders"`
+	Technologies        []string                  `json:"technologies,omitempty"`
+	CPEs                []string                  `json:"cpes,omitempty"`
+	FingerprintMetadata map[string]map[string]any `json:"fingerprintMetadata,omitempty"`
 }
 
 func (e ServiceHTTP) Type() string { return ProtoHTTP }
 
 type ServiceHTTPS struct {
-	Status          string      `json:"status"`     // e.g. "200 OK"
-	StatusCode      int         `json:"statusCode"` // e.g. 200
-	ResponseHeaders http.Header `json:"responseHeaders"`
-	Technologies    []string    `json:"technologies,omitempty"`
-	CPEs            []string    `json:"cpes,omitempty"`
+	Status              string                    `json:"status"`     // e.g. "200 OK"
+	StatusCode          int                       `json:"statusCode"` // e.g. 200
+	ResponseHeaders     http.Header               `json:"responseHeaders"`
+	Technologies        []string                  `json:"technologies,omitempty"`
+	CPEs                []string                  `json:"cpes,omitempty"`
+	FingerprintMetadata map[string]map[string]any `json:"fingerprintMetadata,omitempty"`
 }
 
 func (e ServiceHTTPS) Type() string { return ProtoHTTPS }
