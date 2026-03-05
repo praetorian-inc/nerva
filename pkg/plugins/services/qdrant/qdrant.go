@@ -56,6 +56,10 @@ type QdrantPlugin struct{}
 
 const QDRANT = "qdrant"
 
+// qdrantVersionRegex validates version format to prevent CPE injection
+// Allows: X.Y.Z or X.Y.Z-suffix (for pre-release versions like 1.7.4-beta)
+var qdrantVersionRegex = regexp.MustCompile(`^\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?$`)
+
 // qdrantRootResponse represents the JSON response from Qdrant root endpoint
 type qdrantRootResponse struct {
 	Title   string `json:"title"`
@@ -119,6 +123,10 @@ func DetectQdrant(conn net.Conn, timeout time.Duration, target plugins.Target) (
 		if strings.Contains(strings.ToLower(bodyStr), "qdrant") {
 			// Detected Qdrant but couldn't parse version
 			version := extractVersionFromString(bodyStr)
+			// Validate extracted version
+			if version != "" && !qdrantVersionRegex.MatchString(version) {
+				version = ""
+			}
 			return version, true, nil
 		}
 		return "", false, nil
@@ -126,7 +134,12 @@ func DetectQdrant(conn net.Conn, timeout time.Duration, target plugins.Target) (
 
 	// Check for Qdrant-specific response
 	if strings.Contains(strings.ToLower(rootResp.Title), "qdrant") {
-		return rootResp.Version, true, nil
+		version := rootResp.Version
+		// Validate version format to prevent CPE injection
+		if version != "" && !qdrantVersionRegex.MatchString(version) {
+			version = "" // Invalid format, don't use in CPE
+		}
+		return version, true, nil
 	}
 
 	return "", false, nil
@@ -134,7 +147,7 @@ func DetectQdrant(conn net.Conn, timeout time.Duration, target plugins.Target) (
 
 // extractVersionFromString extracts version from response string using regex
 func extractVersionFromString(body string) string {
-	versionRegex := regexp.MustCompile(`"version"\s*:\s*"v?([0-9]+\.[0-9]+\.[0-9]+[^"]*)"`)
+	versionRegex := regexp.MustCompile(`"version"\s*:\s*"v?([0-9]+\.[0-9]+\.[0-9]+(?:-[a-zA-Z0-9.]+)?)"`)
 	matches := versionRegex.FindStringSubmatch(body)
 	if len(matches) >= 2 {
 		return strings.TrimPrefix(matches[1], "v")

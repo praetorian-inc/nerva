@@ -297,3 +297,82 @@ func TestDetectQdrant_FallbackStringMatch(t *testing.T) {
 		})
 	}
 }
+
+func TestDetectQdrant_CPEInjection(t *testing.T) {
+	tests := []struct {
+		name        string
+		response    string
+		wantVersion string // empty means version should be rejected
+	}{
+		{
+			name:        "CPE injection attempt with colon",
+			response:    `{"title":"qdrant - vector search engine","version":"1.0.0:*:*:malicious"}`,
+			wantVersion: "",
+		},
+		{
+			name:        "CPE injection with special characters",
+			response:    `{"title":"qdrant - vector search engine","version":"1.0.0;rm -rf /"}`,
+			wantVersion: "",
+		},
+		{
+			name:        "command injection attempt",
+			response:    `{"title":"qdrant - vector search engine","version":"1.0.0$(whoami)"}`,
+			wantVersion: "",
+		},
+		{
+			name:        "path traversal attempt",
+			response:    `{"title":"qdrant - vector search engine","version":"../../etc/passwd"}`,
+			wantVersion: "",
+		},
+		{
+			name:        "valid version with pre-release",
+			response:    `{"title":"qdrant - vector search engine","version":"1.7.4-beta"}`,
+			wantVersion: "1.7.4-beta",
+		},
+		{
+			name:        "valid standard version",
+			response:    `{"title":"qdrant - vector search engine","version":"1.7.4"}`,
+			wantVersion: "1.7.4",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte(tt.response))
+			}))
+			defer server.Close()
+
+			addr := strings.TrimPrefix(server.URL, "http://")
+			host, portStr, _ := net.SplitHostPort(addr)
+			port, _ := strconv.Atoi(portStr)
+
+			conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+			if err != nil {
+				t.Fatalf("Failed to connect to test server: %v", err)
+			}
+			defer conn.Close()
+
+			ip := net.ParseIP(host)
+			if ip == nil {
+				ip = net.ParseIP("127.0.0.1")
+			}
+			netAddr, _ := netip.AddrFromSlice(ip.To4())
+			target := plugins.Target{
+				Address: netip.AddrPortFrom(netAddr, uint16(port)),
+			}
+
+			version, detected, _ := DetectQdrant(conn, 5*time.Second, target)
+
+			// Should always detect qdrant (title matches)
+			if !detected {
+				t.Error("DetectQdrant() should detect qdrant even with invalid version")
+			}
+
+			if version != tt.wantVersion {
+				t.Errorf("DetectQdrant() version = %q, want %q", version, tt.wantVersion)
+			}
+		})
+	}
+}
