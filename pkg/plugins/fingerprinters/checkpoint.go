@@ -65,7 +65,7 @@ var (
 	checkPointMobileAccessPattern = regexp.MustCompile(`(?i)(?:Check\s*Point\s*Mobile\s*Access|SNX\s+VPN|sslvpn|/sslvpn/)`)
 	checkPointSmartConsolePattern = regexp.MustCompile(`(?i)(?:SmartConsole|Smart\s*Dashboard|Check\s*Point\s*SmartCenter)`)
 	checkPointVendorRefPattern    = regexp.MustCompile(`(?i)Check\s*Point\s+Software\s+Technologies`)
-	checkPointLoginPattern        = regexp.MustCompile(`(?i)(?:cp_login|cpauth|CheckPoint)`)
+	checkPointLoginPattern        = regexp.MustCompile(`(?i)(?:cp_login|cpauth)`)
 )
 
 func (f *CheckPointFingerprinter) Name() string {
@@ -122,10 +122,17 @@ func (f *CheckPointFingerprinter) Fingerprint(resp *http.Response, body []byte) 
 
 	// Determine if this is a Check Point device via headers or body
 	headerMatch := isCheckPointHeader(resp)
-	bodyMatch := isCheckPointBody(bodyStr)
 
-	// Require at least one header or body match
-	if !headerMatch && !bodyMatch {
+	bodyMatchCount := 0
+	if checkPointGaiaPortalPattern.MatchString(bodyStr) { bodyMatchCount++ }
+	if checkPointMobileAccessPattern.MatchString(bodyStr) { bodyMatchCount++ }
+	if checkPointSmartConsolePattern.MatchString(bodyStr) { bodyMatchCount++ }
+	if checkPointVendorRefPattern.MatchString(bodyStr) { bodyMatchCount++ }
+	if checkPointLoginPattern.MatchString(bodyStr) { bodyMatchCount++ }
+
+	// Require header match OR at least 2 distinct body pattern matches
+	// to reduce false positives from pages that merely mention "Check Point"
+	if !headerMatch && bodyMatchCount < 2 {
 		return nil, nil
 	}
 

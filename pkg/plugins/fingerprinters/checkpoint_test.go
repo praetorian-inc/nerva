@@ -216,6 +216,20 @@ func TestCheckPointFingerprinter_Fingerprint(t *testing.T) {
 			wantVPN:    true,
 		},
 		{
+			name:       "does not detect from single vendor reference alone",
+			statusCode: 200,
+			headers:    http.Header{},
+			body:        `<html><footer>Copyright Check Point Software Technologies Ltd.</footer></html>`,
+			wantResult:  false,
+		},
+		{
+			name:       "does not detect from generic CheckPoint mention",
+			statusCode: 200,
+			headers:    http.Header{},
+			body:        `<html><body>We use CheckPoint firewalls in our infrastructure</body></html>`,
+			wantResult:  false,
+		},
+		{
 			name:       "does not detect non-Check Point content",
 			statusCode: 200,
 			headers: http.Header{
@@ -237,7 +251,7 @@ func TestCheckPointFingerprinter_Fingerprint(t *testing.T) {
 			name:       "extracts version without header match using body only",
 			statusCode: 200,
 			headers:    http.Header{},
-			body:        `<html><head><title>Gaia Portal</title></head><body>Welcome to Check Point Gaia R81.10 Portal</body></html>`,
+			body:        `<html><head><title>Gaia Portal</title></head><body>Welcome to Check Point Gaia R81.10 Portal<footer>Check Point Software Technologies Ltd.</footer></body></html>`,
 			wantResult:  true,
 			wantTech:    "checkpoint-gateway",
 			wantVersion: "R81.10",
