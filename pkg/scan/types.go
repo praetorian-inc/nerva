@@ -43,4 +43,6 @@ type Config struct {
 
 	// Max scans per second globally (0 = unlimited)
 	RateLimit float64
+
+	OnProgress ProgressCallback
 }

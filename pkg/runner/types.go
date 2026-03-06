@@ -29,4 +29,8 @@ type cliConfig struct {
 	workers          int
 	maxHostConn      int
 	rateLimit        float64
+	// Resume support
+	stateFile string
+	resume    bool
+	autoSave  int
 }

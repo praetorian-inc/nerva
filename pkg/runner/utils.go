@@ -57,6 +57,10 @@ func checkConfig(config cliConfig) error {
 		return errors.New("showErrors requires results being output in JSON or CSV format")
 	}
 
+	if config.resume && config.stateFile == "" {
+		return errors.New("--resume requires --state-file")
+	}
+
 	return nil
 }
 

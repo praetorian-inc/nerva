@@ -76,6 +76,9 @@ func ScanTargets(ctx context.Context, targets []plugins.Target, config Config) (
 	}
 
 	pool := NewScanPool(config)
+	if config.OnProgress != nil {
+		pool.WithProgress(config.OnProgress)
+	}
 	fn := func(target plugins.Target) ([]plugins.Service, error) {
 		results, err := config.SimpleScanTarget(target)
 		if err != nil {

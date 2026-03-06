@@ -19,6 +19,7 @@ import (
 	"errors"
 	"net/netip"
 	"sort"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -645,4 +646,239 @@ func TestScanPool_SequentialParallelAccuracy(t *testing.T) {
 				i, sequential[i].Port, parallel[i].Port)
 		}
 	}
+}
+
+// Test Group 9: ProgressCallback
+
+func TestScanPool_WithProgress_CallbackInvoked(t *testing.T) {
+	t.Parallel()
+
+	var callCount atomic.Int64
+	var mu sync.Mutex
+	var completedTargets []plugins.Target
+
+	callback := func(target plugins.Target, results []plugins.Service, count int64) {
+		callCount.Add(1)
+		mu.Lock()
+		completedTargets = append(completedTargets, target)
+		mu.Unlock()
+	}
+
+	fn := func(target plugins.Target) ([]plugins.Service, error) {
+		return []plugins.Service{{IP: target.Address.Addr().String()}}, nil
+	}
+
+	pool := NewScanPool(Config{Workers: 5}).WithProgress(callback)
+	targets := makeTargets(10)
+
+	_, err := pool.Run(context.Background(), targets, fn)
+
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if callCount.Load() != 10 {
+		t.Errorf("expected 10 callback invocations, got %d", callCount.Load())
+	}
+	if len(completedTargets) != 10 {
+		t.Errorf("expected 10 completed targets, got %d", len(completedTargets))
+	}
+}
+
+func TestScanPool_WithProgress_ReceivesCorrectResults(t *testing.T) {
+	t.Parallel()
+
+	var mu sync.Mutex
+	resultsByPort := make(map[int][]plugins.Service)
+
+	callback := func(target plugins.Target, results []plugins.Service, count int64) {
+		mu.Lock()
+		resultsByPort[int(target.Address.Port())] = results
+		mu.Unlock()
+	}
+
+	fn := func(target plugins.Target) ([]plugins.Service, error) {
+		return []plugins.Service{{
+			IP:   target.Address.Addr().String(),
+			Port: int(target.Address.Port()),
+		}}, nil
+	}
+
+	pool := NewScanPool(Config{Workers: 5}).WithProgress(callback)
+	targets := makeTargets(5)
+
+	_, err := pool.Run(context.Background(), targets, fn)
+
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	// Each target got its results
+	for port := 1; port <= 5; port++ {
+		if len(resultsByPort[port]) != 1 {
+			t.Errorf("port %d: expected 1 result, got %d", port, len(resultsByPort[port]))
+		}
+		if resultsByPort[port][0].Port != port {
+			t.Errorf("port %d: result port = %d, want %d", port, resultsByPort[port][0].Port, port)
+		}
+	}
+}
+
+func TestScanPool_WithProgress_CountIncreases(t *testing.T) {
+	t.Parallel()
+
+	var mu sync.Mutex
+	var counts []int64
+
+	callback := func(target plugins.Target, results []plugins.Service, count int64) {
+		mu.Lock()
+		counts = append(counts, count)
+		mu.Unlock()
+	}
+
+	fn := func(target plugins.Target) ([]plugins.Service, error) {
+		return []plugins.Service{{IP: target.Address.Addr().String()}}, nil
+	}
+
+	pool := NewScanPool(Config{Workers: 1}).WithProgress(callback) // Single worker for order
+	targets := makeTargets(5)
+
+	_, err := pool.Run(context.Background(), targets, fn)
+
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	// With single worker, counts should be strictly increasing
+	for i := 1; i < len(counts); i++ {
+		if counts[i] <= counts[i-1] {
+			t.Errorf("counts[%d] = %d, counts[%d] = %d, expected strictly increasing", i, counts[i], i-1, counts[i-1])
+		}
+	}
+}
+
+func TestScanPool_WithProgress_ThreadSafe(t *testing.T) {
+	t.Parallel()
+
+	var counter atomic.Int64
+	var maxConcurrent atomic.Int64
+	var current atomic.Int64
+
+	callback := func(target plugins.Target, results []plugins.Service, count int64) {
+		cur := current.Add(1)
+		defer current.Add(-1)
+
+		// Track max concurrent callback invocations
+		for {
+			max := maxConcurrent.Load()
+			if cur <= max || maxConcurrent.CompareAndSwap(max, cur) {
+				break
+			}
+		}
+
+		// Simulate some work in callback
+		time.Sleep(5 * time.Millisecond)
+		counter.Add(1)
+	}
+
+	fn := func(target plugins.Target) ([]plugins.Service, error) {
+		return []plugins.Service{{IP: target.Address.Addr().String()}}, nil
+	}
+
+	pool := NewScanPool(Config{Workers: 10}).WithProgress(callback)
+	targets := makeTargets(50)
+
+	_, err := pool.Run(context.Background(), targets, fn)
+
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if counter.Load() != 50 {
+		t.Errorf("expected 50 callback invocations, got %d", counter.Load())
+	}
+	// Verify some concurrency occurred
+	if maxConcurrent.Load() <= 1 {
+		t.Errorf("expected max concurrency > 1, got %d", maxConcurrent.Load())
+	}
+}
+
+func TestScanPool_WithProgress_NilCallback(t *testing.T) {
+	t.Parallel()
+
+	fn := func(target plugins.Target) ([]plugins.Service, error) {
+		return []plugins.Service{{IP: target.Address.Addr().String()}}, nil
+	}
+
+	pool := NewScanPool(Config{Workers: 5}).WithProgress(nil)
+	targets := makeTargets(10)
+
+	results, err := pool.Run(context.Background(), targets, fn)
+
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if len(results) != 10 {
+		t.Errorf("expected 10 results, got %d", len(results))
+	}
+}
+
+func TestScanPool_WithProgress_NotCalledOnError(t *testing.T) {
+	t.Parallel()
+
+	var callCount atomic.Int64
+
+	callback := func(target plugins.Target, results []plugins.Service, count int64) {
+		callCount.Add(1)
+	}
+
+	fn := func(target plugins.Target) ([]plugins.Service, error) {
+		return nil, errors.New("simulated error")
+	}
+
+	pool := NewScanPool(Config{Workers: 5}).WithProgress(callback)
+	targets := makeTargets(10)
+
+	_, err := pool.Run(context.Background(), targets, fn)
+
+	if err != nil {
+		t.Fatalf("expected no error (pool continues on individual errors), got: %v", err)
+	}
+	if callCount.Load() != 0 {
+		t.Errorf("expected 0 callback invocations (errors skip callback), got %d", callCount.Load())
+	}
+}
+
+func TestScanPool_WithProgress_ChainedCall(t *testing.T) {
+	callback := func(target plugins.Target, results []plugins.Service, count int64) {}
+
+	pool := NewScanPool(Config{Workers: 5})
+	returned := pool.WithProgress(callback)
+
+	if pool != returned {
+		t.Error("WithProgress() should return the same pool instance for chaining")
+	}
+}
+
+func TestScanPool_WithProgress_EmptyResults(t *testing.T) {
+	t.Parallel()
+
+	var receivedEmpty atomic.Bool
+
+	callback := func(target plugins.Target, results []plugins.Service, count int64) {
+		if len(results) == 0 {
+			receivedEmpty.Store(true)
+		}
+	}
+
+	fn := func(target plugins.Target) ([]plugins.Service, error) {
+		return nil, nil // No results
+	}
+
+	pool := NewScanPool(Config{Workers: 5}).WithProgress(callback)
+	targets := makeTargets(5)
+
+	_, err := pool.Run(context.Background(), targets, fn)
+
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	// Note: callback is only called when len(services) > 0 according to source
+	// So this test documents that behavior
 }

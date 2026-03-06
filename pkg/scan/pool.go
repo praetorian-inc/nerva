@@ -32,6 +32,11 @@ import (
 // Cancellation only prevents new targets from being dispatched.
 type scanFunc func(plugins.Target) ([]plugins.Service, error)
 
+// ProgressCallback is called after each target is scanned.
+// Parameters: completed target, results for that target, total completed count.
+// The callback is invoked from worker goroutines so it must be thread-safe.
+type ProgressCallback func(target plugins.Target, results []plugins.Service, completedCount int64)
+
 // ScanPool manages a pool of workers that concurrently scan targets.
 type ScanPool struct {
 	workers     int
@@ -42,6 +47,7 @@ type ScanPool struct {
 	failed      atomic.Int64
 	active      atomic.Int64
 	total       atomic.Int64
+	onProgress  ProgressCallback
 }
 
 // NewScanPool constructs a ScanPool from the provided Config.
@@ -64,6 +70,13 @@ func NewScanPool(config Config) *ScanPool {
 		p.rateLimiter = rate.NewLimiter(rate.Limit(config.RateLimit), 1)
 	}
 
+	return p
+}
+
+// WithProgress sets a callback to be invoked after each target is scanned.
+// The callback is invoked from worker goroutines so it must be thread-safe.
+func (p *ScanPool) WithProgress(cb ProgressCallback) *ScanPool {
+	p.onProgress = cb
 	return p
 }
 
@@ -167,6 +180,9 @@ func (p *ScanPool) processTarget(ctx context.Context, target plugins.Target, fn 
 	}
 
 	p.completed.Add(1)
+	if p.onProgress != nil {
+		p.onProgress(target, services, p.completed.Load())
+	}
 }
 
 // startProgressTicker logs scan progress every interval.
