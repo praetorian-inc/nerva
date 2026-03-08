@@ -85,10 +85,9 @@ func setupPlugins() {
 func (c *Config) UDPScanTarget(target plugins.Target) (*plugins.Service, error) {
 	// first check the default port mappings for TCP / TLS
 	for _, plugin := range sortedUDPPlugins {
-		ip := target.Address.Addr().String()
 		port := target.Address.Port()
 		if plugin.PortPriority(port) {
-			conn, err := c.DialUDP(ip, port)
+			conn, err := c.DialUDP(target)
 			if err != nil {
 				return nil, fmt.Errorf("unable to connect, err = %w", err)
 			}
@@ -108,7 +107,7 @@ func (c *Config) UDPScanTarget(target plugins.Target) (*plugins.Service, error) 
 	}
 
 	for _, plugin := range sortedUDPPlugins {
-		conn, err := c.DialUDP(target.Address.Addr().String(), target.Address.Port())
+		conn, err := c.DialUDP(target)
 		if err != nil {
 			return nil, fmt.Errorf("unable to connect, err = %w", err)
 		}
@@ -172,7 +171,6 @@ func (c *Config) SCTPScanTarget(target plugins.Target) (*plugins.Service, error)
 // accurate as possible.
 
 func (c *Config) SimpleScanTarget(target plugins.Target) ([]*plugins.Service, error) {
-	ip := target.Address.Addr().String()
 	port := target.Address.Port()
 
 	// first check the default port mappings for TCP / TLS
@@ -181,7 +179,7 @@ func (c *Config) SimpleScanTarget(target plugins.Target) ([]*plugins.Service, er
 			continue
 		}
 
-		conn, err := c.DialTCP(ip, port)
+		conn, err := c.DialTCP(target)
 		if err != nil {
 			return nil, fmt.Errorf("unable to connect, err = %w", err)
 		}
@@ -240,7 +238,7 @@ func (c *Config) SimpleScanTarget(target plugins.Target) ([]*plugins.Service, er
 		}
 	} else {
 		for _, plugin := range sortedTCPPlugins {
-			conn, err := c.DialTCP(ip, port)
+			conn, err := c.DialTCP(target)
 			if err != nil {
 				return nil, fmt.Errorf("unable to connect, err = %w", err)
 			}
@@ -299,7 +297,7 @@ func (c *Config) DialTLS(target plugins.Target) (net.Conn, error) {
 	}
 
 	// Dial TCP first, then wrap with TLS Client
-	conn, err := c.DialTCP(target.Address.Addr().String(), target.Address.Port())
+	conn, err := c.DialTCP(target)
 	if err != nil {
 		return nil, err
 	}
@@ -314,8 +312,32 @@ func (c *Config) DialTLS(target plugins.Target) (net.Conn, error) {
 	return tlsConn, nil
 }
 
-func (c *Config) DialTCP(ip string, port uint16) (net.Conn, error) {
-	addr := net.JoinHostPort(ip, fmt.Sprintf("%d", port))
+func resolveLocalFallback(host string, port uint16, network string, d *net.Dialer) (net.Conn, error) {
+	addrs, err := net.LookupIP(host)
+	if err != nil {
+		return nil, fmt.Errorf("fallback dns resolution failed for %s: %w", host, err)
+	}
+	var lastErr error
+	for _, ip := range addrs {
+		addr := net.JoinHostPort(ip.String(), fmt.Sprintf("%d", port))
+		conn, err := d.Dial(network, addr)
+		if err == nil {
+			return conn, nil
+		}
+		lastErr = err
+	}
+	return nil, lastErr
+}
+
+func (c *Config) DialTCP(target plugins.Target) (net.Conn, error) {
+	ip := target.Address.Addr().String()
+	port := target.Address.Port()
+
+	dialHost := ip
+	if ip == "0.0.0.0" && target.Host != "" {
+		dialHost = target.Host
+	}
+	addr := net.JoinHostPort(dialHost, fmt.Sprintf("%d", port))
 
 	if c.Proxy != "" {
 		proxyURL, err := url.Parse(c.Proxy)
@@ -326,30 +348,51 @@ func (c *Config) DialTCP(ip string, port uint16) (net.Conn, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to create proxy dialer: %w", err)
 		}
-		return proxyDialer.Dial("tcp", addr)
+
+		conn, err := proxyDialer.Dial("tcp", addr)
+		if err != nil && c.DNSOrder == "pl" && dialHost == target.Host {
+			// Proxy dial failed, fallback to local resolution
+			return resolveLocalFallback(target.Host, port, "tcp", dialer)
+		}
+		return conn, err
 	}
 
 	return dialer.Dial("tcp", addr)
 }
 
-func (c *Config) DialUDP(ip string, port uint16) (net.Conn, error) {
-	addr := net.JoinHostPort(ip, fmt.Sprintf("%d", port))
+func (c *Config) DialUDP(target plugins.Target) (net.Conn, error) {
+	ip := target.Address.Addr().String()
+	port := target.Address.Port()
+
+	dialHost := ip
+	if ip == "0.0.0.0" && target.Host != "" {
+		dialHost = target.Host
+	}
+	addr := net.JoinHostPort(dialHost, fmt.Sprintf("%d", port))
 
 	if c.Proxy != "" {
 		proxyURL, err := url.Parse(c.Proxy)
 		if err != nil {
 			return nil, fmt.Errorf("invalid proxy URL: %w", err)
 		}
-		// Try to cast to proxy.Dialer, if it doesn't support UDP it might fail here or later
+
 		proxyDialer, err := proxy.FromURL(proxyURL, dialer)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create proxy dialer: %w", err)
 		}
 
+		var conn net.Conn
 		if pd, ok := proxyDialer.(proxy.ContextDialer); ok {
-			return pd.DialContext(context.Background(), "udp", addr)
+			conn, err = pd.DialContext(context.Background(), "udp", addr)
+		} else {
+			conn, err = proxyDialer.Dial("udp", addr)
 		}
-		return proxyDialer.Dial("udp", addr)
+
+		if err != nil && c.DNSOrder == "pl" && dialHost == target.Host {
+			// Proxy dial failed, fallback to local resolution
+			return resolveLocalFallback(target.Host, port, "udp", dialer)
+		}
+		return conn, err
 	}
 
 	return dialer.Dial("udp", addr)

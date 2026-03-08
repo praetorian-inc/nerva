@@ -47,5 +47,8 @@ type Config struct {
 	// Proxy URL string (e.g. socks5://127.0.0.1:1080)
 	Proxy string
 
+	// DNSOrder controls DNS resolution (p, l, lp, pl)
+	DNSOrder string
+
 	OnProgress ProgressCallback
 }

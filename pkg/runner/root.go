@@ -254,6 +254,7 @@ func buildState(config cliConfig, targets []plugins.Target, completedTargets []s
 			MaxHostConn: config.maxHostConn,
 			RateLimit:   config.rateLimit,
 			Proxy:       config.proxy,
+			DNSOrder:    config.dnsOrder,
 		},
 		Targets: StateTargets{
 			OriginalCount: originalCount,
@@ -289,6 +290,7 @@ func init() {
 	rootCmd.PersistentFlags().IntVar(&config.autoSave, "auto-save", 0, "auto-save interval (number of targets)")
 
 	rootCmd.PersistentFlags().StringVar(&config.proxy, "proxy", "", "proxy URL (e.g. socks5://127.0.0.1:1080)")
+	rootCmd.PersistentFlags().StringVar(&config.dnsOrder, "dns-order", "lp", "DNS resolution order: p, l, lp, pl")
 }
 
 func Execute() {
