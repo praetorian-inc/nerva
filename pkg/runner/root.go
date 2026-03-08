@@ -253,6 +253,9 @@ func buildState(config cliConfig, targets []plugins.Target, completedTargets []s
 			Workers:     config.workers,
 			MaxHostConn: config.maxHostConn,
 			RateLimit:   config.rateLimit,
+			Proxy:       config.proxy,
+			ProxyAuth:   config.proxyAuth,
+			DNSOrder:    config.dnsOrder,
 		},
 		Targets: StateTargets{
 			OriginalCount: originalCount,
@@ -285,9 +288,11 @@ func init() {
 	rootCmd.PersistentFlags().BoolVarP(&config.showCapabilities, "capabilities", "c", false, "list available capabilities and exit")
 
 	// Resume support
-	rootCmd.PersistentFlags().StringVar(&config.stateFile, "state-file", "", "path to state file for resume")
-	rootCmd.PersistentFlags().BoolVar(&config.resume, "resume", false, "resume scan from state file")
 	rootCmd.PersistentFlags().IntVar(&config.autoSave, "auto-save", 0, "auto-save interval (number of targets)")
+
+	rootCmd.PersistentFlags().StringVar(&config.proxy, "proxy", "", "proxy URL (e.g. socks5://127.0.0.1:1080)")
+	rootCmd.PersistentFlags().StringVar(&config.proxyAuth, "proxy-auth", "", "socks5 proxy authentication (username:password)")
+	rootCmd.PersistentFlags().StringVar(&config.dnsOrder, "dns-order", "lp", "DNS resolution order: p, l, lp, pl")
 }
 
 func Execute() {

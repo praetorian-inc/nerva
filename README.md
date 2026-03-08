@@ -32,6 +32,7 @@ Nerva rapidly detects and identifies services running on open network ports. Use
 
 - **120+ Protocol Plugins** — Databases, remote access, web services, messaging, industrial, and telecom protocols
 - **Multi-Transport Support** — TCP (default), UDP (`--udp`), and SCTP (`--sctp`, Linux only)
+- **Proxy Support** — Route scanning traffic transparently through SOCKS5 or HTTP proxies with configurable DNS resolution
 - **Rich Metadata** — Extract versions, configurations, and security-relevant details from each service
 - **Fast Mode** — Scan only default ports for rapid reconnaissance (`--fast`)
 - **Flexible Output** — JSON, CSV, or human-readable formats
@@ -118,6 +119,9 @@ EXAMPLES:
 | `--output` | `-o` | Output file path | stdout |
 | `--json` | | Output in JSON format | false |
 | `--csv` | | Output in CSV format | false |
+| `--proxy` | | Proxy URL (e.g. socks5://127.0.0.1:1080) | — |
+| `--proxy-auth` | | SOCKS5 Proxy Auth (e.g. username:password) | — |
+| `--dns-order` | | DNS resolution order: `p`, `l`, `lp`, `pl` | `lp` |
 | `--fast` | `-f` | Fast mode (default ports only) | false |
 | `--capabilities` | `-c` | list available capabilities and exit | false |
 | `--udp` | `-U` | Run UDP plugins | false |
@@ -160,6 +164,12 @@ nerva -t telecom-server:3868 -S
 
 ```sh
 nerva -l large-target-list.txt --fast --json
+```
+
+**Proxy routing with remote DNS resolution:**
+
+```sh
+nerva -t target.internal:80 --proxy socks5://127.0.0.1:1080 --dns-order p
 ```
 
 **Parallel scanning with rate limiting:**
@@ -404,6 +414,9 @@ func main() {
         DefaultTimeout: 2 * time.Second,
         FastMode:       false,
         UDP:            false,
+        Proxy:          "socks5://127.0.0.1:1080", // optional
+        ProxyAuth:      "username:password",       // optional
+        DNSOrder:       "p",                       // resolver strategy
     }
 
     // Create target
