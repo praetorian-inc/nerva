@@ -22,6 +22,7 @@ import (
 	"net"
 	"net/url"
 	"sort"
+	"strings"
 	"time"
 
 	"golang.org/x/net/proxy"
@@ -344,6 +345,15 @@ func (c *Config) DialTCP(target plugins.Target) (net.Conn, error) {
 		if err != nil {
 			return nil, fmt.Errorf("invalid proxy URL: %w", err)
 		}
+		if c.ProxyAuth != "" {
+			parts := strings.SplitN(c.ProxyAuth, ":", 2)
+			if len(parts) == 2 {
+				proxyURL.User = url.UserPassword(parts[0], parts[1])
+			} else {
+				proxyURL.User = url.User(parts[0])
+			}
+		}
+
 		proxyDialer, err := proxy.FromURL(proxyURL, dialer)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create proxy dialer: %w", err)
@@ -374,6 +384,15 @@ func (c *Config) DialUDP(target plugins.Target) (net.Conn, error) {
 		proxyURL, err := url.Parse(c.Proxy)
 		if err != nil {
 			return nil, fmt.Errorf("invalid proxy URL: %w", err)
+		}
+
+		if c.ProxyAuth != "" {
+			parts := strings.SplitN(c.ProxyAuth, ":", 2)
+			if len(parts) == 2 {
+				proxyURL.User = url.UserPassword(parts[0], parts[1])
+			} else {
+				proxyURL.User = url.User(parts[0])
+			}
 		}
 
 		proxyDialer, err := proxy.FromURL(proxyURL, dialer)

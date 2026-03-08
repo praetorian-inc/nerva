@@ -75,6 +75,7 @@ func createScanConfig(config cliConfig) scan.Config {
 		MaxHostConn:    config.maxHostConn,
 		RateLimit:      config.rateLimit,
 		Proxy:          config.proxy,
+		ProxyAuth:      config.proxyAuth,
 		DNSOrder:       config.dnsOrder,
 	}
 }

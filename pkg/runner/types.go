@@ -35,6 +35,7 @@ type cliConfig struct {
 	autoSave  int
 
 	// Proxy
-	proxy    string
-	dnsOrder string
+	proxy     string
+	proxyAuth string
+	dnsOrder  string
 }

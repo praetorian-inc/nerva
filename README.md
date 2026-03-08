@@ -120,6 +120,7 @@ EXAMPLES:
 | `--json` | | Output in JSON format | false |
 | `--csv` | | Output in CSV format | false |
 | `--proxy` | | Proxy URL (e.g. socks5://127.0.0.1:1080) | — |
+| `--proxy-auth` | | SOCKS5 Proxy Auth (e.g. username:password) | — |
 | `--dns-order` | | DNS resolution order: `p`, `l`, `lp`, `pl` | `lp` |
 | `--fast` | `-f` | Fast mode (default ports only) | false |
 | `--capabilities` | `-c` | list available capabilities and exit | false |
@@ -414,6 +415,7 @@ func main() {
         FastMode:       false,
         UDP:            false,
         Proxy:          "socks5://127.0.0.1:1080", // optional
+        ProxyAuth:      "username:password",       // optional
         DNSOrder:       "p",                       // resolver strategy
     }
 
