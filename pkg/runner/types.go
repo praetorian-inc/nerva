@@ -33,4 +33,7 @@ type cliConfig struct {
 	stateFile string
 	resume    bool
 	autoSave  int
+
+	// Proxy
+	proxy string
 }

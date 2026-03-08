@@ -74,6 +74,7 @@ func createScanConfig(config cliConfig) scan.Config {
 		Workers:        config.workers,
 		MaxHostConn:    config.maxHostConn,
 		RateLimit:      config.rateLimit,
+		Proxy:          config.proxy,
 	}
 }
 
