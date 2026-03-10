@@ -304,7 +304,9 @@ func (c *Config) DialTLS(target plugins.Target) (net.Conn, error) {
 	}
 
 	tlsConn := tls.Client(conn, config)
+	_ = conn.SetDeadline(time.Now().Add(c.DefaultTimeout))
 	err = tlsConn.Handshake()
+	_ = conn.SetDeadline(time.Time{})
 	if err != nil {
 		conn.Close()
 		return nil, err
