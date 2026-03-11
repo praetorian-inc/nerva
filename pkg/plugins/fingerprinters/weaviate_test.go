@@ -106,7 +106,7 @@ func TestWeaviateFingerprinter_Fingerprint_ValidWeaviate(t *testing.T) {
 					}
 				},
 				"version": "1.24.1",
-				"gitHash": "abc123def"
+				"git_hash": "abc123def"
 			}`,
 			expectedTech:    "weaviate",
 			expectedVersion: "1.24.1",
@@ -137,7 +137,7 @@ func TestWeaviateFingerprinter_Fingerprint_ValidWeaviate(t *testing.T) {
 					"text2vec-contextionary": {}
 				},
 				"version": "1.25.0-rc1",
-				"gitHash": "ff00ff"
+				"git_hash": "ff00ff"
 			}`,
 			expectedTech:    "weaviate",
 			expectedVersion: "1.25.0",
@@ -183,9 +183,9 @@ func TestWeaviateFingerprinter_Fingerprint_ValidWeaviate(t *testing.T) {
 
 			// gitHash should only be present when non-empty
 			if tt.expectedGitHash != "" {
-				assert.Equal(t, tt.expectedGitHash, result.Metadata["gitHash"])
+				assert.Equal(t, tt.expectedGitHash, result.Metadata["git_hash"])
 			} else {
-				_, hasGitHash := result.Metadata["gitHash"]
+				_, hasGitHash := result.Metadata["git_hash"]
 				assert.False(t, hasGitHash, "gitHash key should not be present when empty")
 			}
 		})

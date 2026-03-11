@@ -114,7 +114,7 @@ func TestQNAPFingerprinter_Fingerprint_Valid(t *testing.T) {
 			expectedVersion: "4.4.1",
 			expectedCPE:     "cpe:2.3:o:qnap:qts:4.4.1:*:*:*:*:*:*:*",
 			expectedMetadata: map[string]any{
-				"buildNumber": "1216",
+				"build_number": "1216",
 				"buildDate":   "20200214",
 				"model":       "TS-873U-RP",
 				"hostname":    "QNAP-NAS",
@@ -133,7 +133,7 @@ func TestQNAPFingerprinter_Fingerprint_Valid(t *testing.T) {
 			expectedVersion: "5.1.0",
 			expectedCPE:     "cpe:2.3:o:qnap:qts:5.1.0:*:*:*:*:*:*:*",
 			expectedMetadata: map[string]any{
-				"buildNumber": "2399",
+				"build_number": "2399",
 				"buildDate":   "20230609",
 				"model":       "TS-464",
 				"hostname":    "NAS-OFFICE",
@@ -284,6 +284,6 @@ func TestQNAPFingerprinter_Integration(t *testing.T) {
 	require.Len(t, results, 1)
 	assert.Equal(t, "qnap-qts", results[0].Technology)
 	assert.Equal(t, "4.4.1", results[0].Version)
-	assert.Equal(t, "1216", results[0].Metadata["buildNumber"])
+	assert.Equal(t, "1216", results[0].Metadata["build_number"])
 	assert.Equal(t, "TS-873U-RP", results[0].Metadata["model"])
 }

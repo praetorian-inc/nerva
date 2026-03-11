@@ -454,7 +454,7 @@ func TestJuniperFingerprinter_Fingerprint(t *testing.T) {
 				}
 
 				if tt.wantVPN {
-					if vpn, ok := result.Metadata["dynamicVPN"]; !ok || vpn != true {
+					if vpn, ok := result.Metadata["dynamic_vpn"]; !ok || vpn != true {
 						t.Error("dynamicVPN not detected in metadata")
 					}
 				}

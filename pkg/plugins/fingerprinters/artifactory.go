@@ -142,7 +142,7 @@ func checkArtifactoryIdentityHeaders(resp *http.Response, metadata map[string]an
 	}
 	if nodeId := resp.Header.Get("X-Artifactory-Node-Id"); nodeId != "" {
 		detected = true
-		metadata["nodeId"] = nodeId
+		metadata["node_id"] = nodeId
 	}
 
 	return detected

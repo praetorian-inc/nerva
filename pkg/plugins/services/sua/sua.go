@@ -318,10 +318,10 @@ func enrichSUA(response []byte) (uint8, uint8, uint32, string, error) {
 
 // ServiceSUA contains metadata for SUA services over SCTP transport
 type ServiceSUA struct {
-	InfoString   string `json:"infoString,omitempty"`
-	ErrorCode    uint32 `json:"errorCode,omitempty"`
-	MessageClass uint8  `json:"messageClass,omitempty"`
-	MessageType  uint8  `json:"messageType,omitempty"`
+	InfoString   string `json:"info_string,omitempty"`
+	ErrorCode    uint32 `json:"error_code,omitempty"`
+	MessageClass uint8  `json:"message_class,omitempty"`
+	MessageType  uint8  `json:"message_type,omitempty"`
 }
 
 // Type implements the Metadata interface

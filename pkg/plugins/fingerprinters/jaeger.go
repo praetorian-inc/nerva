@@ -114,9 +114,9 @@ type jaegerServicesResponse struct {
 
 // jaegerHTMLVersion represents the JAEGER_VERSION JSON embedded in HTML
 type jaegerHTMLVersion struct {
-	GitCommit  string `json:"gitCommit"`
-	GitVersion string `json:"gitVersion"`
-	BuildDate  string `json:"buildDate"`
+	GitCommit  string `json:"git_commit"`
+	GitVersion string `json:"git_version"`
+	BuildDate  string `json:"build_date"`
 }
 
 // jaegerVersionRegex validates Jaeger version format and prevents CPE injection
@@ -185,10 +185,10 @@ func (f *JaegerFingerprinter) fingerprintHTML(body []byte) (*FingerprintResult, 
 				version = v
 			}
 			if ver.GitCommit != "" {
-				metadata["gitCommit"] = ver.GitCommit
+				metadata["git_commit"] = ver.GitCommit
 			}
 			if ver.BuildDate != "" {
-				metadata["buildDate"] = ver.BuildDate
+				metadata["build_date"] = ver.BuildDate
 			}
 		}
 	}

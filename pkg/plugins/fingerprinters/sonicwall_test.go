@@ -445,17 +445,17 @@ func TestSonicWallFingerprinter_Fingerprint(t *testing.T) {
 					}
 				}
 				if tt.wantSSLVPN {
-					if sslVPN, ok := result.Metadata["sslVPN"]; !ok || sslVPN != true {
+					if sslVPN, ok := result.Metadata["ssl_vpn"]; !ok || sslVPN != true {
 						t.Error("expected sslVPN=true in metadata")
 					}
 				}
 				if tt.wantModel != "" {
-					if model, ok := result.Metadata["productModel"]; !ok || model != tt.wantModel {
+					if model, ok := result.Metadata["product_model"]; !ok || model != tt.wantModel {
 						t.Errorf("productModel = %q, want %q", model, tt.wantModel)
 					}
 				}
 				if tt.wantMgmtInterface != "" {
-					if mgmt, ok := result.Metadata["managementInterface"]; !ok || mgmt != tt.wantMgmtInterface {
+					if mgmt, ok := result.Metadata["management_interface"]; !ok || mgmt != tt.wantMgmtInterface {
 						t.Errorf("managementInterface = %q, want %q", mgmt, tt.wantMgmtInterface)
 					}
 				}
@@ -889,13 +889,13 @@ This page is redirecting! Click <A HREF="https://68.15.167.207/sonicui/7/login/"
 			}
 
 			if tt.wantSSLVPN {
-				if sslVPN, ok := result.Metadata["sslVPN"]; !ok || sslVPN != true {
+				if sslVPN, ok := result.Metadata["ssl_vpn"]; !ok || sslVPN != true {
 					t.Errorf("expected sslVPN=true in metadata for: %s", tt.description)
 				}
 			}
 
 			if tt.wantModel != "" {
-				if model, ok := result.Metadata["productModel"]; !ok || model != tt.wantModel {
+				if model, ok := result.Metadata["product_model"]; !ok || model != tt.wantModel {
 					t.Errorf("productModel = %q, want %q for: %s", model, tt.wantModel, tt.description)
 				}
 			}

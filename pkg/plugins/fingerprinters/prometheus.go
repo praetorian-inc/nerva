@@ -94,9 +94,9 @@ type prometheusBuildInfoData struct {
 	Version   string `json:"version"`
 	Revision  string `json:"revision"`
 	Branch    string `json:"branch"`
-	BuildUser string `json:"buildUser"`
-	BuildDate string `json:"buildDate"`
-	GoVersion string `json:"goVersion"`
+	BuildUser string `json:"build_user"`
+	BuildDate string `json:"build_date"`
+	GoVersion string `json:"go_version"`
 }
 
 // prometheusVersionRegex validates Prometheus version format
@@ -155,13 +155,13 @@ func (f *PrometheusFingerprinter) Fingerprint(resp *http.Response, body []byte) 
 		metadata["branch"] = buildInfo.Data.Branch
 	}
 	if buildInfo.Data.BuildDate != "" {
-		metadata["buildDate"] = buildInfo.Data.BuildDate
+		metadata["build_date"] = buildInfo.Data.BuildDate
 	}
 	if buildInfo.Data.GoVersion != "" {
-		metadata["goVersion"] = buildInfo.Data.GoVersion
+		metadata["go_version"] = buildInfo.Data.GoVersion
 	}
 	if buildInfo.Data.BuildUser != "" {
-		metadata["buildUser"] = buildInfo.Data.BuildUser
+		metadata["build_user"] = buildInfo.Data.BuildUser
 	}
 
 	return &FingerprintResult{

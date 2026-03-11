@@ -127,7 +127,7 @@ func (f *GoAheadFingerprinter) Fingerprint(resp *http.Response, body []byte) (*F
 	metadata := map[string]any{
 		"vendor":       "Embedthis",
 		"product":      "GoAhead",
-		"serverHeader": serverHeader,
+		"server_header": serverHeader,
 	}
 
 	return &FingerprintResult{

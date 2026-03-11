@@ -116,7 +116,7 @@ func TestArtifactoryFingerprinter_Fingerprint_ValidArtifactory(t *testing.T) {
 			expectedVersion: "7.136.0",
 			expectedCPE:     "cpe:2.3:a:jfrog:artifactory:7.136.0:*:*:*:*:*:*:*",
 			expectedMetadata: map[string]any{
-				"nodeId": "node1",
+				"node_id": "node1",
 			},
 		},
 		{
@@ -301,5 +301,5 @@ func TestArtifactoryFingerprinter_Integration(t *testing.T) {
 	require.Len(t, results, 1)
 	assert.Equal(t, "artifactory", results[0].Technology)
 	assert.Equal(t, "7.77.3", results[0].Version)
-	assert.Equal(t, "test-node-1", results[0].Metadata["nodeId"])
+	assert.Equal(t, "test-node-1", results[0].Metadata["node_id"])
 }

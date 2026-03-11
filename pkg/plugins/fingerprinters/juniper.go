@@ -210,13 +210,13 @@ func (f *JuniperFingerprinter) Fingerprint(resp *http.Response, body []byte) (*F
 
 	// Detect Junos REST API
 	if apiMatch {
-		metadata["restAPI"] = true
+		metadata["rest_api"] = true
 	}
 
 	// Detect Dynamic VPN portal
 	if strings.Contains(bodyLower, "dynamic vpn") ||
 		strings.Contains(bodyLower, "dynamicvpn") {
-		metadata["dynamicVPN"] = true
+		metadata["dynamic_vpn"] = true
 	}
 
 	// Extract platform model (SRX300, SRX1500, etc.)

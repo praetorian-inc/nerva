@@ -95,9 +95,9 @@ func TestPrometheusFingerprinter_Fingerprint_Valid(t *testing.T) {
 					"version": "2.45.0",
 					"revision": "abc123def456",
 					"branch": "HEAD",
-					"buildUser": "root@buildhost",
-					"buildDate": "20231215-08:42:32",
-					"goVersion": "go1.21.5"
+					"build_user": "root@buildhost",
+					"build_date": "20231215-08:42:32",
+					"go_version": "go1.21.5"
 				}
 			}`,
 			wantVersion:          "2.45.0",
@@ -115,9 +115,9 @@ func TestPrometheusFingerprinter_Fingerprint_Valid(t *testing.T) {
 					"version": "2.37.0",
 					"revision": "b58e00a49055",
 					"branch": "HEAD",
-					"buildUser": "root@localhost",
-					"buildDate": "20230401-12:34:56",
-					"goVersion": "go1.20.3"
+					"build_user": "root@localhost",
+					"build_date": "20230401-12:34:56",
+					"go_version": "go1.20.3"
 				}
 			}`,
 			wantVersion:          "2.37.0",
@@ -135,9 +135,9 @@ func TestPrometheusFingerprinter_Fingerprint_Valid(t *testing.T) {
 					"version": "2.50.0-rc.0",
 					"revision": "def789abc012",
 					"branch": "release-2.50",
-					"buildUser": "jenkins@ci",
-					"buildDate": "20240101-10:00:00",
-					"goVersion": "go1.22.0"
+					"build_user": "jenkins@ci",
+					"build_date": "20240101-10:00:00",
+					"go_version": "go1.22.0"
 				}
 			}`,
 			wantVersion:          "2.50.0-rc.0",
@@ -153,7 +153,7 @@ func TestPrometheusFingerprinter_Fingerprint_Valid(t *testing.T) {
 				"status": "success",
 				"data": {
 					"version": "2.40.0",
-					"goVersion": "go1.21.0"
+					"go_version": "go1.21.0"
 				}
 			}`,
 			wantVersion:          "2.40.0",
@@ -184,13 +184,13 @@ func TestPrometheusFingerprinter_Fingerprint_Valid(t *testing.T) {
 				assert.Equal(t, tt.wantBranch, result.Metadata["branch"])
 			}
 			if tt.wantBuildDate != "" {
-				assert.Equal(t, tt.wantBuildDate, result.Metadata["buildDate"])
+				assert.Equal(t, tt.wantBuildDate, result.Metadata["build_date"])
 			}
 			if tt.wantGoVersion != "" {
-				assert.Equal(t, tt.wantGoVersion, result.Metadata["goVersion"])
+				assert.Equal(t, tt.wantGoVersion, result.Metadata["go_version"])
 			}
 			if tt.wantBuildUserPresent {
-				_, exists := result.Metadata["buildUser"]
+				_, exists := result.Metadata["build_user"]
 				assert.True(t, exists, "Expected buildUser in metadata")
 			}
 
@@ -213,15 +213,15 @@ func TestPrometheusFingerprinter_Fingerprint_Invalid(t *testing.T) {
 		},
 		{
 			name: "JSON without status field",
-			body: `{"data": {"version": "2.45.0", "goVersion": "go1.21.5"}}`,
+			body: `{"data": {"version": "2.45.0", "go_version": "go1.21.5"}}`,
 		},
 		{
 			name: "JSON with status != success",
-			body: `{"status": "error", "data": {"version": "2.45.0", "goVersion": "go1.21.5"}}`,
+			body: `{"status": "error", "data": {"version": "2.45.0", "go_version": "go1.21.5"}}`,
 		},
 		{
 			name: "JSON without version in data",
-			body: `{"status": "success", "data": {"goVersion": "go1.21.5"}}`,
+			body: `{"status": "success", "data": {"go_version": "go1.21.5"}}`,
 		},
 		{
 			name: "JSON without goVersion in data (distinguishes from other APIs)",
@@ -237,11 +237,11 @@ func TestPrometheusFingerprinter_Fingerprint_Invalid(t *testing.T) {
 		},
 		{
 			name: "CPE injection attempt in version",
-			body: `{"status": "success", "data": {"version": "2.0.0:*:*:*:*:*:*:*", "goVersion": "go1.21.5"}}`,
+			body: `{"status": "success", "data": {"version": "2.0.0:*:*:*:*:*:*:*", "go_version": "go1.21.5"}}`,
 		},
 		{
 			name: "JSON with different envelope structure (not Prometheus)",
-			body: `{"version": "2.45.0", "goVersion": "go1.21.5"}`,
+			body: `{"version": "2.45.0", "go_version": "go1.21.5"}`,
 		},
 	}
 
@@ -297,9 +297,9 @@ func TestPrometheusFingerprinter_Integration(t *testing.T) {
 			"version": "2.45.0",
 			"revision": "abc123def456",
 			"branch": "HEAD",
-			"buildUser": "root@buildhost",
-			"buildDate": "20231215-08:42:32",
-			"goVersion": "go1.21.5"
+			"build_user": "root@buildhost",
+			"build_date": "20231215-08:42:32",
+			"go_version": "go1.21.5"
 		}
 	}`)
 

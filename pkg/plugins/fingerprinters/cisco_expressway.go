@@ -156,7 +156,7 @@ func (f *CiscoExpresswayFingerprinter) Fingerprint(resp *http.Response, body []b
 	}
 
 	if legacyDetected {
-		metadata["legacyName"] = "TelePresence VCS"
+		metadata["legacy_name"] = "TelePresence VCS"
 	}
 
 	return &FingerprintResult{

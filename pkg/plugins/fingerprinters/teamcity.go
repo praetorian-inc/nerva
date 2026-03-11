@@ -82,12 +82,12 @@ type TeamCityFingerprinter struct{}
 // teamcityServerResponse represents the JSON structure from /app/rest/server
 type teamcityServerResponse struct {
 	Version      string `json:"version"`
-	VersionMajor int    `json:"versionMajor"`
-	VersionMinor int    `json:"versionMinor"`
-	BuildNumber  string `json:"buildNumber"`
-	BuildDate    string `json:"buildDate"`
-	InternalID   string `json:"internalId"`
-	WebURL       string `json:"webUrl"`
+	VersionMajor int    `json:"version_major"`
+	VersionMinor int    `json:"version_minor"`
+	BuildNumber  string `json:"build_number"`
+	BuildDate    string `json:"build_date"`
+	InternalID   string `json:"internal_id"`
+	WebURL       string `json:"web_url"`
 }
 
 // teamcityServerXML represents the XML structure from /app/rest/server
@@ -158,10 +158,10 @@ func (f *TeamCityFingerprinter) Fingerprint(resp *http.Response, body []byte) (*
 
 	// Enrich metadata
 	if buildNumber != "" {
-		metadata["buildNumber"] = buildNumber
+		metadata["build_number"] = buildNumber
 	}
 	if internalID != "" {
-		metadata["internalId"] = internalID
+		metadata["internal_id"] = internalID
 	}
 
 	return &FingerprintResult{

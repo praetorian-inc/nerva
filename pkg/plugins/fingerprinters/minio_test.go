@@ -153,7 +153,7 @@ func TestMinIOFingerprinter_Fingerprint_ValidMinIO(t *testing.T) {
 			assert.Contains(t, result.CPEs, tt.expectedCPE)
 
 			// Check metadata includes raw server header
-			assert.Equal(t, tt.serverHeader, result.Metadata["serverHeader"])
+			assert.Equal(t, tt.serverHeader, result.Metadata["server_header"])
 		})
 	}
 }

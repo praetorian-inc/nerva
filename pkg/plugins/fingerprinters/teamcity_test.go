@@ -187,12 +187,12 @@ func TestParseTeamCityJSON(t *testing.T) {
 			name: "Full JSON response",
 			body: `{
 				"version": "2023.11.4 (build 147571)",
-				"versionMajor": 2023,
-				"versionMinor": 11,
-				"buildNumber": "147571",
-				"buildDate": "20240301T000000+0000",
-				"internalId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-				"webUrl": "https://teamcity.example.com"
+				"version_major": 2023,
+				"version_minor": 11,
+				"build_number": "147571",
+				"build_date": "20240301T000000+0000",
+				"internal_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+				"web_url": "https://teamcity.example.com"
 			}`,
 			wantVersion:     "2023.11.4 (build 147571)",
 			wantBuildNumber: "147571",
@@ -214,7 +214,7 @@ func TestParseTeamCityJSON(t *testing.T) {
 		},
 		{
 			name:            "JSON without version",
-			body:            `{"buildNumber": "147571"}`,
+			body:            `{"build_number": "147571"}`,
 			wantVersion:     "",
 			wantBuildNumber: "",
 			wantInternalID:  "",
@@ -320,10 +320,10 @@ func TestTeamCityFingerprinter_Fingerprint_ValidJSON(t *testing.T) {
 			headers: map[string]string{"TeamCity-Node-Id": "MAIN_SERVER"},
 			body: `{
 				"version": "2023.11.4 (build 147571)",
-				"versionMajor": 2023,
-				"versionMinor": 11,
-				"buildNumber": "147571",
-				"internalId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+				"version_major": 2023,
+				"version_minor": 11,
+				"build_number": "147571",
+				"internal_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
 			}`,
 			wantVersion:     "2023.11.4",
 			wantBuildNumber: "147571",
@@ -334,7 +334,7 @@ func TestTeamCityFingerprinter_Fingerprint_ValidJSON(t *testing.T) {
 			name: "Two-part version (2024.1)",
 			body: `{
 				"version": "2024.1 (build 150000)",
-				"buildNumber": "150000"
+				"build_number": "150000"
 			}`,
 			wantVersion:     "2024.1",
 			wantBuildNumber: "150000",
@@ -343,7 +343,7 @@ func TestTeamCityFingerprinter_Fingerprint_ValidJSON(t *testing.T) {
 			name: "Version without build suffix",
 			body: `{
 				"version": "2023.11",
-				"buildNumber": "140000"
+				"build_number": "140000"
 			}`,
 			wantVersion:     "2023.11",
 			wantBuildNumber: "140000",
@@ -352,8 +352,8 @@ func TestTeamCityFingerprinter_Fingerprint_ValidJSON(t *testing.T) {
 			name: "Older version (2019.2.3)",
 			body: `{
 				"version": "2019.2.3 (build 72059)",
-				"buildNumber": "72059",
-				"internalId": "deadbeef-1234"
+				"build_number": "72059",
+				"internal_id": "deadbeef-1234"
 			}`,
 			wantVersion:     "2019.2.3",
 			wantBuildNumber: "72059",
@@ -394,13 +394,13 @@ func TestTeamCityFingerprinter_Fingerprint_ValidJSON(t *testing.T) {
 
 			// Check metadata
 			if tt.wantBuildNumber != "" {
-				if bn, ok := result.Metadata["buildNumber"].(string); !ok || bn != tt.wantBuildNumber {
-					t.Errorf("Metadata[buildNumber] = %v, want %q", result.Metadata["buildNumber"], tt.wantBuildNumber)
+				if bn, ok := result.Metadata["build_number"].(string); !ok || bn != tt.wantBuildNumber {
+					t.Errorf("Metadata[buildNumber] = %v, want %q", result.Metadata["build_number"], tt.wantBuildNumber)
 				}
 			}
 			if tt.wantInternalID != "" {
-				if id, ok := result.Metadata["internalId"].(string); !ok || id != tt.wantInternalID {
-					t.Errorf("Metadata[internalId] = %v, want %q", result.Metadata["internalId"], tt.wantInternalID)
+				if id, ok := result.Metadata["internal_id"].(string); !ok || id != tt.wantInternalID {
+					t.Errorf("Metadata[internalId] = %v, want %q", result.Metadata["internal_id"], tt.wantInternalID)
 				}
 			}
 			if tt.wantNodeID != "" {
@@ -434,8 +434,8 @@ func TestTeamCityFingerprinter_Fingerprint_ValidXML(t *testing.T) {
 	if result.Metadata["nodeId"] != "NODE_1" {
 		t.Errorf("Metadata[nodeId] = %v, want %q", result.Metadata["nodeId"], "NODE_1")
 	}
-	if result.Metadata["buildNumber"] != "147571" {
-		t.Errorf("Metadata[buildNumber] = %v, want %q", result.Metadata["buildNumber"], "147571")
+	if result.Metadata["build_number"] != "147571" {
+		t.Errorf("Metadata[buildNumber] = %v, want %q", result.Metadata["build_number"], "147571")
 	}
 }
 
@@ -450,7 +450,7 @@ func TestTeamCityFingerprinter_Fingerprint_Invalid(t *testing.T) {
 		},
 		{
 			name: "JSON without version",
-			body: `{"buildNumber": "147571"}`,
+			body: `{"build_number": "147571"}`,
 		},
 		{
 			name: "Empty JSON object",
@@ -494,10 +494,10 @@ func TestTeamCityFingerprinter_Integration(t *testing.T) {
 
 	body := []byte(`{
 		"version": "2023.11.4 (build 147571)",
-		"versionMajor": 2023,
-		"versionMinor": 11,
-		"buildNumber": "147571",
-		"internalId": "a1b2c3d4"
+		"version_major": 2023,
+		"version_minor": 11,
+		"build_number": "147571",
+		"internal_id": "a1b2c3d4"
 	}`)
 
 	resp := &http.Response{
