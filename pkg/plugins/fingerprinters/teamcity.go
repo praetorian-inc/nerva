@@ -82,12 +82,12 @@ type TeamCityFingerprinter struct{}
 // teamcityServerResponse represents the JSON structure from /app/rest/server
 type teamcityServerResponse struct {
 	Version      string `json:"version"`
-	VersionMajor int    `json:"version_major"`
-	VersionMinor int    `json:"version_minor"`
-	BuildNumber  string `json:"build_number"`
-	BuildDate    string `json:"build_date"`
-	InternalID   string `json:"internal_id"`
-	WebURL       string `json:"web_url"`
+	VersionMajor int    `json:"versionMajor"`
+	VersionMinor int    `json:"versionMinor"`
+	BuildNumber  string `json:"buildNumber"`
+	BuildDate    string `json:"buildDate"`
+	InternalID   string `json:"internalId"`
+	WebURL       string `json:"webUrl"`
 }
 
 // teamcityServerXML represents the XML structure from /app/rest/server

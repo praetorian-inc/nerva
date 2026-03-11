@@ -94,9 +94,9 @@ type prometheusBuildInfoData struct {
 	Version   string `json:"version"`
 	Revision  string `json:"revision"`
 	Branch    string `json:"branch"`
-	BuildUser string `json:"build_user"`
-	BuildDate string `json:"build_date"`
-	GoVersion string `json:"go_version"`
+	BuildUser string `json:"buildUser"`
+	BuildDate string `json:"buildDate"`
+	GoVersion string `json:"goVersion"`
 }
 
 // prometheusVersionRegex validates Prometheus version format
