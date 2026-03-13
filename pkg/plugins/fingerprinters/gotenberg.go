@@ -214,7 +214,7 @@ func (f *GotenbergHealthFingerprinter) Fingerprint(resp *http.Response, body []b
 	return &FingerprintResult{
 		Technology: "gotenberg",
 		Version:    "",
-		CPEs:       []string{"cpe:2.3:a:gotenberg:gotenberg:*:*:*:*:*:*:*:*"},
+		CPEs:       []string{buildGotenbergCPE("")},
 		Metadata:   metadata,
 	}, nil
 }
