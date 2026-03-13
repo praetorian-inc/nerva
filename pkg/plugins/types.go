@@ -44,6 +44,7 @@ const (
 	ProtoBGP              = "bgp"
 	ProtoCassandra        = "cassandra"
 	ProtoChromaDB         = "chromadb"
+	ProtoCitrixICA        = "citrix-ica"
 	ProtoCODESYS          = "codesys"
 	ProtoCrimsonV3        = "crimsonv3"
 	ProtoCUPS             = "cups"
@@ -227,6 +228,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoChromaDB:
 		var p ServiceChromaDB
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoCitrixICA:
+		var p ServiceCitrixICA
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoCODESYS:
@@ -1596,6 +1601,13 @@ type ServiceChromaDB struct {
 }
 
 func (e ServiceChromaDB) Type() string { return ProtoChromaDB }
+
+type ServiceCitrixICA struct {
+	BannerMatch bool     `json:"bannerMatch"`          // true if double ICA signature matched (high confidence)
+	CPEs        []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceCitrixICA) Type() string { return ProtoCitrixICA }
 
 type ServiceCODESYS struct {
 	Version     string   `json:"version,omitempty"`
