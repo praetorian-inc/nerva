@@ -58,16 +58,16 @@ Detection Strategy:
 */
 
 const (
-	SUA_SCTP       = "sua"
-	SUA_PORT       = 14001 // IANA-assigned port
-	SUA_PORT_ALT   = 2904  // Commonly used in the field
-	SUA_VERSION    = 1
-	ASPSM_CLASS    = 0x03 // ASP State Maintenance
-	ASP_UP_TYPE    = 0x01 // ASP Up message
-	ASP_UP_ACK     = 0x04 // ASP Up Ack message
-	MGMT_CLASS     = 0x00 // Management messages
-	ERROR_TYPE     = 0x00 // Error message
-	HEADER_LENGTH  = 8
+	SUA_SCTP      = "sua"
+	SUA_PORT      = 14001 // IANA-assigned port
+	SUA_PORT_ALT  = 2904  // Commonly used in the field
+	SUA_VERSION   = 1
+	ASPSM_CLASS   = 0x03 // ASP State Maintenance
+	ASP_UP_TYPE   = 0x01 // ASP Up message
+	ASP_UP_ACK    = 0x04 // ASP Up Ack message
+	MGMT_CLASS    = 0x00 // Management messages
+	ERROR_TYPE    = 0x00 // Error message
+	HEADER_LENGTH = 8
 )
 
 type SUAPlugin struct{}
