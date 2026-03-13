@@ -28,6 +28,7 @@ import (
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/bacnet"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/bgp"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/cassandra"
+	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/citrixica"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/crimsonv3"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/cups"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/db2"
