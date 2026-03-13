@@ -126,7 +126,7 @@ func (f *UPnPFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fing
 
 	// Check for UPnP XML namespace in body for additional confirmation
 	if hasBodyMatch {
-		metadata["upnpNamespace"] = true
+		metadata["upnp_namespace"] = true
 	}
 
 	// Extract device type from body if present
@@ -134,7 +134,7 @@ func (f *UPnPFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fing
 		endIdx := bytes.Index(bytes.ToLower(body[idx:]), []byte("</devicetype>"))
 		if endIdx > 0 {
 			deviceType := string(body[idx+len("<deviceType>") : idx+endIdx])
-			metadata["deviceType"] = strings.TrimSpace(deviceType)
+			metadata["device_type"] = strings.TrimSpace(deviceType)
 		}
 	}
 
@@ -143,7 +143,7 @@ func (f *UPnPFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fing
 		endIdx := bytes.Index(bytes.ToLower(body[idx:]), []byte("</friendlyname>"))
 		if endIdx > 0 {
 			friendlyName := string(body[idx+len("<friendlyName>") : idx+endIdx])
-			metadata["friendlyName"] = strings.TrimSpace(friendlyName)
+			metadata["friendly_name"] = strings.TrimSpace(friendlyName)
 		}
 	}
 

@@ -50,7 +50,7 @@ type iControlVersionResponse struct {
 			Entries map[string]struct {
 				Description string `json:"description"`
 			} `json:"entries"`
-		} `json:"nestedStats"`
+		} `json:"nested_stats"`
 	} `json:"entries"`
 }
 

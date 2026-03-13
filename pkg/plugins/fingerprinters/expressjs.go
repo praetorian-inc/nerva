@@ -158,13 +158,13 @@ func (f *ExpressFingerprinter) Fingerprint(resp *http.Response, body []byte) (*F
 
 	// Store X-Powered-By value in metadata if present
 	if hasPoweredByHeader {
-		metadata["poweredBy"] = resp.Header.Get("X-Powered-By")
+		metadata["powered_by"] = resp.Header.Get("X-Powered-By")
 	}
 
 	// Signal 3: Dev mode detection via stack traces
 	bodyStr := string(body)
 	if expressStackTraceRegex.MatchString(bodyStr) {
-		metadata["devMode"] = true
+		metadata["dev_mode"] = true
 	}
 
 	// Version extraction from stack traces (e.g., express@4.21.0)

@@ -127,9 +127,9 @@ func TestRunFingerprinters_WithMatch(t *testing.T) {
 	resp := &http.Response{
 		StatusCode: 200,
 		Header:     http.Header{"Content-Type": []string{"application/json"}},
-		Body:       io.NopCloser(bytes.NewReader([]byte(`{"gitVersion":"v1.29.0"}`))),
+		Body:       io.NopCloser(bytes.NewReader([]byte(`{"git_version":"v1.29.0"}`))),
 	}
-	body := []byte(`{"gitVersion":"v1.29.0"}`)
+	body := []byte(`{"git_version":"v1.29.0"}`)
 
 	results := RunFingerprinters(resp, body)
 

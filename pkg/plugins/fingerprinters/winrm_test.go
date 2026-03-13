@@ -94,7 +94,7 @@ func TestWinRMFingerprinter_Fingerprint_WithAuth(t *testing.T) {
 	require.NotNil(t, result)
 
 	assert.Equal(t, "winrm", result.Technology)
-	authRequired, ok := result.Metadata["authRequired"].(bool)
+	authRequired, ok := result.Metadata["auth_required"].(bool)
 	assert.True(t, ok, "authRequired should be bool type")
 	assert.True(t, authRequired)
 	assert.Equal(t, "Microsoft-HTTPAPI/2.0", result.Metadata["server"])
@@ -118,7 +118,7 @@ func TestWinRMFingerprinter_Fingerprint_WithoutAuth(t *testing.T) {
 	require.NotNil(t, result)
 
 	assert.Equal(t, "winrm", result.Technology)
-	authRequired, ok := result.Metadata["authRequired"].(bool)
+	authRequired, ok := result.Metadata["auth_required"].(bool)
 	assert.True(t, ok, "authRequired should be bool type")
 	assert.False(t, authRequired)
 	assert.Equal(t, "Microsoft-HTTPAPI/2.0", result.Metadata["server"])
@@ -192,7 +192,7 @@ func TestWinRMFingerprinter_Integration(t *testing.T) {
 	for _, result := range results {
 		if result.Technology == "winrm" {
 			found = true
-			authRequired, ok := result.Metadata["authRequired"].(bool)
+			authRequired, ok := result.Metadata["auth_required"].(bool)
 			assert.True(t, ok, "authRequired should be bool type")
 			assert.True(t, authRequired)
 		}

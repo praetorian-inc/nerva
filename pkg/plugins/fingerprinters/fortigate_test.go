@@ -219,7 +219,7 @@ func TestFortiGateFingerprinter_Fingerprint(t *testing.T) {
 					}
 				}
 				if tt.wantBuildDate != "" {
-					if bd, ok := result.Metadata["firmwareBuildDate"]; ok {
+					if bd, ok := result.Metadata["firmware_build_date"]; ok {
 						if bd != tt.wantBuildDate {
 							t.Errorf("firmwareBuildDate = %q, want %q", bd, tt.wantBuildDate)
 						}
@@ -415,7 +415,7 @@ func TestFortiGateFingerprinter_ShodanVectors(t *testing.T) {
 			}
 
 			if tt.wantBuildDate != "" {
-				if bd, ok := result.Metadata["firmwareBuildDate"]; ok {
+				if bd, ok := result.Metadata["firmware_build_date"]; ok {
 					if bd != tt.wantBuildDate {
 						t.Errorf("firmwareBuildDate = %q, want %q", bd, tt.wantBuildDate)
 					}

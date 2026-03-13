@@ -213,7 +213,7 @@ func TestGoAheadFingerprinter_Fingerprint_Valid(t *testing.T) {
 			if !ok || product != "GoAhead" {
 				t.Errorf("Metadata[product] = %v, want %q", product, "GoAhead")
 			}
-			serverHeader, ok := result.Metadata["serverHeader"].(string)
+			serverHeader, ok := result.Metadata["server_header"].(string)
 			if !ok || serverHeader != tt.server {
 				t.Errorf("Metadata[serverHeader] = %v, want %q", serverHeader, tt.server)
 			}

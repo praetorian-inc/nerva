@@ -126,8 +126,8 @@ func TestSOAPFingerprinter_Fingerprint_SOAP11Envelope(t *testing.T) {
 
 	assert.Equal(t, "soap", result.Technology)
 	assert.Equal(t, "1.1", result.Version)
-	assert.Equal(t, "1.1", result.Metadata["soapVersion"])
-	assert.Equal(t, false, result.Metadata["wsdlAvailable"])
+	assert.Equal(t, "1.1", result.Metadata["soap_version"])
+	assert.Equal(t, false, result.Metadata["wsdl_available"])
 }
 
 func TestSOAPFingerprinter_Fingerprint_SOAP12Envelope(t *testing.T) {
@@ -158,8 +158,8 @@ func TestSOAPFingerprinter_Fingerprint_SOAP12Envelope(t *testing.T) {
 
 	assert.Equal(t, "soap", result.Technology)
 	assert.Equal(t, "1.2", result.Version)
-	assert.Equal(t, "1.2", result.Metadata["soapVersion"])
-	assert.Equal(t, false, result.Metadata["wsdlAvailable"])
+	assert.Equal(t, "1.2", result.Metadata["soap_version"])
+	assert.Equal(t, false, result.Metadata["wsdl_available"])
 }
 
 func TestSOAPFingerprinter_Fingerprint_SOAP12ContentTypeOnly(t *testing.T) {
@@ -227,9 +227,9 @@ func TestSOAPFingerprinter_Fingerprint_WSDL11(t *testing.T) {
 	require.NotNil(t, result)
 
 	assert.Equal(t, "soap", result.Technology)
-	assert.Equal(t, true, result.Metadata["wsdlAvailable"])
-	assert.Equal(t, "1.1", result.Metadata["wsdlVersion"])
-	assert.Equal(t, "http://example.com/service", result.Metadata["targetNamespace"])
+	assert.Equal(t, true, result.Metadata["wsdl_available"])
+	assert.Equal(t, "1.1", result.Metadata["wsdl_version"])
+	assert.Equal(t, "http://example.com/service", result.Metadata["target_namespace"])
 }
 
 func TestSOAPFingerprinter_Fingerprint_WSDL20(t *testing.T) {
@@ -257,9 +257,9 @@ func TestSOAPFingerprinter_Fingerprint_WSDL20(t *testing.T) {
 	require.NotNil(t, result)
 
 	assert.Equal(t, "soap", result.Technology)
-	assert.Equal(t, true, result.Metadata["wsdlAvailable"])
-	assert.Equal(t, "2.0", result.Metadata["wsdlVersion"])
-	assert.Equal(t, "http://example.com/service2", result.Metadata["targetNamespace"])
+	assert.Equal(t, true, result.Metadata["wsdl_available"])
+	assert.Equal(t, "2.0", result.Metadata["wsdl_version"])
+	assert.Equal(t, "http://example.com/service2", result.Metadata["target_namespace"])
 }
 
 func TestSOAPFingerprinter_Fingerprint_SOAP11Fault(t *testing.T) {
@@ -289,7 +289,7 @@ func TestSOAPFingerprinter_Fingerprint_SOAP11Fault(t *testing.T) {
 
 	assert.Equal(t, "soap", result.Technology)
 	assert.Equal(t, "1.1", result.Version)
-	assert.Equal(t, true, result.Metadata["hasFault"])
+	assert.Equal(t, true, result.Metadata["has_fault"])
 }
 
 func TestSOAPFingerprinter_Fingerprint_SOAP12Fault(t *testing.T) {
@@ -322,7 +322,7 @@ func TestSOAPFingerprinter_Fingerprint_SOAP12Fault(t *testing.T) {
 
 	assert.Equal(t, "soap", result.Technology)
 	assert.Equal(t, "1.2", result.Version)
-	assert.Equal(t, true, result.Metadata["hasFault"])
+	assert.Equal(t, true, result.Metadata["has_fault"])
 }
 
 func TestSOAPFingerprinter_Fingerprint_NotSOAP(t *testing.T) {

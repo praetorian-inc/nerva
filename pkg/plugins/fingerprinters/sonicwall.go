@@ -181,40 +181,40 @@ func (f *SonicWallFingerprinter) Fingerprint(resp *http.Response, body []byte) (
 
 	// Detect product model
 	if model := extractSonicWallModel(bodyStr); model != "" {
-		metadata["productModel"] = model
+		metadata["product_model"] = model
 	}
 
 	// Detect SSL-VPN
 	if detectSonicWallSSLVPN(bodyStr, resp.Header) {
-		metadata["sslVPN"] = true
+		metadata["ssl_vpn"] = true
 	}
 
 	// Check Location header for SonicOS 7.x management redirect
 	locationHeader := resp.Header.Get("Location")
 	if strings.Contains(locationHeader, "/sonicui/") || strings.Contains(bodyStr, "/sonicui/") {
-		metadata["managementInterface"] = "web-admin"
+		metadata["management_interface"] = "web-admin"
 	}
 
 	// Detect management interface type
 	if strings.Contains(bodyStr, "/cgi-bin/welcome") || strings.Contains(bodyStr, "managementLogin") ||
 		strings.Contains(bodyStr, "auth1.html") || strings.Contains(bodyStr, "authFrm") {
-		metadata["managementInterface"] = "web-admin"
+		metadata["management_interface"] = "web-admin"
 	}
 	if strings.Contains(bodyStr, "sslvpn") || strings.Contains(bodyStr, "NetExtender") ||
 		strings.Contains(bodyStr, "Virtual Office") {
-		metadata["managementInterface"] = "ssl-vpn"
+		metadata["management_interface"] = "ssl-vpn"
 	}
 
 	// Detect SonicOS REST API responses
 	if strings.Contains(bodyStr, "/api/sonicos") || strings.Contains(bodyStr, "sonicos_api") ||
 		strings.Contains(bodyStr, `"status"`) && strings.Contains(bodyStr, `"sonicos"`) {
-		metadata["managementInterface"] = "rest-api"
+		metadata["management_interface"] = "rest-api"
 	}
 
 	// Default to web-admin if we detected SonicWall but couldn't determine specific interface
-	if _, ok := metadata["managementInterface"]; !ok {
+	if _, ok := metadata["management_interface"]; !ok {
 		if headerMatch {
-			metadata["managementInterface"] = "web-admin"
+			metadata["management_interface"] = "web-admin"
 		}
 	}
 

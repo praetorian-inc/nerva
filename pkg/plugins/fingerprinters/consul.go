@@ -90,7 +90,7 @@ func (f *ConsulFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fi
 
 	metadata := map[string]any{
 		"datacenter": agent.Config.Datacenter,
-		"nodeName":   agent.Config.NodeName,
+		"node_name":   agent.Config.NodeName,
 		"server":     agent.Config.Server,
 		"enterprise": enterprise,
 	}

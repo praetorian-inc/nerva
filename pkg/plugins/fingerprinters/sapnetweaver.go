@@ -107,14 +107,14 @@ func (f *SAPNetWeaverFingerprinter) Fingerprint(resp *http.Response, body []byte
 	metadata := map[string]any{
 		"vendor":      "SAP",
 		"product":     "NetWeaver",
-		"stackType":   stackType,
+		"stack_type":   stackType,
 	}
 
 	if rfcsysid != "" {
 		metadata["sid"] = sanitizeXMLValue(rfcsysid)
 	}
 	if rfckernrl != "" {
-		metadata["kernelVersion"] = normalizeSAPRelease(rfckernrl)
+		metadata["kernel_version"] = normalizeSAPRelease(rfckernrl)
 	}
 	if rfcopsys != "" {
 		metadata["os"] = sanitizeXMLValue(rfcopsys)

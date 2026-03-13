@@ -33,7 +33,7 @@ type cockroachDBResponse struct {
 // cockroachDBNode represents a node in the CockroachDB cluster
 type cockroachDBNode struct {
 	NodeID        int                      `json:"node_id"`
-	ServerVersion cockroachDBServerVersion `json:"ServerVersion"`
+	ServerVersion cockroachDBServerVersion `json:"server_version"`
 	BuildTag      string                   `json:"build_tag"`
 }
 

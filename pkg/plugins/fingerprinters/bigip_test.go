@@ -149,7 +149,7 @@ func TestBigIPFingerprinter_Fingerprint(t *testing.T) {
   "selfLink": "https://localhost/mgmt/tm/sys/version?ver=17.1.3",
   "entries": {
     "https://localhost/mgmt/tm/sys/version/0": {
-      "nestedStats": {
+      "nested_stats": {
         "entries": {
           "Build": { "description": "0.20.11" },
           "Date": { "description": "Sun Oct 12 12:43:02 PDT 2025" },
@@ -292,7 +292,7 @@ func TestParseIControlVersion(t *testing.T) {
   "kind": "tm:sys:version:versionstats",
   "entries": {
     "https://localhost/mgmt/tm/sys/version/0": {
-      "nestedStats": {
+      "nested_stats": {
         "entries": {
           "Build": { "description": "0.20.11" },
           "Version": { "description": "13.0.0" }
@@ -315,7 +315,7 @@ func TestParseIControlVersion(t *testing.T) {
 			body: `{
   "entries": {
     "https://localhost/mgmt/tm/sys/version/0": {
-      "nestedStats": {
+      "nested_stats": {
         "entries": {
           "Version": { "description": "13.0.0" }
         }
@@ -395,7 +395,7 @@ func TestBigIPFingerprinter_ShodanVectors(t *testing.T) {
   "selfLink": "https://localhost/mgmt/tm/sys/version?ver=17.1.3",
   "entries": {
     "https://localhost/mgmt/tm/sys/version/0": {
-      "nestedStats": {
+      "nested_stats": {
         "entries": {
           "Build": {
             "description": "0.20.11"
