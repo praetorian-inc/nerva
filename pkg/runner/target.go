@@ -91,13 +91,9 @@ func parseTarget(inputTarget string) (plugins.Target, error) {
 	ip := net.ParseIP(hostStr)
 	var isHostname = false
 	if ip == nil {
-		var addrs []net.IP
-		addrs, err = net.LookupIP(hostStr)
-		if err != nil {
-			return plugins.Target{}, err
-		}
 		isHostname = true
-		ip = addrs[0]
+		// Defer DNS resolution until dialing. Use 0.0.0.0 as placeholder IP.
+		ip = net.IPv4zero
 	}
 
 	// use IPv4 representation if possible
@@ -108,7 +104,7 @@ func parseTarget(inputTarget string) (plugins.Target, error) {
 
 	addr, ok := netip.AddrFromSlice(ip)
 	if !ok {
-		return plugins.Target{}, fmt.Errorf("invalid ip address specified %s", err)
+		return plugins.Target{}, fmt.Errorf("invalid ip address specified")
 	}
 	targetAddr := netip.AddrPortFrom(addr, uint16(port))
 	scanTarget.Address = targetAddr
