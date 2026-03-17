@@ -93,6 +93,7 @@ const (
 	ProtoL2TP             = "l2tp"
 	ProtoLDAP             = "ldap"
 	ProtoLDAPS            = "ldaps"
+	ProtoM2UA             = "m2ua"
 	ProtoM3UA             = "m3ua"
 	ProtoMegaco           = "megaco"
 	ProtoMGCP             = "mgcp"
@@ -431,6 +432,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoLDAPS:
 		var p ServiceLDAPS
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoM2UA:
+		var p ServiceM2UA
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoM3UA:
@@ -1614,6 +1619,16 @@ type ServiceM3UA struct {
 }
 
 func (e ServiceM3UA) Type() string { return ProtoM3UA }
+
+// ServiceM2UA contains metadata for M2UA services over SCTP transport
+type ServiceM2UA struct {
+	InfoString   string `json:"infoString,omitempty"`
+	ErrorCode    uint32 `json:"errorCode,omitempty"`
+	MessageClass uint8  `json:"messageClass,omitempty"`
+	MessageType  uint8  `json:"messageType,omitempty"`
+}
+
+func (e ServiceM2UA) Type() string { return ProtoM2UA }
 
 type ServiceActiveMQOpenWire struct {
 	Version int      `json:"version,omitempty"` // OpenWire protocol version (1-12)
