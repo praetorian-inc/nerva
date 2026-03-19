@@ -72,6 +72,7 @@ import (
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/ldap"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/librechat"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/linuxrpc"
+	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/m2pa"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/m2ua"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/m3ua"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/megaco"
