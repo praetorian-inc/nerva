@@ -119,7 +119,6 @@ const (
 	ProtoOracle           = "oracle"
 	ProtoPCOM             = "pcom"
 	ProtoPFCP             = "pfcp"
-	ProtoPfSense          = "pfsense"
 	ProtoPinecone         = "pinecone"
 	ProtoPCWorx           = "pcworx"
 	ProtoPOP3             = "pop3"
@@ -401,10 +400,6 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoPCOM:
 		var p ServicePCOM
-		_ = json.Unmarshal(e.Raw, &p)
-		return p
-	case ProtoPfSense:
-		var p ServicePfSense
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoPinecone:
@@ -1333,14 +1328,6 @@ type ServicePCOM struct {
 }
 
 func (e ServicePCOM) Type() string { return ProtoPCOM }
-
-type ServicePfSense struct {
-	CPEs       []string `json:"cpes,omitempty"`
-	ServerInfo string   `json:"serverInfo,omitempty"` // Server header value (lighttpd or nginx)
-	Hostname   string   `json:"hostname,omitempty"`   // Extracted from title if available
-}
-
-func (e ServicePfSense) Type() string { return ProtoPfSense }
 
 type ServicePinecone struct {
 	CPEs       []string `json:"cpes,omitempty"`       // Common Platform Enumeration with wildcard version
