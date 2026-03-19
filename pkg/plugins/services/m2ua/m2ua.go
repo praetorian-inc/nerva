@@ -27,33 +27,34 @@ import (
 /*
 M2UA (MTP2 User Adaptation Layer) Protocol Fingerprinting over SCTP
 
-M2UA is part of the SIGTRAN protocol suite for transporting SS7 MTP2
-signaling over IP using SCTP.
+M2UA is part of the SIGTRAN protocol suite for transporting MTP2 user signaling
+over IP using SCTP. It enables SS7 links to be transported over IP networks.
 
 Protocol Specification:
   RFC 3331
   Transport: SCTP (IP protocol 132)
   Default Port: 2904
-  SCTP PPID: 2 (definitive identification)
+  SCTP PPID: 2
 
 SIGTRAN Common Header (8 bytes):
   Byte 0: Version (always 0x01)
   Byte 1: Reserved (always 0x00)
-  Byte 2: Message Class (0-10)
+  Byte 2: Message Class (0-14)
   Byte 3: Message Type (varies by class)
   Bytes 4-7: Message Length (big-endian, >= 8, multiple of 4)
 
 M2UA-Specific Message Classes:
   - Class 0: Management (MGMT) - Error, Notify
-  - Class 3: ASPSM - ASP Up/Down (all SIGTRAN)
+  - Class 3: ASPSM - ASP Up/Down, Heartbeat (all SIGTRAN)
   - Class 4: ASPTM - ASP Active/Inactive (all SIGTRAN)
-  - Class 6: MAUP - Data, Establish Request
-  - Class 10: IIM - Registration Request/Response
+  - Class 6: MAUP - MTP2 User Adaptation - unique to M2UA
 
 Detection Strategy:
-  1. Primary: Check SCTP PPID = 2 (definitive)
-  2. Fallback: Port 2904 when PPID = 0 (misconfiguration)
-  3. Validation: Header bytes 0-1 = 0x01 0x00
+  1. Send ASP Up message (SIGTRAN Common Header, 8 bytes)
+  2. Valid responses:
+     - ASP Up Ack: Class 0x03, Type 0x04
+     - Error: Class 0x00, Type 0x00
+     - MAUP: Class 0x06 (M2UA-unique, any type)
 
 Active Probing (ASP Up):
   Version:       0x01
@@ -61,9 +62,6 @@ Active Probing (ASP Up):
   Message Class: 0x03 (ASPSM)
   Message Type:  0x01 (ASP Up)
   Length:        0x00000008
-
-Expected Response:
-  ASP Up Ack (Class 3, Type 4) or Error (Class 0, Type 0)
 */
 
 const (
@@ -75,6 +73,7 @@ const (
 	ASP_UP_ACK    = 0x04 // ASP Up Ack message
 	MGMT_CLASS    = 0x00 // Management messages
 	ERROR_TYPE    = 0x00 // Error message
+	MAUP_CLASS    = 0x06 // MTP2 User Adaptation - M2UA-unique
 	HEADER_LENGTH = 8
 )
 
@@ -86,7 +85,7 @@ func init() {
 
 // Run implements the main fingerprinting logic
 func (p *M2UAPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
-	// Phase 1: Detection - send ASP Up and receive ASP Up Ack or Error
+	// Phase 1: Detection - send ASP Up and receive ASP Up Ack, Error, or MAUP
 	response, err := detectM2UA(conn, timeout)
 	if err != nil {
 		return nil, err
@@ -96,7 +95,7 @@ func (p *M2UAPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 	messageClass, messageType, errorCode, infoString, err := enrichM2UA(response)
 	if err != nil {
 		// Detection succeeded but enrichment failed - still return service
-		metadata := ServiceM2UA{
+		metadata := plugins.ServiceM2UA{
 			MessageClass: messageClass,
 			MessageType:  messageType,
 		}
@@ -104,7 +103,7 @@ func (p *M2UAPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 	}
 
 	// Create service with metadata
-	metadata := ServiceM2UA{
+	metadata := plugins.ServiceM2UA{
 		MessageClass: messageClass,
 		MessageType:  messageType,
 		ErrorCode:    errorCode,
@@ -130,7 +129,7 @@ func (p *M2UAPlugin) Type() plugins.Protocol {
 }
 
 // Priority returns the plugin execution priority
-// M2UA uses port 2904, run at same priority as M3UA/Diameter (60)
+// M2UA uses port 2904, run at same priority as M3UA and Diameter SCTP (60)
 func (p *M2UAPlugin) Priority() int {
 	return 60
 }
@@ -147,7 +146,7 @@ func detectM2UA(conn net.Conn, timeout time.Duration) ([]byte, error) {
 	}
 
 	// Validate response structure
-	if err := validateASPUpAck(response); err != nil {
+	if err := validateResponse(response); err != nil {
 		return nil, err
 	}
 
@@ -177,8 +176,9 @@ func buildASPUp() []byte {
 	return header
 }
 
-// validateASPUpAck validates the structure of an ASP Up Ack or Error response
-func validateASPUpAck(response []byte) error {
+// validateResponse validates the structure of an ASP Up Ack, Error, or MAUP response.
+// M2UA accepts MAUP class (0x06) responses which are unique to M2UA.
+func validateResponse(response []byte) error {
 	// Minimum response size: Header (8 bytes)
 	if len(response) < HEADER_LENGTH {
 		return &utils.InvalidResponseErrorInfo{
@@ -203,16 +203,17 @@ func validateASPUpAck(response []byte) error {
 		}
 	}
 
-	// Check message class (byte 2) - should be ASPSM (3) or MGMT (0)
+	// Check message class (byte 2) - should be ASPSM (3), MGMT (0), or MAUP (6)
+	// MAUP class (0x06) is unique to M2UA and definitively identifies this protocol
 	messageClass := response[2]
-	if messageClass != ASPSM_CLASS && messageClass != MGMT_CLASS {
+	if messageClass != ASPSM_CLASS && messageClass != MGMT_CLASS && messageClass != MAUP_CLASS {
 		return &utils.InvalidResponseErrorInfo{
 			Service: M2UA_SCTP,
-			Info:    fmt.Sprintf("invalid message class: 0x%02x, expected 0x%02x (ASPSM) or 0x%02x (MGMT)", messageClass, ASPSM_CLASS, MGMT_CLASS),
+			Info:    fmt.Sprintf("invalid message class: 0x%02x, expected 0x%02x (ASPSM), 0x%02x (MGMT), or 0x%02x (MAUP)", messageClass, ASPSM_CLASS, MGMT_CLASS, MAUP_CLASS),
 		}
 	}
 
-	// Check message type (byte 3)
+	// Check message type (byte 3) for ASPSM and MGMT classes
 	messageType := response[3]
 	if messageClass == ASPSM_CLASS && messageType != ASP_UP_ACK {
 		return &utils.InvalidResponseErrorInfo{
@@ -226,6 +227,7 @@ func validateASPUpAck(response []byte) error {
 			Info:    fmt.Sprintf("invalid MGMT message type: 0x%02x, expected 0x%02x (Error)", messageType, ERROR_TYPE),
 		}
 	}
+	// MAUP class accepts any message type - no type check needed
 
 	// Check message length (bytes 4-7)
 	// Use uint32 comparison to avoid integer overflow on 32-bit systems (CWE-190)
@@ -266,15 +268,14 @@ func enrichM2UA(response []byte) (uint8, uint8, uint32, string, error) {
 	messageClass := response[2]
 	messageType := response[3]
 
-	// If this is just an ASP Up Ack with no parameters, return basic metadata
+	// If this is just a header-only message with no parameters, return basic metadata
 	msgLength := binary.BigEndian.Uint32(response[4:8])
 	if msgLength == HEADER_LENGTH {
 		return messageClass, messageType, 0, "", nil
 	}
 
 	// Parse optional parameters (TLV format)
-	// For now, we extract Info String (Tag 0x0004) and Error Code (Tag 0x000c) if present
-	// This is a simplified implementation - full implementation would parse all parameter types
+	// Extract Info String (Tag 0x0004) and Error Code (Tag 0x000c) if present
 
 	var errorCode uint32
 	var infoString string
@@ -313,26 +314,13 @@ func enrichM2UA(response []byte) (uint8, uint8, uint32, string, error) {
 		}
 
 		// Move to next parameter (parameters are padded to 4-byte boundary)
-		// Use int to avoid uint16 overflow when paramLength is near max
-		paddedLength := int(paramLength)
-		if paddedLength%4 != 0 {
-			paddedLength += 4 - (paddedLength % 4)
+		paddedLength := paramLength
+		if paramLength%4 != 0 {
+			paddedLength += 4 - (paramLength % 4)
 		}
-		offset += paddedLength
+		offset += int(paddedLength)
 	}
 
 	return messageClass, messageType, errorCode, infoString, nil
 }
 
-// ServiceM2UA contains metadata for M2UA services over SCTP transport
-type ServiceM2UA struct {
-	InfoString   string `json:"info_string,omitempty"`
-	ErrorCode    uint32 `json:"error_code,omitempty"`
-	MessageClass uint8  `json:"message_class,omitempty"`
-	MessageType  uint8  `json:"message_type,omitempty"`
-}
-
-// Type implements the Metadata interface
-func (s ServiceM2UA) Type() string {
-	return M2UA_SCTP
-}

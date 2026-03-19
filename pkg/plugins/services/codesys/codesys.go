@@ -27,11 +27,11 @@ const (
 	CODESYS = "codesys"
 
 	// V2 Protocol constants
-	V2ResponseSignature  = 0xbb
-	MinV2ResponseLength  = 10 // Minimum valid V2 response size: Header (7 bytes) + minimal metadata
-	OSNameOffset         = 65
-	OSTypeOffset         = 97
-	ProductTypeOffset    = 129
+	V2ResponseSignature = 0xbb
+	MinV2ResponseLength = 10 // Minimum valid V2 response size: Header (7 bytes) + minimal metadata
+	OSNameOffset        = 65
+	OSTypeOffset        = 97
+	ProductTypeOffset   = 129
 )
 
 type CODESYSPlugin struct{}
