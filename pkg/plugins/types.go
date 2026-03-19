@@ -736,31 +736,31 @@ type Service struct {
 
 type ServiceHTTP struct {
 	Status              string                    `json:"status"`     // e.g. "200 OK"
-	StatusCode          int                       `json:"statusCode"` // e.g. 200
-	ResponseHeaders     http.Header               `json:"responseHeaders"`
+	StatusCode          int                       `json:"status_code"` // e.g. 200
+	ResponseHeaders     http.Header               `json:"response_headers"`
 	Technologies        []string                  `json:"technologies,omitempty"`
 	CPEs                []string                  `json:"cpes,omitempty"`
-	FingerprintMetadata map[string]map[string]any `json:"fingerprintMetadata,omitempty"`
+	FingerprintMetadata map[string]map[string]any `json:"fingerprint_metadata,omitempty"`
 }
 
 func (e ServiceHTTP) Type() string { return ProtoHTTP }
 
 type ServiceHTTPS struct {
 	Status              string                    `json:"status"`     // e.g. "200 OK"
-	StatusCode          int                       `json:"statusCode"` // e.g. 200
-	ResponseHeaders     http.Header               `json:"responseHeaders"`
+	StatusCode          int                       `json:"status_code"` // e.g. 200
+	ResponseHeaders     http.Header               `json:"response_headers"`
 	Technologies        []string                  `json:"technologies,omitempty"`
 	CPEs                []string                  `json:"cpes,omitempty"`
-	FingerprintMetadata map[string]map[string]any `json:"fingerprintMetadata,omitempty"`
+	FingerprintMetadata map[string]map[string]any `json:"fingerprint_metadata,omitempty"`
 }
 
 func (e ServiceHTTPS) Type() string { return ProtoHTTPS }
 
 type ServiceH323 struct {
-	VendorID     string   `json:"vendorID,omitempty"`
-	ProductName  string   `json:"productName,omitempty"`
+	VendorID     string   `json:"vendor_id,omitempty"`
+	ProductName  string   `json:"product_name,omitempty"`
 	Version      string   `json:"version,omitempty"`
-	TerminalType string   `json:"terminalType,omitempty"`
+	TerminalType string   `json:"terminal_type,omitempty"`
 	CPEs         []string `json:"cpes,omitempty"`
 }
 
@@ -768,23 +768,23 @@ func (e ServiceH323) Type() string { return ProtoH323 }
 
 type ServiceHARTIP struct {
 	Version       uint8  `json:"version"`       // HART-IP protocol version (0x01)
-	MessageType   uint8  `json:"messageType"`   // Message type (0x01=Response, 0x03=Error, 0x0F=NAK)
+	MessageType   uint8  `json:"message_type"`   // Message type (0x01=Response, 0x03=Error, 0x0F=NAK)
 	Status        uint8  `json:"status"`        // Status code
-	StatusDesc    string `json:"statusDesc"`    // Status description (Success/Error/NAK)
-	TransactionID uint16 `json:"transactionID"` // Transaction ID echoed from request
+	StatusDesc    string `json:"status_desc"`    // Status description (Success/Error/NAK)
+	TransactionID uint16 `json:"transaction_id"` // Transaction ID echoed from request
 }
 
 func (e ServiceHARTIP) Type() string { return ProtoHARTIP }
 
 type ServiceRDP struct {
 	OSFingerprint       string `json:"fingerprint,omitempty"` // e.g. Windows Server 2016 or 2019
-	OSVersion           string `json:"osVersion,omitempty"`
-	TargetName          string `json:"targetName,omitempty"`
-	NetBIOSComputerName string `json:"netBIOSComputerName,omitempty"`
-	NetBIOSDomainName   string `json:"netBIOSDomainName,omitempty"`
-	DNSComputerName     string `json:"dnsComputerName,omitempty"`
-	DNSDomainName       string `json:"dnsDomainName,omitempty"`
-	ForestName          string `json:"forestName,omitempty"`
+	OSVersion           string `json:"os_version,omitempty"`
+	TargetName          string `json:"target_name,omitempty"`
+	NetBIOSComputerName string `json:"netbios_computer_name,omitempty"`
+	NetBIOSDomainName   string `json:"netbios_domain_name,omitempty"`
+	DNSComputerName     string `json:"dns_computer_name,omitempty"`
+	DNSDomainName       string `json:"dns_domain_name,omitempty"`
+	ForestName          string `json:"forest_name,omitempty"`
 }
 
 func (e ServiceRDP) Type() string { return ProtoRDP }
@@ -804,22 +804,22 @@ type RPCB struct {
 func (e ServiceRPC) Type() string { return ProtoRPC }
 
 type ServiceSMB struct {
-	SigningEnabled      bool   `json:"signingEnabled"`  // e.g. Is SMB Signing Enabled?
-	SigningRequired     bool   `json:"signingRequired"` // e.g. Is SMB Signing Required?
-	OSVersion           string `json:"osVersion"`
-	NetBIOSComputerName string `json:"netBIOSComputerName,omitempty"`
-	NetBIOSDomainName   string `json:"netBIOSDomainName,omitempty"`
-	DNSComputerName     string `json:"dnsComputerName,omitempty"`
-	DNSDomainName       string `json:"dnsDomainName,omitempty"`
-	ForestName          string `json:"forestName,omitempty"`
+	SigningEnabled      bool   `json:"signing_enabled"`  // e.g. Is SMB Signing Enabled?
+	SigningRequired     bool   `json:"signing_required"` // e.g. Is SMB Signing Required?
+	OSVersion           string `json:"os_version"`
+	NetBIOSComputerName string `json:"netbios_computer_name,omitempty"`
+	NetBIOSDomainName   string `json:"netbios_domain_name,omitempty"`
+	DNSComputerName     string `json:"dns_computer_name,omitempty"`
+	DNSDomainName       string `json:"dns_domain_name,omitempty"`
+	ForestName          string `json:"forest_name,omitempty"`
 }
 
 func (e ServiceSMB) Type() string { return ProtoSMB }
 
 type ServiceMySQL struct {
-	PacketType   string   `json:"packetType"`     // the type of packet returned by the server (i.e. handshake or error)
-	ErrorMessage string   `json:"errorMsg"`       // error message if the server returns an error packet
-	ErrorCode    int      `json:"errorCode"`      // error code returned if the server returns an error packet
+	PacketType   string   `json:"packet_type"`     // the type of packet returned by the server (i.e. handshake or error)
+	ErrorMessage string   `json:"error_msg"`       // error message if the server returns an error packet
+	ErrorCode    int      `json:"error_code"`      // error code returned if the server returns an error packet
 	CPEs         []string `json:"cpes,omitempty"` // Common Platform Enumeration identifiers for vulnerability tracking
 }
 
@@ -828,16 +828,16 @@ func (e ServiceMySQL) Type() string { return ProtoMySQL }
 func (e ServicePostgreSQL) Type() string { return ProtoPostgreSQL }
 
 type ServicePostgreSQL struct {
-	AuthRequired bool     `json:"authRequired"`
+	AuthRequired bool     `json:"auth_required"`
 	CPEs         []string `json:"cpes,omitempty"`
 }
 
 type ServiceProConOS struct {
-	LadderLogicRuntime string   `json:"ladderLogicRuntime,omitempty"` // Version from offset 13
-	PLCType            string   `json:"plcType,omitempty"`            // PLC type from offset 45
-	ProjectName        string   `json:"projectName,omitempty"`        // Project name from offset 78
-	BootProject        string   `json:"bootProject,omitempty"`        // Boot project (variable offset)
-	ProjectSourceCode  string   `json:"projectSourceCode,omitempty"`  // Source code file (variable offset)
+	LadderLogicRuntime string   `json:"ladder_logic_runtime,omitempty"` // Version from offset 13
+	PLCType            string   `json:"plc_type,omitempty"`            // PLC type from offset 45
+	ProjectName        string   `json:"project_name,omitempty"`        // Project name from offset 78
+	BootProject        string   `json:"boot_project,omitempty"`        // Boot project (variable offset)
+	ProjectSourceCode  string   `json:"project_source_code,omitempty"`  // Source code file (variable offset)
 	CPEs               []string `json:"cpes,omitempty"`
 }
 
@@ -856,7 +856,7 @@ type ServicePOP3S struct {
 func (e ServicePOP3S) Type() string { return ProtoPOP3S }
 
 type ServicePulsar struct {
-	ProtocolVersion int      `json:"protocolVersion,omitempty"`
+	ProtocolVersion int      `json:"protocol_version,omitempty"`
 	CPEs            []string `json:"cpes,omitempty"`
 }
 
@@ -887,7 +887,7 @@ func (e ServiceSNPP) Type() string { return ProtoSNPP }
 type ServiceSIP struct {
 	Banner         string   `json:"banner,omitempty"`
 	Server         string   `json:"server,omitempty"`
-	AllowedMethods []string `json:"allowedMethods,omitempty"`
+	AllowedMethods []string `json:"allowed_methods,omitempty"`
 	CPEs           []string `json:"cpes,omitempty"`
 }
 
@@ -896,16 +896,16 @@ func (e ServiceSIP) Type() string { return ProtoSIP }
 type ServiceSIPS struct {
 	Banner         string   `json:"banner,omitempty"`
 	Server         string   `json:"server,omitempty"`
-	AllowedMethods []string `json:"allowedMethods,omitempty"`
+	AllowedMethods []string `json:"allowed_methods,omitempty"`
 	CPEs           []string `json:"cpes,omitempty"`
 }
 
 func (e ServiceSIPS) Type() string { return ProtoSIPS }
 
 type ServiceSOCKS5 struct {
-	SelectedMethod  string   `json:"selectedMethod"`
-	OfferedMethods  []string `json:"offeredMethods,omitempty"`
-	AnonymousAccess bool     `json:"anonymousAccess"`
+	SelectedMethod  string   `json:"selected_method"`
+	OfferedMethods  []string `json:"offered_methods,omitempty"`
+	AnonymousAccess bool     `json:"anonymous_access"`
 	CPEs            []string `json:"cpes,omitempty"`
 }
 
@@ -914,7 +914,7 @@ func (e ServiceSOCKS5) Type() string { return ProtoSOCKS5 }
 type ServiceSOCKS4 struct {
 	Status          string   `json:"status"`
 	SOCKS4a         bool     `json:"socks4a"`
-	AnonymousAccess bool     `json:"anonymousAccess"`
+	AnonymousAccess bool     `json:"anonymous_access"`
 	CPEs            []string `json:"cpes,omitempty"`
 }
 
@@ -922,7 +922,7 @@ func (e ServiceSOCKS4) Type() string { return ProtoSOCKS4 }
 
 type ServiceSonarQube struct {
 	Status          string   `json:"status,omitempty"`
-	AnonymousAccess bool     `json:"anonymousAccess,omitempty"`
+	AnonymousAccess bool     `json:"anonymous_access,omitempty"`
 	CPEs            []string `json:"cpes,omitempty"`
 }
 
@@ -941,7 +941,7 @@ type ServiceNTP struct{}
 func (e ServiceNTP) Type() string { return ProtoNTP }
 
 type ServiceNetbios struct {
-	NetBIOSName string `json:"netBIOSName"`
+	NetBIOSName string `json:"netbios_name"`
 }
 
 func (e ServiceNetbios) Type() string { return ProtoNetbios }
@@ -959,30 +959,30 @@ type ServiceIMAPS struct {
 func (e ServiceIMAPS) Type() string { return ProtoIMAPS }
 
 type ServiceIRC struct {
-	ServerName     string   `json:"serverName,omitempty"`
-	NetworkName    string   `json:"networkName,omitempty"`
+	ServerName     string   `json:"server_name,omitempty"`
+	NetworkName    string   `json:"network_name,omitempty"`
 	Version        string   `json:"version,omitempty"`
-	ServerSoftware string   `json:"serverSoftware,omitempty"`
-	CreatedDate    string   `json:"createdDate,omitempty"`
-	UserModes      string   `json:"userModes,omitempty"`
-	ChannelModes   string   `json:"channelModes,omitempty"`
-	UserCount      int      `json:"userCount,omitempty"`
-	ChannelCount   int      `json:"channelCount,omitempty"`
+	ServerSoftware string   `json:"server_software,omitempty"`
+	CreatedDate    string   `json:"created_date,omitempty"`
+	UserModes      string   `json:"user_modes,omitempty"`
+	ChannelModes   string   `json:"channel_modes,omitempty"`
+	UserCount      int      `json:"user_count,omitempty"`
+	ChannelCount   int      `json:"channel_count,omitempty"`
 	CPEs           []string `json:"cpes,omitempty"`
 }
 
 func (e ServiceIRC) Type() string { return ProtoIRC }
 
 type ServiceIRCS struct {
-	ServerName     string   `json:"serverName,omitempty"`
-	NetworkName    string   `json:"networkName,omitempty"`
+	ServerName     string   `json:"server_name,omitempty"`
+	NetworkName    string   `json:"network_name,omitempty"`
 	Version        string   `json:"version,omitempty"`
-	ServerSoftware string   `json:"serverSoftware,omitempty"`
-	CreatedDate    string   `json:"createdDate,omitempty"`
-	UserModes      string   `json:"userModes,omitempty"`
-	ChannelModes   string   `json:"channelModes,omitempty"`
-	UserCount      int      `json:"userCount,omitempty"`
-	ChannelCount   int      `json:"channelCount,omitempty"`
+	ServerSoftware string   `json:"server_software,omitempty"`
+	CreatedDate    string   `json:"created_date,omitempty"`
+	UserModes      string   `json:"user_modes,omitempty"`
+	ChannelModes   string   `json:"channel_modes,omitempty"`
+	UserCount      int      `json:"user_count,omitempty"`
+	ChannelCount   int      `json:"channel_count,omitempty"`
 	CPEs           []string `json:"cpes,omitempty"`
 }
 
@@ -995,8 +995,8 @@ type ServiceInfluxDB struct {
 func (e ServiceInfluxDB) Type() string { return ProtoInfluxDB }
 
 type ServiceIKEv2 struct {
-	ResponderSPI string `json:"responderSPI"`
-	MessageID    string `json:"messageID"`
+	ResponderSPI string `json:"responder_spi"`
+	MessageID    string `json:"message_id"`
 	Vendor       string `json:"vendor,omitempty"`
 }
 
@@ -1009,17 +1009,17 @@ type ServiceIAX2 struct {
 func (e ServiceIAX2) Type() string { return ProtoIAX2 }
 
 type ServiceIPSEC struct {
-	ResponderISP string `json:"responderISP"`
-	MessageID    string `json:"messageID"`
+	ResponderISP string `json:"responder_isp"`
+	MessageID    string `json:"message_id"`
 }
 
 func (e ServiceIPSEC) Type() string { return ProtoIPSEC }
 
 type ServiceIUA struct {
-	InfoString   string `json:"infoString,omitempty"`
-	ErrorCode    uint32 `json:"errorCode,omitempty"`
-	MessageClass uint8  `json:"messageClass,omitempty"`
-	MessageType  uint8  `json:"messageType,omitempty"`
+	InfoString   string `json:"info_string,omitempty"`
+	ErrorCode    uint32 `json:"error_code,omitempty"`
+	MessageClass uint8  `json:"message_class,omitempty"`
+	MessageType  uint8  `json:"message_type,omitempty"`
 }
 
 func (e ServiceIUA) Type() string { return ProtoIUA }
@@ -1028,9 +1028,9 @@ type ServiceJetDirect struct {
 	Manufacturer     string   `json:"manufacturer,omitempty"`
 	Model            string   `json:"model,omitempty"`
 	Firmware         string   `json:"firmware,omitempty"`
-	RawID            string   `json:"rawId"`
+	RawID            string   `json:"raw_id"`
 	Status           string   `json:"status,omitempty"`
-	FilesystemAccess bool     `json:"filesystemAccess,omitempty"`
+	FilesystemAccess bool     `json:"filesystem_access,omitempty"`
 	CPEs             []string `json:"cpes,omitempty"`
 }
 
@@ -1038,13 +1038,13 @@ func (e ServiceJetDirect) Type() string { return ProtoJetDirect }
 
 type ServicePPTP struct {
 	Hostname            string `json:"hostname,omitempty"`
-	VendorString        string `json:"vendorString,omitempty"`
-	FirmwareRevision    uint16 `json:"firmwareRevision"`
-	ProtocolVersion     string `json:"protocolVersion,omitempty"`
-	FramingCapabilities uint32 `json:"framingCapabilities"`
-	BearerCapabilities  uint32 `json:"bearerCapabilities"`
-	MaxChannels         uint16 `json:"maxChannels"`
-	ResultCode          uint8  `json:"resultCode"`
+	VendorString        string `json:"vendor_string,omitempty"`
+	FirmwareRevision    uint16 `json:"firmware_revision"`
+	ProtocolVersion     string `json:"protocol_version,omitempty"`
+	FramingCapabilities uint32 `json:"framing_capabilities"`
+	BearerCapabilities  uint32 `json:"bearer_capabilities"`
+	MaxChannels         uint16 `json:"max_channels"`
+	ResultCode          uint8  `json:"result_code"`
 }
 
 func (e ServicePPTP) Type() string { return ProtoPPTP }
@@ -1060,13 +1060,13 @@ type ServiceVNC struct{}
 func (e ServiceVNC) Type() string { return ProtoVNC }
 
 type ServiceVMware struct {
-	ProductType   string   `json:"productType"`              // "esxi", "vcenter", or "vsphere"
-	FullName      string   `json:"fullName,omitempty"`
+	ProductType   string   `json:"product_type"`              // "esxi", "vcenter", or "vsphere"
+	FullName      string   `json:"full_name,omitempty"`
 	Build         string   `json:"build,omitempty"`
-	ApiType       string   `json:"apiType,omitempty"`
-	ApiVersion    string   `json:"apiVersion,omitempty"`
-	OsType        string   `json:"osType,omitempty"`
-	ProductLineId string   `json:"productLineId,omitempty"`
+	ApiType       string   `json:"api_type,omitempty"`
+	ApiVersion    string   `json:"api_version,omitempty"`
+	OsType        string   `json:"os_type,omitempty"`
+	ProductLineId string   `json:"product_line_id,omitempty"`
 	CPEs          []string `json:"cpes,omitempty"`
 }
 
@@ -1088,13 +1088,13 @@ type ServiceTeamViewer struct {
 func (e ServiceTeamViewer) Type() string { return ProtoTeamViewer }
 
 type ServiceTelnet struct {
-	ServerData string `json:"serverData"`
+	ServerData string `json:"server_data"`
 }
 
 func (e ServiceTelnet) Type() string { return ProtoTelnet }
 
 type ServiceTFTP struct {
-	ErrorMessage string `json:"errorMessage,omitempty"`
+	ErrorMessage string `json:"error_message,omitempty"`
 }
 
 func (e ServiceTFTP) Type() string { return ProtoTFTP }
@@ -1108,7 +1108,7 @@ type ServiceTURN struct {
 func (e ServiceTURN) Type() string { return ProtoTURN }
 
 type ServiceRedis struct {
-	AuthRequired bool     `json:"authRequired:"`
+	AuthRequired bool     `json:"auth_required"`
 	CPEs         []string `json:"cpes,omitempty"`
 }
 
@@ -1135,8 +1135,8 @@ type ServiceGTPU struct{}
 func (e ServiceGTPU) Type() string { return ProtoGTPU }
 
 type ServicePFCP struct {
-	RecoveryTimestamp uint32 `json:"recoveryTimestamp,omitempty"`
-	NodeID            string `json:"nodeId,omitempty"`
+	RecoveryTimestamp uint32 `json:"recovery_timestamp,omitempty"`
+	NodeID            string `json:"node_id,omitempty"`
 }
 
 func (e ServicePFCP) Type() string { return ProtoPFCP }
@@ -1151,23 +1151,23 @@ func (e ServiceFTP) Type() string { return ProtoFTP }
 
 type ServiceFox struct {
 	Version     string   `json:"version,omitempty"`     // Fox protocol version
-	HostName    string   `json:"hostName,omitempty"`    // Device hostname
-	HostAddress string   `json:"hostAddress,omitempty"` // Device IP address
-	AppName     string   `json:"appName,omitempty"`     // Application name
-	AppVersion  string   `json:"appVersion,omitempty"`  // Application version
-	VMName      string   `json:"vmName,omitempty"`      // Virtual machine name
-	VMVersion   string   `json:"vmVersion,omitempty"`   // VM version
-	OSName      string   `json:"osName,omitempty"`      // Operating system name
-	StationName string   `json:"stationName,omitempty"` // Station name
-	BrandId     string   `json:"brandId,omitempty"`     // Brand identifier
+	HostName    string   `json:"host_name,omitempty"`    // Device hostname
+	HostAddress string   `json:"host_address,omitempty"` // Device IP address
+	AppName     string   `json:"app_name,omitempty"`     // Application name
+	AppVersion  string   `json:"app_version,omitempty"`  // Application version
+	VMName      string   `json:"vm_name,omitempty"`      // Virtual machine name
+	VMVersion   string   `json:"vm_version,omitempty"`   // VM version
+	OSName      string   `json:"os_name,omitempty"`      // Operating system name
+	StationName string   `json:"station_name,omitempty"` // Station name
+	BrandId     string   `json:"brand_id,omitempty"`     // Brand identifier
 	CPEs        []string `json:"cpes,omitempty"`        // Common Platform Enumeration identifiers for vulnerability tracking
 }
 
 func (e ServiceFox) Type() string { return ProtoFox }
 
 type ServiceGESRTP struct {
-	PLCName         string   `json:"plcName,omitempty"`
-	DeviceIndicator uint8    `json:"deviceIndicator,omitempty"`
+	PLCName         string   `json:"plc_name,omitempty"`
+	DeviceIndicator uint8    `json:"device_indicator,omitempty"`
 	CPEs            []string `json:"cpes,omitempty"`
 }
 
@@ -1175,8 +1175,8 @@ func (e ServiceGESRTP) Type() string { return ProtoGESRTP }
 
 // ServiceGit contains metadata extracted from a Git daemon ref advertisement.
 type ServiceGit struct {
-	ProtocolVersion int      `json:"protocolVersion,omitempty"` // 0=implicit, 1=explicit v1, 2=v2
-	HeadRef         string   `json:"headRef,omitempty"`         // SHA-1 hash of HEAD
+	ProtocolVersion int      `json:"protocol_version,omitempty"` // 0=implicit, 1=explicit v1, 2=v2
+	HeadRef         string   `json:"head_ref,omitempty"`         // SHA-1 hash of HEAD
 	Branches        []string `json:"branches,omitempty"`        // Branch names (without refs/heads/ prefix)
 	Tags            []string `json:"tags,omitempty"`            // Tag names (without refs/tags/ prefix)
 	Capabilities    []string `json:"capabilities,omitempty"`    // Server capabilities from ref advertisement
@@ -1186,8 +1186,8 @@ func (e ServiceGit) Type() string { return ProtoGit }
 
 type ServiceSMPP struct {
 	CPEs            []string `json:"cpes,omitempty"`            // Common Platform Enumeration identifiers for vulnerability tracking
-	ProtocolVersion string   `json:"protocolVersion,omitempty"` // SMPP protocol version (e.g., "3.4", "5.0")
-	SystemID        string   `json:"systemID,omitempty"`        // System ID from bind_transceiver_resp
+	ProtocolVersion string   `json:"protocol_version,omitempty"` // SMPP protocol version (e.g., "3.4", "5.0")
+	SystemID        string   `json:"system_id,omitempty"`        // System ID from bind_transceiver_resp
 	Vendor          string   `json:"vendor,omitempty"`          // Vendor identified from system_id
 	Product         string   `json:"product,omitempty"`         // Product identified from system_id
 }
@@ -1216,19 +1216,19 @@ func (e ServiceStun) Type() string { return ProtoStun }
 
 type ServiceSSH struct {
 	Banner              string `json:"banner"`
-	PasswordAuthEnabled bool   `json:"passwordAuthEnabled"`
+	PasswordAuthEnabled bool   `json:"password_auth_enabled"`
 	Algo                string `json:"algo"`
-	HostKey             string `json:"hostKey,omitempty"`
-	HostKeyType         string `json:"hostKeyType,omitempty"`
-	HostKeyFingerprint  string `json:"hostKeyFingerprint,omitempty"`
+	HostKey             string `json:"host_key,omitempty"`
+	HostKeyType         string `json:"host_key_type,omitempty"`
+	HostKeyFingerprint  string `json:"host_key_fingerprint,omitempty"`
 }
 
 func (e ServiceSSH) Type() string { return ProtoSSH }
 
 type ServiceSVN struct {
-	MinVersion   int      `json:"minVersion"`
-	MaxVersion   int      `json:"maxVersion"`
-	AuthMechs    []string `json:"authMechs"`
+	MinVersion   int      `json:"min_version"`
+	MaxVersion   int      `json:"max_version"`
+	AuthMechs    []string `json:"auth_mechs"`
 	Capabilities []string `json:"capabilities"`
 }
 
@@ -1242,13 +1242,13 @@ type ServiceSybase struct {
 func (e ServiceSybase) Type() string { return ProtoSybase }
 
 type ServiceEthernetIP struct {
-	VendorID    uint16   `json:"vendorId,omitempty"`
-	VendorName  string   `json:"vendorName,omitempty"`
-	DeviceType  uint16   `json:"deviceType,omitempty"`
-	ProductCode uint16   `json:"productCode,omitempty"`
+	VendorID    uint16   `json:"vendor_id,omitempty"`
+	VendorName  string   `json:"vendor_name,omitempty"`
+	DeviceType  uint16   `json:"device_type,omitempty"`
+	ProductCode uint16   `json:"product_code,omitempty"`
 	Revision    string   `json:"revision,omitempty"`
 	Serial      string   `json:"serial,omitempty"`
-	ProductName string   `json:"productName,omitempty"`
+	ProductName string   `json:"product_name,omitempty"`
 	CPEs        []string `json:"cpes,omitempty"`
 }
 
@@ -1263,8 +1263,8 @@ type ServiceLDAPS struct{}
 func (e ServiceLDAPS) Type() string { return ProtoLDAPS }
 
 type ServiceLibreChat struct {
-	ConfigVersion string   `json:"configVersion,omitempty"`
-	HasHealth     bool     `json:"hasHealth,omitempty"`
+	ConfigVersion string   `json:"config_version,omitempty"`
+	HasHealth     bool     `json:"has_health,omitempty"`
 	CPEs          []string `json:"cpes,omitempty"`
 }
 
@@ -1276,29 +1276,29 @@ func (e ServiceKafka) Type() string { return ProtoKafka }
 
 type ServiceKerberos struct {
 	Realm     string `json:"realm,omitempty"`
-	ErrorCode int    `json:"errorCode,omitempty"`
-	ErrorText string `json:"errorText,omitempty"`
+	ErrorCode int    `json:"error_code,omitempty"`
+	ErrorText string `json:"error_text,omitempty"`
 }
 
 func (e ServiceKerberos) Type() string { return ProtoKerberos }
 
 type ServiceKNXIP struct {
-	DeviceName      string   `json:"deviceName"`                // Friendly name (30 chars max)
-	KNXAddress      string   `json:"knxAddress"`                // Individual address "area.line.device"
-	SerialNumber    string   `json:"serialNumber"`              // 6-byte hex string
-	MACAddress      string   `json:"macAddress"`                // XX:XX:XX:XX:XX:XX
-	KNXMedium       string   `json:"knxMedium,omitempty"`       // "TP1", "PL110", "RF", "IP"
-	ServiceFamilies []string `json:"serviceFamilies,omitempty"` // ["Core", "Tunnelling", "Routing"]
+	DeviceName      string   `json:"device_name"`                // Friendly name (30 chars max)
+	KNXAddress      string   `json:"knx_address"`                // Individual address "area.line.device"
+	SerialNumber    string   `json:"serial_number"`              // 6-byte hex string
+	MACAddress      string   `json:"mac_address"`                // XX:XX:XX:XX:XX:XX
+	KNXMedium       string   `json:"knx_medium,omitempty"`       // "TP1", "PL110", "RF", "IP"
+	ServiceFamilies []string `json:"service_families,omitempty"` // ["Core", "Tunnelling", "Routing"]
 }
 
 func (e ServiceKNXIP) Type() string { return ProtoKNXIP }
 
 type ServiceKubernetes struct {
 	CPEs         []string `json:"cpes,omitempty"`
-	GitVersion   string   `json:"gitVersion,omitempty"`
-	GitCommit    string   `json:"gitCommit,omitempty"`
-	BuildDate    string   `json:"buildDate,omitempty"`
-	GoVersion    string   `json:"goVersion,omitempty"`
+	GitVersion   string   `json:"git_version,omitempty"`
+	GitCommit    string   `json:"git_commit,omitempty"`
+	BuildDate    string   `json:"build_date,omitempty"`
+	GoVersion    string   `json:"go_version,omitempty"`
 	Platform     string   `json:"platform,omitempty"`
 	Distribution string   `json:"distribution,omitempty"` // k3s, gke, eks, aks, openshift, minikube, vanilla
 	Vendor       string   `json:"vendor,omitempty"`       // kubernetes, rancher, google, aws, azure, redhat
@@ -1307,13 +1307,13 @@ type ServiceKubernetes struct {
 func (e ServiceKubernetes) Type() string { return ProtoKubernetes }
 
 type ServiceL2TP struct {
-	ProtocolVersion  string `json:"protocolVersion,omitempty"`
-	HostName         string `json:"hostName,omitempty"`
-	VendorName       string `json:"vendorName,omitempty"`
-	FirmwareRevision uint16 `json:"firmwareRevision,omitempty"`
-	AssignedTunnelID uint16 `json:"assignedTunnelId,omitempty"`
-	FramingCaps      uint32 `json:"framingCaps,omitempty"`
-	BearerCaps       uint32 `json:"bearerCaps,omitempty"`
+	ProtocolVersion  string `json:"protocol_version,omitempty"`
+	HostName         string `json:"host_name,omitempty"`
+	VendorName       string `json:"vendor_name,omitempty"`
+	FirmwareRevision uint16 `json:"firmware_revision,omitempty"`
+	AssignedTunnelID uint16 `json:"assigned_tunnel_id,omitempty"`
+	FramingCaps      uint32 `json:"framing_caps,omitempty"`
+	BearerCaps       uint32 `json:"bearer_caps,omitempty"`
 }
 
 func (e ServiceL2TP) Type() string { return ProtoL2TP }
@@ -1326,9 +1326,9 @@ func (e ServiceOracle) Type() string { return ProtoOracle }
 
 type ServicePCOM struct {
 	Model     string   `json:"model,omitempty"`
-	HWVersion string   `json:"hwVersion,omitempty"`
-	OSVersion string   `json:"osVersion,omitempty"`
-	UnitID    string   `json:"unitId,omitempty"`
+	HWVersion string   `json:"hw_version,omitempty"`
+	OSVersion string   `json:"os_version,omitempty"`
+	UnitID    string   `json:"unit_id,omitempty"`
 	CPEs      []string `json:"cpes,omitempty"`
 }
 
@@ -1336,7 +1336,7 @@ func (e ServicePCOM) Type() string { return ProtoPCOM }
 
 type ServicePinecone struct {
 	CPEs       []string `json:"cpes,omitempty"`       // Common Platform Enumeration with wildcard version
-	APIVersion string   `json:"apiVersion,omitempty"` // Pinecone API version from x-pinecone-api-version header
+	APIVersion string   `json:"api_version,omitempty"` // Pinecone API version from x-pinecone-api-version header
 }
 
 func (e ServicePinecone) Type() string { return ProtoPinecone }
@@ -1353,42 +1353,42 @@ type ServiceWireGuard struct {
 func (e ServiceWireGuard) Type() string { return ProtoWireGuard }
 
 type ServiceXMPP struct {
-	StreamID       string   `json:"streamId,omitempty"`
-	ServerFrom     string   `json:"serverFrom,omitempty"`
-	AuthMechanisms []string `json:"authMechanisms,omitempty"`
-	TLSSupport     string   `json:"tlsSupport,omitempty"`
+	StreamID       string   `json:"stream_id,omitempty"`
+	ServerFrom     string   `json:"server_from,omitempty"`
+	AuthMechanisms []string `json:"auth_mechanisms,omitempty"`
+	TLSSupport     string   `json:"tls_support,omitempty"`
 	Compression    []string `json:"compression,omitempty"`
-	CapsNode       string   `json:"capsNode,omitempty"`
-	CapsVer        string   `json:"capsVer,omitempty"`
-	ServerSoftware string   `json:"serverSoftware,omitempty"`
+	CapsNode       string   `json:"caps_node,omitempty"`
+	CapsVer        string   `json:"caps_ver,omitempty"`
+	ServerSoftware string   `json:"server_software,omitempty"`
 	CPEs           []string `json:"cpes,omitempty"`
 }
 
 func (e ServiceXMPP) Type() string { return ProtoXMPP }
 
 type ServiceOMRONFINS struct {
-	ControllerModel   string   `json:"controllerModel,omitempty"`
-	ControllerVersion string   `json:"controllerVersion,omitempty"`
+	ControllerModel   string   `json:"controller_model,omitempty"`
+	ControllerVersion string   `json:"controller_version,omitempty"`
 	CPEs              []string `json:"cpes,omitempty"`
 }
 
 func (e ServiceOMRONFINS) Type() string { return ProtoOMRONFINS }
 
 type ServiceOPCUA struct {
-	ApplicationName string   `json:"applicationName,omitempty"` // Server application name
-	ProductURI      string   `json:"productUri,omitempty"`      // Product URI from server
-	SecurityModes   []string `json:"securityModes,omitempty"`   // None, Sign, SignAndEncrypt
+	ApplicationName string   `json:"application_name,omitempty"` // Server application name
+	ProductURI      string   `json:"product_uri,omitempty"`      // Product URI from server
+	SecurityModes   []string `json:"security_modes,omitempty"`   // None, Sign, SignAndEncrypt
 	CPEs            []string `json:"cpes,omitempty"`
 }
 
 func (e ServiceOPCUA) Type() string { return ProtoOPCUA }
 
 type ServicePCWorx struct {
-	PLCType         string   `json:"plcType,omitempty"`
-	FirmwareVersion string   `json:"firmwareVersion,omitempty"`
-	FirmwareDate    string   `json:"firmwareDate,omitempty"`
-	FirmwareTime    string   `json:"firmwareTime,omitempty"`
-	ModelNumber     string   `json:"modelNumber,omitempty"`
+	PLCType         string   `json:"plc_type,omitempty"`
+	FirmwareVersion string   `json:"firmware_version,omitempty"`
+	FirmwareDate    string   `json:"firmware_date,omitempty"`
+	FirmwareTime    string   `json:"firmware_time,omitempty"`
+	ModelNumber     string   `json:"model_number,omitempty"`
 	CPEs            []string `json:"cpes,omitempty"`
 }
 
@@ -1402,7 +1402,7 @@ type ServiceMegaco struct {
 	Version   string `json:"version,omitempty"`
 	MID       string `json:"mid,omitempty"`
 	Profile   string `json:"profile,omitempty"`
-	ErrorCode int    `json:"errorCode,omitempty"`
+	ErrorCode int    `json:"error_code,omitempty"`
 }
 
 func (e ServiceMegaco) Type() string { return ProtoMegaco }
@@ -1415,7 +1415,7 @@ type ServiceMemcached struct {
 func (e ServiceMemcached) Type() string { return ProtoMemcached }
 
 type ServiceMGCP struct {
-	ResponseCode int      `json:"responseCode,omitempty"`
+	ResponseCode int      `json:"response_code,omitempty"`
 	Endpoints    []string `json:"endpoints,omitempty"`
 	Packages     []string `json:"packages,omitempty"`
 }
@@ -1423,7 +1423,7 @@ type ServiceMGCP struct {
 func (e ServiceMGCP) Type() string { return ProtoMGCP }
 
 type ServiceMelsecQ struct {
-	CPUModel string   `json:"cpuModel,omitempty"`
+	CPUModel string   `json:"cpu_model,omitempty"`
 	CPEs     []string `json:"cpes,omitempty"`
 }
 
@@ -1442,21 +1442,21 @@ type ServiceMilvusMetrics struct {
 func (e ServiceMilvusMetrics) Type() string { return ProtoMilvusMetrics }
 
 type ServiceModbus struct {
-	VendorName  string   `json:"vendorName,omitempty"`  // Object ID 0x00: Vendor name
-	ProductCode string   `json:"productCode,omitempty"` // Object ID 0x01: Product code
+	VendorName  string   `json:"vendor_name,omitempty"`  // Object ID 0x00: Vendor name
+	ProductCode string   `json:"product_code,omitempty"` // Object ID 0x01: Product code
 	Revision    string   `json:"revision,omitempty"`    // Object ID 0x02: Major.Minor revision
-	VendorURL   string   `json:"vendorUrl,omitempty"`   // Object ID 0x03: Vendor URL
-	ProductName string   `json:"productName,omitempty"` // Object ID 0x04: Product name
-	ModelName   string   `json:"modelName,omitempty"`   // Object ID 0x05: Model name
+	VendorURL   string   `json:"vendor_url,omitempty"`   // Object ID 0x03: Vendor URL
+	ProductName string   `json:"product_name,omitempty"` // Object ID 0x04: Product name
+	ModelName   string   `json:"model_name,omitempty"`   // Object ID 0x05: Model name
 	CPEs        []string `json:"cpes,omitempty"`        // Common Platform Enumeration identifiers
 }
 
 func (e ServiceModbus) Type() string { return ProtoModbus }
 
 type ServiceMongoDB struct {
-	MaxWireVersion int      `json:"maxWireVersion,omitempty"` // Wire protocol version (indicates capabilities, NOT precise version; e.g., wire 21 = MongoDB 7.0.x)
-	MinWireVersion int      `json:"minWireVersion,omitempty"` // Minimum wire protocol version supported
-	ServerType     string   `json:"serverType,omitempty"`     // "mongod" or "mongos"
+	MaxWireVersion int      `json:"max_wire_version,omitempty"` // Wire protocol version (indicates capabilities, NOT precise version; e.g., wire 21 = MongoDB 7.0.x)
+	MinWireVersion int      `json:"min_wire_version,omitempty"` // Minimum wire protocol version supported
+	ServerType     string   `json:"server_type,omitempty"`     // "mongod" or "mongos"
 	CPEs           []string `json:"cpes,omitempty"`
 }
 
@@ -1469,28 +1469,28 @@ type ServiceNeo4j struct {
 func (e ServiceNeo4j) Type() string { return ProtoNeo4j }
 
 type ServiceNRPE struct {
-	CommandArgsEnabled *bool    `json:"commandArgsEnabled,omitempty"`
+	CommandArgsEnabled *bool    `json:"command_args_enabled,omitempty"`
 	CPEs               []string `json:"cpes,omitempty"`
 }
 
 func (e ServiceNRPE) Type() string { return ProtoNRPE }
 
 type ServiceNATS struct {
-	ServerID     string   `json:"serverId,omitempty"`
-	ServerName   string   `json:"serverName,omitempty"`
-	AuthRequired bool     `json:"authRequired"`
-	TLSRequired  bool     `json:"tlsRequired"`
-	TLSAvailable bool     `json:"tlsAvailable,omitempty"`
-	JetStream    bool     `json:"jetStream,omitempty"`
+	ServerID     string   `json:"server_id,omitempty"`
+	ServerName   string   `json:"server_name,omitempty"`
+	AuthRequired bool     `json:"auth_required"`
+	TLSRequired  bool     `json:"tls_required"`
+	TLSAvailable bool     `json:"tls_available,omitempty"`
+	JetStream    bool     `json:"jet_stream,omitempty"`
 	Headers      bool     `json:"headers,omitempty"`
 	Proto        int      `json:"proto,omitempty"`
-	MaxPayload   int64    `json:"maxPayload,omitempty"`
-	GoVersion    string   `json:"goVersion,omitempty"`
-	GitCommit    string   `json:"gitCommit,omitempty"`
+	MaxPayload   int64    `json:"max_payload,omitempty"`
+	GoVersion    string   `json:"go_version,omitempty"`
+	GitCommit    string   `json:"git_commit,omitempty"`
 	Cluster      string   `json:"cluster,omitempty"`
 	Domain       string   `json:"domain,omitempty"`
-	ConnectURLs  []string `json:"connectUrls,omitempty"`
-	ClientIP     string   `json:"clientIp,omitempty"`
+	ConnectURLs  []string `json:"connect_urls,omitempty"`
+	ClientIP     string   `json:"client_ip,omitempty"`
 	LDM          bool     `json:"ldm,omitempty"`
 	CPEs         []string `json:"cpes,omitempty"`
 }
@@ -1498,28 +1498,28 @@ type ServiceNATS struct {
 func (e ServiceNATS) Type() string { return ProtoNATS }
 
 type ServiceRtsp struct {
-	ServerInfo string `json:"serverInfo"`
+	ServerInfo string `json:"server_info"`
 }
 
 func (e ServiceRtsp) Type() string { return ProtoRtsp }
 
 type ServiceS7comm struct {
-	PLCType         string   `json:"plcType,omitempty"`         // "S7-300", "S7-400", "S7-1200", "S7-1500"
-	ModuleType      string   `json:"moduleType,omitempty"`      // Module type identifier from SZL
-	OrderCode       string   `json:"orderCode,omitempty"`       // 6ES7 XXX-XXXXX-XXXX
-	SerialNumber    string   `json:"serialNumber,omitempty"`    // Hardware serial number
-	FirmwareVersion string   `json:"firmwareVersion,omitempty"` // V1.2.3 format
-	ProtectionLevel uint8    `json:"protectionLevel,omitempty"` // 1=none, 2=read, 3=full
-	ModuleName      string   `json:"moduleName,omitempty"`      // PLC module name
-	PlantID         string   `json:"plantId,omitempty"`         // Plant/system identifier
+	PLCType         string   `json:"plc_type,omitempty"`         // "S7-300", "S7-400", "S7-1200", "S7-1500"
+	ModuleType      string   `json:"module_type,omitempty"`      // Module type identifier from SZL
+	OrderCode       string   `json:"order_code,omitempty"`       // 6ES7 XXX-XXXXX-XXXX
+	SerialNumber    string   `json:"serial_number,omitempty"`    // Hardware serial number
+	FirmwareVersion string   `json:"firmware_version,omitempty"` // V1.2.3 format
+	ProtectionLevel uint8    `json:"protection_level,omitempty"` // 1=none, 2=read, 3=full
+	ModuleName      string   `json:"module_name,omitempty"`      // PLC module name
+	PlantID         string   `json:"plant_id,omitempty"`         // Plant/system identifier
 	CPEs            []string `json:"cpes,omitempty"`            // CPE identifiers
 }
 
 func (e ServiceS7comm) Type() string { return ProtoS7comm }
 
 type ServicePROFINET struct {
-	DeviceName string   `json:"deviceName,omitempty"`
-	DeviceType string   `json:"deviceType,omitempty"`
+	DeviceName string   `json:"device_name,omitempty"`
+	DeviceType string   `json:"device_type,omitempty"`
 	Vendor     string   `json:"vendor,omitempty"`
 	CPEs       []string `json:"cpes,omitempty"`
 }
@@ -1543,7 +1543,7 @@ type ServiceCouchDB struct {
 func (e ServiceCouchDB) Type() string { return ProtoCouchDB }
 
 type ServiceCUPS struct {
-	ServerHeader string   `json:"serverHeader,omitempty"`
+	ServerHeader string   `json:"server_header,omitempty"`
 	CPEs         []string `json:"cpes,omitempty"`
 }
 
@@ -1559,17 +1559,17 @@ type ServiceDiameter struct {
 func (e ServiceDiameter) Type() string { return ProtoDiameter }
 
 type ServiceDNP3 struct {
-	SourceAddress      uint16   `json:"sourceAddress,omitempty"`      // DNP3 source address
-	DestinationAddress uint16   `json:"destinationAddress,omitempty"` // DNP3 destination address
-	DeviceRole         string   `json:"deviceRole,omitempty"`         // "master" or "outstation"
-	FunctionCode       uint8    `json:"functionCode,omitempty"`       // Function code used in detection
+	SourceAddress      uint16   `json:"source_address,omitempty"`      // DNP3 source address
+	DestinationAddress uint16   `json:"destination_address,omitempty"` // DNP3 destination address
+	DeviceRole         string   `json:"device_role,omitempty"`         // "master" or "outstation"
+	FunctionCode       uint8    `json:"function_code,omitempty"`       // Function code used in detection
 	CPEs               []string `json:"cpes,omitempty"`               // Common Platform Enumeration identifiers
 }
 
 func (e ServiceDNP3) Type() string { return ProtoDNP3 }
 
 type ServiceDocker struct {
-	ApiVersion string   `json:"apiVersion,omitempty"` // Docker API version (e.g., "1.43")
+	ApiVersion string   `json:"api_version,omitempty"` // Docker API version (e.g., "1.43")
 	Os         string   `json:"os,omitempty"`         // Operating system (e.g., "linux")
 	Arch       string   `json:"arch,omitempty"`       // Architecture (e.g., "amd64")
 	CPEs       []string `json:"cpes,omitempty"`       // Common Platform Enumeration identifiers
@@ -1578,19 +1578,19 @@ type ServiceDocker struct {
 func (e ServiceDocker) Type() string { return ProtoDocker }
 
 type ServiceDB2 struct {
-	ServerName string   `json:"serverName,omitempty"` // DB2 instance name
+	ServerName string   `json:"server_name,omitempty"` // DB2 instance name
 	CPEs       []string `json:"cpes,omitempty"`
 }
 
 func (e ServiceDB2) Type() string { return ProtoDB2 }
 
 type ServiceIPP struct {
-	PrinterMakeAndModel string   `json:"printerMakeAndModel,omitempty"`
-	FirmwareVersion     string   `json:"firmwareVersion,omitempty"`
-	PrinterState        string   `json:"printerState,omitempty"`
-	IPPVersions         []string `json:"ippVersions,omitempty"`
-	PrinterName         string   `json:"printerName,omitempty"`
-	PrinterURI          string   `json:"printerUri,omitempty"`
+	PrinterMakeAndModel string   `json:"printer_make_and_model,omitempty"`
+	FirmwareVersion     string   `json:"firmware_version,omitempty"`
+	PrinterState        string   `json:"printer_state,omitempty"`
+	IPPVersions         []string `json:"ipp_versions,omitempty"`
+	PrinterName         string   `json:"printer_name,omitempty"`
+	PrinterURI          string   `json:"printer_uri,omitempty"`
 	CPEs                []string `json:"cpes,omitempty"`
 }
 
@@ -1598,8 +1598,8 @@ func (e ServiceIPP) Type() string { return ProtoIPP }
 
 type ServiceCassandra struct {
 	Product          string   `json:"product,omitempty"`          // "Apache Cassandra", "ScyllaDB", "DataStax Enterprise"
-	CQLVersion       string   `json:"cqlVersion,omitempty"`       // CQL version from SUPPORTED response (e.g., "3.4.5")
-	ProtocolVersions []string `json:"protocolVersions,omitempty"` // Native protocol versions (e.g., ["3/v3", "4/v4", "5/v5"])
+	CQLVersion       string   `json:"cql_version,omitempty"`       // CQL version from SUPPORTED response (e.g., "3.4.5")
+	ProtocolVersions []string `json:"protocol_versions,omitempty"` // Native protocol versions (e.g., ["3/v3", "4/v4", "5/v5"])
 	Compression      []string `json:"compression,omitempty"`      // Compression algorithms (e.g., ["lz4", "snappy", "zstd"])
 	Confidence       string   `json:"confidence,omitempty"`       // Version detection confidence ("high", "medium", "low")
 	CPEs             []string `json:"cpes,omitempty"`
@@ -1622,11 +1622,11 @@ func (e ServiceCitrixICA) Type() string { return ProtoCitrixICA }
 
 type ServiceCODESYS struct {
 	Version     string   `json:"version,omitempty"`
-	DeviceName  string   `json:"deviceName,omitempty"`
-	VendorName  string   `json:"vendorName,omitempty"`
-	OSType      string   `json:"osType,omitempty"`
-	OSName      string   `json:"osName,omitempty"`
-	AuthEnabled bool     `json:"authEnabled,omitempty"`
+	DeviceName  string   `json:"device_name,omitempty"`
+	VendorName  string   `json:"vendor_name,omitempty"`
+	OSType      string   `json:"os_type,omitempty"`
+	OSName      string   `json:"os_name,omitempty"`
+	AuthEnabled bool     `json:"auth_enabled,omitempty"`
 	CPEs        []string `json:"cpes,omitempty"`
 }
 
@@ -1642,8 +1642,8 @@ func (e ServiceCrimsonV3) Type() string { return ProtoCrimsonV3 }
 
 type ServiceEtcd struct {
 	CPEs           []string `json:"cpes,omitempty"`
-	ClusterVersion string   `json:"clusterVersion,omitempty"`
-	PortType       string   `json:"portType,omitempty"` // "client" or "peer"
+	ClusterVersion string   `json:"cluster_version,omitempty"`
+	PortType       string   `json:"port_type,omitempty"` // "client" or "peer"
 }
 
 func (e ServiceEtcd) Type() string { return ProtoEtcd }
@@ -1653,8 +1653,8 @@ type ServiceEcho struct{}
 func (e ServiceEcho) Type() string { return ProtoEcho }
 
 type ServiceEtherCAT struct {
-	WorkingCounter uint16 `json:"workingCounter"` // Number of slaves that processed the request
-	DatagramCount  int    `json:"datagramCount"`  // Number of datagrams in response
+	WorkingCounter uint16 `json:"working_counter"` // Number of slaves that processed the request
+	DatagramCount  int    `json:"datagram_count"`  // Number of datagrams in response
 }
 
 func (e ServiceEtherCAT) Type() string { return ProtoEtherCAT }
@@ -1680,10 +1680,10 @@ func (e ServiceRsync) Type() string { return ProtoRsync }
 
 type ServiceJDWP struct {
 	Description string `json:"description"`
-	JdwpMajor   int32  `json:"jdwpMajor"`
-	JdwpMinor   int32  `json:"jdwpMinor"`
-	VMVersion   string `json:"VMVersion"`
-	VMName      string `json:"VMName"`
+	JdwpMajor   int32  `json:"jdwp_major"`
+	JdwpMinor   int32  `json:"jdwp_minor"`
+	VMVersion   string `json:"vm_version"`
+	VMName      string `json:"vm_name"`
 }
 
 func (e ServiceJDWP) Type() string { return ProtoJDWP }
@@ -1696,28 +1696,28 @@ type ServiceRMI struct {
 func (e ServiceRMI) Type() string { return ProtoRMI }
 
 type ServiceM2UA struct {
-	InfoString   string `json:"infoString,omitempty"`
-	ErrorCode    uint32 `json:"errorCode,omitempty"`
-	MessageClass uint8  `json:"messageClass,omitempty"`
-	MessageType  uint8  `json:"messageType,omitempty"`
+	InfoString   string `json:"info_string,omitempty"`
+	ErrorCode    uint32 `json:"error_code,omitempty"`
+	MessageClass uint8  `json:"message_class,omitempty"`
+	MessageType  uint8  `json:"message_type,omitempty"`
 }
 
 func (e ServiceM2UA) Type() string { return ProtoM2UA }
 
 type ServiceM3UA struct {
-	InfoString   string `json:"infoString,omitempty"`
-	ErrorCode    uint32 `json:"errorCode,omitempty"`
-	MessageClass uint8  `json:"messageClass,omitempty"`
-	MessageType  uint8  `json:"messageType,omitempty"`
+	InfoString   string `json:"info_string,omitempty"`
+	ErrorCode    uint32 `json:"error_code,omitempty"`
+	MessageClass uint8  `json:"message_class,omitempty"`
+	MessageType  uint8  `json:"message_type,omitempty"`
 }
 
 func (e ServiceM3UA) Type() string { return ProtoM3UA }
 
 type ServiceSUA struct {
-	InfoString   string `json:"infoString,omitempty"`
-	ErrorCode    uint32 `json:"errorCode,omitempty"`
-	MessageClass uint8  `json:"messageClass,omitempty"`
-	MessageType  uint8  `json:"messageType,omitempty"`
+	InfoString   string `json:"info_string,omitempty"`
+	ErrorCode    uint32 `json:"error_code,omitempty"`
+	MessageClass uint8  `json:"message_class,omitempty"`
+	MessageType  uint8  `json:"message_type,omitempty"`
 }
 
 func (e ServiceSUA) Type() string { return ProtoSUA }
@@ -1730,8 +1730,8 @@ type ServiceActiveMQOpenWire struct {
 func (e ServiceActiveMQOpenWire) Type() string { return ProtoActiveMQOpenWire }
 
 type ServiceATG struct {
-	StationName string   `json:"stationName,omitempty"`
-	TankCount   int      `json:"tankCount,omitempty"`
+	StationName string   `json:"station_name,omitempty"`
+	TankCount   int      `json:"tank_count,omitempty"`
 	Products    []string `json:"products,omitempty"`
 	CPEs        []string `json:"cpes,omitempty"`
 }
@@ -1751,7 +1751,7 @@ type ServiceZooKeeper struct {
 	CPEs        []string `json:"cpes,omitempty"`        // Common Platform Enumeration identifiers for vulnerability tracking
 	Mode        string   `json:"mode,omitempty"`        // ZooKeeper mode: standalone, leader, follower, observer
 	Connections int      `json:"connections,omitempty"` // Number of active connections
-	NodeCount   int      `json:"nodeCount,omitempty"`   // Number of ZNodes in the namespace
+	NodeCount   int      `json:"node_count,omitempty"`   // Number of ZNodes in the namespace
 	Restricted  bool     `json:"restricted,omitempty"`  // Whether commands are restricted by whitelist
 }
 
@@ -1759,19 +1759,19 @@ func (e ServiceZooKeeper) Type() string { return ProtoZooKeeper }
 
 type ServiceNFS struct {
 	Version          int   `json:"version"`          // Highest detected NFS version (4, 3, or 2)
-	DetectedVersions []int `json:"detectedVersions"` // All versions that responded successfully
+	DetectedVersions []int `json:"detected_versions"` // All versions that responded successfully
 }
 
 func (e ServiceNFS) Type() string { return ProtoNFS }
 
 type ServiceBACnet struct {
-	DeviceInstance uint32   `json:"deviceInstance"`
-	VendorID       uint16   `json:"vendorID"`
-	VendorName     string   `json:"vendorName"`
-	MaxAPDU        uint16   `json:"maxAPDU,omitempty"`
+	DeviceInstance uint32   `json:"device_instance"`
+	VendorID       uint16   `json:"vendor_id"`
+	VendorName     string   `json:"vendor_name"`
+	MaxAPDU        uint16   `json:"max_apdu,omitempty"`
 	Segmentation   string   `json:"segmentation,omitempty"`
-	ModelName      string   `json:"modelName,omitempty"`
-	FirmwareRev    string   `json:"firmwareRevision,omitempty"`
+	ModelName      string   `json:"model_name,omitempty"`
+	FirmwareRev    string   `json:"firmware_revision,omitempty"`
 	CPEs           []string `json:"cpes,omitempty"`
 }
 
@@ -1785,42 +1785,42 @@ type ServiceBGP struct {
 func (e ServiceBGP) Type() string { return ProtoBGP }
 
 type ServiceSCCP struct {
-	DeviceType      string `json:"deviceType,omitempty"`
-	ProtocolVersion string `json:"protocolVersion,omitempty"`
-	MaxStreams      int    `json:"maxStreams,omitempty"`
-	DeviceName      string `json:"deviceName,omitempty"`
+	DeviceType      string `json:"device_type,omitempty"`
+	ProtocolVersion string `json:"protocol_version,omitempty"`
+	MaxStreams      int    `json:"max_streams,omitempty"`
+	DeviceName      string `json:"device_name,omitempty"`
 }
 
 func (e ServiceSCCP) Type() string { return ProtoSCCP }
 
 type ServiceX2AP struct {
-	ProcedureCode uint8 `json:"procedureCode,omitempty"`
+	ProcedureCode uint8 `json:"procedure_code,omitempty"`
 	Criticality   uint8 `json:"criticality,omitempty"`
-	MessageType   uint8 `json:"messageType,omitempty"` // 0=Initiating, 1=Successful, 2=Unsuccessful
+	MessageType   uint8 `json:"message_type,omitempty"` // 0=Initiating, 1=Successful, 2=Unsuccessful
 }
 
 func (e ServiceX2AP) Type() string { return ProtoX2AP }
 
 type ServiceSGsAP struct {
-	MessageType uint8 `json:"messageType,omitempty"`
-	SGsCause    uint8 `json:"sgsCause,omitempty"`
+	MessageType uint8 `json:"message_type,omitempty"`
+	SGsCause    uint8 `json:"sgs_cause,omitempty"`
 }
 
 func (e ServiceSGsAP) Type() string { return ProtoSGsAP }
 
 type ServiceZabbixAgent struct {
-	RemoteCommandsEnabled bool     `json:"remoteCommandsEnabled"`
+	RemoteCommandsEnabled bool     `json:"remote_commands_enabled"`
 	CPEs                  []string `json:"cpes,omitempty"`
 }
 
 func (e ServiceZabbixAgent) Type() string { return ProtoZabbixAgent }
 
 type ServiceX11 struct {
-	MajorVersion  uint16 `json:"majorVersion"`
-	MinorVersion  uint16 `json:"minorVersion"`
+	MajorVersion  uint16 `json:"major_version"`
+	MinorVersion  uint16 `json:"minor_version"`
 	Vendor        string `json:"vendor,omitempty"`
-	AccessGranted bool   `json:"accessGranted"`
-	DisplayNumber int    `json:"displayNumber,omitempty"`
+	AccessGranted bool   `json:"access_granted"`
+	DisplayNumber int    `json:"display_number,omitempty"`
 }
 
 func (e ServiceX11) Type() string { return ProtoX11 }

@@ -94,7 +94,7 @@ func (f *JenkinsFingerprinter) Fingerprint(resp *http.Response, body []byte) (*F
 
 	// Store X-Hudson version in metadata if present
 	if hudsonVersion := resp.Header.Get("X-Hudson"); hudsonVersion != "" {
-		metadata["hudsonVersion"] = hudsonVersion
+		metadata["hudson_version"] = hudsonVersion
 	}
 
 	// If neither X-Jenkins nor X-Hudson is present, return nil

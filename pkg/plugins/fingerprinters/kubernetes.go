@@ -87,8 +87,8 @@ func (f *KubernetesFingerprinter) Fingerprint(resp *http.Response, body []byte) 
 		CPEs:       []string{buildK8sCPE(versionStr)},
 		Metadata: map[string]any{
 			"platform":  version.Platform,
-			"goVersion": version.GoVersion,
-			"gitCommit": version.GitCommit,
+			"go_version": version.GoVersion,
+			"git_commit": version.GitCommit,
 		},
 	}, nil
 }

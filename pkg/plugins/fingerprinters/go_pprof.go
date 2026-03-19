@@ -167,7 +167,7 @@ func (f *GoPprofFingerprinter) Fingerprint(resp *http.Response, body []byte) (*F
 			}
 		}
 		if len(profiles) > 0 {
-			metadata["exposedProfiles"] = profiles
+			metadata["exposed_profiles"] = profiles
 		}
 	}
 

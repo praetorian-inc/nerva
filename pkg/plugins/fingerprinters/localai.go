@@ -80,8 +80,8 @@ func (f *LocalAIFingerprinter) Fingerprint(resp *http.Response, body []byte) (*F
 
 	metadata := map[string]any{
 		"backends":         sysInfo.Backends,
-		"loadedModelCount": len(sysInfo.Models),
-		"anonymousAccess":  true,
+		"loaded_model_count": len(sysInfo.Models),
+		"anonymous_access":  true,
 	}
 	if len(modelIDs) > 0 {
 		metadata["loadedModels"] = modelIDs

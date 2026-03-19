@@ -172,7 +172,7 @@ func TestWeaviateFingerprinter_Fingerprint_ValidWeaviate(t *testing.T) {
 			assert.Equal(t, "http://[::]:8080", result.Metadata["hostname"])
 
 			// Anonymous access is always noted
-			assert.Equal(t, true, result.Metadata["anonymousAccess"])
+			assert.Equal(t, true, result.Metadata["anonymous_access"])
 
 			if tt.hasModules {
 				assert.Equal(t, tt.expectedModules, result.Metadata["modules"])
@@ -183,9 +183,9 @@ func TestWeaviateFingerprinter_Fingerprint_ValidWeaviate(t *testing.T) {
 
 			// gitHash should only be present when non-empty
 			if tt.expectedGitHash != "" {
-				assert.Equal(t, tt.expectedGitHash, result.Metadata["gitHash"])
+				assert.Equal(t, tt.expectedGitHash, result.Metadata["git_hash"])
 			} else {
-				_, hasGitHash := result.Metadata["gitHash"]
+				_, hasGitHash := result.Metadata["git_hash"]
 				assert.False(t, hasGitHash, "gitHash key should not be present when empty")
 			}
 		})

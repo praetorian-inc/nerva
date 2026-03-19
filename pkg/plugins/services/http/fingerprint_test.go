@@ -164,8 +164,8 @@ func TestFingerprintPipeline_Integration(t *testing.T) {
 			Version:    "1.29.0",
 			CPEs:       []string{"cpe:2.3:a:kubernetes:kubernetes:1.29.0:*:*:*:*:*:*:*"},
 			Metadata: map[string]any{
-				"platform":  "linux/amd64",
-				"goVersion": "go1.21.5",
+				"platform":   "linux/amd64",
+				"go_version": "go1.21.5",
 			},
 		},
 		{

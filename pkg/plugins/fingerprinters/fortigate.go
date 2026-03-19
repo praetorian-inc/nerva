@@ -95,14 +95,14 @@ func (f *FortiGateFingerprinter) Fingerprint(resp *http.Response, body []byte) (
 	// Extract firmware build date from ETag if present
 	if etagMatch {
 		if buildDate, ok := parseFortiGateETagTimestamp(etag); ok {
-			metadata["firmwareBuildDate"] = buildDate
+			metadata["firmware_build_date"] = buildDate
 		}
 	}
 
 	// Detect SSL VPN feature from body patterns
 	bodyStr := string(body)
 	if strings.Contains(bodyStr, "/remote/login") {
-		metadata["sslVPN"] = true
+		metadata["ssl_vpn"] = true
 	}
 
 	result := &FingerprintResult{

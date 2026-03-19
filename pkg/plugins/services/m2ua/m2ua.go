@@ -323,3 +323,4 @@ func enrichM2UA(response []byte) (uint8, uint8, uint32, string, error) {
 
 	return messageClass, messageType, errorCode, infoString, nil
 }
+

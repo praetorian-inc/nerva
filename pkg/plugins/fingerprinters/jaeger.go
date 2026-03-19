@@ -85,7 +85,7 @@ Jaeger typically runs on:
 	if fp.Match(resp) {
 		result, err := fp.Fingerprint(resp, body)
 		if err == nil && result != nil {
-			fmt.Printf("Detected: %s with %d services\n", result.Technology, result.Metadata["serviceCount"])
+			fmt.Printf("Detected: %s with %d services\n", result.Technology, result.Metadata["service_count"])
 		}
 	}
 */
@@ -172,7 +172,7 @@ func (f *JaegerFingerprinter) fingerprintHTML(body []byte) (*FingerprintResult, 
 
 	version := ""
 	metadata := map[string]any{
-		"serviceCount": 0, // HTML root page doesn't expose service list
+		"service_count": 0, // HTML root page doesn't expose service list
 	}
 
 	// Try to extract version from embedded JAEGER_VERSION JSON
@@ -185,10 +185,10 @@ func (f *JaegerFingerprinter) fingerprintHTML(body []byte) (*FingerprintResult, 
 				version = v
 			}
 			if ver.GitCommit != "" {
-				metadata["gitCommit"] = ver.GitCommit
+				metadata["git_commit"] = ver.GitCommit
 			}
 			if ver.BuildDate != "" {
-				metadata["buildDate"] = ver.BuildDate
+				metadata["build_date"] = ver.BuildDate
 			}
 		}
 	}
@@ -227,7 +227,7 @@ func (f *JaegerFingerprinter) fingerprintJSON(body []byte) (*FingerprintResult, 
 	// All 5 fields present = positive Jaeger detection
 	// Now extract services if data is a non-null array
 	metadata := map[string]any{
-		"serviceCount": 0,
+		"service_count": 0,
 	}
 
 	// Try to parse data as []string if it's not null
@@ -235,7 +235,7 @@ func (f *JaegerFingerprinter) fingerprintJSON(body []byte) (*FingerprintResult, 
 		var serviceList []string
 		if err := json.Unmarshal(services.Data, &serviceList); err == nil && len(serviceList) > 0 {
 			metadata["services"] = serviceList
-			metadata["serviceCount"] = len(serviceList)
+			metadata["service_count"] = len(serviceList)
 		}
 	}
 

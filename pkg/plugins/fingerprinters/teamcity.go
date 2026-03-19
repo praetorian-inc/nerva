@@ -131,7 +131,7 @@ func (f *TeamCityFingerprinter) Fingerprint(resp *http.Response, body []byte) (*
 
 	// Extract nodeId from response header (present on all TeamCity responses)
 	if nodeId := resp.Header.Get("TeamCity-Node-Id"); nodeId != "" {
-		metadata["nodeId"] = nodeId
+		metadata["node_id"] = nodeId
 		detected = true
 	}
 
@@ -158,10 +158,10 @@ func (f *TeamCityFingerprinter) Fingerprint(resp *http.Response, body []byte) (*
 
 	// Enrich metadata
 	if buildNumber != "" {
-		metadata["buildNumber"] = buildNumber
+		metadata["build_number"] = buildNumber
 	}
 	if internalID != "" {
-		metadata["internalId"] = internalID
+		metadata["internal_id"] = internalID
 	}
 
 	return &FingerprintResult{

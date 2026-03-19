@@ -184,13 +184,13 @@ func TestPrometheusFingerprinter_Fingerprint_Valid(t *testing.T) {
 				assert.Equal(t, tt.wantBranch, result.Metadata["branch"])
 			}
 			if tt.wantBuildDate != "" {
-				assert.Equal(t, tt.wantBuildDate, result.Metadata["buildDate"])
+				assert.Equal(t, tt.wantBuildDate, result.Metadata["build_date"])
 			}
 			if tt.wantGoVersion != "" {
-				assert.Equal(t, tt.wantGoVersion, result.Metadata["goVersion"])
+				assert.Equal(t, tt.wantGoVersion, result.Metadata["go_version"])
 			}
 			if tt.wantBuildUserPresent {
-				_, exists := result.Metadata["buildUser"]
+				_, exists := result.Metadata["build_user"]
 				assert.True(t, exists, "Expected buildUser in metadata")
 			}
 

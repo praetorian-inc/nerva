@@ -195,8 +195,8 @@ func TestConsulFingerprinter_Fingerprint_Valid(t *testing.T) {
 			if datacenter, ok := result.Metadata["datacenter"].(string); !ok || datacenter != tt.wantDatacenter {
 				t.Errorf("Metadata datacenter = %q, want %q", datacenter, tt.wantDatacenter)
 			}
-			if nodeName, ok := result.Metadata["nodeName"].(string); !ok || nodeName != tt.wantNodeName {
-				t.Errorf("Metadata nodeName = %q, want %q", nodeName, tt.wantNodeName)
+			if nodeName, ok := result.Metadata["node_name"].(string); !ok || nodeName != tt.wantNodeName {
+				t.Errorf("Metadata node_name = %q, want %q", nodeName, tt.wantNodeName)
 			}
 			if server, ok := result.Metadata["server"].(bool); !ok || server != tt.wantServer {
 				t.Errorf("Metadata server = %v, want %v", server, tt.wantServer)

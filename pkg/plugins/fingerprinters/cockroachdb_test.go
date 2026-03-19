@@ -292,7 +292,7 @@ func TestCockroachDBFingerprinter_Fingerprint_NoVersionInfo(t *testing.T) {
 		},
 	}
 
-	// No build_tag and ServerVersion.Major is 0
+	// No build_tag and server_version.Major is 0
 	body := []byte(`{
 		"nodes": [
 			{

@@ -138,8 +138,8 @@ func TestGotenbergFingerprinter_Fingerprint_Valid(t *testing.T) {
 			}
 
 			// Verify traceId in metadata
-			if traceVal, ok := result.Metadata["traceId"].(string); !ok || traceVal != traceID {
-				t.Errorf("Metadata[traceId] = %v, want %q", result.Metadata["traceId"], traceID)
+			if traceVal, ok := result.Metadata["trace_id"].(string); !ok || traceVal != traceID {
+				t.Errorf("Metadata[traceId] = %v, want %q", result.Metadata["trace_id"], traceID)
 			}
 
 			// Verify exact CPE string
@@ -413,8 +413,8 @@ func TestGotenbergHealthFingerprinter_Fingerprint_Valid(t *testing.T) {
 				t.Errorf("CPE = %v, want %q", result.CPEs, expectedCPE)
 			}
 
-			if traceVal, ok := result.Metadata["traceId"].(string); !ok || traceVal != traceID {
-				t.Errorf("Metadata[traceId] = %v, want %q", result.Metadata["traceId"], traceID)
+			if traceVal, ok := result.Metadata["trace_id"].(string); !ok || traceVal != traceID {
+				t.Errorf("Metadata[traceId] = %v, want %q", result.Metadata["trace_id"], traceID)
 			}
 			components, ok := result.Metadata["components"].([]string)
 			if !ok {

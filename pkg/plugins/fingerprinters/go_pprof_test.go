@@ -129,7 +129,7 @@ Types of profiles available:
 	assert.Contains(t, result.CPEs[0], "cpe:2.3:a:golang:go:")
 
 	// Check that exposedProfiles metadata contains expected profiles
-	if profiles, ok := result.Metadata["exposedProfiles"]; ok {
+	if profiles, ok := result.Metadata["exposed_profiles"]; ok {
 		profileList := profiles.([]string)
 		assert.Contains(t, profileList, "goroutine")
 		assert.Contains(t, profileList, "heap")

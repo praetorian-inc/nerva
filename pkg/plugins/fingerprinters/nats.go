@@ -95,13 +95,13 @@ func (f *NATSFingerprinter) fingerprintJSON(body []byte) (*FingerprintResult, er
 	// Build metadata
 	metadata := map[string]any{}
 	if data.ServerName != "" {
-		metadata["serverName"] = data.ServerName
+		metadata["server_name"] = data.ServerName
 	}
 	if data.Go != "" {
-		metadata["goVersion"] = data.Go
+		metadata["go_version"] = data.Go
 	}
 	if data.GitCommit != "" {
-		metadata["gitCommit"] = data.GitCommit
+		metadata["git_commit"] = data.GitCommit
 	}
 	if data.JetStream {
 		metadata["jetstream"] = true

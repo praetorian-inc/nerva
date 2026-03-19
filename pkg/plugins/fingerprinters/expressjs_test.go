@@ -124,7 +124,7 @@ func TestExpressFingerprinter_Fingerprint_XPoweredBy(t *testing.T) {
 	require.NotNil(t, result)
 
 	assert.Equal(t, "expressjs", result.Technology)
-	assert.Equal(t, "Express", result.Metadata["poweredBy"])
+	assert.Equal(t, "Express", result.Metadata["powered_by"])
 	assert.NotEmpty(t, result.CPEs)
 	assert.Contains(t, result.CPEs[0], "cpe:2.3:a:expressjs:express:")
 }
@@ -220,7 +220,7 @@ func TestExpressFingerprinter_Fingerprint_DevMode(t *testing.T) {
 	require.NotNil(t, result)
 
 	assert.Equal(t, "expressjs", result.Technology)
-	assert.Equal(t, true, result.Metadata["devMode"])
+	assert.Equal(t, true, result.Metadata["dev_mode"])
 }
 
 func TestExpressFingerprinter_Fingerprint_VersionExtraction(t *testing.T) {
@@ -405,5 +405,5 @@ func TestExpressFingerprinter_Integration(t *testing.T) {
 
 	require.Len(t, results, 1)
 	assert.Equal(t, "expressjs", results[0].Technology)
-	assert.Equal(t, "Express", results[0].Metadata["poweredBy"])
+	assert.Equal(t, "Express", results[0].Metadata["powered_by"])
 }

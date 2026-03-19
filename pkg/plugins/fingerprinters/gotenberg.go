@@ -132,7 +132,7 @@ func (f *GotenbergFingerprinter) Fingerprint(resp *http.Response, body []byte) (
 	}
 
 	metadata := map[string]any{
-		"traceId": trace,
+		"trace_id": trace,
 	}
 
 	return &FingerprintResult{
@@ -208,7 +208,7 @@ func (f *GotenbergHealthFingerprinter) Fingerprint(resp *http.Response, body []b
 	metadata := map[string]any{
 		"status":     health.Status,
 		"components": components,
-		"traceId":    trace,
+		"trace_id":    trace,
 	}
 
 	return &FingerprintResult{

@@ -137,17 +137,17 @@ func (f *HarborFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fi
 
 	// Build metadata with fields always present in unauthenticated response
 	metadata := map[string]any{
-		"authMode":         info.AuthMode,
-		"selfRegistration": info.SelfRegistration,
-		"primaryAuthMode":  info.PrimaryAuthMode,
+		"auth_mode":         info.AuthMode,
+		"self_registration": info.SelfRegistration,
+		"primary_auth_mode":  info.PrimaryAuthMode,
 	}
 
 	// Add optional fields only present when authenticated
 	if info.RegistryURL != nil {
-		metadata["registryUrl"] = *info.RegistryURL
+		metadata["registry_url"] = *info.RegistryURL
 	}
 	if info.ExternalURL != nil {
-		metadata["externalUrl"] = *info.ExternalURL
+		metadata["external_url"] = *info.ExternalURL
 	}
 
 	// Extract version from harbor_version field (only present when authenticated)
