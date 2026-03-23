@@ -84,7 +84,7 @@ func (f *LocalAIFingerprinter) Fingerprint(resp *http.Response, body []byte) (*F
 		"anonymous_access":  true,
 	}
 	if len(modelIDs) > 0 {
-		metadata["loadedModels"] = modelIDs
+		metadata["loaded_models"] = modelIDs
 	}
 
 	// LocalAI /system does not expose version — use wildcard CPE

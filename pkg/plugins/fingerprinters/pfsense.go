@@ -112,12 +112,12 @@ func (f *PfSenseFingerprinter) Fingerprint(resp *http.Response, body []byte) (*F
 	metadata := make(map[string]any)
 	metadata["vendor"] = "Netgate"
 	metadata["product"] = "pfSense"
-	metadata["managementInterface"] = "web-admin"
+	metadata["management_interface"] = "web-admin"
 
 	// Extract Server header for metadata and version fallback
 	serverInfo := resp.Header.Get("Server")
 	if serverInfo != "" {
-		metadata["serverInfo"] = serverInfo
+		metadata["server_info"] = serverInfo
 	}
 
 	// Version detection: jQuery version → pfSense version range

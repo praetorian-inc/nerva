@@ -1614,7 +1614,7 @@ type ServiceChromaDB struct {
 func (e ServiceChromaDB) Type() string { return ProtoChromaDB }
 
 type ServiceCitrixICA struct {
-	BannerMatch bool     `json:"bannerMatch"`          // true if double ICA signature matched (high confidence)
+	BannerMatch bool     `json:"banner_match"`          // true if double ICA signature matched (high confidence)
 	CPEs        []string `json:"cpes,omitempty"`
 }
 

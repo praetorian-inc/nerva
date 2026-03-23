@@ -230,9 +230,9 @@ func TestWordPressFingerprinter_Fingerprint_Valid(t *testing.T) {
 
 			// Check site name
 			if tt.wantSite != "" {
-				gotSite, ok := result.Metadata["siteName"].(string)
+				gotSite, ok := result.Metadata["site_name"].(string)
 				if !ok || gotSite != tt.wantSite {
-					t.Errorf("Metadata[siteName] = %v, want %q", result.Metadata["siteName"], tt.wantSite)
+					t.Errorf("Metadata[siteName] = %v, want %q", result.Metadata["site_name"], tt.wantSite)
 				}
 			}
 		})
@@ -342,8 +342,8 @@ func TestWordPressFingerprinter_Integration(t *testing.T) {
 		if result.Technology == "wordpress" {
 			found = true
 			// Verify site name was extracted
-			if siteName, ok := result.Metadata["siteName"].(string); !ok || siteName != "Test WordPress Site" {
-				t.Errorf("siteName = %v, want %q", result.Metadata["siteName"], "Test WordPress Site")
+			if siteName, ok := result.Metadata["site_name"].(string); !ok || siteName != "Test WordPress Site" {
+				t.Errorf("siteName = %v, want %q", result.Metadata["site_name"], "Test WordPress Site")
 			}
 		}
 	}

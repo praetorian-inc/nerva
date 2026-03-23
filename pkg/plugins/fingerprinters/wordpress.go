@@ -185,7 +185,7 @@ func (f *WordPressFingerprinter) Fingerprint(resp *http.Response, body []byte) (
 		metadata["themes"] = themes
 	}
 	if siteName != "" {
-		metadata["siteName"] = siteName
+		metadata["site_name"] = siteName
 	}
 
 	return &FingerprintResult{
