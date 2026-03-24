@@ -77,6 +77,7 @@ func createScanConfig(config cliConfig) scan.Config {
 		Proxy:          config.proxy,
 		ProxyAuth:      config.proxyAuth,
 		DNSOrder:       config.dnsOrder,
+		Misconfigs:     config.misconfigs,
 	}
 }
 

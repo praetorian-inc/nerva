@@ -12,33 +12,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package runner
+package scan
 
-type cliConfig struct {
-	outputFile       string
-	outputJSON       bool
-	outputCSV        bool
-	overwriteOutput  bool
-	fastMode         bool
-	timeout          int
-	useUDP           bool
-	useSCTP          bool
-	verbose          bool
-	showErrors       bool
-	showCapabilities bool
-	workers          int
-	maxHostConn      int
-	rateLimit        float64
-	// Resume support
-	stateFile string
-	resume    bool
-	autoSave  int
+import (
+	"testing"
 
-	// Security misconfiguration detection
-	misconfigs bool
+	"github.com/praetorian-inc/nerva/pkg/plugins"
+)
 
-	// Proxy
-	proxy     string
-	proxyAuth string
-	dnsOrder  string
+func TestStripSecurityFindings(t *testing.T) {
+	service := &plugins.Service{
+		AnonymousAccess: true,
+		SecurityFindings: []plugins.SecurityFinding{{
+			ID:       "test-finding",
+			Severity: plugins.SeverityHigh,
+		}},
+	}
+	stripSecurityFindings(service)
+	if service.AnonymousAccess {
+		t.Error("expected AnonymousAccess to be false after stripping")
+	}
+	if service.SecurityFindings != nil {
+		t.Error("expected SecurityFindings to be nil after stripping")
+	}
 }

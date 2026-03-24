@@ -53,5 +53,8 @@ type Config struct {
 	// DNSOrder controls DNS resolution (p, l, lp, pl)
 	DNSOrder string
 
+	// Enable security misconfiguration detection
+	Misconfigs bool
+
 	OnProgress ProgressCallback
 }

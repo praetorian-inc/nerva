@@ -117,6 +117,9 @@ func runScan(cmd *cobra.Command, args []string) error {
 		if config.timeout == 2000 { // default value
 			config.timeout = state.Config.TimeoutMs
 		}
+		if !config.misconfigs {
+			config.misconfigs = state.Config.Misconfigs
+		}
 	} else {
 		// Read targets from input
 		var err error
@@ -256,6 +259,7 @@ func buildState(config cliConfig, targets []plugins.Target, completedTargets []s
 			Proxy:       config.proxy,
 			ProxyAuth:   config.proxyAuth,
 			DNSOrder:    config.dnsOrder,
+			Misconfigs:  config.misconfigs,
 		},
 		Targets: StateTargets{
 			OriginalCount: originalCount,
@@ -289,6 +293,7 @@ func init() {
 
 	// Resume support
 	rootCmd.PersistentFlags().IntVar(&config.autoSave, "auto-save", 0, "auto-save interval (number of targets)")
+	rootCmd.PersistentFlags().BoolVar(&config.misconfigs, "misconfigs", false, "enable security misconfiguration detection")
 
 	rootCmd.PersistentFlags().StringVar(&config.proxy, "proxy", "", "proxy URL (e.g. socks5://127.0.0.1:1080)")
 	rootCmd.PersistentFlags().StringVar(&config.proxyAuth, "proxy-auth", "", "socks5 proxy authentication (username:password)")

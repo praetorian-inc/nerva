@@ -36,6 +36,37 @@ const (
 
 const TypeService string = "service"
 
+// Severity represents the severity level of a security finding.
+type Severity string
+
+const (
+	SeverityCritical Severity = "critical"
+	SeverityHigh     Severity = "high"
+	SeverityMedium   Severity = "medium"
+	SeverityLow      Severity = "low"
+	SeverityInfo     Severity = "info"
+)
+
+// SecurityFinding represents a security misconfiguration detected during fingerprinting.
+// Evidence should contain observable protocol-level data (e.g., banner text, response codes,
+// negotiated parameters). Do not include credentials, tokens, or other secrets.
+type SecurityFinding struct {
+	ID          string   `json:"id"`
+	Severity    Severity `json:"severity"`
+	Description string   `json:"description"`
+	Evidence    string   `json:"evidence,omitempty"`
+}
+
+// Valid returns true if the severity is a recognized value.
+func (s Severity) Valid() bool {
+	switch s {
+	case SeverityCritical, SeverityHigh, SeverityMedium, SeverityLow, SeverityInfo:
+		return true
+	default:
+		return false
+	}
+}
+
 const (
 	ProtoActiveMQOpenWire = "activemq-openwire"
 	ProtoATG              = "atg"
@@ -730,8 +761,13 @@ type Service struct {
 	Protocol  string          `json:"protocol"`
 	TLS       bool            `json:"tls"`
 	Transport string          `json:"transport"`
-	Version   string          `json:"version,omitempty"`
-	Raw       json.RawMessage `json:"metadata"`
+	Version          string            `json:"version,omitempty"`
+	Raw              json.RawMessage   `json:"metadata"`
+	// AnonymousAccess is the canonical top-level field for anonymous access detection.
+	// Per-service metadata types (e.g., ServiceSOCKS5) may also have their own AnonymousAccess
+	// field for protocol-specific context; the Service-level field is authoritative for reporting.
+	AnonymousAccess  bool              `json:"anonymous_access,omitempty"`
+	SecurityFindings []SecurityFinding `json:"security_findings,omitempty"`
 }
 
 type ServiceHTTP struct {
