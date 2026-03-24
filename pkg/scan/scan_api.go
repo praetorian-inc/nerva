@@ -19,15 +19,40 @@ import (
 	"log"
 	"net"
 	"net/netip"
+	"strings"
 
 	"github.com/praetorian-inc/nerva/pkg/plugins"
 )
 
 // ResolveTargets expands targets based on the DNSOrder strategy.
+// For socks5h:// proxy scheme, always uses proxy-side DNS resolution.
 func ResolveTargets(targets []plugins.Target, config Config) []plugins.Target {
 	var resolved []plugins.Target
+
+	// Check if proxy uses socks5h:// scheme (proxy-side DNS)
+	usesProxySideDNS := false
+	if config.Proxy != "" {
+		// socks5h:// scheme forces proxy-side DNS resolution
+		// strings.HasPrefix is safer than manual slicing
+		if strings.HasPrefix(strings.ToLower(config.Proxy), "socks5h://") {
+			usesProxySideDNS = true
+			if config.Verbose {
+				log.Printf("socks5h:// proxy scheme detected: forcing proxy-side DNS resolution\n")
+			}
+		}
+	}
+
 	for _, t := range targets {
 		if t.Host == "" || t.Address.Addr() != netip.IPv4Unspecified() {
+			resolved = append(resolved, t)
+			continue
+		}
+
+		// socks5h:// scheme always uses proxy-side DNS
+		if usesProxySideDNS {
+			if config.Verbose {
+				log.Printf("socks5h:// scheme detected: using proxy-side DNS for %s\n", t.Host)
+			}
 			resolved = append(resolved, t)
 			continue
 		}
@@ -43,10 +68,13 @@ func ResolveTargets(targets []plugins.Target, config Config) []plugins.Target {
 		addrs, err := net.LookupIP(t.Host)
 		if err != nil {
 			if config.Verbose {
-				log.Printf("dns lookup failed for %s: %v\n", t.Host, err)
+				log.Printf("local dns lookup failed for %s: %v (DNSOrder=%s)\n", t.Host, err, config.DNSOrder)
 			}
 			if config.DNSOrder == "lp" {
 				// Fall back to Proxy resolution by passing the 0.0.0.0 target
+				if config.Verbose {
+					log.Printf("falling back to proxy-side DNS for %s\n", t.Host)
+				}
 				resolved = append(resolved, t)
 			}
 			continue

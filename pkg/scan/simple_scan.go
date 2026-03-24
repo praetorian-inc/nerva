@@ -15,17 +15,13 @@
 package scan
 
 import (
-	"context"
 	"crypto/tls"
 	"fmt"
 	"log"
 	"net"
-	"net/url"
 	"sort"
-	"strings"
+	"sync"
 	"time"
-
-	"golang.org/x/net/proxy"
 
 	"github.com/praetorian-inc/nerva/pkg/plugins"
 )
@@ -33,6 +29,13 @@ import (
 var dialer = &net.Dialer{
 	Timeout: 2 * time.Second,
 }
+
+// Package-level proxy dialer cache for performance
+var (
+	proxyDialerCache    *ProxyDialer
+	proxyDialerCacheKey string
+	proxyDialerMutex    sync.RWMutex
+)
 
 var sortedTCPPlugins = make([]plugins.Plugin, 0)
 var sortedTCPTLSPlugins = make([]plugins.Plugin, 0)
@@ -288,6 +291,44 @@ func simplePluginRunner(
 	return result, err
 }
 
+// getProxyDialer returns a cached ProxyDialer or creates a new one.
+// This improves performance by avoiding repeated ProxyDialer creation.
+func (c *Config) getProxyDialer() (*ProxyDialer, error) {
+	if c.Proxy == "" {
+		return nil, nil
+	}
+
+	// Create cache key from proxy URL and auth
+	cacheKey := c.Proxy + "|" + c.ProxyAuth
+
+	// Fast path: check if cached dialer matches current config
+	proxyDialerMutex.RLock()
+	if proxyDialerCache != nil && proxyDialerCacheKey == cacheKey {
+		cached := proxyDialerCache
+		proxyDialerMutex.RUnlock()
+		return cached, nil
+	}
+	proxyDialerMutex.RUnlock()
+
+	// Slow path: create new dialer and cache it
+	proxyDialerMutex.Lock()
+	defer proxyDialerMutex.Unlock()
+
+	// Double-check after acquiring write lock
+	if proxyDialerCache != nil && proxyDialerCacheKey == cacheKey {
+		return proxyDialerCache, nil
+	}
+
+	pd, err := NewProxyDialer(*c)
+	if err != nil {
+		return nil, err
+	}
+
+	proxyDialerCache = pd
+	proxyDialerCacheKey = cacheKey
+	return pd, nil
+}
+
 func (c *Config) DialTLS(target plugins.Target) (net.Conn, error) {
 	config := &tlsConfig
 	if target.Host != "" {
@@ -297,7 +338,23 @@ func (c *Config) DialTLS(target plugins.Target) (net.Conn, error) {
 		config = cfg
 	}
 
-	// Dial TCP first, then wrap with TLS Client
+	ip := target.Address.Addr().String()
+	port := target.Address.Port()
+	dialHost := ip
+	if ip == "0.0.0.0" && target.Host != "" {
+		dialHost = target.Host
+	}
+
+	// Use ProxyDialer for TLS if proxy is configured
+	if c.Proxy != "" {
+		pd, err := c.getProxyDialer()
+		if err != nil {
+			return nil, err
+		}
+		return pd.DialTLS(dialHost, port, config)
+	}
+
+	// Non-proxy path: Dial TCP first, then wrap with TLS Client
 	conn, err := c.DialTCP(target)
 	if err != nil {
 		return nil, err
@@ -340,35 +397,17 @@ func (c *Config) DialTCP(target plugins.Target) (net.Conn, error) {
 	if ip == "0.0.0.0" && target.Host != "" {
 		dialHost = target.Host
 	}
-	addr := net.JoinHostPort(dialHost, fmt.Sprintf("%d", port))
 
 	if c.Proxy != "" {
-		proxyURL, err := url.Parse(c.Proxy)
+		// Use cached proxy dialer for performance
+		pd, err := c.getProxyDialer()
 		if err != nil {
-			return nil, fmt.Errorf("invalid proxy URL: %w", err)
+			return nil, err
 		}
-		if c.ProxyAuth != "" {
-			parts := strings.SplitN(c.ProxyAuth, ":", 2)
-			if len(parts) == 2 {
-				proxyURL.User = url.UserPassword(parts[0], parts[1])
-			} else {
-				proxyURL.User = url.User(parts[0])
-			}
-		}
-
-		proxyDialer, err := proxy.FromURL(proxyURL, dialer)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create proxy dialer: %w", err)
-		}
-
-		conn, err := proxyDialer.Dial("tcp", addr)
-		if err != nil && c.DNSOrder == "pl" && dialHost == target.Host {
-			// Proxy dial failed, fallback to local resolution
-			return resolveLocalFallback(target.Host, port, "tcp", dialer)
-		}
-		return conn, err
+		return pd.DialTCP(dialHost, port)
 	}
 
+	addr := net.JoinHostPort(dialHost, fmt.Sprintf("%d", port))
 	return dialer.Dial("tcp", addr)
 }
 
@@ -380,41 +419,16 @@ func (c *Config) DialUDP(target plugins.Target) (net.Conn, error) {
 	if ip == "0.0.0.0" && target.Host != "" {
 		dialHost = target.Host
 	}
-	addr := net.JoinHostPort(dialHost, fmt.Sprintf("%d", port))
 
 	if c.Proxy != "" {
-		proxyURL, err := url.Parse(c.Proxy)
+		// Use cached proxy dialer for performance
+		pd, err := c.getProxyDialer()
 		if err != nil {
-			return nil, fmt.Errorf("invalid proxy URL: %w", err)
+			return nil, err
 		}
-
-		if c.ProxyAuth != "" {
-			parts := strings.SplitN(c.ProxyAuth, ":", 2)
-			if len(parts) == 2 {
-				proxyURL.User = url.UserPassword(parts[0], parts[1])
-			} else {
-				proxyURL.User = url.User(parts[0])
-			}
-		}
-
-		proxyDialer, err := proxy.FromURL(proxyURL, dialer)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create proxy dialer: %w", err)
-		}
-
-		var conn net.Conn
-		if pd, ok := proxyDialer.(proxy.ContextDialer); ok {
-			conn, err = pd.DialContext(context.Background(), "udp", addr)
-		} else {
-			conn, err = proxyDialer.Dial("udp", addr)
-		}
-
-		if err != nil && c.DNSOrder == "pl" && dialHost == target.Host {
-			// Proxy dial failed, fallback to local resolution
-			return resolveLocalFallback(target.Host, port, "udp", dialer)
-		}
-		return conn, err
+		return pd.DialUDP(dialHost, port)
 	}
 
+	addr := net.JoinHostPort(dialHost, fmt.Sprintf("%d", port))
 	return dialer.Dial("udp", addr)
 }
