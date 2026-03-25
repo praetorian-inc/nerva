@@ -59,6 +59,7 @@ var (
 	)
 	oscEUFCoreVersionRegex = regexp.MustCompile(`/euf/core/(\d+\.\d+)/js/([\d.]+)/`)
 	oscCPVersionRegex      = regexp.MustCompile(`^[\d.]+$`)
+	oscAlphanumVersionRegex = regexp.MustCompile(`^[\dA-Za-z.]+$`)
 )
 
 type OracleServiceCloudFingerprinter struct{}
@@ -159,7 +160,7 @@ func (f *OracleServiceCloudFingerprinter) Fingerprint(resp *http.Response, body 
 	// Validate version format for CPE safety.
 	if version != "" && !oscCPVersionRegex.MatchString(version) {
 		// Release versions like "25C" contain letters — allow alphanumeric.
-		if matched, _ := regexp.MatchString(`^[\dA-Za-z.]+$`, version); !matched {
+		if !oscAlphanumVersionRegex.MatchString(version) {
 			version = ""
 		}
 	}
