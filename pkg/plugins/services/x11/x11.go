@@ -124,7 +124,17 @@ func (p *Plugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target
 	info.DisplayNumber = int(target.Address.Port()) - x11BasePort
 
 	version := fmt.Sprintf("%d.%d", info.MajorVersion, info.MinorVersion)
-	return plugins.CreateServiceFrom(target, info, false, version, plugins.TCP), nil
+	service := plugins.CreateServiceFrom(target, info, false, version, plugins.TCP)
+	if info.AccessGranted {
+		service.AnonymousAccess = true
+		service.SecurityFindings = []plugins.SecurityFinding{{
+			ID:          "x11-unauth-access",
+			Severity:    plugins.SeverityCritical,
+			Description: "X11 server grants access without authentication",
+			Evidence:    fmt.Sprintf("X11 connection accepted with status=Success (display :%d)", info.DisplayNumber),
+		}}
+	}
+	return service, nil
 }
 
 // parseX11Response parses the X11 connection setup response header.
