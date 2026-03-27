@@ -15,7 +15,11 @@
 package docker
 
 import (
+	"fmt"
+	"net"
+	"net/netip"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 
@@ -468,6 +472,73 @@ func TestTLSPluginMetadata(t *testing.T) {
 	assert.False(t, plugin.PortPriority(2375), "Port 2375 should not be prioritized for TLS plugin")
 	assert.False(t, plugin.PortPriority(8080), "Port 8080 should not be prioritized")
 	assert.False(t, plugin.PortPriority(443), "Port 443 should not be prioritized")
+}
+
+// TestDockerSecurityFindings verifies that security findings are set on a detected Docker service.
+func TestDockerSecurityFindings(t *testing.T) {
+	// Build a valid Docker /version HTTP response
+	versionBody := `{"Version":"24.0.7","ApiVersion":"1.43","Os":"linux","Arch":"amd64"}`
+	httpResponse := "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n" + versionBody
+
+	// Start mock TCP server on random port
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Failed to start mock server: %v", err)
+	}
+	defer listener.Close()
+
+	tcpAddr := listener.Addr().(*net.TCPAddr)
+	serverPort := tcpAddr.Port
+
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		// Read the request
+		buf := make([]byte, 1024)
+		_, _ = conn.Read(buf)
+		// Write the Docker version response
+		_, _ = conn.Write([]byte(httpResponse))
+	}()
+
+	time.Sleep(10 * time.Millisecond)
+
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", serverPort), 5*time.Second)
+	if err != nil {
+		t.Fatalf("Failed to connect to mock server: %v", err)
+	}
+	defer conn.Close()
+
+	addrStr := fmt.Sprintf("127.0.0.1:%d", serverPort)
+	addrPort := netip.MustParseAddrPort(addrStr)
+	target := plugins.Target{
+		Host:    "127.0.0.1",
+		Address: addrPort,
+	}
+
+	plugin := &DockerPlugin{}
+	service, err := plugin.Run(conn, 5*time.Second, target)
+	if err != nil {
+		t.Fatalf("Run() returned unexpected error: %v", err)
+	}
+	if service == nil {
+		t.Fatal("Run() returned nil, want non-nil service")
+	}
+
+	if !service.AnonymousAccess {
+		t.Error("expected AnonymousAccess to be true")
+	}
+	if len(service.SecurityFindings) != 1 {
+		t.Fatalf("expected 1 finding, got %d", len(service.SecurityFindings))
+	}
+	if service.SecurityFindings[0].ID != "docker-unauth-api" {
+		t.Errorf("expected finding ID 'docker-unauth-api', got %q", service.SecurityFindings[0].ID)
+	}
+	if service.SecurityFindings[0].Severity != plugins.SeverityCritical {
+		t.Errorf("expected severity critical, got %s", service.SecurityFindings[0].Severity)
+	}
 }
 
 // TestPluginsDifferentPorts verifies plain and TLS plugins use different ports

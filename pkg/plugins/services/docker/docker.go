@@ -279,9 +279,25 @@ func detectDocker(conn net.Conn, target plugins.Target, timeout time.Duration, t
 			}
 
 			if tls {
-				return plugins.CreateServiceFrom(target, payload, true, result.version, plugins.TCPTLS), nil
+				service := plugins.CreateServiceFrom(target, payload, true, result.version, plugins.TCPTLS)
+				service.AnonymousAccess = true
+				service.SecurityFindings = []plugins.SecurityFinding{{
+					ID:          "docker-unauth-api",
+					Severity:    plugins.SeverityCritical,
+					Description: "Docker API accessible without authentication",
+					Evidence:    "Successfully queried /version endpoint without credentials",
+				}}
+				return service, nil
 			}
-			return plugins.CreateServiceFrom(target, payload, false, result.version, plugins.TCP), nil
+			service := plugins.CreateServiceFrom(target, payload, false, result.version, plugins.TCP)
+			service.AnonymousAccess = true
+			service.SecurityFindings = []plugins.SecurityFinding{{
+				ID:          "docker-unauth-api",
+				Severity:    plugins.SeverityCritical,
+				Description: "Docker API accessible without authentication",
+				Evidence:    "Successfully queried /version endpoint without credentials",
+			}}
+			return service, nil
 		}
 
 		// /version didn't work, but we might still have a connection
@@ -296,9 +312,25 @@ func detectDocker(conn net.Conn, target plugins.Target, timeout time.Duration, t
 			}
 
 			if tls {
-				return plugins.CreateServiceFrom(target, payload, true, "", plugins.TCPTLS), nil
+				service := plugins.CreateServiceFrom(target, payload, true, "", plugins.TCPTLS)
+				service.AnonymousAccess = true
+				service.SecurityFindings = []plugins.SecurityFinding{{
+					ID:          "docker-unauth-api",
+					Severity:    plugins.SeverityCritical,
+					Description: "Docker API accessible without authentication",
+					Evidence:    "Successfully queried /_ping endpoint without credentials",
+				}}
+				return service, nil
 			}
-			return plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP), nil
+			service := plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP)
+			service.AnonymousAccess = true
+			service.SecurityFindings = []plugins.SecurityFinding{{
+				ID:          "docker-unauth-api",
+				Severity:    plugins.SeverityCritical,
+				Description: "Docker API accessible without authentication",
+				Evidence:    "Successfully queried /_ping endpoint without credentials",
+			}}
+			return service, nil
 		}
 	}
 
