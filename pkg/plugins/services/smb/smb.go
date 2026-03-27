@@ -359,7 +359,16 @@ func (p *SMBPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 		return nil, nil
 	}
 
-	return plugins.CreateServiceFrom(target, info, false, info.OSVersion, plugins.TCP), nil
+	service := plugins.CreateServiceFrom(target, info, false, info.OSVersion, plugins.TCP)
+	if !info.SigningRequired {
+		service.SecurityFindings = append(service.SecurityFindings, plugins.SecurityFinding{
+			ID:          "smb-signing-not-required",
+			Severity:    plugins.SeverityMedium,
+			Description: "SMB signing is not required, enabling relay attacks",
+			Evidence:    fmt.Sprintf("SigningEnabled=%t, SigningRequired=%t", info.SigningEnabled, info.SigningRequired),
+		})
+	}
+	return service, nil
 }
 
 func (p *SMBPlugin) Name() string {
