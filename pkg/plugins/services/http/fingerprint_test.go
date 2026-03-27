@@ -70,7 +70,7 @@ func TestProcessFingerprintResult_IncludesVersion(t *testing.T) {
 		},
 	}
 
-	tech, cpes, metadata := processFingerprintResult(result)
+	tech, cpes, metadata, _, _ := processFingerprintResult(result)
 
 	// Version should be included in technology string
 	assert.Equal(t, "kubernetes:1.29.0", tech)
@@ -86,7 +86,7 @@ func TestProcessFingerprintResult_NoVersion(t *testing.T) {
 		CPEs:       []string{"cpe:2.3:a:nginx:nginx:*:*:*:*:*:*:*:*"},
 	}
 
-	tech, cpes, metadata := processFingerprintResult(result)
+	tech, cpes, metadata, _, _ := processFingerprintResult(result)
 
 	// No version means just the technology name
 	assert.Equal(t, "nginx", tech)
@@ -95,7 +95,7 @@ func TestProcessFingerprintResult_NoVersion(t *testing.T) {
 }
 
 func TestProcessFingerprintResult_NilResult(t *testing.T) {
-	tech, cpes, metadata := processFingerprintResult(nil)
+	tech, cpes, metadata, _, _ := processFingerprintResult(nil)
 
 	assert.Equal(t, "", tech)
 	assert.Nil(t, cpes)
@@ -144,7 +144,7 @@ func TestProcessFingerprintResult_EmptyTechnology(t *testing.T) {
 		CPEs:       []string{},
 	}
 
-	tech, cpes, metadata := processFingerprintResult(result)
+	tech, cpes, metadata, _, _ := processFingerprintResult(result)
 
 	// Empty technology with version still produces ":1.0.0"
 	// but the caller should guard against appending empty technologies
@@ -187,7 +187,7 @@ func TestFingerprintPipeline_Integration(t *testing.T) {
 	fingerprintMetadata := make(map[string]map[string]any)
 
 	for _, result := range mockResults {
-		tech, resultCPEs, metadata := processFingerprintResult(result)
+		tech, resultCPEs, metadata, _, _ := processFingerprintResult(result)
 		if result.Technology != "" { // Guard on raw technology, not formatted
 			technologies = append(technologies, tech)
 		}

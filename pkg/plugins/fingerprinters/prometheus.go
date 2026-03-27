@@ -78,6 +78,8 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+
+	"github.com/praetorian-inc/nerva/pkg/plugins"
 )
 
 // PrometheusFingerprinter detects Prometheus instances via /api/v1/status/buildinfo endpoint
@@ -165,10 +167,17 @@ func (f *PrometheusFingerprinter) Fingerprint(resp *http.Response, body []byte) 
 	}
 
 	return &FingerprintResult{
-		Technology: "prometheus",
-		Version:    buildInfo.Data.Version,
-		CPEs:       []string{buildPrometheusCPE(buildInfo.Data.Version)},
-		Metadata:   metadata,
+		Technology:      "prometheus",
+		Version:         buildInfo.Data.Version,
+		CPEs:            []string{buildPrometheusCPE(buildInfo.Data.Version)},
+		Metadata:        metadata,
+		AnonymousAccess: true,
+		Findings: []plugins.SecurityFinding{{
+			ID:          "prometheus-anon-access",
+			Severity:    plugins.SeverityLow,
+			Description: "Prometheus accessible without authentication",
+			Evidence:    "Successfully queried /api/v1/status/buildinfo without credentials",
+		}},
 	}, nil
 }
 
