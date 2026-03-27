@@ -76,7 +76,7 @@ func (f *EtcdFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fing
 	// Build metadata
 	metadata := map[string]any{}
 	if data.ETCDCluster != "" {
-		metadata["clusterVersion"] = data.ETCDCluster
+		metadata["cluster_version"] = data.ETCDCluster
 	}
 
 	return &FingerprintResult{

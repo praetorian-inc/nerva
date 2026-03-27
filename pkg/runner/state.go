@@ -49,6 +49,9 @@ type StateConfig struct {
 	Workers     int     `json:"workers,omitempty"`
 	MaxHostConn int     `json:"max_host_conn,omitempty"`
 	RateLimit   float64 `json:"rate_limit,omitempty"`
+	Proxy       string  `json:"proxy,omitempty"`
+	ProxyAuth   string  `json:"proxy_auth,omitempty"`
+	DNSOrder    string  `json:"dns_order,omitempty"`
 }
 
 // StateTargets tracks target progress

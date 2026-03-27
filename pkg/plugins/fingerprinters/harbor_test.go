@@ -217,33 +217,33 @@ func TestHarborFingerprinter_Fingerprint_Valid(t *testing.T) {
 			}
 
 			// Check required metadata fields
-			if authMode, ok := result.Metadata["authMode"].(string); !ok || authMode != tt.wantAuthMode {
-				t.Errorf("Metadata[authMode] = %v, want %v", result.Metadata["authMode"], tt.wantAuthMode)
+			if authMode, ok := result.Metadata["auth_mode"].(string); !ok || authMode != tt.wantAuthMode {
+				t.Errorf("Metadata[authMode] = %v, want %v", result.Metadata["auth_mode"], tt.wantAuthMode)
 			}
-			if selfReg, ok := result.Metadata["selfRegistration"].(bool); !ok || selfReg != tt.wantSelfRegistration {
-				t.Errorf("Metadata[selfRegistration] = %v, want %v", result.Metadata["selfRegistration"], tt.wantSelfRegistration)
+			if selfReg, ok := result.Metadata["self_registration"].(bool); !ok || selfReg != tt.wantSelfRegistration {
+				t.Errorf("Metadata[selfRegistration] = %v, want %v", result.Metadata["self_registration"], tt.wantSelfRegistration)
 			}
-			if primaryAuth, ok := result.Metadata["primaryAuthMode"].(bool); !ok || primaryAuth != tt.wantPrimaryAuthMode {
-				t.Errorf("Metadata[primaryAuthMode] = %v, want %v", result.Metadata["primaryAuthMode"], tt.wantPrimaryAuthMode)
+			if primaryAuth, ok := result.Metadata["primary_auth_mode"].(bool); !ok || primaryAuth != tt.wantPrimaryAuthMode {
+				t.Errorf("Metadata[primaryAuthMode] = %v, want %v", result.Metadata["primary_auth_mode"], tt.wantPrimaryAuthMode)
 			}
 
 			// Check optional metadata fields
 			if tt.wantRegistryURLPresent {
-				if _, ok := result.Metadata["registryUrl"]; !ok {
+				if _, ok := result.Metadata["registry_url"]; !ok {
 					t.Error("Expected registryUrl in metadata, but it's missing")
 				}
 			} else {
-				if _, ok := result.Metadata["registryUrl"]; ok {
+				if _, ok := result.Metadata["registry_url"]; ok {
 					t.Error("Expected no registryUrl in metadata, but it exists")
 				}
 			}
 
 			if tt.wantExternalURLPresent {
-				if _, ok := result.Metadata["externalUrl"]; !ok {
+				if _, ok := result.Metadata["external_url"]; !ok {
 					t.Error("Expected externalUrl in metadata, but it's missing")
 				}
 			} else {
-				if _, ok := result.Metadata["externalUrl"]; ok {
+				if _, ok := result.Metadata["external_url"]; ok {
 					t.Error("Expected no externalUrl in metadata, but it exists")
 				}
 			}

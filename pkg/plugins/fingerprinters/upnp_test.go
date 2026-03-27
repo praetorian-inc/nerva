@@ -166,9 +166,9 @@ func TestUPnPFingerprinter_Fingerprint_BodyDetection(t *testing.T) {
 
 	assert.Equal(t, "upnp", result.Technology)
 	assert.Equal(t, "1.0", result.Version)
-	assert.Equal(t, true, result.Metadata["upnpNamespace"])
-	assert.Equal(t, "urn:schemas-upnp-org:device:Basic:1", result.Metadata["deviceType"])
-	assert.Equal(t, "Philips hue", result.Metadata["friendlyName"])
+	assert.Equal(t, true, result.Metadata["upnp_namespace"])
+	assert.Equal(t, "urn:schemas-upnp-org:device:Basic:1", result.Metadata["device_type"])
+	assert.Equal(t, "Philips hue", result.Metadata["friendly_name"])
 }
 
 func TestUPnPFingerprinter_Fingerprint_BodyOnlyDetection(t *testing.T) {
@@ -197,9 +197,9 @@ func TestUPnPFingerprinter_Fingerprint_BodyOnlyDetection(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, "upnp", result.Technology)
-	assert.Equal(t, true, result.Metadata["upnpNamespace"])
-	assert.Equal(t, "urn:schemas-upnp-org:device:MediaRenderer:1", result.Metadata["deviceType"])
-	assert.Equal(t, "Living Room Speaker", result.Metadata["friendlyName"])
+	assert.Equal(t, true, result.Metadata["upnp_namespace"])
+	assert.Equal(t, "urn:schemas-upnp-org:device:MediaRenderer:1", result.Metadata["device_type"])
+	assert.Equal(t, "Living Room Speaker", result.Metadata["friendly_name"])
 }
 
 func TestUPnPFingerprinter_Fingerprint_NoMatch(t *testing.T) {
@@ -276,5 +276,5 @@ func TestUPnPFingerprinter_Integration(t *testing.T) {
 	assert.Equal(t, "upnp", results[0].Technology)
 	assert.Equal(t, "1.0", results[0].Version)
 	assert.Equal(t, "Linux/3.0 UPnP/1.0 IpBridge/1.16.0", results[0].Metadata["server"])
-	assert.Equal(t, true, results[0].Metadata["upnpNamespace"])
+	assert.Equal(t, true, results[0].Metadata["upnp_namespace"])
 }

@@ -101,9 +101,9 @@ func TestKubernetesFingerprinter_Fingerprint_ValidK8s(t *testing.T) {
 			expectedVersion: "1.29.0",
 			expectedCPE:     "cpe:2.3:a:kubernetes:kubernetes:1.29.0:*:*:*:*:*:*:*",
 			expectedMetadata: map[string]any{
-				"platform":  "linux/amd64",
-				"goVersion": "go1.21.5",
-				"gitCommit": "abc123",
+				"platform":   "linux/amd64",
+				"go_version": "go1.21.5",
+				"git_commit": "abc123",
 			},
 		},
 		{
@@ -123,9 +123,9 @@ func TestKubernetesFingerprinter_Fingerprint_ValidK8s(t *testing.T) {
 			expectedVersion: "1.28.3",
 			expectedCPE:     "cpe:2.3:a:kubernetes:kubernetes:1.28.3:*:*:*:*:*:*:*",
 			expectedMetadata: map[string]any{
-				"platform":  "linux/arm64",
-				"goVersion": "go1.21.3",
-				"gitCommit": "def456",
+				"platform":   "linux/arm64",
+				"go_version": "go1.21.3",
+				"git_commit": "def456",
 			},
 		},
 		{
@@ -145,9 +145,9 @@ func TestKubernetesFingerprinter_Fingerprint_ValidK8s(t *testing.T) {
 			expectedVersion: "1.27.8",
 			expectedCPE:     "cpe:2.3:a:kubernetes:kubernetes:1.27.8:*:*:*:*:*:*:*",
 			expectedMetadata: map[string]any{
-				"platform":  "linux/amd64",
-				"goVersion": "go1.20.10",
-				"gitCommit": "ghi789",
+				"platform":   "linux/amd64",
+				"go_version": "go1.20.10",
+				"git_commit": "ghi789",
 			},
 		},
 	}

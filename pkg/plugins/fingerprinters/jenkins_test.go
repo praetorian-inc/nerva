@@ -96,7 +96,7 @@ func TestJenkinsFingerprinter_Fingerprint_Valid(t *testing.T) {
 			expectedVersion: "2.541.1",
 			expectedCPE:     "cpe:2.3:a:jenkins:jenkins:2.541.1:*:*:*:*:*:*:*",
 			expectedMetadata: map[string]any{
-				"hudsonVersion": "1.395",
+				"hudson_version": "1.395",
 			},
 		},
 		{
@@ -118,7 +118,7 @@ func TestJenkinsFingerprinter_Fingerprint_Valid(t *testing.T) {
 			expectedVersion: "",
 			expectedCPE:     "cpe:2.3:a:jenkins:jenkins:*:*:*:*:*:*:*:*",
 			expectedMetadata: map[string]any{
-				"hudsonVersion": "1.395",
+				"hudson_version": "1.395",
 			},
 		},
 	}
@@ -221,5 +221,5 @@ func TestJenkinsFingerprinter_Integration(t *testing.T) {
 	require.Len(t, results, 1)
 	assert.Equal(t, "jenkins", results[0].Technology)
 	assert.Equal(t, "2.541.1", results[0].Version)
-	assert.Equal(t, "1.395", results[0].Metadata["hudsonVersion"])
+	assert.Equal(t, "1.395", results[0].Metadata["hudson_version"])
 }

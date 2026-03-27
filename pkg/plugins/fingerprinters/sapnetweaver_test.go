@@ -495,7 +495,7 @@ func TestSAPNetWeaverFingerprinter_Fingerprint(t *testing.T) {
 			}
 
 			if tt.wantStackType != "" {
-				stackType, _ := result.Metadata["stackType"].(string)
+				stackType, _ := result.Metadata["stack_type"].(string)
 				if stackType != tt.wantStackType {
 					t.Errorf("stackType = %q, want %q", stackType, tt.wantStackType)
 				}
@@ -509,7 +509,7 @@ func TestSAPNetWeaverFingerprinter_Fingerprint(t *testing.T) {
 			}
 
 			if tt.wantKernelVer != "" {
-				kernelVersion, _ := result.Metadata["kernelVersion"].(string)
+				kernelVersion, _ := result.Metadata["kernel_version"].(string)
 				if kernelVersion != tt.wantKernelVer {
 					t.Errorf("kernelVersion = %q, want %q", kernelVersion, tt.wantKernelVer)
 				}

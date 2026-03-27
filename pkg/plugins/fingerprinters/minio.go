@@ -75,7 +75,7 @@ func (f *MinIOFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fin
 
 	// Build metadata
 	metadata := map[string]any{
-		"serverHeader": serverHeader,
+		"server_header": serverHeader,
 	}
 
 	return &FingerprintResult{

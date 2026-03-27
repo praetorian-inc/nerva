@@ -518,9 +518,9 @@ type ServiceDiameterSCTP struct {
 	Version      string   `json:"version,omitempty"`
 	Vendor       string   `json:"vendor,omitempty"`
 	Product      string   `json:"product,omitempty"`
-	OriginHost   string   `json:"originHost,omitempty"`
-	OriginRealm  string   `json:"originRealm,omitempty"`
-	ErrorMessage string   `json:"errorMessage,omitempty"`
+	OriginHost   string   `json:"origin_host,omitempty"`
+	OriginRealm  string   `json:"origin_realm,omitempty"`
+	ErrorMessage string   `json:"error_message,omitempty"`
 }
 
 // Type implements the Metadata interface

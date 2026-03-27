@@ -262,7 +262,7 @@ func TestJaegerFingerprinter_Fingerprint_Valid(t *testing.T) {
   <base href="/">
   <script>
     function getJaegerVersion() {
-      const DEFAULT_VERSION = {'gitCommit':'', 'gitVersion':'', 'buildDate':''};
+      const DEFAULT_VERSION = {'git_commit':'', 'git_version':'', 'build_date':''};
       const JAEGER_VERSION = {"gitCommit":"63b27e1810a710ac54dc4522da0538e540bdc545","gitVersion":"v1.76.0","buildDate":"2025-12-03T16:07:08Z"};
       return JAEGER_VERSION;
     }
@@ -288,7 +288,7 @@ func TestJaegerFingerprinter_Fingerprint_Valid(t *testing.T) {
 		},
 		{
 			name:               "Jaeger v1 root HTML (minified) with version",
-			body:               `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Jaeger UI</title><base href="/"><script>function getJaegerVersion(){const DEFAULT_VERSION={'gitCommit':'','gitVersion':'','buildDate':''};const JAEGER_VERSION={"gitCommit":"abc123","gitVersion":"v1.35.0","buildDate":"2024-01-15T10:30:00Z"};return JAEGER_VERSION;}</script></head><body><div id="jaeger-ui-root"></div></body></html>`,
+			body:               `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Jaeger UI</title><base href="/"><script>function getJaegerVersion(){const DEFAULT_VERSION={'git_commit':'','git_version':'','build_date':''};const JAEGER_VERSION={"gitCommit":"abc123","gitVersion":"v1.35.0","buildDate":"2024-01-15T10:30:00Z"};return JAEGER_VERSION;}</script></head><body><div id="jaeger-ui-root"></div></body></html>`,
 			wantVersion:        "1.35.0",
 			wantCPE:            "cpe:2.3:a:jaegertracing:jaeger:1.35.0:*:*:*:*:*:*:*",
 			wantServiceCount:   0,
@@ -402,8 +402,8 @@ func TestJaegerFingerprinter_Fingerprint_Valid(t *testing.T) {
 			assert.Equal(t, tt.wantVersion, result.Version)
 
 			// Check metadata - serviceCount (always present)
-			serviceCount, exists := result.Metadata["serviceCount"]
-			require.True(t, exists, "Expected serviceCount in metadata")
+			serviceCount, exists := result.Metadata["service_count"]
+			require.True(t, exists, "Expected service_count in metadata")
 			assert.Equal(t, tt.wantServiceCount, serviceCount)
 
 			// Check metadata - services array (only if services exist)
@@ -417,7 +417,7 @@ func TestJaegerFingerprinter_Fingerprint_Valid(t *testing.T) {
 			} else {
 				// When no services, services key should not be present
 				_, exists := result.Metadata["services"]
-				assert.False(t, exists, "Did not expect services in metadata when serviceCount is 0")
+				assert.False(t, exists, "Did not expect services in metadata when service_count is 0")
 			}
 
 			// Check metadata - total
@@ -447,17 +447,17 @@ func TestJaegerFingerprinter_Fingerprint_Valid(t *testing.T) {
 				assert.False(t, exists, "Did not expect offset in metadata when offset=0")
 			}
 
-			// Check metadata - gitCommit
+			// Check metadata - git_commit
 			if tt.wantGitCommit != "" {
-				gitCommit, exists := result.Metadata["gitCommit"]
-				assert.True(t, exists, "Expected gitCommit in metadata")
+				gitCommit, exists := result.Metadata["git_commit"]
+				assert.True(t, exists, "Expected git_commit in metadata")
 				assert.Equal(t, tt.wantGitCommit, gitCommit)
 			}
 
-			// Check metadata - buildDate
+			// Check metadata - build_date
 			if tt.wantBuildDate != "" {
-				buildDate, exists := result.Metadata["buildDate"]
-				assert.True(t, exists, "Expected buildDate in metadata")
+				buildDate, exists := result.Metadata["build_date"]
+				assert.True(t, exists, "Expected build_date in metadata")
 				assert.Equal(t, tt.wantBuildDate, buildDate)
 			}
 
@@ -601,7 +601,7 @@ func TestJaegerFingerprinter_Integration(t *testing.T) {
 			found = true
 			assert.Equal(t, "", result.Version) // No version exposed via JSON endpoint
 			assert.Contains(t, result.CPEs, buildJaegerCPE(""))
-			serviceCount, exists := result.Metadata["serviceCount"]
+			serviceCount, exists := result.Metadata["service_count"]
 			assert.True(t, exists)
 			assert.Equal(t, 4, serviceCount)
 		}

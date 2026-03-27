@@ -17,9 +17,86 @@ package scan
 import (
 	"context"
 	"log"
+	"net"
+	"net/netip"
+	"strings"
 
 	"github.com/praetorian-inc/nerva/pkg/plugins"
 )
+
+// ResolveTargets expands targets based on the DNSOrder strategy.
+// For socks5h:// proxy scheme, always uses proxy-side DNS resolution.
+func ResolveTargets(targets []plugins.Target, config Config) []plugins.Target {
+	var resolved []plugins.Target
+
+	// Check if proxy uses socks5h:// scheme (proxy-side DNS)
+	usesProxySideDNS := false
+	if config.Proxy != "" {
+		// socks5h:// scheme forces proxy-side DNS resolution
+		// strings.HasPrefix is safer than manual slicing
+		if strings.HasPrefix(strings.ToLower(config.Proxy), "socks5h://") {
+			usesProxySideDNS = true
+			if config.Verbose {
+				log.Printf("socks5h:// proxy scheme detected: forcing proxy-side DNS resolution\n")
+			}
+		}
+	}
+
+	for _, t := range targets {
+		if t.Host == "" || t.Address.Addr() != netip.IPv4Unspecified() {
+			resolved = append(resolved, t)
+			continue
+		}
+
+		// socks5h:// scheme always uses proxy-side DNS
+		if usesProxySideDNS {
+			if config.Verbose {
+				log.Printf("socks5h:// scheme detected: using proxy-side DNS for %s\n", t.Host)
+			}
+			resolved = append(resolved, t)
+			continue
+		}
+
+		if config.DNSOrder == "p" || config.DNSOrder == "pl" {
+			// Do not resolve yet; pass the 0.0.0.0 target through.
+			// The dialer will try the proxy using t.Host.
+			resolved = append(resolved, t)
+			continue
+		}
+
+		// Local resolution ("l" or "lp" or default)
+		addrs, err := net.LookupIP(t.Host)
+		if err != nil {
+			if config.Verbose {
+				log.Printf("local dns lookup failed for %s: %v (DNSOrder=%s)\n", t.Host, err, config.DNSOrder)
+			}
+			if config.DNSOrder == "lp" {
+				// Fall back to Proxy resolution by passing the 0.0.0.0 target
+				if config.Verbose {
+					log.Printf("falling back to proxy-side DNS for %s\n", t.Host)
+				}
+				resolved = append(resolved, t)
+			}
+			continue
+		}
+
+		// Expand target to one per IP
+		for _, ip := range addrs {
+			// prefer IPv4
+			if ipv4 := ip.To4(); ipv4 != nil {
+				ip = ipv4
+			}
+			if addr, ok := netip.AddrFromSlice(ip); ok {
+				newTarget := plugins.Target{
+					Host:    t.Host,
+					Address: netip.AddrPortFrom(addr, t.Address.Port()),
+				}
+				resolved = append(resolved, newTarget)
+			}
+		}
+	}
+	return resolved
+}
 
 // TODO: integrate SCTP/UDP scan paths with worker pool. Currently sequential because:
 // 1. Different return types (*Service vs []*Service) need separate scanFunc adapters
@@ -68,6 +145,8 @@ func UDPScan(ctx context.Context, targets []plugins.Target, config Config) ([]pl
 
 // ScanTargets fingerprints service(s) running given a list of targets.
 func ScanTargets(ctx context.Context, targets []plugins.Target, config Config) ([]plugins.Service, error) {
+	targets = ResolveTargets(targets, config)
+
 	if config.SCTP {
 		return SCTPScan(ctx, targets, config)
 	}

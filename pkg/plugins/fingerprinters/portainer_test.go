@@ -171,8 +171,8 @@ func TestPortainerFingerprinter_Fingerprint_Valid(t *testing.T) {
 			}
 
 			// Check metadata
-			if instanceID, ok := result.Metadata["instanceId"].(string); !ok || instanceID != tt.wantInstanceID {
-				t.Errorf("Metadata[instanceId] = %v, want %v", result.Metadata["instanceId"], tt.wantInstanceID)
+			if instanceID, ok := result.Metadata["instance_id"].(string); !ok || instanceID != tt.wantInstanceID {
+				t.Errorf("Metadata[instanceId] = %v, want %v", result.Metadata["instance_id"], tt.wantInstanceID)
 			}
 			if rawVersion, ok := result.Metadata["raw_version"].(string); !ok || rawVersion != tt.wantRawVersion {
 				t.Errorf("Metadata[raw_version] = %v, want %v", result.Metadata["raw_version"], tt.wantRawVersion)

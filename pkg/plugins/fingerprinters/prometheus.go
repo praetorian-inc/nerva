@@ -155,13 +155,13 @@ func (f *PrometheusFingerprinter) Fingerprint(resp *http.Response, body []byte) 
 		metadata["branch"] = buildInfo.Data.Branch
 	}
 	if buildInfo.Data.BuildDate != "" {
-		metadata["buildDate"] = buildInfo.Data.BuildDate
+		metadata["build_date"] = buildInfo.Data.BuildDate
 	}
 	if buildInfo.Data.GoVersion != "" {
-		metadata["goVersion"] = buildInfo.Data.GoVersion
+		metadata["go_version"] = buildInfo.Data.GoVersion
 	}
 	if buildInfo.Data.BuildUser != "" {
-		metadata["buildUser"] = buildInfo.Data.BuildUser
+		metadata["build_user"] = buildInfo.Data.BuildUser
 	}
 
 	return &FingerprintResult{

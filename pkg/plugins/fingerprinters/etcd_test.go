@@ -146,7 +146,7 @@ func TestEtcdFingerprinter_Fingerprint_ValidEtcd(t *testing.T) {
 
 			// Check cluster version in metadata
 			if tt.expectedCluster != "" {
-				assert.Equal(t, tt.expectedCluster, result.Metadata["clusterVersion"])
+				assert.Equal(t, tt.expectedCluster, result.Metadata["cluster_version"])
 			}
 		})
 	}

@@ -146,33 +146,33 @@ func (f *SOAPFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fing
 	if bytes.Contains(body, []byte(wsdl11NS)) {
 		detected = true
 		wsdlDetected = true
-		metadata["wsdlVersion"] = "1.1"
+		metadata["wsdl_version"] = "1.1"
 	}
 	if bytes.Contains(body, []byte(wsdl20NS)) {
 		detected = true
 		wsdlDetected = true
-		metadata["wsdlVersion"] = "2.0"
+		metadata["wsdl_version"] = "2.0"
 	}
-	metadata["wsdlAvailable"] = wsdlDetected
+	metadata["wsdl_available"] = wsdlDetected
 
 	if !detected {
 		return nil, nil
 	}
 
 	if soapVersion != "" {
-		metadata["soapVersion"] = soapVersion
+		metadata["soap_version"] = soapVersion
 	}
 
 	// Extract WSDL target namespace if present
 	if wsdlDetected {
 		if ns := extractTargetNamespace(body); ns != "" {
-			metadata["targetNamespace"] = ns
+			metadata["target_namespace"] = ns
 		}
 	}
 
 	// Detect SOAP fault presence
 	if bytes.Contains(body, []byte(":Fault")) || bytes.Contains(body, []byte("<Fault")) {
-		metadata["hasFault"] = true
+		metadata["has_fault"] = true
 	}
 
 	return &FingerprintResult{

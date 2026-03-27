@@ -118,12 +118,12 @@ func (f *CheckPointFingerprinter) Fingerprint(resp *http.Response, body []byte) 
 	location := strings.ToLower(resp.Header.Get("Location"))
 	if checkPointMobileAccessPattern.MatchString(bodyStr) ||
 		strings.Contains(location, "/sslvpn/") {
-		metadata["vpnEnabled"] = true
+		metadata["vpn_enabled"] = true
 	}
 
 	// Detect blade info from body hints
 	if checkPointSmartConsolePattern.MatchString(bodyStr) {
-		metadata["managementBlade"] = true
+		metadata["management_blade"] = true
 	}
 
 	// Extract Gaia OS version

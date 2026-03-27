@@ -130,10 +130,10 @@ func (f *QNAPFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fing
 
 	// Extract additional metadata
 	if buildNumber := extractCDATAContent(body, "number"); buildNumber != "" {
-		metadata["buildNumber"] = buildNumber
+		metadata["build_number"] = buildNumber
 	}
 	if buildDate := extractCDATAContent(body, "build"); buildDate != "" {
-		metadata["buildDate"] = buildDate
+		metadata["build_date"] = buildDate
 	}
 	if model := extractCDATAContent(body, "displayModelName"); model != "" {
 		metadata["model"] = model

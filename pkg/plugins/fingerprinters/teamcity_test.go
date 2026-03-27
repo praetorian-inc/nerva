@@ -394,18 +394,18 @@ func TestTeamCityFingerprinter_Fingerprint_ValidJSON(t *testing.T) {
 
 			// Check metadata
 			if tt.wantBuildNumber != "" {
-				if bn, ok := result.Metadata["buildNumber"].(string); !ok || bn != tt.wantBuildNumber {
-					t.Errorf("Metadata[buildNumber] = %v, want %q", result.Metadata["buildNumber"], tt.wantBuildNumber)
+				if bn, ok := result.Metadata["build_number"].(string); !ok || bn != tt.wantBuildNumber {
+					t.Errorf("Metadata[buildNumber] = %v, want %q", result.Metadata["build_number"], tt.wantBuildNumber)
 				}
 			}
 			if tt.wantInternalID != "" {
-				if id, ok := result.Metadata["internalId"].(string); !ok || id != tt.wantInternalID {
-					t.Errorf("Metadata[internalId] = %v, want %q", result.Metadata["internalId"], tt.wantInternalID)
+				if id, ok := result.Metadata["internal_id"].(string); !ok || id != tt.wantInternalID {
+					t.Errorf("Metadata[internalId] = %v, want %q", result.Metadata["internal_id"], tt.wantInternalID)
 				}
 			}
 			if tt.wantNodeID != "" {
-				if nid, ok := result.Metadata["nodeId"].(string); !ok || nid != tt.wantNodeID {
-					t.Errorf("Metadata[nodeId] = %v, want %q", result.Metadata["nodeId"], tt.wantNodeID)
+				if nid, ok := result.Metadata["node_id"].(string); !ok || nid != tt.wantNodeID {
+					t.Errorf("Metadata[node_id] = %v, want %q", result.Metadata["node_id"], tt.wantNodeID)
 				}
 			}
 		})
@@ -431,11 +431,11 @@ func TestTeamCityFingerprinter_Fingerprint_ValidXML(t *testing.T) {
 	if result.Version != "2023.11.4" {
 		t.Errorf("Version = %q, want %q", result.Version, "2023.11.4")
 	}
-	if result.Metadata["nodeId"] != "NODE_1" {
-		t.Errorf("Metadata[nodeId] = %v, want %q", result.Metadata["nodeId"], "NODE_1")
+	if result.Metadata["node_id"] != "NODE_1" {
+		t.Errorf("Metadata[node_id] = %v, want %q", result.Metadata["node_id"], "NODE_1")
 	}
-	if result.Metadata["buildNumber"] != "147571" {
-		t.Errorf("Metadata[buildNumber] = %v, want %q", result.Metadata["buildNumber"], "147571")
+	if result.Metadata["build_number"] != "147571" {
+		t.Errorf("Metadata[buildNumber] = %v, want %q", result.Metadata["build_number"], "147571")
 	}
 }
 
@@ -550,8 +550,8 @@ func TestTeamCityFingerprinter_Fingerprint_HeaderOnly(t *testing.T) {
 	if len(result.CPEs) == 0 || result.CPEs[0] != expectedCPE {
 		t.Errorf("CPE = %v, want [%q]", result.CPEs, expectedCPE)
 	}
-	if result.Metadata["nodeId"] != "MAIN_SERVER" {
-		t.Errorf("Metadata[nodeId] = %v, want %q", result.Metadata["nodeId"], "MAIN_SERVER")
+	if result.Metadata["node_id"] != "MAIN_SERVER" {
+		t.Errorf("Metadata[node_id] = %v, want %q", result.Metadata["node_id"], "MAIN_SERVER")
 	}
 }
 
@@ -575,7 +575,7 @@ func TestTeamCityFingerprinter_Fingerprint_HeaderWithInvalidVersion(t *testing.T
 	if result.Version != "" {
 		t.Errorf("Version = %q, want empty (invalid version should be discarded)", result.Version)
 	}
-	if result.Metadata["nodeId"] != "MAIN_SERVER" {
-		t.Errorf("Metadata[nodeId] = %v, want %q", result.Metadata["nodeId"], "MAIN_SERVER")
+	if result.Metadata["node_id"] != "MAIN_SERVER" {
+		t.Errorf("Metadata[node_id] = %v, want %q", result.Metadata["node_id"], "MAIN_SERVER")
 	}
 }

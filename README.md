@@ -32,6 +32,7 @@ Nerva rapidly detects and identifies services running on open network ports. Use
 
 - **120+ Protocol Plugins** — Databases, remote access, web services, messaging, industrial, and telecom protocols
 - **Multi-Transport Support** — TCP (default), UDP (`--udp`), and SCTP (`--sctp`, Linux only)
+- **Proxy Support** — Route scanning traffic transparently through SOCKS5 or HTTP proxies with configurable DNS resolution
 - **Rich Metadata** — Extract versions, configurations, and security-relevant details from each service
 - **Fast Mode** — Scan only default ports for rapid reconnaissance (`--fast`)
 - **Flexible Output** — JSON, CSV, or human-readable formats
@@ -118,6 +119,9 @@ EXAMPLES:
 | `--output` | `-o` | Output file path | stdout |
 | `--json` | | Output in JSON format | false |
 | `--csv` | | Output in CSV format | false |
+| `--proxy` | | Proxy URL (e.g. socks5://127.0.0.1:1080) | — |
+| `--proxy-auth` | | SOCKS5 Proxy Auth (e.g. username:password) | — |
+| `--dns-order` | | DNS resolution order: `p`, `l`, `lp`, `pl` | `lp` |
 | `--fast` | `-f` | Fast mode (default ports only) | false |
 | `--capabilities` | `-c` | list available capabilities and exit | false |
 | `--udp` | `-U` | Run UDP plugins | false |
@@ -161,6 +165,60 @@ nerva -t telecom-server:3868 -S
 ```sh
 nerva -l large-target-list.txt --fast --json
 ```
+
+**Proxy routing with remote DNS resolution:**
+
+```sh
+nerva -t target.internal:80 --proxy socks5://127.0.0.1:1080 --dns-order p
+```
+
+### Proxy Support
+
+Nerva supports routing scanning traffic through SOCKS5 and HTTP proxies with configurable DNS resolution.
+
+**Supported proxy schemes:**
+
+- `socks5://` - SOCKS5 proxy with local DNS resolution
+- `socks5h://` - SOCKS5 proxy with proxy-side DNS resolution (always)
+- `http://` - HTTP CONNECT proxy
+- `https://` - HTTPS CONNECT proxy
+
+**Proxy authentication:**
+
+```sh
+# Inline authentication (URL format)
+nerva -t example.com:80 --proxy socks5://username:password@127.0.0.1:1080
+
+# Separate authentication flag
+nerva -t example.com:80 --proxy socks5://127.0.0.1:1080 --proxy-auth username:password
+```
+
+**DNS resolution strategies** (`--dns-order`):
+
+| Option | Strategy | Use Case |
+|--------|----------|----------|
+| `l` | Local only | Standard local DNS (default) |
+| `p` | Proxy only | Force proxy-side DNS resolution |
+| `lp` | Local, fallback to proxy | Try local first, use proxy on failure |
+| `pl` | Proxy, fallback to local | Try proxy first, use local on failure |
+
+**Note:** `socks5h://` scheme automatically forces proxy-side DNS (equivalent to `--dns-order p`)
+
+**Tor scanning example:**
+
+```sh
+# Scan .onion services through Tor (SOCKS5 proxy on port 9050)
+nerva -t http://example.onion:80 --proxy socks5h://127.0.0.1:9050
+```
+
+**UDP through proxy:**
+
+```sh
+# UDP scanning through SOCKS5 proxy (limited support)
+nerva -t target.com:161 --proxy socks5://127.0.0.1:1080 --udp
+```
+
+⚠️ **UDP Limitations:** UDP through SOCKS5 has limited support. Not all SOCKS5 servers support UDP association. Local UDP fallback may occur.
 
 **Parallel scanning with rate limiting:**
 
@@ -404,6 +462,9 @@ func main() {
         DefaultTimeout: 2 * time.Second,
         FastMode:       false,
         UDP:            false,
+        Proxy:          "socks5://127.0.0.1:1080", // optional
+        ProxyAuth:      "username:password",       // optional
+        DNSOrder:       "p",                       // resolver strategy
     }
 
     // Create target

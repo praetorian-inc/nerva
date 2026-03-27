@@ -136,7 +136,7 @@ func (f *VaultFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fin
 
 	// Add cluster name if present
 	if health.ClusterName != "" {
-		metadata["clusterName"] = health.ClusterName
+		metadata["cluster_name"] = health.ClusterName
 	}
 
 	return &FingerprintResult{

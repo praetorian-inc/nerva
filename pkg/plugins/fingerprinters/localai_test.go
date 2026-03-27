@@ -207,13 +207,13 @@ func TestLocalAIFingerprinter_Fingerprint_ValidLocalAI(t *testing.T) {
 			assert.Contains(t, result.CPEs, tt.expectedCPE)
 
 			assert.Equal(t, tt.expectedBackends, result.Metadata["backends"])
-			assert.Equal(t, tt.expectedModelCount, result.Metadata["loadedModelCount"])
-			assert.Equal(t, true, result.Metadata["anonymousAccess"])
+			assert.Equal(t, tt.expectedModelCount, result.Metadata["loaded_model_count"])
+			assert.Equal(t, true, result.Metadata["anonymous_access"])
 
 			if tt.expectedLoadedModels != nil {
-				assert.Equal(t, tt.expectedLoadedModels, result.Metadata["loadedModels"])
+				assert.Equal(t, tt.expectedLoadedModels, result.Metadata["loaded_models"])
 			} else {
-				_, hasLoadedModels := result.Metadata["loadedModels"]
+				_, hasLoadedModels := result.Metadata["loaded_models"]
 				assert.False(t, hasLoadedModels, "loadedModels key should not be present when no models are loaded")
 			}
 		})
@@ -395,9 +395,9 @@ func TestLocalAIFingerprinter_Fingerprint_LargePayload(t *testing.T) {
 	require.True(t, ok, "backends metadata should be a []string")
 	assert.Len(t, backends, 20)
 
-	assert.Equal(t, 50, result.Metadata["loadedModelCount"])
+	assert.Equal(t, 50, result.Metadata["loaded_model_count"])
 
-	loadedModels, ok := result.Metadata["loadedModels"].([]string)
+	loadedModels, ok := result.Metadata["loaded_models"].([]string)
 	require.True(t, ok, "loadedModels metadata should be a []string")
 	assert.Len(t, loadedModels, 50)
 	assert.Equal(t, "model-00", loadedModels[0])

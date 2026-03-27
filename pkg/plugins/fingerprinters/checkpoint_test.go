@@ -303,7 +303,7 @@ func TestCheckPointFingerprinter_Fingerprint(t *testing.T) {
 					}
 				}
 				if tt.wantVPN {
-					if vpn, ok := result.Metadata["vpnEnabled"]; ok {
+					if vpn, ok := result.Metadata["vpn_enabled"]; ok {
 						if vpn != true {
 							t.Errorf("vpnEnabled = %v, want true", vpn)
 						}

@@ -73,7 +73,7 @@ func (f *WinRMFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fin
 	}
 
 	metadata := map[string]any{
-		"authRequired": resp.StatusCode == 401,
+		"auth_required": resp.StatusCode == 401,
 	}
 	if server != "" {
 		metadata["server"] = server

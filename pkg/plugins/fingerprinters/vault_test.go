@@ -197,11 +197,11 @@ func TestVaultFingerprinter_Fingerprint_Valid(t *testing.T) {
 			}
 
 			if tt.wantClusterNameExist {
-				if _, ok := result.Metadata["clusterName"]; !ok {
+				if _, ok := result.Metadata["cluster_name"]; !ok {
 					t.Error("Expected clusterName in metadata, but it's missing")
 				}
 			} else {
-				if _, ok := result.Metadata["clusterName"]; ok {
+				if _, ok := result.Metadata["cluster_name"]; ok {
 					t.Error("Expected no clusterName in metadata, but it exists")
 				}
 			}

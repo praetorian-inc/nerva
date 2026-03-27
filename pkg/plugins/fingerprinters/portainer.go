@@ -124,7 +124,7 @@ func (f *PortainerFingerprinter) Fingerprint(resp *http.Response, body []byte) (
 	}
 
 	metadata := map[string]any{
-		"instanceId":  status.InstanceID,
+		"instance_id":  status.InstanceID,
 		"raw_version": status.Version,
 	}
 
