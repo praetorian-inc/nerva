@@ -81,6 +81,7 @@ import (
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/melsecq"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/memcached"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/mgcp"
+	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/mikrotikwinbox"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/milvus"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/modbus"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/mongodb"

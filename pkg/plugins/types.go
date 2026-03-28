@@ -134,6 +134,7 @@ const (
 	ProtoMGCP             = "mgcp"
 	ProtoMemcached        = "memcached"
 	ProtoMelsecQ          = "melsec-q"
+	ProtoMikroTikWinbox   = "mikrotik-winbox"
 	ProtoMilvus           = "milvus"
 	ProtoMilvusMetrics    = "milvus-metrics"
 	ProtoModbus           = "modbus"
@@ -594,6 +595,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoMelsecQ:
 		var p ServiceMelsecQ
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoMikroTikWinbox:
+		var p ServiceMikroTikWinbox
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoMegaco:
@@ -1474,6 +1479,13 @@ type ServiceMelsecQ struct {
 }
 
 func (e ServiceMelsecQ) Type() string { return ProtoMelsecQ }
+
+type ServiceMikroTikWinbox struct {
+	SubProtocol string   `json:"sub_protocol"`
+	CPEs        []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceMikroTikWinbox) Type() string { return ProtoMikroTikWinbox }
 
 type ServiceMilvus struct {
 	CPEs []string `json:"cpes,omitempty"`

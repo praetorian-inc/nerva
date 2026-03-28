@@ -1,0 +1,163 @@
+// Copyright 2022 Praetorian Security, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// MikroTikFingerprinter detects MikroTik RouterOS web management interfaces.
+//
+// Detection Strategy:
+// MikroTik RouterOS exposes a web management interface called WebFig.
+// Detection uses multiple signals to identify RouterOS:
+//
+//  1. PRIMARY:   Body contains "webfig" or "/webfig/" path reference
+//  2. SECONDARY: Body contains "mikrotik" (case-insensitive)
+//  3. TERTIARY:  Body contains "RouterOS" string
+//  4. TITLE:     Title contains "RouterOS" or "MikroTik"
+//
+// Version Detection:
+// - Regex scan for patterns like "RouterOS v7.22.1" or version strings near MikroTik references
+// - Validated against format ^\d+\.\d+(?:\.\d+)?$ for CPE safety
+//
+// Security Risks:
+//   - Default credentials (admin with empty password) frequently unchanged
+//   - CVE-2018-14847: WinBox credential disclosure (unauthenticated)
+//   - Exposed management interface allows credential brute-force
+//   - Winbox port (8291) allows remote code execution in unpatched versions
+package fingerprinters
+
+import (
+	"fmt"
+	"net/http"
+	"regexp"
+	"strings"
+)
+
+// mikrotikVersionRegex matches version patterns like "RouterOS v7.22.1" or "6.49.7".
+var mikrotikVersionRegex = regexp.MustCompile(`(?i)routeros\s+v?(\d+\.\d+(?:\.\d+)?)`)
+
+// mikrotikVersionValidateRegex validates extracted version format for CPE safety.
+var mikrotikVersionValidateRegex = regexp.MustCompile(`^\d+\.\d+(?:\.\d+)?$`)
+
+// MikroTikFingerprinter detects MikroTik RouterOS web management interfaces.
+type MikroTikFingerprinter struct{}
+
+func init() {
+	Register(&MikroTikFingerprinter{})
+}
+
+func (f *MikroTikFingerprinter) Name() string {
+	return "mikrotik-routeros"
+}
+
+func (f *MikroTikFingerprinter) ProbeEndpoint() string {
+	return "/webfig/"
+}
+
+func (f *MikroTikFingerprinter) Match(resp *http.Response) bool {
+	if resp.StatusCode < 200 || resp.StatusCode >= 500 {
+		return false
+	}
+
+	// Accept HTML responses for body-based detection.
+	ct := resp.Header.Get("Content-Type")
+	if strings.Contains(ct, "text/html") {
+		return true
+	}
+
+	return false
+}
+
+func (f *MikroTikFingerprinter) Fingerprint(resp *http.Response, body []byte) (*FingerprintResult, error) {
+	if resp.StatusCode < 200 || resp.StatusCode >= 500 {
+		return nil, nil
+	}
+
+	bodyStr := string(body)
+
+	// Signal 1: Body contains "webfig" (case-insensitive).
+	hasWebFig := strings.Contains(strings.ToLower(bodyStr), "webfig")
+
+	// Signal 2: Body contains "mikrotik" (case-insensitive).
+	hasMikroTik := strings.Contains(strings.ToLower(bodyStr), "mikrotik")
+
+	// Signal 3: Body contains "RouterOS" string.
+	hasRouterOS := strings.Contains(bodyStr, "RouterOS")
+
+	// Signal 4: Title contains "RouterOS" or "MikroTik".
+	hasTitle := extractMikroTikTitle(bodyStr)
+
+	if !hasWebFig && !hasMikroTik && !hasRouterOS && !hasTitle {
+		return nil, nil
+	}
+
+	metadata := map[string]any{
+		"vendor":               "MikroTik",
+		"product":              "RouterOS",
+		"management_interface": "webfig",
+	}
+
+	version := extractMikroTikVersion(bodyStr)
+
+	return &FingerprintResult{
+		Technology: "mikrotik-routeros",
+		Version:    version,
+		CPEs:       []string{buildMikroTikCPE(version)},
+		Metadata:   metadata,
+	}, nil
+}
+
+// extractMikroTikTitle returns true if the HTML title contains "RouterOS" or "MikroTik".
+func extractMikroTikTitle(bodyStr string) bool {
+	start := strings.Index(bodyStr, "<title>")
+	if start == -1 {
+		return false
+	}
+	start += len("<title>")
+	end := strings.Index(bodyStr[start:], "</title>")
+	if end == -1 {
+		return false
+	}
+	title := strings.TrimSpace(bodyStr[start : start+end])
+	return strings.Contains(title, "RouterOS") || strings.Contains(strings.ToLower(title), "mikrotik")
+}
+
+// extractMikroTikVersion extracts RouterOS version from the response body.
+// Looks for patterns like "RouterOS v7.22.1" or "RouterOS 6.49.7".
+// Returns empty string if no valid version found.
+func extractMikroTikVersion(bodyStr string) string {
+	matches := mikrotikVersionRegex.FindStringSubmatch(bodyStr)
+	if len(matches) < 2 {
+		return ""
+	}
+
+	version := strings.TrimSpace(matches[1])
+	if version == "" {
+		return ""
+	}
+
+	// Validate version format for CPE safety.
+	if !mikrotikVersionValidateRegex.MatchString(version) {
+		return ""
+	}
+
+	return version
+}
+
+// buildMikroTikCPE generates a CPE string for MikroTik RouterOS.
+// Uses the OS component type ("o") since RouterOS is an operating system.
+// CPE format: cpe:2.3:o:mikrotik:routeros:{version}:*:*:*:*:*:*:*
+func buildMikroTikCPE(version string) string {
+	if version == "" {
+		version = "*"
+	}
+	return fmt.Sprintf("cpe:2.3:o:mikrotik:routeros:%s:*:*:*:*:*:*:*", version)
+}
