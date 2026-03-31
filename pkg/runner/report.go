@@ -17,10 +17,11 @@ package runner
 import (
 	"encoding/csv"
 	"encoding/json"
-	"log"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/praetorian-inc/nerva/pkg/plugins"
 )
@@ -33,73 +34,102 @@ const (
 	DEFAULT outputFormat = "DEFAULT"
 )
 
-func Report(services []plugins.Service) error {
-	var writeFile *os.File
-	var outputFormat = DEFAULT
-	var csvWriter *csv.Writer
-	var err error
-
-	log.SetFlags(0)
-
-	if len(config.outputFile) > 0 {
-		var fileErr error
-		writeFile, fileErr = os.Create(config.outputFile)
-		if fileErr != nil {
-			return fileErr
-		}
-		log.SetOutput(writeFile)
-	} else {
-		log.SetOutput(os.Stdout)
-	}
-	if writeFile != nil {
-		defer writeFile.Close()
-	}
-
-	if config.outputJSON {
-		outputFormat = JSON
-	} else if config.outputCSV {
-		outputFormat = CSV
-		csvWriter = csv.NewWriter(writeFile)
-		if config.showErrors {
-			err = csvWriter.Write([]string{"Host", "Port", "Service", "Metadata", "Error"})
-		} else {
-			err = csvWriter.Write([]string{"Host", "Port", "Service", "Data"})
-		}
+// FormatService formats a single service result as a string based on output format.
+func FormatService(service plugins.Service, format outputFormat) string {
+	switch format {
+	case JSON:
+		data, err := json.Marshal(service)
 		if err != nil {
-			return err
+			return ""
 		}
+		return string(data)
+	default:
+		if len(service.Host) > 0 {
+			if service.TLS {
+				return fmt.Sprintf("%s://%s:%d (%s) (tls)", strings.ToLower(service.Protocol), service.Host, service.Port, service.IP)
+			}
+			return fmt.Sprintf("%s://%s:%d (%s)", strings.ToLower(service.Protocol), service.Host, service.Port, service.IP)
+		}
+		if service.TLS {
+			return fmt.Sprintf("%s://%s:%d (tls)", strings.ToLower(service.Protocol), service.IP, service.Port)
+		}
+		return fmt.Sprintf("%s://%s:%d", strings.ToLower(service.Protocol), service.IP, service.Port)
+	}
+}
+
+// ResultPrinter handles thread-safe real-time printing of results to stdout.
+type ResultPrinter struct {
+	mu     sync.Mutex
+	format outputFormat
+}
+
+// NewResultPrinter creates a printer for the configured output format.
+func NewResultPrinter() *ResultPrinter {
+	format := DEFAULT
+	if config.outputJSON {
+		format = JSON
+	}
+	return &ResultPrinter{format: format}
+}
+
+// Print outputs a single service result to stdout. Thread-safe.
+func (p *ResultPrinter) Print(service plugins.Service) {
+	line := FormatService(service, p.format)
+	if line == "" {
+		return
+	}
+	p.mu.Lock()
+	fmt.Fprintln(os.Stdout, line)
+	p.mu.Unlock()
+}
+
+// Report writes all results to file. If no output file is configured, it is a no-op
+// (results were already printed to stdout in real-time).
+func Report(services []plugins.Service) error {
+	if len(config.outputFile) == 0 {
+		// Already printed to stdout in real-time
+		return nil
+	}
+
+	writeFile, err := os.Create(config.outputFile)
+	if err != nil {
+		return err
+	}
+	defer writeFile.Close()
+
+	var format = DEFAULT
+	if config.outputJSON {
+		format = JSON
+	} else if config.outputCSV {
+		format = CSV
+	}
+
+	if format == CSV {
+		csvWriter := csv.NewWriter(writeFile)
+		if config.showErrors {
+			if err := csvWriter.Write([]string{"Host", "Port", "Service", "Metadata", "Error"}); err != nil {
+				return err
+			}
+		} else {
+			if err := csvWriter.Write([]string{"Host", "Port", "Service", "Data"}); err != nil {
+				return err
+			}
+		}
+		for _, service := range services {
+			portStr := strconv.FormatInt(int64(service.Port), 10)
+			if err := csvWriter.Write([]string{service.Host, service.IP, portStr, service.Protocol,
+				strconv.FormatBool(service.TLS), string(service.Raw)}); err != nil {
+				return err
+			}
+		}
+		csvWriter.Flush()
+		return csvWriter.Error()
 	}
 
 	for _, service := range services {
-		switch outputFormat {
-		case JSON:
-			data, jerr := json.Marshal(service)
-			if jerr != nil {
-				return err
-			}
-			log.Println(string(data))
-		case CSV:
-			portStr := strconv.FormatInt(int64(service.Port), 10)
-			err = csvWriter.Write([]string{service.Host, service.IP, portStr, service.Protocol,
-				strconv.FormatBool(service.TLS), string(service.Raw)})
-			if err != nil {
-				return err
-			}
-			csvWriter.Flush()
-		default:
-			if len(service.Host) > 0 {
-				if service.TLS {
-					log.Printf("%s://%s:%d (%s) (tls)\n", strings.ToLower(service.Protocol), service.Host, service.Port, service.IP)
-				} else {
-					log.Printf("%s://%s:%d (%s)\n", strings.ToLower(service.Protocol), service.Host, service.Port, service.IP)
-				}
-			} else {
-				if service.TLS {
-					log.Printf("%s://%s:%d (tls)\n", strings.ToLower(service.Protocol), service.IP, service.Port)
-				} else {
-					log.Printf("%s://%s:%d\n", strings.ToLower(service.Protocol), service.IP, service.Port)
-				}
-			}
+		line := FormatService(service, format)
+		if line != "" {
+			fmt.Fprintln(writeFile, line)
 		}
 	}
 	return nil

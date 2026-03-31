@@ -16,6 +16,8 @@ package scan
 
 import (
 	"time"
+
+	"github.com/praetorian-inc/nerva/pkg/plugins"
 )
 
 type Config struct {
@@ -57,4 +59,8 @@ type Config struct {
 	Misconfigs bool
 
 	OnProgress ProgressCallback
+
+	// OnResult is called each time a service is discovered.
+	// It is invoked from worker goroutines so it must be thread-safe.
+	OnResult func(plugins.Service)
 }

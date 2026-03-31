@@ -48,6 +48,7 @@ type ScanPool struct {
 	active      atomic.Int64
 	total       atomic.Int64
 	onProgress  ProgressCallback
+	onResult    func(plugins.Service)
 }
 
 // NewScanPool constructs a ScanPool from the provided Config.
@@ -58,8 +59,9 @@ func NewScanPool(config Config) *ScanPool {
 	}
 
 	p := &ScanPool{
-		workers: workers,
-		verbose: config.Verbose,
+		workers:  workers,
+		verbose:  config.Verbose,
+		onResult: config.OnResult,
 	}
 
 	if config.MaxHostConn > 0 {
@@ -176,6 +178,11 @@ func (p *ScanPool) processTarget(ctx context.Context, target plugins.Target, fn 
 	}
 
 	if len(services) > 0 {
+		if p.onResult != nil {
+			for _, svc := range services {
+				p.onResult(svc)
+			}
+		}
 		resultCh <- services
 	}
 

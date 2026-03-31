@@ -166,6 +166,14 @@ func runScan(cmd *cobra.Command, args []string) error {
 	// Create progress callback for state tracking
 	scanConfig := createScanConfig(config)
 
+	// Stream results to stdout as they are found (naabu-style)
+	if !config.outputCSV {
+		printer := NewResultPrinter()
+		scanConfig.OnResult = func(service plugins.Service) {
+			printer.Print(service)
+		}
+	}
+
 	if config.stateFile != "" {
 		scanConfig.OnProgress = func(target plugins.Target, results []plugins.Service, completedCount int64) {
 			mu.Lock()
