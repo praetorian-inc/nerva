@@ -170,6 +170,7 @@ const (
 	ProtoRMI              = "java-rmi"
 	ProtoRPC              = "rpc"
 	ProtoRsync            = "rsync"
+	ProtoRTMP             = "rtmp"
 	ProtoRtsp             = "rtsp"
 	ProtoS7comm           = "s7comm"
 	ProtoSAPNetWeaver     = "sap-netweaver"
@@ -534,6 +535,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoRsync:
 		var p ServiceRsync
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoRTMP:
+		var p ServiceRTMP
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoRtsp:
@@ -1729,6 +1734,10 @@ func (e ServiceIEC104) Type() string { return ProtoIEC104 }
 type ServiceRsync struct{}
 
 func (e ServiceRsync) Type() string { return ProtoRsync }
+
+type ServiceRTMP struct{}
+
+func (e ServiceRTMP) Type() string { return ProtoRTMP }
 
 type ServiceJDWP struct {
 	Description string `json:"description"`

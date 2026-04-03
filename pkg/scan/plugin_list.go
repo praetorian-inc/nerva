@@ -110,6 +110,7 @@ import (
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/rdp"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/redis"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/rsync"
+	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/rtmp"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/rtsp"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/s7comm"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/sccp"
