@@ -109,6 +109,11 @@ func TestRunWithMockConnection(t *testing.T) {
 			manufacturerResp: []byte{},
 			expectService:    false,
 		},
+		{
+			name:             "MySQL X Protocol response (must not match CR3)",
+			manufacturerResp: []byte{0x05, 0x00, 0x00, 0x00, 0x0b, 0x08, 0x05, 0x1a, 0x00},
+			expectService:    false,
+		},
 	}
 
 	p := &CrimsonV3Plugin{}
@@ -255,6 +260,16 @@ func TestIsValidResponse(t *testing.T) {
 			expected: false,
 		},
 		{
+			name:     "MySQL X Protocol NOTICE response (must not match CR3)",
+			response: []byte{0x05, 0x00, 0x00, 0x00, 0x0b, 0x08, 0x05, 0x1a, 0x00},
+			expected: false,
+		},
+		{
+			name:     "payload length mismatch",
+			response: []byte{0x00, 0x99, 0x01, 0x2b, 0x1b, 0x00, 0x41},
+			expected: false,
+		},
+		{
 			name:     "shorter than header",
 			response: []byte{0x00, 0x04, 0x01},
 			expected: false,
@@ -272,6 +287,34 @@ func TestIsValidResponse(t *testing.T) {
 			t.Parallel()
 			result := isValidResponse(tc.response)
 			assert.Equal(t, tc.expected, result)
+		})
+	}
+}
+
+// TestIsPrintableASCII tests the printable ASCII validation
+func TestIsPrintableASCII(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		input    string
+		expected bool
+	}{
+		{name: "normal text", input: "Red Lion Controls", expected: true},
+		{name: "alphanumeric", input: "G310C2", expected: true},
+		{name: "with punctuation", input: "Red-Lion v3.0", expected: true},
+		{name: "empty string", input: "", expected: false},
+		{name: "binary data", input: "\x05\x1a", expected: false},
+		{name: "null byte", input: "Red\x00Lion", expected: false},
+		{name: "control characters", input: "\x01\x02\x03", expected: false},
+		{name: "high byte", input: "caf\xe9", expected: false},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.expected, isPrintableASCII(tc.input))
 		})
 	}
 }

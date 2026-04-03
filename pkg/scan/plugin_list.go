@@ -88,6 +88,7 @@ import (
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/mqtt/mqtt5"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/mssql"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/mysql"
+	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/mysqlx"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/nats"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/neo4j"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/netbios"
