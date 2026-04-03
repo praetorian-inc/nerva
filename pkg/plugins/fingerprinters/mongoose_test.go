@@ -284,6 +284,14 @@ func TestMongooseFingerprinter_Fingerprint_Invalid(t *testing.T) {
 			name: "Body with partial Mongoose string (no version pattern)",
 			body: `<html><body><p>Powered by Mongoose</p></body></html>`,
 		},
+		{
+			name:   "Server: Mongoose/ (trailing slash, no version)",
+			server: "Mongoose/",
+		},
+		{
+			name: "Body with CPE injection in address tag",
+			body: `<html><body><address>Mongoose v.7.14:*:*:*</address></body></html>`,
+		},
 	}
 
 	for _, tt := range tests {

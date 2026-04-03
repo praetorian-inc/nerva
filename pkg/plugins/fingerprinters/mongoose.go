@@ -114,9 +114,10 @@ func (f *MongooseFingerprinter) Fingerprint(resp *http.Response, body []byte) (*
 		"product": "Mongoose",
 	}
 
-	// Check if directory listing is present
+	// Check if directory listing is present (requires both the versioned footer
+	// and a table element, matching Mongoose's actual directory listing output)
 	if bodyStr != "" {
-		if strings.Contains(bodyStr, "<address>Mongoose") && strings.Contains(bodyStr, "<table") {
+		if mongooseBodyVersionRegex.MatchString(bodyStr) && strings.Contains(bodyStr, "<table") {
 			metadata["directory_listing"] = true
 		}
 	}
