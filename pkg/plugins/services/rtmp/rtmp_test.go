@@ -101,8 +101,8 @@ func TestRTMPPlugin_Reject_WrongVersion(t *testing.T) {
 }
 
 func TestRTMPPlugin_Reject_TooShort(t *testing.T) {
-	// Only 3 bytes (need at least 5)
-	response := []byte{0x03, 0x00, 0x00}
+	// Only 5 bytes (need at least 9)
+	response := []byte{0x03, 0x00, 0x00, 0x00, 0x00}
 
 	conn := newMockConn(response)
 	p := &RTMPPlugin{}
@@ -151,17 +151,27 @@ func TestIsValidRTMPResponse(t *testing.T) {
 			expected: true,
 		},
 		{
-			name:     "Minimal valid (S0 + 4 bytes S1)",
-			data:     []byte{0x03, 0x00, 0x00, 0x00, 0x00},
+			name:     "Minimal valid (S0 + 4-byte timestamp + 4 zero bytes)",
+			data:     []byte{0x03, 0x00, 0x01, 0x02, 0x03, 0x00, 0x00, 0x00, 0x00},
 			expected: true,
 		},
 		{
 			name:     "Wrong version",
-			data:     []byte{0x06, 0x00, 0x00, 0x00, 0x00},
+			data:     []byte{0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
 			expected: false,
 		},
 		{
-			name:     "Too short",
+			name:     "Non-zero S1 bytes 4-7 (not RTMP)",
+			data:     []byte{0x03, 0x00, 0x00, 0x00, 0x00, 0x01, 0x02, 0x03, 0x04},
+			expected: false,
+		},
+		{
+			name:     "Too short (5 bytes, need 9)",
+			data:     []byte{0x03, 0x00, 0x00, 0x00, 0x00},
+			expected: false,
+		},
+		{
+			name:     "Too short (2 bytes)",
 			data:     []byte{0x03, 0x00},
 			expected: false,
 		},

@@ -68,10 +68,11 @@ func (p *RTMPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 
 // isValidRTMPResponse validates an RTMP S0+S1 response.
 // S0 is a single byte containing the RTMP version (must be 0x03).
-// S1 follows with 1536 bytes (we only check S0 + minimum length).
+// S1 is 1536 bytes: 4-byte timestamp + 4 zero bytes + 1528 random bytes.
+// Per the RTMP spec, S1 bytes 4-7 must be zeros for version 3.
 func isValidRTMPResponse(response []byte) bool {
-	// Need at least S0 (1 byte) + some S1 data
-	if len(response) < 1+4 {
+	// Need at least S0 (1) + S1 timestamp (4) + S1 zeros (4) = 9 bytes
+	if len(response) < 9 {
 		return false
 	}
 
@@ -80,9 +81,12 @@ func isValidRTMPResponse(response []byte) bool {
 		return false
 	}
 
-	// S1 should be at least partially present (1536 bytes).
-	// We accept partial reads since utils.Recv may not get the full S1+S2.
-	// Minimum: S0 (1) + some S1 timestamp (4) = 5 bytes.
+	// S1 bytes 4-7 (offsets 5-8 in response) must be zeros per RTMP spec.
+	// This distinguishes RTMP from other protocols that happen to start with 0x03.
+	if response[5] != 0 || response[6] != 0 || response[7] != 0 || response[8] != 0 {
+		return false
+	}
+
 	return true
 }
 
