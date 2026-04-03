@@ -87,9 +87,10 @@ func (p *CrimsonV3Plugin) Run(conn net.Conn, timeout time.Duration, target plugi
 		return nil, nil
 	}
 
-	// Extract manufacturer string
+	// Extract manufacturer string — must be printable ASCII to avoid
+	// false positives on binary protocols like MySQL X Protocol
 	manufacturer := extractString(response)
-	if manufacturer == "" {
+	if !isPrintableASCII(manufacturer) {
 		return nil, nil
 	}
 
@@ -146,10 +147,35 @@ func extractString(response []byte) string {
 	return string(data)
 }
 
-// isValidResponse checks if response is valid CR3 format
-// Valid response must be > 6 bytes (header + at least some data)
+// isValidResponse checks if response is valid CR3 format.
+// Validates header structure: first two bytes encode payload length (big-endian),
+// and the stated length must be consistent with the actual response size.
+// This prevents false positives on other binary protocols (e.g., MySQL X Protocol)
+// whose responses happen to be longer than 6 bytes.
 func isValidResponse(response []byte) bool {
-	return len(response) > CR3HeaderSize
+	if len(response) <= CR3HeaderSize {
+		return false
+	}
+	// Validate payload length field matches actual response
+	payloadLen := int(response[0])<<8 | int(response[1])
+	if payloadLen == 0 || payloadLen+2 != len(response) {
+		return false
+	}
+	return true
+}
+
+// isPrintableASCII checks that every byte in s is printable ASCII (0x20-0x7E).
+// CR3 register strings (manufacturer, model) are always human-readable text.
+func isPrintableASCII(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, b := range []byte(s) {
+		if b < 0x20 || b > 0x7E {
+			return false
+		}
+	}
+	return true
 }
 
 // generateCPE generates CPE string from model name

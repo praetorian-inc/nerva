@@ -141,6 +141,7 @@ const (
 	ProtoMQTT             = "mqtt"
 	ProtoMSSQL            = "mssql"
 	ProtoMySQL            = "mysql"
+	ProtoMySQLX           = "mysqlx"
 	ProtoNATS             = "nats"
 	ProtoNeo4j            = "neo4j"
 	ProtoNRPE             = "nrpe"
@@ -454,6 +455,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoMySQL:
 		var p ServiceMySQL
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoMySQLX:
+		var p ServiceMySQLX
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoSMTP:
@@ -870,6 +875,12 @@ type ServiceMySQL struct {
 }
 
 func (e ServiceMySQL) Type() string { return ProtoMySQL }
+
+type ServiceMySQLX struct {
+	CPEs []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceMySQLX) Type() string { return ProtoMySQLX }
 
 func (e ServicePostgreSQL) Type() string { return ProtoPostgreSQL }
 
