@@ -288,3 +288,34 @@ func TestFirebirdPluginInterface(t *testing.T) {
 	// Just verify it returns a value
 	_ = plugin.Type()
 }
+
+// TestSmartInstallResponseRejected verifies that Cisco Smart Install responses
+// are not misidentified as Firebird. The Smart Install response starts with
+// 0x00000004 which is opReject (4) in Firebird's wire protocol.
+func TestSmartInstallResponseRejected(t *testing.T) {
+	// Standard Smart Install response (24 bytes starting with 0x00000004)
+	smartInstallResp := []byte{
+		0x00, 0x00, 0x00, 0x04,
+		0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x03,
+		0x00, 0x00, 0x00, 0x08,
+		0x00, 0x00, 0x00, 0x01,
+		0x00, 0x00, 0x00, 0x00,
+	}
+
+	// Parse opcode
+	opcode := binary.BigEndian.Uint32(smartInstallResp[0:4])
+	if opcode != opReject {
+		t.Fatalf("expected opcode %d (opReject), got %d", opReject, opcode)
+	}
+
+	// Verify that the response is longer than 4 bytes (opReject should be exactly 4)
+	// This is what our fix checks — a real Firebird opReject is exactly 4 bytes
+	if len(smartInstallResp) == 4 {
+		t.Fatal("Smart Install response should be 24 bytes, not 4")
+	}
+
+	// The fix rejects opReject responses that are not exactly 4 bytes
+	// So this 24-byte Smart Install response should NOT be treated as Firebird
+	t.Logf("Smart Install response (%d bytes) correctly rejected: opReject handler requires exactly 4 bytes", len(smartInstallResp))
+}

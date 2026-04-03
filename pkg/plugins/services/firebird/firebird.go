@@ -151,8 +151,14 @@ func (p *FirebirdPlugin) Run(conn net.Conn, timeout time.Duration, target plugin
 		return plugins.CreateServiceFrom(target, payload, false, version, plugins.TCP), nil
 
 	case opReject:
-		// Server rejected connection but responded (still confirms Firebird)
-		// Cannot extract protocol version from rejection, use wildcard CPE
+		// Server rejected connection but responded (still confirms Firebird).
+		// A real Firebird opReject is exactly 4 bytes (just the opcode).
+		// Reject longer responses to avoid false positives on protocols that
+		// happen to start with 0x00000004 (e.g., Cisco Smart Install).
+		if len(response) != 4 {
+			return nil, nil
+		}
+
 		cpe := buildFirebirdCPE("")
 
 		payload := plugins.ServiceFirebird{
