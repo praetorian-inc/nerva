@@ -86,6 +86,7 @@ import (
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/mongodb"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/mqtt/mqtt3"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/mqtt/mqtt5"
+	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/msrpc"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/mssql"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/mysql"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/nats"
