@@ -116,6 +116,7 @@ import (
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/sccp"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/sgsap"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/sip"
+	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/smartinstall"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/smb"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/smpp"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/smtp"

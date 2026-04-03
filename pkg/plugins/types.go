@@ -173,6 +173,7 @@ const (
 	ProtoRsync            = "rsync"
 	ProtoRtsp             = "rtsp"
 	ProtoS7comm           = "s7comm"
+	ProtoSmartInstall     = "smart-install"
 	ProtoSAPNetWeaver     = "sap-netweaver"
 	ProtoSCCP             = "sccp"
 	ProtoSGsAP            = "sgsap"
@@ -547,6 +548,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoS7comm:
 		var p ServiceS7comm
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoSmartInstall:
+		var p ServiceSmartInstall
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoSCCP:
@@ -1573,6 +1578,12 @@ type ServiceS7comm struct {
 }
 
 func (e ServiceS7comm) Type() string { return ProtoS7comm }
+
+type ServiceSmartInstall struct {
+	CPEs []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceSmartInstall) Type() string { return ProtoSmartInstall }
 
 type ServicePROFINET struct {
 	DeviceName string   `json:"device_name,omitempty"`
