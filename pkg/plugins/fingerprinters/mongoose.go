@@ -47,9 +47,6 @@ import (
 // MongooseFingerprinter detects Cesanta Mongoose embedded web server instances
 type MongooseFingerprinter struct{}
 
-// mongooseHeaderVersionRegex extracts version from Server header "Mongoose/X.XX"
-var mongooseHeaderVersionRegex = regexp.MustCompile(`(?i)mongoose/(\d+\.\d+(?:\.\d+)?)`)
-
 // mongooseBodyVersionRegex extracts version from directory listing footer
 // "<address>Mongoose v.7.21</address>"
 var mongooseBodyVersionRegex = regexp.MustCompile(`<address>Mongoose v\.(\d+\.\d+(?:\.\d+)?)</address>`)
@@ -93,8 +90,12 @@ func (f *MongooseFingerprinter) Fingerprint(resp *http.Response, body []byte) (*
 	}
 
 	// Signal 2: Directory listing footer "<address>Mongoose v.X.XX</address>"
-	if !detected && len(body) > 0 {
-		bodyStr := string(body)
+	var bodyStr string
+	if len(body) > 0 {
+		bodyStr = string(body)
+	}
+
+	if !detected && bodyStr != "" {
 		if matches := mongooseBodyVersionRegex.FindStringSubmatch(bodyStr); len(matches) >= 2 {
 			detected = true
 			candidate := matches[1]
@@ -114,8 +115,7 @@ func (f *MongooseFingerprinter) Fingerprint(resp *http.Response, body []byte) (*
 	}
 
 	// Check if directory listing is present
-	if len(body) > 0 {
-		bodyStr := string(body)
+	if bodyStr != "" {
 		if strings.Contains(bodyStr, "<address>Mongoose") && strings.Contains(bodyStr, "<table") {
 			metadata["directory_listing"] = true
 		}
