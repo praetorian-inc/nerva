@@ -118,6 +118,9 @@ func TestMikroTikFingerprinter_Fingerprint_WebFigPage(t *testing.T) {
 }
 
 func TestMikroTikFingerprinter_Fingerprint_RouterOSTitle(t *testing.T) {
+	// Title "MikroTik RouterOS" triggers mikrotik + routeros + title (3 generic signals)
+	// but no exclusive signal (no webfig, no data-defaultuser). Under the new logic,
+	// generic signals alone are insufficient — an exclusive signal is required.
 	body := []byte(`<html>
 <head><title>MikroTik RouterOS</title></head>
 <body>
@@ -135,9 +138,7 @@ func TestMikroTikFingerprinter_Fingerprint_RouterOSTitle(t *testing.T) {
 
 	result, err := fp.Fingerprint(resp, body)
 	require.NoError(t, err)
-	require.NotNil(t, result)
-
-	assert.Equal(t, "mikrotik-routeros", result.Technology)
+	assert.Nil(t, result)
 }
 
 func TestMikroTikFingerprinter_Fingerprint_VersionExtraction(t *testing.T) {
@@ -203,6 +204,24 @@ func TestMikroTikFingerprinter_Fingerprint_NoMatch(t *testing.T) {
 			body:    []byte(`<html><head><title>RouterOS</title></head></html>`),
 			status:  500,
 		},
+		{
+			name:    "single signal mikrotik mention only",
+			headers: map[string]string{"Content-Type": "text/html"},
+			body:    []byte(`<html><body><p>Powered by MikroTik</p></body></html>`),
+			status:  200,
+		},
+		{
+			name:    "blog post mentioning mikrotik is rejected",
+			headers: map[string]string{"Content-Type": "text/html"},
+			body:    []byte(`<html><head><title>Best Routers 2024</title></head><body><p>MikroTik makes great routers.</p></body></html>`),
+			status:  200,
+		},
+		{
+			name:    "single routeros signal only is rejected",
+			headers: map[string]string{"Content-Type": "text/html"},
+			body:    []byte(`<html><body><p>RouterOS is an operating system.</p></body></html>`),
+			status:  200,
+		},
 	}
 
 	for _, tt := range tests {
@@ -229,7 +248,7 @@ func TestMikroTikFingerprinter_ProbeEndpoint(t *testing.T) {
 	assert.Equal(t, "/webfig/", fp.ProbeEndpoint())
 }
 
-func TestBuildMikroTikCPE(t *testing.T) {
+func TestBuildMikroTikRouterOSCPE(t *testing.T) {
 	tests := []struct {
 		name     string
 		version  string
@@ -254,14 +273,16 @@ func TestBuildMikroTikCPE(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := buildMikroTikCPE(tt.version)
+			got := BuildMikroTikRouterOSCPE(tt.version)
 			assert.Equal(t, tt.expected, got)
 		})
 	}
 }
 
-func TestMikroTikFingerprinter_Fingerprint_MikroTikBodyOnly(t *testing.T) {
-	body := []byte(`<html><body><p>Powered by MikroTik</p></body></html>`)
+func TestMikroTikFingerprinter_Fingerprint_LoginFormSignal(t *testing.T) {
+	// data-defaultuser is MikroTik-specific and survives custom branding.
+	// Combined with "mikrotik" in the body, this satisfies the 2-signal requirement.
+	body := []byte(`<html><body><form data-defaultuser="admin"><input type="password"/></form><p>MikroTik</p></body></html>`)
 	fp := &MikroTikFingerprinter{}
 	header := http.Header{}
 	header.Set("Content-Type", "text/html")
@@ -272,6 +293,166 @@ func TestMikroTikFingerprinter_Fingerprint_MikroTikBodyOnly(t *testing.T) {
 	result, err := fp.Fingerprint(resp, body)
 	require.NoError(t, err)
 	require.NotNil(t, result)
+	assert.Equal(t, "mikrotik-routeros", result.Technology)
+}
+
+func TestMikroTikFingerprinter_Fingerprint_CaseInsensitiveTitle(t *testing.T) {
+	// Uppercase TITLE tag must be detected by the case-insensitive title extractor.
+	body := []byte(`<html><head><TITLE>MikroTik RouterOS</TITLE></head><body><div id="webfig"></div></body></html>`)
+	fp := &MikroTikFingerprinter{}
+	header := http.Header{}
+	header.Set("Content-Type", "text/html")
+	resp := &http.Response{
+		StatusCode: 200,
+		Header:     header,
+	}
+	result, err := fp.Fingerprint(resp, body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "mikrotik-routeros", result.Technology)
+}
+
+func TestMikroTikFingerprinter_Fingerprint_HotspotPage(t *testing.T) {
+	// Simulates a hotspot page with mikrotik + routeros (2 generic signals) but no
+	// exclusive signal (no webfig, no data-defaultuser). Under the new logic, generic
+	// signals alone are insufficient — an exclusive signal is required.
+	body := []byte(`<html><head><title>internet hotspot > login</title></head>
+<body><img alt="mikrotik"><p>Powered by MikroTik RouterOS</p></body></html>`)
+	fp := &MikroTikFingerprinter{}
+	header := http.Header{}
+	header.Set("Content-Type", "text/html")
+	resp := &http.Response{
+		StatusCode: 200,
+		Header:     header,
+	}
+	result, err := fp.Fingerprint(resp, body)
+	require.NoError(t, err)
+	assert.Nil(t, result)
+}
+
+func TestMikroTikFingerprinter_Fingerprint_OldAdminPage(t *testing.T) {
+	// Title contains both "mikrotik" and "routeros" — hasTitle is true.
+	// Body also contains "mikrotik" and "routeros" — hasMikroTik + hasRouterOS also true.
+	// However, all signals are generic (no webfig, no data-defaultuser), so under the
+	// exclusive-signal requirement, this page does not match.
+	body := []byte(`<html><head><title>mikrotik routeros > administration</title></head>
+<body><div class="top">mikrotik routeros 6.49.17 configuration page</div></body></html>`)
+	fp := &MikroTikFingerprinter{}
+	header := http.Header{}
+	header.Set("Content-Type", "text/html")
+	resp := &http.Response{
+		StatusCode: 200,
+		Header:     header,
+	}
+	result, err := fp.Fingerprint(resp, body)
+	require.NoError(t, err)
+	assert.Nil(t, result)
+}
+
+func TestMikroTikFingerprinter_Fingerprint_SingleDataDefaultuserRejected(t *testing.T) {
+	// Only data-defaultuser signal present — 1 signal is below the 2-signal threshold.
+	body := []byte(`<html><body><form id="login"><input id="name" data-defaultuser="admin"><input id="password"></form></body></html>`)
+	fp := &MikroTikFingerprinter{}
+	header := http.Header{}
+	header.Set("Content-Type", "text/html")
+	resp := &http.Response{
+		StatusCode: 200,
+		Header:     header,
+	}
+	result, err := fp.Fingerprint(resp, body)
+	require.NoError(t, err)
+	assert.Nil(t, result)
+}
+
+func TestMikroTikFingerprinter_Fingerprint_DataDefaultuserPlusMikroTikMatches(t *testing.T) {
+	// data-defaultuser + "mikrotik" in body = 2 signals — meets threshold.
+	body := []byte(`<html><body><img src="mikrotik_logo.png"><form id="login"><input id="name" data-defaultuser="admin"></form></body></html>`)
+	fp := &MikroTikFingerprinter{}
+	header := http.Header{}
+	header.Set("Content-Type", "text/html")
+	resp := &http.Response{
+		StatusCode: 200,
+		Header:     header,
+	}
+	result, err := fp.Fingerprint(resp, body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "mikrotik-routeros", result.Technology)
+}
+
+func TestMikroTikFingerprinter_Fingerprint_302RedirectMinimalBodyRejected(t *testing.T) {
+	// 302 redirect with minimal body — 0 signals, no match.
+	// Match() returns true for 302 + text/html, but Fingerprint() requires 2 signals.
+	body := []byte(`<html><body>Redirecting...</body></html>`)
+	fp := &MikroTikFingerprinter{}
+	header := http.Header{}
+	header.Set("Content-Type", "text/html")
+	resp := &http.Response{
+		StatusCode: 302,
+		Header:     header,
+	}
+	result, err := fp.Fingerprint(resp, body)
+	require.NoError(t, err)
+	assert.Nil(t, result)
+}
+
+func TestMikroTikFingerprinter_Fingerprint_SecurityBlogPostAcceptedRisk(t *testing.T) {
+	// A security blog post about MikroTik CVEs has mikrotik + routeros + title (3 generic
+	// signals) but no exclusive signal (webfig or data-defaultuser). Under the new logic,
+	// generic signals alone are insufficient — an exclusive signal is required.
+	body := []byte(`<html><head><title>CVE-2018-14847: MikroTik RouterOS Vulnerability</title></head>
+<body><p>MikroTik RouterOS versions before 6.49.7 are vulnerable...</p></body></html>`)
+	fp := &MikroTikFingerprinter{}
+	header := http.Header{}
+	header.Set("Content-Type", "text/html")
+	resp := &http.Response{
+		StatusCode: 200,
+		Header:     header,
+	}
+	result, err := fp.Fingerprint(resp, body)
+	require.NoError(t, err)
+	assert.Nil(t, result)
+}
+
+func TestMikroTikFingerprinter_Fingerprint_LowercaseRouterOSVersionExtraction(t *testing.T) {
+	// The version regex is case-insensitive but version extraction must use the original-case
+	// bodyStr (not bodyLower) so the extracted version string has correct digit formatting.
+	body := []byte(`<html><head><title>RouterOS</title></head><body><p>routeros v7.14.3</p><div id="webfig"></div></body></html>`)
+	fp := &MikroTikFingerprinter{}
+	header := http.Header{}
+	header.Set("Content-Type", "text/html")
+	resp := &http.Response{
+		StatusCode: 200,
+		Header:     header,
+	}
+	result, err := fp.Fingerprint(resp, body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	// Version must be extracted correctly even though "routeros" is lowercase in the body.
+	assert.Equal(t, "7.14.3", result.Version)
+}
+
+func TestMikroTikFingerprinter_Fingerprint_GenericSignalsOnlyRejected(t *testing.T) {
+	body := []byte(`<html><head><title>MikroTik RouterOS > Administration</title></head>
+<body><p>Welcome to MikroTik RouterOS management</p></body></html>`)
+	fp := &MikroTikFingerprinter{}
+	header := http.Header{}
+	header.Set("Content-Type", "text/html")
+	resp := &http.Response{StatusCode: 200, Header: header}
+	result, err := fp.Fingerprint(resp, body)
+	require.NoError(t, err)
+	assert.Nil(t, result, "generic signals (mikrotik + routeros + title) without exclusive signal should not match")
+}
+
+func TestMikroTikFingerprinter_Fingerprint_WebFigExclusivePlusGeneric(t *testing.T) {
+	body := []byte(`<html><body><script src="/webfig/app.js"></script><p>mikrotik device</p></body></html>`)
+	fp := &MikroTikFingerprinter{}
+	header := http.Header{}
+	header.Set("Content-Type", "text/html")
+	resp := &http.Response{StatusCode: 200, Header: header}
+	result, err := fp.Fingerprint(resp, body)
+	require.NoError(t, err)
+	require.NotNil(t, result, "exclusive signal (webfig) + generic signal (mikrotik) should match")
 	assert.Equal(t, "mikrotik-routeros", result.Technology)
 }
 

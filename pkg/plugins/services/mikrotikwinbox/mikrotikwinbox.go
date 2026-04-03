@@ -36,11 +36,11 @@ package mikrotikwinbox
 
 import (
 	"bytes"
-	"fmt"
 	"net"
 	"time"
 
 	"github.com/praetorian-inc/nerva/pkg/plugins"
+	"github.com/praetorian-inc/nerva/pkg/plugins/fingerprinters"
 	utils "github.com/praetorian-inc/nerva/pkg/plugins/pluginutils"
 )
 
@@ -76,8 +76,9 @@ func (p *MikroTikWinboxPlugin) Run(conn net.Conn, timeout time.Duration, target 
 	case DefaultAPIPort:
 		return detectAPI(conn, timeout, target)
 	default:
-		// Try Winbox M2 detection on unknown ports.
-		return detectWinbox(conn, timeout, target)
+		// Do not attempt detection on non-priority ports to avoid false positives.
+		// The M2 magic (2 bytes) is too weak for reliable detection on arbitrary ports.
+		return nil, nil
 	}
 }
 
@@ -100,7 +101,7 @@ func detectWinbox(conn net.Conn, timeout time.Duration, target plugins.Target) (
 
 	payload := plugins.ServiceMikroTikWinbox{
 		SubProtocol: "winbox",
-		CPEs:        []string{buildMikroTikWinboxCPE("")},
+		CPEs:        []string{fingerprinters.BuildMikroTikRouterOSCPE("")},
 	}
 
 	return plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP), nil
@@ -133,21 +134,12 @@ func detectAPI(conn net.Conn, timeout time.Duration, target plugins.Target) (*pl
 
 	payload := plugins.ServiceMikroTikWinbox{
 		SubProtocol: "api",
-		CPEs:        []string{buildMikroTikWinboxCPE("")},
+		CPEs:        []string{fingerprinters.BuildMikroTikRouterOSCPE("")},
 	}
 
 	return plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP), nil
 }
 
-// buildMikroTikWinboxCPE generates a CPE string for MikroTik RouterOS.
-// Uses the OS component type ("o") since RouterOS is an operating system.
-// CPE format: cpe:2.3:o:mikrotik:routeros:{version}:*:*:*:*:*:*:*
-func buildMikroTikWinboxCPE(version string) string {
-	if version == "" {
-		version = "*"
-	}
-	return fmt.Sprintf("cpe:2.3:o:mikrotik:routeros:%s:*:*:*:*:*:*:*", version)
-}
 
 func (p *MikroTikWinboxPlugin) PortPriority(port uint16) bool {
 	return port == DefaultWinboxPort || port == DefaultAPIPort

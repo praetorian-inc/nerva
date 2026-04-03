@@ -17,10 +17,12 @@ package mikrotikwinbox
 import (
 	"io"
 	"net"
+	"net/netip"
 	"testing"
 	"time"
 
 	"github.com/praetorian-inc/nerva/pkg/plugins"
+	"github.com/praetorian-inc/nerva/pkg/plugins/fingerprinters"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -187,7 +189,7 @@ func TestName(t *testing.T) {
 	assert.Equal(t, "mikrotik-winbox", p.Name())
 }
 
-func TestBuildMikroTikWinboxCPE(t *testing.T) {
+func TestBuildMikroTikRouterOSCPE(t *testing.T) {
 	tests := []struct {
 		name     string
 		version  string
@@ -212,8 +214,53 @@ func TestBuildMikroTikWinboxCPE(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := buildMikroTikWinboxCPE(tt.version)
+			got := fingerprinters.BuildMikroTikRouterOSCPE(tt.version)
 			assert.Equal(t, tt.expected, got)
 		})
 	}
+}
+
+func TestRun_APIPortRoutesToAPIDetection(t *testing.T) {
+	// Run() with port 8728 must route to API detection.
+	// A valid !trap response confirms the API code path was exercised.
+	p := &MikroTikWinboxPlugin{}
+	conn := newMockConn([]byte{0x05, '!', 't', 'r', 'a', 'p', 0x00})
+	target := plugins.Target{
+		Address: netip.MustParseAddrPort("192.168.1.1:8728"),
+	}
+	svc, err := p.Run(conn, time.Second, target)
+	require.NoError(t, err)
+	require.NotNil(t, svc, "port 8728 with valid API response should be detected")
+	assert.Equal(t, DefaultAPIPort, svc.Port)
+}
+
+func TestRun_WinboxPortRoutesToWinboxDetection(t *testing.T) {
+	// Run() with port 8291 must route to Winbox detection.
+	// A valid M2 magic response confirms the Winbox code path was exercised.
+	p := &MikroTikWinboxPlugin{}
+	conn := newMockConn([]byte{0x4D, 0x32, 0x00, 0x00, 0x00, 0x00})
+	target := plugins.Target{
+		Address: netip.MustParseAddrPort("192.168.1.1:8291"),
+	}
+	svc, err := p.Run(conn, time.Second, target)
+	require.NoError(t, err)
+	require.NotNil(t, svc, "port 8291 with M2 magic should be detected as Winbox")
+	assert.Equal(t, DefaultWinboxPort, svc.Port)
+}
+
+func TestRun_NonPriorityPortReturnsNil(t *testing.T) {
+	// Non-priority ports must return nil to avoid false positives from the
+	// 2-byte M2 magic being too weak for arbitrary port detection.
+	p := &MikroTikWinboxPlugin{}
+	// Port 80 is not a priority port; provide M2 magic bytes to ensure
+	// the nil return is from port gating, not from the M2 check failing.
+	conn := newMockConn([]byte{0x4D, 0x32, 0x00, 0x00})
+	target := plugins.Target{}
+
+	// Manually set the port via address — use a helper that creates a target
+	// with a non-priority port. Since plugins.Target wraps an address, we
+	// call Run directly and rely on Port() returning 0 for a zero-value target.
+	svc, err := p.Run(conn, time.Second, target)
+	require.NoError(t, err)
+	assert.Nil(t, svc, "non-priority port should return nil")
 }

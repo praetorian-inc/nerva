@@ -16,12 +16,17 @@
 //
 // Detection Strategy:
 // MikroTik RouterOS exposes a web management interface called WebFig.
-// Detection uses multiple signals to identify RouterOS:
+// Detection uses multiple signals to identify RouterOS. At least one
+// MikroTik-exclusive signal (webfig or data-defaultuser) plus one
+// corroborating signal must match. Generic signals alone (mikrotik,
+// routeros, title) are insufficient since the fingerprinter runs against
+// both "/" and "/webfig/" responses:
 //
 //  1. PRIMARY:   Body contains "webfig" or "/webfig/" path reference
 //  2. SECONDARY: Body contains "mikrotik" (case-insensitive)
 //  3. TERTIARY:  Body contains "RouterOS" string
 //  4. TITLE:     Title contains "RouterOS" or "MikroTik"
+//  5. LOGIN:     Body contains "data-defaultuser" (MikroTik-specific login form attribute)
 //
 // Version Detection:
 // - Regex scan for patterns like "RouterOS v7.22.1" or version strings near MikroTik references
@@ -82,20 +87,36 @@ func (f *MikroTikFingerprinter) Fingerprint(resp *http.Response, body []byte) (*
 	}
 
 	bodyStr := string(body)
+	bodyLower := strings.ToLower(bodyStr)
 
 	// Signal 1: Body contains "webfig" (case-insensitive).
-	hasWebFig := strings.Contains(strings.ToLower(bodyStr), "webfig")
+	hasWebFig := strings.Contains(bodyLower, "webfig")
 
 	// Signal 2: Body contains "mikrotik" (case-insensitive).
-	hasMikroTik := strings.Contains(strings.ToLower(bodyStr), "mikrotik")
+	hasMikroTik := strings.Contains(bodyLower, "mikrotik")
 
-	// Signal 3: Body contains "RouterOS" string.
-	hasRouterOS := strings.Contains(bodyStr, "RouterOS")
+	// Signal 3: Body contains "RouterOS" (case-insensitive).
+	hasRouterOS := strings.Contains(bodyLower, "routeros")
 
 	// Signal 4: Title contains "RouterOS" or "MikroTik".
-	hasTitle := extractMikroTikTitle(bodyStr)
+	hasTitle := extractMikroTikTitle(bodyLower)
 
-	if !hasWebFig && !hasMikroTik && !hasRouterOS && !hasTitle {
+	// Signal 5: MikroTik-specific login form attribute (survives custom branding).
+	hasLoginForm := strings.Contains(bodyLower, "data-defaultuser")
+
+	// Require at least one MikroTik-exclusive signal (webfig or data-defaultuser)
+	// plus at least one corroborating signal. Generic signals alone (mikrotik,
+	// routeros, title) are insufficient because the fingerprinter runs against
+	// both the root "/" response and the "/webfig/" probe — any page mentioning
+	// "MikroTik RouterOS" would otherwise false-positive on the root response.
+	hasExclusiveSignal := hasWebFig || hasLoginForm
+	signalCount := 0
+	for _, signal := range []bool{hasWebFig, hasMikroTik, hasRouterOS, hasTitle, hasLoginForm} {
+		if signal {
+			signalCount++
+		}
+	}
+	if !hasExclusiveSignal || signalCount < 2 {
 		return nil, nil
 	}
 
@@ -110,24 +131,25 @@ func (f *MikroTikFingerprinter) Fingerprint(resp *http.Response, body []byte) (*
 	return &FingerprintResult{
 		Technology: "mikrotik-routeros",
 		Version:    version,
-		CPEs:       []string{buildMikroTikCPE(version)},
+		CPEs:       []string{BuildMikroTikRouterOSCPE(version)},
 		Metadata:   metadata,
 	}, nil
 }
 
-// extractMikroTikTitle returns true if the HTML title contains "RouterOS" or "MikroTik".
-func extractMikroTikTitle(bodyStr string) bool {
-	start := strings.Index(bodyStr, "<title>")
+// extractMikroTikTitle returns true if the HTML title contains "routeros" or "mikrotik".
+// Expects a lowercased body string.
+func extractMikroTikTitle(bodyLower string) bool {
+	start := strings.Index(bodyLower, "<title>")
 	if start == -1 {
 		return false
 	}
 	start += len("<title>")
-	end := strings.Index(bodyStr[start:], "</title>")
+	end := strings.Index(bodyLower[start:], "</title>")
 	if end == -1 {
 		return false
 	}
-	title := strings.TrimSpace(bodyStr[start : start+end])
-	return strings.Contains(title, "RouterOS") || strings.Contains(strings.ToLower(title), "mikrotik")
+	title := bodyLower[start : start+end]
+	return strings.Contains(title, "routeros") || strings.Contains(title, "mikrotik")
 }
 
 // extractMikroTikVersion extracts RouterOS version from the response body.
@@ -152,10 +174,10 @@ func extractMikroTikVersion(bodyStr string) string {
 	return version
 }
 
-// buildMikroTikCPE generates a CPE string for MikroTik RouterOS.
+// BuildMikroTikRouterOSCPE generates a CPE string for MikroTik RouterOS.
 // Uses the OS component type ("o") since RouterOS is an operating system.
 // CPE format: cpe:2.3:o:mikrotik:routeros:{version}:*:*:*:*:*:*:*
-func buildMikroTikCPE(version string) string {
+func BuildMikroTikRouterOSCPE(version string) string {
 	if version == "" {
 		version = "*"
 	}
