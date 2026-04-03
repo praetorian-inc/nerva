@@ -28,6 +28,7 @@ package smartinstall
 
 import (
 	"bytes"
+	"encoding/binary"
 	"net"
 	"time"
 
@@ -78,13 +79,24 @@ func (p *SmartInstallPlugin) Run(conn net.Conn, timeout time.Duration, target pl
 	return plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP), nil
 }
 
-// isValidSmartInstallResponse validates the Smart Install response.
-// A valid response is exactly 24 bytes and starts with 0x00000004.
+// isValidSmartInstallResponse validates the Smart Install response per the
+// Cisco-Talos smi_check specification. A valid response is exactly 24 bytes
+// with specific field values at known offsets.
 func isValidSmartInstallResponse(response []byte) bool {
 	if len(response) != respLen {
 		return false
 	}
-	return bytes.HasPrefix(response, smiResponsePrefix)
+	if !bytes.HasPrefix(response, smiResponsePrefix) {
+		return false
+	}
+	// Validate additional fields per smi_check spec
+	if binary.BigEndian.Uint32(response[8:12]) != 0x00000003 {
+		return false
+	}
+	if binary.BigEndian.Uint32(response[12:16]) != 0x00000008 {
+		return false
+	}
+	return true
 }
 
 func (p *SmartInstallPlugin) PortPriority(port uint16) bool {
