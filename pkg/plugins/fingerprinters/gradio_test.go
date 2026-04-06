@@ -86,7 +86,8 @@ func TestGradioFingerprinter_Fingerprint_Valid_Config(t *testing.T) {
 		wantProtocol     string
 		wantIsSpace      bool
 		wantSpaceID      string
-		wantComponentMin int // minimum component_count expected (-1 means don't check)
+		wantComponentMin int    // minimum component_count expected (-1 means don't check)
+		wantCPEVersion   string // when empty, defaults to wantVersion
 	}{
 		{
 			name: "Gradio 3.x config (no protocol field, has enable_queue)",
@@ -170,6 +171,20 @@ func TestGradioFingerprinter_Fingerprint_Valid_Config(t *testing.T) {
 			wantMode:         "blocks",
 			wantComponentMin: -1, // empty array, component_count not expected
 		},
+		{
+			name: "Gradio pre-release version (4.0.0b1)",
+			body: `{
+				"version": "4.0.0b1",
+				"mode": "blocks",
+				"is_space": false,
+				"components": [{"id": 1, "type": "textbox"}],
+				"dependencies": []
+			}`,
+			wantVersion:      "4.0.0b1",
+			wantMode:         "blocks",
+			wantComponentMin: 1,
+			wantCPEVersion:   "4.0.0",
+		},
 	}
 
 	for _, tt := range tests {
@@ -196,7 +211,11 @@ func TestGradioFingerprinter_Fingerprint_Valid_Config(t *testing.T) {
 			if len(result.CPEs) == 0 {
 				t.Error("Expected at least one CPE")
 			} else {
-				wantCPE := "cpe:2.3:a:gradio_project:gradio:" + tt.wantVersion + ":*:*:*:*:python:*:*"
+				cpeVersion := tt.wantVersion
+				if tt.wantCPEVersion != "" {
+					cpeVersion = tt.wantCPEVersion
+				}
+				wantCPE := "cpe:2.3:a:gradio_project:gradio:" + cpeVersion + ":*:*:*:*:python:*:*"
 				if result.CPEs[0] != wantCPE {
 					t.Errorf("CPE = %q, want %q", result.CPEs[0], wantCPE)
 				}
@@ -270,6 +289,10 @@ func TestGradioFingerprinter_Fingerprint_Invalid(t *testing.T) {
 			name: "Version with special characters (CPE injection)",
 			body: `{"version": "4.0.0; rm -rf /", "mode": "blocks", "components": []}`,
 		},
+		{
+			name: "JSON with version and unknown mode but no components/dependencies",
+			body: `{"version": "4.0.0", "mode": "custom_unknown"}`,
+		},
 	}
 
 	for _, tt := range tests {
@@ -310,6 +333,11 @@ func TestBuildGradioCPE(t *testing.T) {
 			name:    "Empty version uses wildcard",
 			version: "",
 			want:    "cpe:2.3:a:gradio_project:gradio:*:*:*:*:*:python:*:*",
+		},
+		{
+			name:    "Pre-release version (base extracted before calling)",
+			version: "4.0.0",
+			want:    "cpe:2.3:a:gradio_project:gradio:4.0.0:*:*:*:*:python:*:*",
 		},
 	}
 

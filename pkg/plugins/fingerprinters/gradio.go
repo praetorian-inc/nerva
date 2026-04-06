@@ -42,7 +42,7 @@ This endpoint requires no authentication and returns a comprehensive JSON object
 describing the application layout. Detection requires:
   1. Content-Type: application/json response header
   2. A "version" field present in the JSON body
-  3. At least one Gradio-specific structural field (components, mode, or dependencies)
+  3. At least one Gradio-specific structural field (components, known mode value, or dependencies)
      to avoid false positives from generic JSON APIs that may return a "version" field
 
 # API Response Format
@@ -123,10 +123,12 @@ type gradioConfigResponse struct {
 }
 
 // gradioVersionRegex validates Gradio version format for CPE safety.
-// Accepts: 3.50.2, 4.44.1, 5.12.0 (strict semantic versioning with exactly 3 numeric components).
-// Rejects: pre-release versions, build metadata, and any special characters that could
-// enable CPE injection attacks. Gradio uses strict semver with no pre-release suffixes.
-var gradioVersionRegex = regexp.MustCompile(`^\d+\.\d+\.\d+$`)
+// Accepts: 3.50.2, 4.44.1, 5.12.0 (standard releases) and 4.0.0b1, 5.0.0rc1 (pre-releases).
+// Rejects: special characters that could enable CPE injection attacks.
+var gradioVersionRegex = regexp.MustCompile(`^\d+\.\d+\.\d+[a-zA-Z0-9]*$`)
+
+// gradioBaseVersionRegex extracts the base semver (digits only) for CPE construction
+var gradioBaseVersionRegex = regexp.MustCompile(`^(\d+\.\d+\.\d+)`)
 
 func init() {
 	Register(&GradioFingerprinter{})
@@ -159,7 +161,7 @@ func (f *GradioFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fi
 	// Require at least one Gradio-specific structural field to prevent false positives.
 	// Generic JSON APIs may expose a "version" field; we need structural confirmation.
 	hasComponents := len(config.Components) > 0 && string(config.Components) != "null"
-	hasMode := config.Mode != ""
+	hasMode := config.Mode == "blocks" || config.Mode == "interface" || config.Mode == "chat_interface"
 	hasDependencies := len(config.Dependencies) > 0 && string(config.Dependencies) != "null"
 
 	// components must be a JSON array (not just any non-null value)
@@ -207,10 +209,15 @@ func (f *GradioFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fi
 		}
 	}
 
+	cpeVersion := config.Version
+	if m := gradioBaseVersionRegex.FindString(config.Version); m != "" {
+		cpeVersion = m
+	}
+
 	return &FingerprintResult{
 		Technology: "gradio",
 		Version:    config.Version,
-		CPEs:       []string{buildGradioCPE(config.Version)},
+		CPEs:       []string{buildGradioCPE(cpeVersion)},
 		Metadata:   metadata,
 	}, nil
 }
