@@ -24,9 +24,8 @@ Exposed instances represent a security concern due to:
   - Artifact storage endpoints that may expose cloud credentials
   - Often deployed without authentication in internal environments
 
-Detection uses two active fingerprinters:
+Detection uses one active fingerprinter:
  1. MLflowFingerprinter: Queries /api/2.0/mlflow/experiments/search?max_results=10 for experiment enumeration
- 2. MLflowVersionFingerprinter: Queries /version for version extraction
 
 # API Response Format
 
@@ -42,14 +41,6 @@ The /api/2.0/mlflow/experiments/search?max_results=10 endpoint returns JSON with
 	    }
 	  ]
 	}
-
-The /version endpoint returns a plain text version string:
-
-	2.3.0
-
-or with surrounding quotes:
-
-	"2.3.0"
 
 # Port Configuration
 
@@ -74,15 +65,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"regexp"
 	"strings"
 )
 
 // MLflowFingerprinter detects MLflow instances via /api/2.0/mlflow/experiments/search
 type MLflowFingerprinter struct{}
-
-// MLflowVersionFingerprinter extracts the MLflow version via /version
-type MLflowVersionFingerprinter struct{}
 
 // mlflowExperimentsResponse represents the JSON structure from /api/2.0/mlflow/experiments/search
 type mlflowExperimentsResponse struct {
@@ -97,13 +84,8 @@ type mlflowExperiment struct {
 	LifecycleStage   string `json:"lifecycle_stage"`
 }
 
-// mlflowVersionRegex validates MLflow version format.
-// Accepts: 2.3.0, 2.12.1, 2.3.0rc1, 2.3.0.dev0
-var mlflowVersionRegex = regexp.MustCompile(`^\d+\.\d+\.\d+([a-zA-Z0-9._-]*)?$`)
-
 func init() {
 	Register(&MLflowFingerprinter{})
-	Register(&MLflowVersionFingerprinter{})
 }
 
 // Name returns the fingerprinter identifier.
@@ -164,45 +146,6 @@ func mlflowHasExperimentsKey(body []byte) bool {
 		return false
 	}
 	return string(val) != "null"
-}
-
-// Name returns the fingerprinter identifier.
-func (f *MLflowVersionFingerprinter) Name() string {
-	return "mlflow-version"
-}
-
-// ProbeEndpoint returns the version endpoint.
-func (f *MLflowVersionFingerprinter) ProbeEndpoint() string {
-	return "/version"
-}
-
-// Match returns true if the response Content-Type indicates text or JSON.
-func (f *MLflowVersionFingerprinter) Match(resp *http.Response) bool {
-	ct := resp.Header.Get("Content-Type")
-	return strings.Contains(ct, "text/") || strings.Contains(ct, "application/json")
-}
-
-// Fingerprint parses the plain text version string from /version.
-func (f *MLflowVersionFingerprinter) Fingerprint(resp *http.Response, body []byte) (*FingerprintResult, error) {
-	raw := strings.TrimSpace(string(body))
-
-	// Strip surrounding quotes if present (e.g., `"2.3.0"` -> `2.3.0`)
-	raw = strings.Trim(raw, `"`)
-
-	if !mlflowVersionRegex.MatchString(raw) {
-		return nil, nil
-	}
-
-	metadata := map[string]any{
-		"version_source": "/version",
-	}
-
-	return &FingerprintResult{
-		Technology: "mlflow",
-		Version:    raw,
-		CPEs:       []string{buildMLflowCPE(raw)},
-		Metadata:   metadata,
-	}, nil
 }
 
 // buildMLflowCPE constructs a CPE 2.3 string for MLflow.
