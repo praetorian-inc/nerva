@@ -58,6 +58,14 @@ var weakMACs = map[string]bool{
 	"hmac-sha1-96-etm@openssh.com": true,
 }
 
+// makeSSHService creates a Service with the given SSH payload and attaches any
+// security findings derived from the algorithm negotiation and auth state.
+func makeSSHService(target plugins.Target, payload plugins.ServiceSSH, algo map[string]string, passwordAuth bool) *plugins.Service {
+	service := plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP)
+	service.SecurityFindings = buildSSHFindings(algo, passwordAuth)
+	return service
+}
+
 // buildSSHFindings inspects the algorithm negotiation map returned by checkAlgo
 // and returns security findings for any weak ciphers, KEX, or MAC algorithms offered,
 // as well as password authentication being enabled.
@@ -339,14 +347,19 @@ func (p *SSHPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 		return plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP), nil
 	}
 
-	// check auth methods
-	// Only include Password auth — adding KeyboardInteractive causes the forked
-	// crypto/ssh library to return "unexpected message type 51 (expected 60)" when
-	// the server rejects keyboard-interactive without sending an info request,
-	// which masks the auth method detection in the error string.
+	// Check auth methods by attempting Password and KeyboardInteractive.
 	conf := ssh.ClientConfig{}
 	conf.Timeout = timeout
-	conf.Auth = []ssh.AuthMethod{ssh.Password("admin")}
+	conf.Auth = []ssh.AuthMethod{
+		ssh.Password("admin"),
+		ssh.KeyboardInteractive(func(name, instruction string, questions []string, echos []bool) ([]string, error) {
+			answers := make([]string, len(questions))
+			for i := range answers {
+				answers[i] = "password"
+			}
+			return answers, nil
+		}),
+	}
 
 	conf.User = "admin"
 	conf.HostKeyCallback = ssh.InsecureIgnoreHostKey()
@@ -404,9 +417,7 @@ func (p *SSHPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 			PasswordAuthEnabled: passwordAuth,
 			Algo:                fmt.Sprintf("%s", algo),
 		}
-		service := plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP)
-		service.SecurityFindings = buildSSHFindings(algo, passwordAuth)
-		return service, nil
+		return makeSSHService(target, payload, algo, passwordAuth), nil
 	}
 	if firstKeyExchange := t.SessionID == nil; firstKeyExchange {
 		sendMsg.KexAlgos = make([]string, 0, len(t.Config.KeyExchanges)+1)
@@ -424,9 +435,7 @@ func (p *SSHPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 			PasswordAuthEnabled: passwordAuth,
 			Algo:                fmt.Sprintf("%s", algo),
 		}
-		service := plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP)
-		service.SecurityFindings = buildSSHFindings(algo, passwordAuth)
-		return service, nil
+		return makeSSHService(target, payload, algo, passwordAuth), nil
 	}
 
 	cookie, err := hex.DecodeString(algo["cookie"])
@@ -439,9 +448,7 @@ func (p *SSHPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 			PasswordAuthEnabled: passwordAuth,
 			Algo:                fmt.Sprintf("%s", algo),
 		}
-		service := plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP)
-		service.SecurityFindings = buildSSHFindings(algo, passwordAuth)
-		return service, nil
+		return makeSSHService(target, payload, algo, passwordAuth), nil
 	}
 	otherInit := &ssh.KexInitMsg{
 		KexAlgos:                strings.Split(algo["KexAlgos"], ","),
@@ -464,9 +471,7 @@ func (p *SSHPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 			PasswordAuthEnabled: passwordAuth,
 			Algo:                fmt.Sprintf("%s", algo),
 		}
-		service := plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP)
-		service.SecurityFindings = buildSSHFindings(algo, passwordAuth)
-		return service, nil
+		return makeSSHService(target, payload, algo, passwordAuth), nil
 	}
 	magics := ssh.HandshakeMagics{
 		ClientVersion: t.ClientVersion,
@@ -484,9 +489,7 @@ func (p *SSHPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 			PasswordAuthEnabled: passwordAuth,
 			Algo:                fmt.Sprintf("%s", algo),
 		}
-		service := plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP)
-		service.SecurityFindings = buildSSHFindings(algo, passwordAuth)
-		return service, nil
+		return makeSSHService(target, payload, algo, passwordAuth), nil
 	}
 	hostKey, err := ssh.ParsePublicKey(result.HostKey)
 	if err != nil {
@@ -495,9 +498,7 @@ func (p *SSHPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 			PasswordAuthEnabled: passwordAuth,
 			Algo:                fmt.Sprintf("%s", algo),
 		}
-		service := plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP)
-		service.SecurityFindings = buildSSHFindings(algo, passwordAuth)
-		return service, nil
+		return makeSSHService(target, payload, algo, passwordAuth), nil
 	}
 	fingerprint := ssh.FingerprintSHA256(hostKey)
 	base64HostKey := base64.StdEncoding.EncodeToString(result.HostKey)
@@ -510,9 +511,7 @@ func (p *SSHPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 		HostKeyType:         hostKey.Type(),
 		HostKeyFingerprint:  fingerprint,
 	}
-	service := plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP)
-	service.SecurityFindings = buildSSHFindings(algo, passwordAuth)
-	return service, nil
+	return makeSSHService(target, payload, algo, passwordAuth), nil
 }
 
 func (p *SSHPlugin) Name() string {
