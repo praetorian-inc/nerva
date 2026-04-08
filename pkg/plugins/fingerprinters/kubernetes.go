@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+
+	"github.com/praetorian-inc/nerva/pkg/plugins"
 )
 
 // KubernetesFingerprinter detects Kubernetes API servers via /version endpoint
@@ -82,15 +84,15 @@ func (f *KubernetesFingerprinter) Fingerprint(resp *http.Response, body []byte) 
 	versionStr = strings.Split(versionStr, "-")[0]
 
 	return &FingerprintResult{
-		Technology:      "kubernetes",
-		Version:         versionStr,
-		CPEs:            []string{buildK8sCPE(versionStr)},
+		Technology: "kubernetes",
+		Version:    versionStr,
+		CPEs:       []string{buildK8sCPE(versionStr)},
 		Metadata: map[string]any{
-			"platform":  version.Platform,
+			"platform":   version.Platform,
 			"go_version": version.GoVersion,
 			"git_commit": version.GitCommit,
 		},
-
+		Severity: plugins.SeverityHigh,
 	}, nil
 }
 

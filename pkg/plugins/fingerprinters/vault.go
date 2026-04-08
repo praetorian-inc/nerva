@@ -73,6 +73,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/praetorian-inc/nerva/pkg/plugins"
 )
 
 // VaultFingerprinter detects HashiCorp Vault instances via /v1/sys/health endpoint
@@ -141,11 +142,11 @@ func (f *VaultFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fin
 	}
 
 	return &FingerprintResult{
-		Technology:      "vault",
-		Version:         health.Version,
-		CPEs:            []string{buildVaultCPE(health.Version)},
-		Metadata:        metadata,
-
+		Technology: "vault",
+		Version:    health.Version,
+		CPEs:       []string{buildVaultCPE(health.Version)},
+		Metadata:   metadata,
+		Severity:   plugins.SeverityMedium,
 	}, nil
 }
 

@@ -63,6 +63,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/praetorian-inc/nerva/pkg/plugins"
 )
 
 // GrafanaFingerprinter detects Grafana instances via /api/health endpoint
@@ -123,11 +124,11 @@ func (f *GrafanaFingerprinter) Fingerprint(resp *http.Response, body []byte) (*F
 	}
 
 	return &FingerprintResult{
-		Technology:      "grafana",
-		Version:         health.Version,
-		CPEs:            []string{buildGrafanaCPE(health.Version)},
-		Metadata:        metadata,
-
+		Technology: "grafana",
+		Version:    health.Version,
+		CPEs:       []string{buildGrafanaCPE(health.Version)},
+		Metadata:   metadata,
+		Severity:   plugins.SeverityMedium,
 	}, nil
 }
 

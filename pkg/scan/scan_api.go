@@ -111,6 +111,7 @@ func SCTPScan(ctx context.Context, targets []plugins.Target, config Config) ([]p
 			return results, nil
 		default:
 		}
+		target.Misconfigs = config.Misconfigs
 		result, err := config.SCTPScanTarget(target)
 		if err == nil && result != nil {
 			results = append(results, *result)
@@ -131,6 +132,7 @@ func UDPScan(ctx context.Context, targets []plugins.Target, config Config) ([]pl
 			return results, nil
 		default:
 		}
+		target.Misconfigs = config.Misconfigs
 		result, err := config.UDPScanTarget(target)
 		if err == nil && result != nil {
 			results = append(results, *result)

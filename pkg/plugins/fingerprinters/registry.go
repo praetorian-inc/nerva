@@ -19,14 +19,17 @@ package fingerprinters
 
 import (
 	"net/http"
+
+	"github.com/praetorian-inc/nerva/pkg/plugins"
 )
 
 // FingerprintResult contains the detected technology information
 type FingerprintResult struct {
-	Technology string         // e.g., "kubernetes"
-	Version    string         // e.g., "1.29.0"
-	CPEs       []string       // e.g., ["cpe:2.3:a:kubernetes:kubernetes:1.29.0:*:*:*:*:*:*:*"]
-	Metadata   map[string]any // service-specific additional data
+	Technology string           // e.g., "kubernetes"
+	Version    string           // e.g., "1.29.0"
+	CPEs       []string         // e.g., ["cpe:2.3:a:kubernetes:kubernetes:1.29.0:*:*:*:*:*:*:*"]
+	Metadata   map[string]any   // service-specific additional data
+	Severity   plugins.Severity // severity for anonymous access finding if detected
 }
 
 // HTTPFingerprinter detects applications running over HTTP

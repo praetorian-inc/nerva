@@ -79,6 +79,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/praetorian-inc/nerva/pkg/plugins"
 )
 
 // PrometheusFingerprinter detects Prometheus instances via /api/v1/status/buildinfo endpoint
@@ -166,11 +167,11 @@ func (f *PrometheusFingerprinter) Fingerprint(resp *http.Response, body []byte) 
 	}
 
 	return &FingerprintResult{
-		Technology:      "prometheus",
-		Version:         buildInfo.Data.Version,
-		CPEs:            []string{buildPrometheusCPE(buildInfo.Data.Version)},
-		Metadata:        metadata,
-
+		Technology: "prometheus",
+		Version:    buildInfo.Data.Version,
+		CPEs:       []string{buildPrometheusCPE(buildInfo.Data.Version)},
+		Metadata:   metadata,
+		Severity:   plugins.SeverityLow,
 	}, nil
 }
 
