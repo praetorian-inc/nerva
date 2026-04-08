@@ -21,7 +21,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"strings"
 	"syscall"
 	"time"
 
@@ -141,18 +140,10 @@ func (p *HTTPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 	if target.Misconfigs && len(fingerprintedTechs) > 0 {
 		service.AnonymousAccess = true
 		for _, ft := range fingerprintedTechs {
-			baseTech := ft.name
-			if idx := strings.Index(ft.name, ":"); idx != -1 {
-				baseTech = ft.name[:idx]
-			}
-			severity := ft.severity
-			if severity == "" {
-				severity = plugins.SeverityMedium // fallback
-			}
 			service.SecurityFindings = append(service.SecurityFindings, plugins.SecurityFinding{
-				ID:          baseTech + "-anon-access",
-				Severity:    severity,
-				Description: baseTech + " accessible without authentication",
+				ID:          ft.name + "-anon-access",
+				Severity:    ft.severity,
+				Description: ft.name + " accessible without authentication",
 				Evidence:    "Successfully queried endpoint without credentials",
 			})
 		}
@@ -224,18 +215,10 @@ func (p *HTTPSPlugin) Run(
 	if target.Misconfigs && len(fingerprintedTechs) > 0 {
 		service.AnonymousAccess = true
 		for _, ft := range fingerprintedTechs {
-			baseTech := ft.name
-			if idx := strings.Index(ft.name, ":"); idx != -1 {
-				baseTech = ft.name[:idx]
-			}
-			severity := ft.severity
-			if severity == "" {
-				severity = plugins.SeverityMedium // fallback
-			}
 			service.SecurityFindings = append(service.SecurityFindings, plugins.SecurityFinding{
-				ID:          baseTech + "-anon-access",
-				Severity:    severity,
-				Description: baseTech + " accessible without authentication",
+				ID:          ft.name + "-anon-access",
+				Severity:    ft.severity,
+				Description: ft.name + " accessible without authentication",
 				Evidence:    "Successfully queried endpoint without credentials",
 			})
 		}
