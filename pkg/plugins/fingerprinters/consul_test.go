@@ -18,7 +18,6 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/praetorian-inc/nerva/pkg/plugins"
 )
 
 func TestConsulFingerprinter_Name(t *testing.T) {
@@ -207,19 +206,6 @@ func TestConsulFingerprinter_Fingerprint_Valid(t *testing.T) {
 				t.Errorf("Metadata enterprise = %v, want %v", enterprise, tt.wantEnterprise)
 			}
 
-			// Security findings
-			if !result.AnonymousAccess {
-				t.Error("expected AnonymousAccess to be true")
-			}
-			if len(result.Findings) != 1 {
-				t.Fatalf("expected 1 finding, got %d", len(result.Findings))
-			}
-			if result.Findings[0].ID != "consul-anon-access" {
-				t.Errorf("expected finding ID 'consul-anon-access', got %q", result.Findings[0].ID)
-			}
-			if result.Findings[0].Severity != plugins.SeverityMedium {
-				t.Errorf("expected severity %s, got %s", plugins.SeverityMedium, result.Findings[0].Severity)
-			}
 		})
 	}
 }

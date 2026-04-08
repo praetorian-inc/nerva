@@ -63,7 +63,6 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/praetorian-inc/nerva/pkg/plugins"
 )
 
 // GrafanaFingerprinter detects Grafana instances via /api/health endpoint
@@ -128,13 +127,7 @@ func (f *GrafanaFingerprinter) Fingerprint(resp *http.Response, body []byte) (*F
 		Version:         health.Version,
 		CPEs:            []string{buildGrafanaCPE(health.Version)},
 		Metadata:        metadata,
-		AnonymousAccess: true,
-		Findings: []plugins.SecurityFinding{{
-			ID:          "grafana-anon-access",
-			Severity:    plugins.SeverityMedium,
-			Description: "Grafana accessible without authentication",
-			Evidence:    "Successfully queried /api/health without credentials",
-		}},
+
 	}, nil
 }
 

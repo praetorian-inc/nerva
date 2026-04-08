@@ -95,8 +95,9 @@ func TestFTPSecurityFindings(t *testing.T) {
 	addrStr := "127.0.0.1:21"
 	addrPort := netip.MustParseAddrPort(addrStr)
 	target := plugins.Target{
-		Host:    "127.0.0.1",
-		Address: addrPort,
+		Host:       "127.0.0.1",
+		Address:    addrPort,
+		Misconfigs: true,
 	}
 
 	plugin := &FTPPlugin{}

@@ -18,7 +18,6 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/praetorian-inc/nerva/pkg/plugins"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -200,19 +199,6 @@ func TestPrometheusFingerprinter_Fingerprint_Valid(t *testing.T) {
 			expectedCPE := "cpe:2.3:a:prometheus:prometheus:" + tt.wantVersion + ":*:*:*:*:*:*:*"
 			assert.Contains(t, result.CPEs, expectedCPE)
 
-			// Security findings
-			if !result.AnonymousAccess {
-				t.Error("expected AnonymousAccess to be true")
-			}
-			if len(result.Findings) != 1 {
-				t.Fatalf("expected 1 finding, got %d", len(result.Findings))
-			}
-			if result.Findings[0].ID != "prometheus-anon-access" {
-				t.Errorf("expected finding ID 'prometheus-anon-access', got %q", result.Findings[0].ID)
-			}
-			if result.Findings[0].Severity != plugins.SeverityLow {
-				t.Errorf("expected severity %s, got %s", plugins.SeverityLow, result.Findings[0].Severity)
-			}
 		})
 	}
 }

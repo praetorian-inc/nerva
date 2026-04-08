@@ -208,11 +208,13 @@ func (p *FTPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 	}
 
 	service := plugins.CreateServiceFrom(target, payload, false, version, plugins.TCP)
-	service.SecurityFindings = []plugins.SecurityFinding{{
-		ID:          "ftp-cleartext",
-		Severity:    plugins.SeverityLow,
-		Description: "FTP transmits data including credentials in cleartext",
-	}}
+	if target.Misconfigs {
+		service.SecurityFindings = []plugins.SecurityFinding{{
+			ID:          "ftp-cleartext",
+			Severity:    plugins.SeverityLow,
+			Description: "FTP transmits data including credentials in cleartext",
+		}}
+	}
 	return service, nil
 }
 

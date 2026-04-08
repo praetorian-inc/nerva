@@ -15,75 +15,13 @@
 package vnc
 
 import (
-	"fmt"
-	"net"
-	"net/netip"
 	"testing"
-	"time"
 
 	"github.com/ory/dockertest/v3"
 
 	"github.com/praetorian-inc/nerva/pkg/plugins"
 	"github.com/praetorian-inc/nerva/pkg/test"
 )
-
-// TestVNCSecurityFindings verifies that security findings are set when VNC is detected via mock server.
-func TestVNCSecurityFindings(t *testing.T) {
-	// Valid VNC protocol version: "RFB 003.008\n" (exactly 12 bytes)
-	vncBanner := []byte("RFB 003.008\n")
-
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("Failed to start mock server: %v", err)
-	}
-	defer listener.Close()
-
-	tcpAddr := listener.Addr().(*net.TCPAddr)
-	serverPort := tcpAddr.Port
-
-	go func() {
-		conn, err := listener.Accept()
-		if err != nil {
-			return
-		}
-		defer conn.Close()
-		_, _ = conn.Write(vncBanner)
-	}()
-
-	time.Sleep(10 * time.Millisecond)
-
-	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", serverPort), 5*time.Second)
-	if err != nil {
-		t.Fatalf("Failed to connect to mock server: %v", err)
-	}
-	defer conn.Close()
-
-	addrStr := fmt.Sprintf("127.0.0.1:%d", serverPort)
-	addrPort := netip.MustParseAddrPort(addrStr)
-	target := plugins.Target{
-		Host:    "127.0.0.1",
-		Address: addrPort,
-	}
-
-	plugin := &VNCPlugin{}
-	service, err := plugin.Run(conn, 5*time.Second, target)
-	if err != nil {
-		t.Fatalf("Run() returned unexpected error: %v", err)
-	}
-	if service == nil {
-		t.Fatal("Run() returned nil, want non-nil service")
-	}
-
-	if len(service.SecurityFindings) != 1 {
-		t.Fatalf("expected 1 finding, got %d", len(service.SecurityFindings))
-	}
-	if service.SecurityFindings[0].ID != "vnc-detected" {
-		t.Errorf("expected finding ID 'vnc-detected', got %q", service.SecurityFindings[0].ID)
-	}
-	if service.SecurityFindings[0].Severity != plugins.SeverityMedium {
-		t.Errorf("expected severity medium, got %s", service.SecurityFindings[0].Severity)
-	}
-}
 
 func TestVNC(t *testing.T) {
 	testcases := []test.Testcase{

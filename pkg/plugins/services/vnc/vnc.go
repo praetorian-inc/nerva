@@ -87,13 +87,7 @@ func (p *VNCPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 		return nil, nil
 	}
 
-	service := plugins.CreateServiceFrom(target, plugins.ServiceVNC{}, false, info, plugins.TCP)
-	service.SecurityFindings = []plugins.SecurityFinding{{
-		ID:          "vnc-detected",
-		Severity:    plugins.SeverityMedium,
-		Description: "VNC service detected, often configured without authentication",
-	}}
-	return service, nil
+	return plugins.CreateServiceFrom(target, plugins.ServiceVNC{}, false, info, plugins.TCP), nil
 }
 
 func (p *VNCPlugin) Name() string {

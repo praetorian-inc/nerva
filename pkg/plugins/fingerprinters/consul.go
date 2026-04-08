@@ -30,7 +30,6 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/praetorian-inc/nerva/pkg/plugins"
 )
 
 // ConsulFingerprinter detects HashiCorp Consul via /v1/agent/self
@@ -102,13 +101,7 @@ func (f *ConsulFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fi
 		Version:         version,
 		CPEs:            []string{buildConsulCPE(version)},
 		Metadata:        metadata,
-		AnonymousAccess: true,
-		Findings: []plugins.SecurityFinding{{
-			ID:          "consul-anon-access",
-			Severity:    plugins.SeverityMedium,
-			Description: "Consul agent accessible without authentication",
-			Evidence:    "Successfully queried /v1/agent/self without credentials",
-		}},
+
 	}, nil
 }
 

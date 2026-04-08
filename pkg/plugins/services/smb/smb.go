@@ -360,7 +360,7 @@ func (p *SMBPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 	}
 
 	service := plugins.CreateServiceFrom(target, info, false, info.OSVersion, plugins.TCP)
-	if !info.SigningRequired {
+	if target.Misconfigs && !info.SigningRequired {
 		service.SecurityFindings = append(service.SecurityFindings, plugins.SecurityFinding{
 			ID:          "smb-signing-not-required",
 			Severity:    plugins.SeverityMedium,

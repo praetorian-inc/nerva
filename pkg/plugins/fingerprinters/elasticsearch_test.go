@@ -20,7 +20,6 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/praetorian-inc/nerva/pkg/plugins"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -207,19 +206,6 @@ func TestElasticsearchFingerprinter_Fingerprint_ValidElasticsearch(t *testing.T)
 				assert.Equal(t, expectedValue, result.Metadata[key], "metadata key: %s", key)
 			}
 
-			// Security findings
-			if !result.AnonymousAccess {
-				t.Error("expected AnonymousAccess to be true")
-			}
-			if len(result.Findings) != 1 {
-				t.Fatalf("expected 1 finding, got %d", len(result.Findings))
-			}
-			if result.Findings[0].ID != "elasticsearch-anon-access" {
-				t.Errorf("expected finding ID 'elasticsearch-anon-access', got %q", result.Findings[0].ID)
-			}
-			if result.Findings[0].Severity != plugins.SeverityHigh {
-				t.Errorf("expected severity %s, got %s", plugins.SeverityHigh, result.Findings[0].Severity)
-			}
 		})
 	}
 }

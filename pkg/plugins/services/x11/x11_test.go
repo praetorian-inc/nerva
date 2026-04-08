@@ -386,8 +386,9 @@ func TestRunWithMockServer(t *testing.T) {
 			addrStr := fmt.Sprintf("127.0.0.1:%d", tt.targetPort)
 			addrPort := netip.MustParseAddrPort(addrStr)
 			target := plugins.Target{
-				Host:    "127.0.0.1",
-				Address: addrPort,
+				Host:       "127.0.0.1",
+				Address:    addrPort,
+				Misconfigs: true,
 			}
 
 			plugin := &Plugin{}

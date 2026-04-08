@@ -781,8 +781,9 @@ func CreateServiceFrom(target Target, m Metadata, tls bool, version string, tran
 }
 
 type Target struct {
-	Address netip.AddrPort
-	Host    string
+	Address    netip.AddrPort
+	Host       string
+	Misconfigs bool // when true, plugins should populate SecurityFindings
 }
 
 type Plugin interface {

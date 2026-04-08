@@ -125,7 +125,7 @@ func (p *Plugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target
 
 	version := fmt.Sprintf("%d.%d", info.MajorVersion, info.MinorVersion)
 	service := plugins.CreateServiceFrom(target, info, false, version, plugins.TCP)
-	if info.AccessGranted {
+	if target.Misconfigs && info.AccessGranted {
 		service.AnonymousAccess = true
 		service.SecurityFindings = []plugins.SecurityFinding{{
 			ID:          "x11-unauth-access",

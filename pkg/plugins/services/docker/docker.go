@@ -234,6 +234,16 @@ func extractHTTPBody(response []byte) []byte {
 	return response
 }
 
+// dockerUnauthFinding returns a SecurityFinding for an unauthenticated Docker API.
+func dockerUnauthFinding(evidence string) plugins.SecurityFinding {
+	return plugins.SecurityFinding{
+		ID:          "docker-unauth-api",
+		Severity:    plugins.SeverityCritical,
+		Description: "Docker API accessible without authentication",
+		Evidence:    evidence,
+	}
+}
+
 // detectDocker performs Docker Remote API detection using HTTP REST API.
 //
 // Detection phases:
@@ -278,25 +288,15 @@ func detectDocker(conn net.Conn, target plugins.Target, timeout time.Duration, t
 				CPEs:       []string{cpe},
 			}
 
+			transport := plugins.TCP
 			if tls {
-				service := plugins.CreateServiceFrom(target, payload, true, result.version, plugins.TCPTLS)
-				service.AnonymousAccess = true
-				service.SecurityFindings = []plugins.SecurityFinding{{
-					ID:          "docker-unauth-api",
-					Severity:    plugins.SeverityCritical,
-					Description: "Docker API accessible without authentication",
-					Evidence:    "Successfully queried /version endpoint without credentials",
-				}}
-				return service, nil
+				transport = plugins.TCPTLS
 			}
-			service := plugins.CreateServiceFrom(target, payload, false, result.version, plugins.TCP)
-			service.AnonymousAccess = true
-			service.SecurityFindings = []plugins.SecurityFinding{{
-				ID:          "docker-unauth-api",
-				Severity:    plugins.SeverityCritical,
-				Description: "Docker API accessible without authentication",
-				Evidence:    "Successfully queried /version endpoint without credentials",
-			}}
+			service := plugins.CreateServiceFrom(target, payload, tls, result.version, transport)
+			if target.Misconfigs {
+				service.AnonymousAccess = true
+				service.SecurityFindings = []plugins.SecurityFinding{dockerUnauthFinding("Successfully queried /version endpoint without credentials")}
+			}
 			return service, nil
 		}
 
@@ -311,25 +311,15 @@ func detectDocker(conn net.Conn, target plugins.Target, timeout time.Duration, t
 				CPEs: []string{cpe},
 			}
 
+			transport := plugins.TCP
 			if tls {
-				service := plugins.CreateServiceFrom(target, payload, true, "", plugins.TCPTLS)
-				service.AnonymousAccess = true
-				service.SecurityFindings = []plugins.SecurityFinding{{
-					ID:          "docker-unauth-api",
-					Severity:    plugins.SeverityCritical,
-					Description: "Docker API accessible without authentication",
-					Evidence:    "Successfully queried /_ping endpoint without credentials",
-				}}
-				return service, nil
+				transport = plugins.TCPTLS
 			}
-			service := plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP)
-			service.AnonymousAccess = true
-			service.SecurityFindings = []plugins.SecurityFinding{{
-				ID:          "docker-unauth-api",
-				Severity:    plugins.SeverityCritical,
-				Description: "Docker API accessible without authentication",
-				Evidence:    "Successfully queried /_ping endpoint without credentials",
-			}}
+			service := plugins.CreateServiceFrom(target, payload, tls, "", transport)
+			if target.Misconfigs {
+				service.AnonymousAccess = true
+				service.SecurityFindings = []plugins.SecurityFinding{dockerUnauthFinding("Successfully queried /_ping endpoint without credentials")}
+			}
 			return service, nil
 		}
 	}

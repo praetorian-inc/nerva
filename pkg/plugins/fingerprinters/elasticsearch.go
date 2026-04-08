@@ -20,7 +20,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/praetorian-inc/nerva/pkg/plugins"
 )
 
 // ElasticsearchFingerprinter detects Elasticsearch via root endpoint (/)
@@ -88,13 +87,7 @@ func (f *ElasticsearchFingerprinter) Fingerprint(resp *http.Response, body []byt
 			"cluster_name":   esResponse.ClusterName,
 			"lucene_version": esResponse.Version.LuceneVersion,
 		},
-		AnonymousAccess: true,
-		Findings: []plugins.SecurityFinding{{
-			ID:          "elasticsearch-anon-access",
-			Severity:    plugins.SeverityHigh,
-			Description: "Elasticsearch accessible without authentication",
-			Evidence:    "Successfully queried root endpoint without credentials",
-		}},
+
 	}, nil
 }
 

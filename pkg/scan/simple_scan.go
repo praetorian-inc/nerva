@@ -259,13 +259,6 @@ func (c *Config) SimpleScanTarget(target plugins.Target) ([]*plugins.Service, er
 	return nil, nil
 }
 
-// stripSecurityFindings removes security findings from a service result
-// when misconfiguration detection is not enabled.
-func stripSecurityFindings(service *plugins.Service) {
-	service.AnonymousAccess = false
-	service.SecurityFindings = nil
-}
-
 // This will attempt to close the provided Conn after running the plugin.
 func simplePluginRunner(
 	conn net.Conn,
@@ -284,11 +277,8 @@ func simplePluginRunner(
 		)
 	}
 
+	target.Misconfigs = config.Misconfigs
 	result, err := plugin.Run(conn, config.DefaultTimeout, target)
-
-	if result != nil && !config.Misconfigs {
-		stripSecurityFindings(result)
-	}
 
 	// Log probe completion.
 	if config.Verbose {
