@@ -308,7 +308,9 @@ func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *ht
 		tech, resultCPEs, metadata, severity := processFingerprintResult(result)
 		if result.Technology != "" { // Guard against empty technology
 			technologies = append(technologies, tech)
-			fingerprintedTechs = append(fingerprintedTechs, fingerprintedTech{name: tech, severity: severity})
+			if result.Severity != "" {
+				fingerprintedTechs = append(fingerprintedTechs, fingerprintedTech{name: tech, severity: severity})
+			}
 		}
 		cpes = append(cpes, resultCPEs...)
 		if metadata != nil && result.Technology != "" {
@@ -353,7 +355,9 @@ func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *ht
 					tech, resultCPEs, metadata, severity := processFingerprintResult(result)
 					if result.Technology != "" { // Guard against empty technology
 						technologies = append(technologies, tech)
-						fingerprintedTechs = append(fingerprintedTechs, fingerprintedTech{name: tech, severity: severity})
+						if result.Severity != "" {
+							fingerprintedTechs = append(fingerprintedTechs, fingerprintedTech{name: tech, severity: severity})
+						}
 					}
 					cpes = append(cpes, resultCPEs...)
 					if metadata != nil && result.Technology != "" {
