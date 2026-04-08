@@ -23,6 +23,7 @@ import (
 	"io"
 	"math/big"
 	"net"
+	"sort"
 	"strings"
 	"time"
 
@@ -30,6 +31,127 @@ import (
 	utils "github.com/praetorian-inc/nerva/pkg/plugins/pluginutils"
 	"github.com/praetorian-inc/nerva/third_party/cryptolib/ssh"
 )
+
+// weakCiphers contains cipher algorithms considered cryptographically weak.
+var weakCiphers = map[string]bool{
+	"arcfour":     true,
+	"arcfour128":  true,
+	"arcfour256":  true,
+	"3des-cbc":    true,
+	"blowfish-cbc": true,
+	"cast128-cbc": true,
+}
+
+// weakKEX contains key exchange algorithms considered cryptographically weak.
+var weakKEX = map[string]bool{
+	"diffie-hellman-group1-sha1":          true,
+	"diffie-hellman-group-exchange-sha1":  true,
+}
+
+// weakMACs contains MAC algorithms considered cryptographically weak.
+var weakMACs = map[string]bool{
+	"hmac-md5":                    true,
+	"hmac-md5-96":                 true,
+	"hmac-md5-etm@openssh.com":    true,
+	"hmac-md5-96-etm@openssh.com": true,
+	"hmac-sha1-96":                true,
+	"hmac-sha1-96-etm@openssh.com": true,
+}
+
+// makeSSHService creates a Service with the given SSH payload and attaches any
+// security findings derived from the algorithm negotiation and auth state.
+func makeSSHService(target plugins.Target, payload plugins.ServiceSSH, algo map[string]string, passwordAuth bool) *plugins.Service {
+	service := plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP)
+	service.SecurityFindings = buildSSHFindings(algo, passwordAuth)
+	return service
+}
+
+// buildSSHFindings inspects the algorithm negotiation map returned by checkAlgo
+// and returns security findings for any weak ciphers, KEX, or MAC algorithms offered,
+// as well as password authentication being enabled.
+func buildSSHFindings(algo map[string]string, passwordAuth bool) []plugins.SecurityFinding {
+	var findings []plugins.SecurityFinding
+
+	// Check ciphers (union of both directions)
+	cipherSet := make(map[string]bool)
+	for _, field := range []string{"CiphersClientServer", "CiphersServerClient"} {
+		for _, alg := range strings.Split(algo[field], ",") {
+			alg = strings.TrimSpace(alg)
+			if alg != "" {
+				cipherSet[alg] = true
+			}
+		}
+	}
+	var foundCiphers []string
+	for alg := range cipherSet {
+		if weakCiphers[alg] {
+			foundCiphers = append(foundCiphers, alg)
+		}
+	}
+	if len(foundCiphers) > 0 {
+		sort.Strings(foundCiphers)
+		findings = append(findings, plugins.SecurityFinding{
+			ID:          "ssh-weak-cipher",
+			Severity:    plugins.SeverityLow,
+			Description: "SSH server offers weak encryption algorithms",
+			Evidence:    strings.Join(foundCiphers, ","),
+		})
+	}
+
+	// Check KEX
+	var foundKEX []string
+	for _, alg := range strings.Split(algo["KexAlgos"], ",") {
+		alg = strings.TrimSpace(alg)
+		if weakKEX[alg] {
+			foundKEX = append(foundKEX, alg)
+		}
+	}
+	if len(foundKEX) > 0 {
+		sort.Strings(foundKEX)
+		findings = append(findings, plugins.SecurityFinding{
+			ID:          "ssh-weak-kex",
+			Severity:    plugins.SeverityLow,
+			Description: "SSH server offers weak key exchange algorithms",
+			Evidence:    strings.Join(foundKEX, ","),
+		})
+	}
+
+	// Check MACs (union of both directions)
+	macSet := make(map[string]bool)
+	for _, field := range []string{"MACsClientServer", "MACsServerClient"} {
+		for _, alg := range strings.Split(algo[field], ",") {
+			alg = strings.TrimSpace(alg)
+			if alg != "" {
+				macSet[alg] = true
+			}
+		}
+	}
+	var foundMACs []string
+	for alg := range macSet {
+		if weakMACs[alg] {
+			foundMACs = append(foundMACs, alg)
+		}
+	}
+	if len(foundMACs) > 0 {
+		sort.Strings(foundMACs)
+		findings = append(findings, plugins.SecurityFinding{
+			ID:          "ssh-weak-mac",
+			Severity:    plugins.SeverityLow,
+			Description: "SSH server offers weak MAC algorithms",
+			Evidence:    strings.Join(foundMACs, ","),
+		})
+	}
+
+	if passwordAuth {
+		findings = append(findings, plugins.SecurityFinding{
+			ID:          "ssh-password-auth",
+			Severity:    plugins.SeverityMedium,
+			Description: "SSH server allows password authentication, enabling brute-force attacks",
+		})
+	}
+
+	return findings
+}
 
 type SSHPlugin struct{}
 
@@ -225,20 +347,19 @@ func (p *SSHPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 		return plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP), nil
 	}
 
-	// check auth methods
+	// Check auth methods by attempting Password and KeyboardInteractive.
 	conf := ssh.ClientConfig{}
 	conf.Timeout = timeout
-	conf.Auth = nil
-	conf.Auth = append(conf.Auth, ssh.Password("admin"))
-	conf.Auth = append(conf.Auth,
-		ssh.KeyboardInteractive(func(user, instruction string, questions []string, echos []bool) ([]string, error) {
+	conf.Auth = []ssh.AuthMethod{
+		ssh.Password("admin"),
+		ssh.KeyboardInteractive(func(name, instruction string, questions []string, echos []bool) ([]string, error) {
 			answers := make([]string, len(questions))
 			for i := range answers {
 				answers[i] = "password"
 			}
 			return answers, nil
 		}),
-	)
+	}
 
 	conf.User = "admin"
 	conf.HostKeyCallback = ssh.InsecureIgnoreHostKey()
@@ -296,7 +417,7 @@ func (p *SSHPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 			PasswordAuthEnabled: passwordAuth,
 			Algo:                fmt.Sprintf("%s", algo),
 		}
-		return plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP), nil
+		return makeSSHService(target, payload, algo, passwordAuth), nil
 	}
 	if firstKeyExchange := t.SessionID == nil; firstKeyExchange {
 		sendMsg.KexAlgos = make([]string, 0, len(t.Config.KeyExchanges)+1)
@@ -314,7 +435,7 @@ func (p *SSHPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 			PasswordAuthEnabled: passwordAuth,
 			Algo:                fmt.Sprintf("%s", algo),
 		}
-		return plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP), nil
+		return makeSSHService(target, payload, algo, passwordAuth), nil
 	}
 
 	cookie, err := hex.DecodeString(algo["cookie"])
@@ -327,7 +448,7 @@ func (p *SSHPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 			PasswordAuthEnabled: passwordAuth,
 			Algo:                fmt.Sprintf("%s", algo),
 		}
-		return plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP), nil
+		return makeSSHService(target, payload, algo, passwordAuth), nil
 	}
 	otherInit := &ssh.KexInitMsg{
 		KexAlgos:                strings.Split(algo["KexAlgos"], ","),
@@ -350,7 +471,7 @@ func (p *SSHPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 			PasswordAuthEnabled: passwordAuth,
 			Algo:                fmt.Sprintf("%s", algo),
 		}
-		return plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP), nil
+		return makeSSHService(target, payload, algo, passwordAuth), nil
 	}
 	magics := ssh.HandshakeMagics{
 		ClientVersion: t.ClientVersion,
@@ -368,7 +489,7 @@ func (p *SSHPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 			PasswordAuthEnabled: passwordAuth,
 			Algo:                fmt.Sprintf("%s", algo),
 		}
-		return plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP), nil
+		return makeSSHService(target, payload, algo, passwordAuth), nil
 	}
 	hostKey, err := ssh.ParsePublicKey(result.HostKey)
 	if err != nil {
@@ -377,7 +498,7 @@ func (p *SSHPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 			PasswordAuthEnabled: passwordAuth,
 			Algo:                fmt.Sprintf("%s", algo),
 		}
-		return plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP), nil
+		return makeSSHService(target, payload, algo, passwordAuth), nil
 	}
 	fingerprint := ssh.FingerprintSHA256(hostKey)
 	base64HostKey := base64.StdEncoding.EncodeToString(result.HostKey)
@@ -390,7 +511,7 @@ func (p *SSHPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 		HostKeyType:         hostKey.Type(),
 		HostKeyFingerprint:  fingerprint,
 	}
-	return plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP), nil
+	return makeSSHService(target, payload, algo, passwordAuth), nil
 }
 
 func (p *SSHPlugin) Name() string {

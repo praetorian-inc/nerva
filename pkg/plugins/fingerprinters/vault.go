@@ -72,6 +72,8 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+
+	"github.com/praetorian-inc/nerva/pkg/plugins"
 )
 
 // VaultFingerprinter detects HashiCorp Vault instances via /v1/sys/health endpoint
@@ -140,10 +142,17 @@ func (f *VaultFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fin
 	}
 
 	return &FingerprintResult{
-		Technology: "vault",
-		Version:    health.Version,
-		CPEs:       []string{buildVaultCPE(health.Version)},
-		Metadata:   metadata,
+		Technology:      "vault",
+		Version:         health.Version,
+		CPEs:            []string{buildVaultCPE(health.Version)},
+		Metadata:        metadata,
+		AnonymousAccess: true,
+		Findings: []plugins.SecurityFinding{{
+			ID:          "vault-anon-access",
+			Severity:    plugins.SeverityMedium,
+			Description: "Vault API accessible without authentication",
+			Evidence:    "Successfully queried /v1/sys/health without credentials",
+		}},
 	}, nil
 }
 

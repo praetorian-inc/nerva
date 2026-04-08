@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/praetorian-inc/nerva/pkg/plugins"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -147,6 +148,20 @@ func TestEtcdFingerprinter_Fingerprint_ValidEtcd(t *testing.T) {
 			// Check cluster version in metadata
 			if tt.expectedCluster != "" {
 				assert.Equal(t, tt.expectedCluster, result.Metadata["cluster_version"])
+			}
+
+			// Security findings
+			if !result.AnonymousAccess {
+				t.Error("expected AnonymousAccess to be true")
+			}
+			if len(result.Findings) != 1 {
+				t.Fatalf("expected 1 finding, got %d", len(result.Findings))
+			}
+			if result.Findings[0].ID != "etcd-anon-access" {
+				t.Errorf("expected finding ID 'etcd-anon-access', got %q", result.Findings[0].ID)
+			}
+			if result.Findings[0].Severity != plugins.SeverityHigh {
+				t.Errorf("expected severity %s, got %s", plugins.SeverityHigh, result.Findings[0].Severity)
 			}
 		})
 	}

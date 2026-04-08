@@ -15,13 +15,75 @@
 package telnet
 
 import (
+	"fmt"
+	"net"
+	"net/netip"
 	"testing"
+	"time"
 
 	"github.com/ory/dockertest/v3"
 
 	"github.com/praetorian-inc/nerva/pkg/plugins"
 	"github.com/praetorian-inc/nerva/pkg/test"
 )
+
+// TestTelnetSecurityFindings verifies that security findings are set when Telnet is detected via mock server.
+func TestTelnetSecurityFindings(t *testing.T) {
+	// Valid telnet bytes: IAC WILL ECHO (255, 251, 1)
+	telnetBytes := []byte{IAC, WILL, ECHO}
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Failed to start mock server: %v", err)
+	}
+	defer listener.Close()
+
+	tcpAddr := listener.Addr().(*net.TCPAddr)
+	serverPort := tcpAddr.Port
+
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		_, _ = conn.Write(telnetBytes)
+	}()
+
+	time.Sleep(10 * time.Millisecond)
+
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", serverPort), 5*time.Second)
+	if err != nil {
+		t.Fatalf("Failed to connect to mock server: %v", err)
+	}
+	defer conn.Close()
+
+	addrStr := fmt.Sprintf("127.0.0.1:%d", serverPort)
+	addrPort := netip.MustParseAddrPort(addrStr)
+	target := plugins.Target{
+		Host:    "127.0.0.1",
+		Address: addrPort,
+	}
+
+	plugin := &TELNETPlugin{}
+	service, err := plugin.Run(conn, 5*time.Second, target)
+	if err != nil {
+		t.Fatalf("Run() returned unexpected error: %v", err)
+	}
+	if service == nil {
+		t.Fatal("Run() returned nil, want non-nil service")
+	}
+
+	if len(service.SecurityFindings) != 1 {
+		t.Fatalf("expected 1 finding, got %d", len(service.SecurityFindings))
+	}
+	if service.SecurityFindings[0].ID != "telnet-cleartext" {
+		t.Errorf("expected finding ID 'telnet-cleartext', got %q", service.SecurityFindings[0].ID)
+	}
+	if service.SecurityFindings[0].Severity != plugins.SeverityMedium {
+		t.Errorf("expected severity medium, got %s", service.SecurityFindings[0].Severity)
+	}
+}
 
 func TestTelnet(t *testing.T) {
 	testcases := []test.Testcase{

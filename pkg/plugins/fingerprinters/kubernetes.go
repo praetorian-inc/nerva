@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+
+	"github.com/praetorian-inc/nerva/pkg/plugins"
 )
 
 // KubernetesFingerprinter detects Kubernetes API servers via /version endpoint
@@ -82,14 +84,21 @@ func (f *KubernetesFingerprinter) Fingerprint(resp *http.Response, body []byte) 
 	versionStr = strings.Split(versionStr, "-")[0]
 
 	return &FingerprintResult{
-		Technology: "kubernetes",
-		Version:    versionStr,
-		CPEs:       []string{buildK8sCPE(versionStr)},
+		Technology:      "kubernetes",
+		Version:         versionStr,
+		CPEs:            []string{buildK8sCPE(versionStr)},
 		Metadata: map[string]any{
 			"platform":  version.Platform,
 			"go_version": version.GoVersion,
 			"git_commit": version.GitCommit,
 		},
+		AnonymousAccess: true,
+		Findings: []plugins.SecurityFinding{{
+			ID:          "kubernetes-anon-access",
+			Severity:    plugins.SeverityHigh,
+			Description: "Kubernetes API accessible without authentication",
+			Evidence:    "Successfully queried /version endpoint without credentials",
+		}},
 	}, nil
 }
 

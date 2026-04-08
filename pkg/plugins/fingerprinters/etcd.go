@@ -20,6 +20,8 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+
+	"github.com/praetorian-inc/nerva/pkg/plugins"
 )
 
 // EtcdFingerprinter detects etcd distributed key-value store via /version endpoint.
@@ -80,10 +82,17 @@ func (f *EtcdFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fing
 	}
 
 	return &FingerprintResult{
-		Technology: "etcd",
-		Version:    data.ETCDServer,
-		CPEs:       []string{buildEtcdCPE(data.ETCDServer)},
-		Metadata:   metadata,
+		Technology:      "etcd",
+		Version:         data.ETCDServer,
+		CPEs:            []string{buildEtcdCPE(data.ETCDServer)},
+		Metadata:        metadata,
+		AnonymousAccess: true,
+		Findings: []plugins.SecurityFinding{{
+			ID:          "etcd-anon-access",
+			Severity:    plugins.SeverityHigh,
+			Description: "Etcd accessible without authentication",
+			Evidence:    "Successfully queried /version endpoint without credentials",
+		}},
 	}, nil
 }
 

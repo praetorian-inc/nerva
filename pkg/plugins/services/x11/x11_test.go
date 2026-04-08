@@ -431,6 +431,33 @@ func TestRunWithMockServer(t *testing.T) {
 			if meta.DisplayNumber != tt.expectDisplay {
 				t.Errorf("DisplayNumber = %d, want %d", meta.DisplayNumber, tt.expectDisplay)
 			}
+
+			// For success response: verify AnonymousAccess and SecurityFindings
+			if tt.name == "valid X11 success response" {
+				if !result.AnonymousAccess {
+					t.Error("expected AnonymousAccess to be true for successful X11 connection")
+				}
+				if len(result.SecurityFindings) != 1 {
+					t.Fatalf("expected 1 finding, got %d", len(result.SecurityFindings))
+				}
+				if result.SecurityFindings[0].ID != "x11-unauth-access" {
+					t.Errorf("expected finding ID 'x11-unauth-access', got %q", result.SecurityFindings[0].ID)
+				}
+				if result.SecurityFindings[0].Severity != plugins.SeverityCritical {
+					t.Errorf("expected severity critical, got %s", result.SecurityFindings[0].Severity)
+				}
+			}
+
+			// For failed and authenticate responses: verify no AnonymousAccess or SecurityFindings
+			if tt.name == "valid X11 failed response - still detected as X11" ||
+				tt.name == "valid X11 authenticate response" {
+				if result.AnonymousAccess {
+					t.Error("expected AnonymousAccess to be false")
+				}
+				if len(result.SecurityFindings) != 0 {
+					t.Errorf("expected 0 security findings, got %d", len(result.SecurityFindings))
+				}
+			}
 		})
 	}
 }

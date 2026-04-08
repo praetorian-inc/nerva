@@ -17,6 +17,8 @@ package fingerprinters
 import (
 	"net/http"
 	"testing"
+
+	"github.com/praetorian-inc/nerva/pkg/plugins"
 )
 
 func TestGrafanaFingerprinter_Name(t *testing.T) {
@@ -169,6 +171,20 @@ func TestGrafanaFingerprinter_Fingerprint_Valid(t *testing.T) {
 			expectedCPE := "cpe:2.3:a:grafana:grafana:" + tt.wantVersion + ":*:*:*:*:*:*:*"
 			if result.CPEs[0] != expectedCPE {
 				t.Errorf("CPE = %q, want %q", result.CPEs[0], expectedCPE)
+			}
+
+			// Security findings
+			if !result.AnonymousAccess {
+				t.Error("expected AnonymousAccess to be true")
+			}
+			if len(result.Findings) != 1 {
+				t.Fatalf("expected 1 finding, got %d", len(result.Findings))
+			}
+			if result.Findings[0].ID != "grafana-anon-access" {
+				t.Errorf("expected finding ID 'grafana-anon-access', got %q", result.Findings[0].ID)
+			}
+			if result.Findings[0].Severity != plugins.SeverityMedium {
+				t.Errorf("expected severity %s, got %s", plugins.SeverityMedium, result.Findings[0].Severity)
 			}
 		})
 	}

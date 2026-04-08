@@ -15,7 +15,11 @@
 package ftp
 
 import (
+	"fmt"
+	"net"
+	"net/netip"
 	"testing"
+	"time"
 
 	"github.com/ory/dockertest/v3"
 	"github.com/stretchr/testify/assert"
@@ -34,7 +38,11 @@ func TestFTP(t *testing.T) {
 				return res != nil
 			},
 			RunConfig: dockertest.RunOptions{
-				Repository: "panubo/vsftpd",
+				Repository: "garethflowers/ftp-server",
+				Env: []string{
+					"FTP_USER=test",
+					"FTP_PASS=test",
+				},
 			},
 		},
 	}
@@ -50,6 +58,67 @@ func TestFTP(t *testing.T) {
 				t.Error(err)
 			}
 		})
+	}
+}
+
+// TestFTPSecurityFindings verifies that security findings are set when FTP is detected via mock server.
+func TestFTPSecurityFindings(t *testing.T) {
+	banner := "220 (vsFTPd 3.0.5)\r\n"
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Failed to start mock server: %v", err)
+	}
+	defer listener.Close()
+
+	tcpAddr := listener.Addr().(*net.TCPAddr)
+	serverPort := tcpAddr.Port
+
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		_, _ = conn.Write([]byte(banner))
+	}()
+
+	time.Sleep(10 * time.Millisecond)
+
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", serverPort), 5*time.Second)
+	if err != nil {
+		t.Fatalf("Failed to connect to mock server: %v", err)
+	}
+	defer conn.Close()
+
+	// Use port 21 so detection succeeds
+	addrStr := "127.0.0.1:21"
+	addrPort := netip.MustParseAddrPort(addrStr)
+	target := plugins.Target{
+		Host:    "127.0.0.1",
+		Address: addrPort,
+	}
+
+	plugin := &FTPPlugin{}
+	service, err := plugin.Run(conn, 5*time.Second, target)
+	if err != nil {
+		t.Fatalf("Run() returned unexpected error: %v", err)
+	}
+	if service == nil {
+		t.Fatal("Run() returned nil, want non-nil service")
+	}
+
+	if len(service.SecurityFindings) != 1 {
+		t.Fatalf("expected 1 finding, got %d", len(service.SecurityFindings))
+	}
+	if service.SecurityFindings[0].ID != "ftp-cleartext" {
+		t.Errorf("expected finding ID 'ftp-cleartext', got %q", service.SecurityFindings[0].ID)
+	}
+	if service.SecurityFindings[0].Severity != plugins.SeverityLow {
+		t.Errorf("expected severity low, got %s", service.SecurityFindings[0].Severity)
+	}
+	if service.AnonymousAccess {
+		t.Error("expected AnonymousAccess to be false")
 	}
 }
 

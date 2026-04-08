@@ -283,7 +283,13 @@ func (p *TELNETPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.
 	payload := plugins.ServiceTelnet{
 		ServerData: hex.EncodeToString(response),
 	}
-	return plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP), nil
+	service := plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP)
+	service.SecurityFindings = []plugins.SecurityFinding{{
+		ID:          "telnet-cleartext",
+		Severity:    plugins.SeverityMedium,
+		Description: "Telnet transmits data including credentials in cleartext",
+	}}
+	return service, nil
 }
 
 func (p *TELNETPlugin) Name() string {

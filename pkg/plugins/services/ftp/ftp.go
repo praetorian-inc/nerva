@@ -207,7 +207,13 @@ func (p *FTPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 		payload.CPEs = []string{cpe}
 	}
 
-	return plugins.CreateServiceFrom(target, payload, false, version, plugins.TCP), nil
+	service := plugins.CreateServiceFrom(target, payload, false, version, plugins.TCP)
+	service.SecurityFindings = []plugins.SecurityFinding{{
+		ID:          "ftp-cleartext",
+		Severity:    plugins.SeverityLow,
+		Description: "FTP transmits data including credentials in cleartext",
+	}}
+	return service, nil
 }
 
 func (p *FTPPlugin) PortPriority(i uint16) bool {
