@@ -110,7 +110,7 @@ func (p *ScanPool) Run(ctx context.Context, targets []plugins.Target, fn scanFun
 		go func() {
 			defer wg.Done()
 			for target := range jobCh {
-				p.processTarget(ctx, target, fn, resultCh)
+				p.safeProcessTarget(ctx, target, fn, resultCh)
 			}
 		}()
 	}
@@ -143,6 +143,18 @@ func (p *ScanPool) Run(ctx context.Context, targets []plugins.Target, fn scanFun
 	}
 
 	return results, nil
+}
+
+// safeProcessTarget wraps processTarget with a recover to prevent panics
+// in individual plugin runs from crashing the entire process.
+func (p *ScanPool) safeProcessTarget(ctx context.Context, target plugins.Target, fn scanFunc, resultCh chan<- []plugins.Service) {
+	defer func() {
+		if r := recover(); r != nil {
+			p.failed.Add(1)
+			log.Printf("recovered panic while scanning %s: %v", target.Address, r)
+		}
+	}()
+	p.processTarget(ctx, target, fn, resultCh)
 }
 
 // processTarget executes a single scan, honouring host and rate limits.
