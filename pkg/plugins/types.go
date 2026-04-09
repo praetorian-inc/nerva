@@ -128,6 +128,7 @@ const (
 	ProtoLDAP             = "ldap"
 	ProtoLDAPS            = "ldaps"
 	ProtoLibreChat        = "librechat"
+	ProtoLwM2M            = "lwm2m"
 	ProtoM2UA             = "m2ua"
 	ProtoM3UA             = "m3ua"
 	ProtoMegaco           = "megaco"
@@ -507,6 +508,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoLibreChat:
 		var p ServiceLibreChat
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoLwM2M:
+		var p ServiceLwM2M
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoM2UA:
@@ -1403,6 +1408,15 @@ type ServiceL2TP struct {
 }
 
 func (e ServiceL2TP) Type() string { return ProtoL2TP }
+
+type ServiceLwM2M struct {
+	HasRegistration bool   `json:"has_registration"`
+	HasBootstrap    bool   `json:"has_bootstrap"`
+	ServerImpl      string `json:"server_impl,omitempty"`
+	Resources       string `json:"resources,omitempty"`
+}
+
+func (e ServiceLwM2M) Type() string { return ProtoLwM2M }
 
 type ServiceOracle struct {
 	Info string `json:"info"`
