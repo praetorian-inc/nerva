@@ -765,7 +765,11 @@ func CreateServiceFrom(target Target, m Metadata, tls bool, version string, tran
 	service.Host = target.Host
 	service.IP = target.Address.Addr().String()
 	service.Port = int(target.Address.Port())
-	service.Protocol = m.Type()
+	if m != nil {
+		service.Protocol = m.Type()
+	} else {
+		service.Protocol = ProtoUnknown
+	}
 	service.Transport = strings.ToLower(transport.String())
 	service.Raw = json.RawMessage(b)
 	if version != "" {
@@ -796,8 +800,8 @@ type Service struct {
 	Protocol  string          `json:"protocol"`
 	TLS       bool            `json:"tls"`
 	Transport string          `json:"transport"`
-	Version          string            `json:"version,omitempty"`
-	Raw              json.RawMessage   `json:"metadata"`
+	Version   string          `json:"version,omitempty"`
+	Raw       json.RawMessage `json:"metadata"`
 	// AnonymousAccess is the canonical top-level field for anonymous access detection.
 	// Per-service metadata types (e.g., ServiceSOCKS5) may also have their own AnonymousAccess
 	// field for protocol-specific context; the Service-level field is authoritative for reporting.
@@ -806,7 +810,7 @@ type Service struct {
 }
 
 type ServiceHTTP struct {
-	Status              string                    `json:"status"`     // e.g. "200 OK"
+	Status              string                    `json:"status"`      // e.g. "200 OK"
 	StatusCode          int                       `json:"status_code"` // e.g. 200
 	ResponseHeaders     http.Header               `json:"response_headers"`
 	Technologies        []string                  `json:"technologies,omitempty"`
@@ -817,7 +821,7 @@ type ServiceHTTP struct {
 func (e ServiceHTTP) Type() string { return ProtoHTTP }
 
 type ServiceHTTPS struct {
-	Status              string                    `json:"status"`     // e.g. "200 OK"
+	Status              string                    `json:"status"`      // e.g. "200 OK"
 	StatusCode          int                       `json:"status_code"` // e.g. 200
 	ResponseHeaders     http.Header               `json:"response_headers"`
 	Technologies        []string                  `json:"technologies,omitempty"`
@@ -838,9 +842,9 @@ type ServiceH323 struct {
 func (e ServiceH323) Type() string { return ProtoH323 }
 
 type ServiceHARTIP struct {
-	Version       uint8  `json:"version"`       // HART-IP protocol version (0x01)
+	Version       uint8  `json:"version"`        // HART-IP protocol version (0x01)
 	MessageType   uint8  `json:"message_type"`   // Message type (0x01=Response, 0x03=Error, 0x0F=NAK)
-	Status        uint8  `json:"status"`        // Status code
+	Status        uint8  `json:"status"`         // Status code
 	StatusDesc    string `json:"status_desc"`    // Status description (Success/Error/NAK)
 	TransactionID uint16 `json:"transaction_id"` // Transaction ID echoed from request
 }
@@ -888,9 +892,9 @@ type ServiceSMB struct {
 func (e ServiceSMB) Type() string { return ProtoSMB }
 
 type ServiceMySQL struct {
-	PacketType   string   `json:"packet_type"`     // the type of packet returned by the server (i.e. handshake or error)
-	ErrorMessage string   `json:"error_msg"`       // error message if the server returns an error packet
-	ErrorCode    int      `json:"error_code"`      // error code returned if the server returns an error packet
+	PacketType   string   `json:"packet_type"`    // the type of packet returned by the server (i.e. handshake or error)
+	ErrorMessage string   `json:"error_msg"`      // error message if the server returns an error packet
+	ErrorCode    int      `json:"error_code"`     // error code returned if the server returns an error packet
 	CPEs         []string `json:"cpes,omitempty"` // Common Platform Enumeration identifiers for vulnerability tracking
 }
 
@@ -911,9 +915,9 @@ type ServicePostgreSQL struct {
 
 type ServiceProConOS struct {
 	LadderLogicRuntime string   `json:"ladder_logic_runtime,omitempty"` // Version from offset 13
-	PLCType            string   `json:"plc_type,omitempty"`            // PLC type from offset 45
-	ProjectName        string   `json:"project_name,omitempty"`        // Project name from offset 78
-	BootProject        string   `json:"boot_project,omitempty"`        // Boot project (variable offset)
+	PLCType            string   `json:"plc_type,omitempty"`             // PLC type from offset 45
+	ProjectName        string   `json:"project_name,omitempty"`         // Project name from offset 78
+	BootProject        string   `json:"boot_project,omitempty"`         // Boot project (variable offset)
 	ProjectSourceCode  string   `json:"project_source_code,omitempty"`  // Source code file (variable offset)
 	CPEs               []string `json:"cpes,omitempty"`
 }
@@ -1141,7 +1145,7 @@ type ServiceVNC struct{}
 func (e ServiceVNC) Type() string { return ProtoVNC }
 
 type ServiceVMware struct {
-	ProductType   string   `json:"product_type"`              // "esxi", "vcenter", or "vsphere"
+	ProductType   string   `json:"product_type"` // "esxi", "vcenter", or "vsphere"
 	FullName      string   `json:"full_name,omitempty"`
 	Build         string   `json:"build,omitempty"`
 	ApiType       string   `json:"api_type,omitempty"`
@@ -1231,7 +1235,7 @@ type ServiceFTP struct {
 func (e ServiceFTP) Type() string { return ProtoFTP }
 
 type ServiceFox struct {
-	Version     string   `json:"version,omitempty"`     // Fox protocol version
+	Version     string   `json:"version,omitempty"`      // Fox protocol version
 	HostName    string   `json:"host_name,omitempty"`    // Device hostname
 	HostAddress string   `json:"host_address,omitempty"` // Device IP address
 	AppName     string   `json:"app_name,omitempty"`     // Application name
@@ -1241,7 +1245,7 @@ type ServiceFox struct {
 	OSName      string   `json:"os_name,omitempty"`      // Operating system name
 	StationName string   `json:"station_name,omitempty"` // Station name
 	BrandId     string   `json:"brand_id,omitempty"`     // Brand identifier
-	CPEs        []string `json:"cpes,omitempty"`        // Common Platform Enumeration identifiers for vulnerability tracking
+	CPEs        []string `json:"cpes,omitempty"`         // Common Platform Enumeration identifiers for vulnerability tracking
 }
 
 func (e ServiceFox) Type() string { return ProtoFox }
@@ -1258,19 +1262,19 @@ func (e ServiceGESRTP) Type() string { return ProtoGESRTP }
 type ServiceGit struct {
 	ProtocolVersion int      `json:"protocol_version,omitempty"` // 0=implicit, 1=explicit v1, 2=v2
 	HeadRef         string   `json:"head_ref,omitempty"`         // SHA-1 hash of HEAD
-	Branches        []string `json:"branches,omitempty"`        // Branch names (without refs/heads/ prefix)
-	Tags            []string `json:"tags,omitempty"`            // Tag names (without refs/tags/ prefix)
-	Capabilities    []string `json:"capabilities,omitempty"`    // Server capabilities from ref advertisement
+	Branches        []string `json:"branches,omitempty"`         // Branch names (without refs/heads/ prefix)
+	Tags            []string `json:"tags,omitempty"`             // Tag names (without refs/tags/ prefix)
+	Capabilities    []string `json:"capabilities,omitempty"`     // Server capabilities from ref advertisement
 }
 
 func (e ServiceGit) Type() string { return ProtoGit }
 
 type ServiceSMPP struct {
-	CPEs            []string `json:"cpes,omitempty"`            // Common Platform Enumeration identifiers for vulnerability tracking
+	CPEs            []string `json:"cpes,omitempty"`             // Common Platform Enumeration identifiers for vulnerability tracking
 	ProtocolVersion string   `json:"protocol_version,omitempty"` // SMPP protocol version (e.g., "3.4", "5.0")
 	SystemID        string   `json:"system_id,omitempty"`        // System ID from bind_transceiver_resp
-	Vendor          string   `json:"vendor,omitempty"`          // Vendor identified from system_id
-	Product         string   `json:"product,omitempty"`         // Product identified from system_id
+	Vendor          string   `json:"vendor,omitempty"`           // Vendor identified from system_id
+	Product         string   `json:"product,omitempty"`          // Product identified from system_id
 }
 
 func (e ServiceSMPP) Type() string { return ProtoSMPP }
@@ -1416,7 +1420,7 @@ type ServicePCOM struct {
 func (e ServicePCOM) Type() string { return ProtoPCOM }
 
 type ServicePinecone struct {
-	CPEs       []string `json:"cpes,omitempty"`       // Common Platform Enumeration with wildcard version
+	CPEs       []string `json:"cpes,omitempty"`        // Common Platform Enumeration with wildcard version
 	APIVersion string   `json:"api_version,omitempty"` // Pinecone API version from x-pinecone-api-version header
 }
 
@@ -1532,11 +1536,11 @@ func (e ServiceMilvusMetrics) Type() string { return ProtoMilvusMetrics }
 type ServiceModbus struct {
 	VendorName  string   `json:"vendor_name,omitempty"`  // Object ID 0x00: Vendor name
 	ProductCode string   `json:"product_code,omitempty"` // Object ID 0x01: Product code
-	Revision    string   `json:"revision,omitempty"`    // Object ID 0x02: Major.Minor revision
+	Revision    string   `json:"revision,omitempty"`     // Object ID 0x02: Major.Minor revision
 	VendorURL   string   `json:"vendor_url,omitempty"`   // Object ID 0x03: Vendor URL
 	ProductName string   `json:"product_name,omitempty"` // Object ID 0x04: Product name
 	ModelName   string   `json:"model_name,omitempty"`   // Object ID 0x05: Model name
-	CPEs        []string `json:"cpes,omitempty"`        // Common Platform Enumeration identifiers
+	CPEs        []string `json:"cpes,omitempty"`         // Common Platform Enumeration identifiers
 }
 
 func (e ServiceModbus) Type() string { return ProtoModbus }
@@ -1544,7 +1548,7 @@ func (e ServiceModbus) Type() string { return ProtoModbus }
 type ServiceMongoDB struct {
 	MaxWireVersion int      `json:"max_wire_version,omitempty"` // Wire protocol version (indicates capabilities, NOT precise version; e.g., wire 21 = MongoDB 7.0.x)
 	MinWireVersion int      `json:"min_wire_version,omitempty"` // Minimum wire protocol version supported
-	ServerType     string   `json:"server_type,omitempty"`     // "mongod" or "mongos"
+	ServerType     string   `json:"server_type,omitempty"`      // "mongod" or "mongos"
 	CPEs           []string `json:"cpes,omitempty"`
 }
 
@@ -1600,7 +1604,7 @@ type ServiceS7comm struct {
 	ProtectionLevel uint8    `json:"protection_level,omitempty"` // 1=none, 2=read, 3=full
 	ModuleName      string   `json:"module_name,omitempty"`      // PLC module name
 	PlantID         string   `json:"plant_id,omitempty"`         // Plant/system identifier
-	CPEs            []string `json:"cpes,omitempty"`            // CPE identifiers
+	CPEs            []string `json:"cpes,omitempty"`             // CPE identifiers
 }
 
 func (e ServiceS7comm) Type() string { return ProtoS7comm }
@@ -1657,16 +1661,16 @@ type ServiceDNP3 struct {
 	DestinationAddress uint16   `json:"destination_address,omitempty"` // DNP3 destination address
 	DeviceRole         string   `json:"device_role,omitempty"`         // "master" or "outstation"
 	FunctionCode       uint8    `json:"function_code,omitempty"`       // Function code used in detection
-	CPEs               []string `json:"cpes,omitempty"`               // Common Platform Enumeration identifiers
+	CPEs               []string `json:"cpes,omitempty"`                // Common Platform Enumeration identifiers
 }
 
 func (e ServiceDNP3) Type() string { return ProtoDNP3 }
 
 type ServiceDocker struct {
 	ApiVersion string   `json:"api_version,omitempty"` // Docker API version (e.g., "1.43")
-	Os         string   `json:"os,omitempty"`         // Operating system (e.g., "linux")
-	Arch       string   `json:"arch,omitempty"`       // Architecture (e.g., "amd64")
-	CPEs       []string `json:"cpes,omitempty"`       // Common Platform Enumeration identifiers
+	Os         string   `json:"os,omitempty"`          // Operating system (e.g., "linux")
+	Arch       string   `json:"arch,omitempty"`        // Architecture (e.g., "amd64")
+	CPEs       []string `json:"cpes,omitempty"`        // Common Platform Enumeration identifiers
 }
 
 func (e ServiceDocker) Type() string { return ProtoDocker }
@@ -1691,11 +1695,11 @@ type ServiceIPP struct {
 func (e ServiceIPP) Type() string { return ProtoIPP }
 
 type ServiceCassandra struct {
-	Product          string   `json:"product,omitempty"`          // "Apache Cassandra", "ScyllaDB", "DataStax Enterprise"
+	Product          string   `json:"product,omitempty"`           // "Apache Cassandra", "ScyllaDB", "DataStax Enterprise"
 	CQLVersion       string   `json:"cql_version,omitempty"`       // CQL version from SUPPORTED response (e.g., "3.4.5")
 	ProtocolVersions []string `json:"protocol_versions,omitempty"` // Native protocol versions (e.g., ["3/v3", "4/v4", "5/v5"])
-	Compression      []string `json:"compression,omitempty"`      // Compression algorithms (e.g., ["lz4", "snappy", "zstd"])
-	Confidence       string   `json:"confidence,omitempty"`       // Version detection confidence ("high", "medium", "low")
+	Compression      []string `json:"compression,omitempty"`       // Compression algorithms (e.g., ["lz4", "snappy", "zstd"])
+	Confidence       string   `json:"confidence,omitempty"`        // Version detection confidence ("high", "medium", "low")
 	CPEs             []string `json:"cpes,omitempty"`
 }
 
@@ -1708,7 +1712,7 @@ type ServiceChromaDB struct {
 func (e ServiceChromaDB) Type() string { return ProtoChromaDB }
 
 type ServiceCitrixICA struct {
-	BannerMatch bool     `json:"banner_match"`          // true if double ICA signature matched (high confidence)
+	BannerMatch bool     `json:"banner_match"` // true if double ICA signature matched (high confidence)
 	CPEs        []string `json:"cpes,omitempty"`
 }
 
@@ -1863,14 +1867,14 @@ type ServiceZooKeeper struct {
 	CPEs        []string `json:"cpes,omitempty"`        // Common Platform Enumeration identifiers for vulnerability tracking
 	Mode        string   `json:"mode,omitempty"`        // ZooKeeper mode: standalone, leader, follower, observer
 	Connections int      `json:"connections,omitempty"` // Number of active connections
-	NodeCount   int      `json:"node_count,omitempty"`   // Number of ZNodes in the namespace
+	NodeCount   int      `json:"node_count,omitempty"`  // Number of ZNodes in the namespace
 	Restricted  bool     `json:"restricted,omitempty"`  // Whether commands are restricted by whitelist
 }
 
 func (e ServiceZooKeeper) Type() string { return ProtoZooKeeper }
 
 type ServiceNFS struct {
-	Version          int   `json:"version"`          // Highest detected NFS version (4, 3, or 2)
+	Version          int   `json:"version"`           // Highest detected NFS version (4, 3, or 2)
 	DetectedVersions []int `json:"detected_versions"` // All versions that responded successfully
 }
 
