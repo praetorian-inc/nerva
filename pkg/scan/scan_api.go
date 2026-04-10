@@ -16,9 +16,11 @@ package scan
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net"
 	"net/netip"
+	"runtime/debug"
 	"strings"
 
 	"github.com/praetorian-inc/nerva/pkg/plugins"
@@ -112,7 +114,9 @@ func SCTPScan(ctx context.Context, targets []plugins.Target, config Config) ([]p
 		default:
 		}
 		target.Misconfigs = config.Misconfigs
-		result, err := config.SCTPScanTarget(target)
+		result, err := safeScanTarget(target, func() (*plugins.Service, error) {
+			return config.SCTPScanTarget(target)
+		})
 		if err == nil && result != nil {
 			results = append(results, *result)
 		}
@@ -133,7 +137,9 @@ func UDPScan(ctx context.Context, targets []plugins.Target, config Config) ([]pl
 		default:
 		}
 		target.Misconfigs = config.Misconfigs
-		result, err := config.UDPScanTarget(target)
+		result, err := safeScanTarget(target, func() (*plugins.Service, error) {
+			return config.UDPScanTarget(target)
+		})
 		if err == nil && result != nil {
 			results = append(results, *result)
 		}
@@ -143,6 +149,19 @@ func UDPScan(ctx context.Context, targets []plugins.Target, config Config) ([]pl
 	}
 
 	return results, nil
+}
+
+// safeScanTarget wraps a scan call with panic recovery so that a panicking
+// plugin does not crash the entire process during sequential (non-pool) scans.
+func safeScanTarget(target plugins.Target, fn func() (*plugins.Service, error)) (result *plugins.Service, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("recovered panic while scanning %s: %v\n%s", target.Address, r, debug.Stack())
+			result = nil
+			err = fmt.Errorf("panic scanning %s: %v", target.Address, r)
+		}
+	}()
+	return fn()
 }
 
 // ScanTargets fingerprints service(s) running given a list of targets.

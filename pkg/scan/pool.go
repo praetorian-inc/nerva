@@ -177,8 +177,8 @@ func (p *ScanPool) processTarget(ctx context.Context, target plugins.Target, fn 
 	}
 
 	p.active.Add(1)
+	defer p.active.Add(-1)
 	services, err := fn(target)
-	p.active.Add(-1)
 	if err != nil {
 		p.failed.Add(1)
 		if p.verbose {
