@@ -1,4 +1,4 @@
-<img width="2976" height="1440" alt="Nerva - Fast service fingerprinting CLI for network reconnaissance supporting 150+ protocols" src="https://github.com/user-attachments/assets/8bb40a77-a2cf-42a2-acbb-195a36623e00" />
+<img width="2976" height="1440" alt="Nerva - Fast service fingerprinting CLI for network reconnaissance supporting 170+ protocols" src="https://github.com/user-attachments/assets/8bb40a77-a2cf-42a2-acbb-195a36623e00" />
 <h1 align="center">
   Nerva
   <br>
@@ -24,14 +24,14 @@
   <a href="#troubleshooting">Troubleshooting</a>
 </p>
 
-> **High-performance service fingerprinting written in Go.** Identify 150+ network protocols across TCP, UDP, and SCTP transports with rich metadata extraction.
+> **High-performance service fingerprinting written in Go.** Identify 170+ network protocols across TCP, UDP, and SCTP transports with rich metadata extraction.
 
 Nerva rapidly detects and identifies services running on open network ports. Use it alongside port scanners like [Naabu](https://github.com/projectdiscovery/naabu) to fingerprint discovered services, or integrate it into your security pipelines for automated reconnaissance.
 
 ## Features
 
-- **150+ Protocol Plugins** — Databases, remote access, web services, messaging, industrial, and telecom protocols
-- **66 HTTP Fingerprinters** — Detect web technologies including firewalls, databases, AI/LLM servers, and more
+- **170+ Protocol Plugins** — Databases, remote access, web services, messaging, industrial, and telecom protocols
+- **76 HTTP Fingerprinters** — Detect web technologies including firewalls, databases, AI/LLM servers, and more
 - **Security Misconfiguration Detection** — Identify common security issues like unauthenticated APIs and cleartext protocols (`--misconfigs`)
 - **Multi-Transport Support** — TCP (default), UDP (`--udp`), and SCTP (`--sctp`, Linux only)
 - **Proxy Support** — Route scanning traffic transparently through SOCKS5 or HTTP proxies with configurable DNS resolution
@@ -192,6 +192,10 @@ nerva -t example.com:2375 --misconfigs --json
 | `smb-signing-not-required` | Medium | SMB signing not required (relay attack risk) |
 | `telnet-cleartext` | Medium | Telnet transmits credentials in cleartext |
 | `vnc-detected` | Medium | VNC detected (often weak authentication) |
+| `ssh-password-auth` | Medium | Server allows password authentication |
+| `ssh-weak-cipher` | Low | Server offers weak ciphers (RC4, 3DES, Blowfish) |
+| `ssh-weak-kex` | Low | Server offers weak key exchange algorithms |
+| `ssh-weak-mac` | Low | Server offers weak MAC algorithms |
 | `ftp-cleartext` | Low | FTP transmits credentials in cleartext |
 
 **Example output with misconfigs:**
@@ -276,7 +280,7 @@ nerva -l huge-target-list.txt -W 50 -v
 
 ## Supported Protocols
 
-**150+ service detection plugins** across TCP, UDP, and SCTP:
+**170+ service detection plugins** across TCP, UDP, and SCTP:
 
 ### HTTP Fingerprint Modules (66)
 
