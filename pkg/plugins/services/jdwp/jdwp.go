@@ -167,7 +167,7 @@ func (p *JDWPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 	}
 
 	if info == nil {
-		return plugins.CreateServiceFrom(target, nil, false, "", plugins.TCP), nil
+		return plugins.CreateServiceFrom(target, plugins.ServiceJDWP{}, false, "", plugins.TCP), nil
 	}
 
 	return plugins.CreateServiceFrom(target, info, false, info.VMVersion, plugins.TCP), nil
