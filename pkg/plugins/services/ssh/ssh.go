@@ -34,27 +34,27 @@ import (
 
 // weakCiphers contains cipher algorithms considered cryptographically weak.
 var weakCiphers = map[string]bool{
-	"arcfour":     true,
-	"arcfour128":  true,
-	"arcfour256":  true,
-	"3des-cbc":    true,
+	"arcfour":      true,
+	"arcfour128":   true,
+	"arcfour256":   true,
+	"3des-cbc":     true,
 	"blowfish-cbc": true,
-	"cast128-cbc": true,
+	"cast128-cbc":  true,
 }
 
 // weakKEX contains key exchange algorithms considered cryptographically weak.
 var weakKEX = map[string]bool{
-	"diffie-hellman-group1-sha1":          true,
-	"diffie-hellman-group-exchange-sha1":  true,
+	"diffie-hellman-group1-sha1":         true,
+	"diffie-hellman-group-exchange-sha1": true,
 }
 
 // weakMACs contains MAC algorithms considered cryptographically weak.
 var weakMACs = map[string]bool{
-	"hmac-md5":                    true,
-	"hmac-md5-96":                 true,
-	"hmac-md5-etm@openssh.com":    true,
-	"hmac-md5-96-etm@openssh.com": true,
-	"hmac-sha1-96":                true,
+	"hmac-md5":                     true,
+	"hmac-md5-96":                  true,
+	"hmac-md5-etm@openssh.com":     true,
+	"hmac-md5-96-etm@openssh.com":  true,
+	"hmac-sha1-96":                 true,
 	"hmac-sha1-96-etm@openssh.com": true,
 }
 
@@ -384,14 +384,17 @@ func (p *SSHPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 		"3des-cbc",
 	)
 
-	authClient, err := ssh.Dial("tcp", target.Address.String(), &conf)
-
-	if err != nil {
-		passwordAuth = strings.Contains(err.Error(), "password") || strings.Contains(err.Error(), "keyboard-interactive")
-	}
-
-	if authClient != nil {
-		authClient.Close()
+	authConn, err := net.DialTimeout("tcp", target.Address.String(), timeout)
+	if err == nil {
+		_ = authConn.SetDeadline(time.Now().Add(timeout))
+		authC, authChans, authReqs, handshakeErr := ssh.NewClientConn(authConn, target.Address.String(), &conf)
+		if handshakeErr != nil {
+			passwordAuth = strings.Contains(handshakeErr.Error(), "password") || strings.Contains(handshakeErr.Error(), "keyboard-interactive")
+			_ = authConn.Close()
+		} else {
+			authClient := ssh.NewClient(authC, authChans, authReqs)
+			authClient.Close()
+		}
 	}
 
 	sshConfig := &ssh.ClientConfig{}
