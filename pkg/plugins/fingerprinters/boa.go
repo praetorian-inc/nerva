@@ -52,7 +52,7 @@ var boaVersionRegex = regexp.MustCompile(`(?i)Boa/([\d]+[\d.]*\w*)`)
 
 // boaVersionValidationRegex validates extracted version format
 // Prevents CPE injection by ensuring version contains only digits, dots, and alphanumeric suffixes
-var boaVersionValidationRegex = regexp.MustCompile(`(?i)^[\d]+[\d.]*[a-z0-9]*$`)
+var boaVersionValidationRegex = regexp.MustCompile(`(?i)^[\d]+[\d.]*\w*$`)
 
 func init() {
 	Register(&BoaFingerprinter{})
@@ -69,9 +69,9 @@ func (f *BoaFingerprinter) Match(resp *http.Response) bool {
 	}
 
 	// Check Server header for "boa/" (case-insensitive, slash required to avoid false positives
-	// with words like "aboard")
-	server := resp.Header.Get("Server")
-	return strings.Contains(strings.ToLower(server), "boa/")
+	// with words like "aboard") or bare "boa" (no version)
+	server := strings.ToLower(resp.Header.Get("Server"))
+	return strings.Contains(server, "boa/") || server == "boa"
 }
 
 func (f *BoaFingerprinter) Fingerprint(resp *http.Response, body []byte) (*FingerprintResult, error) {

@@ -87,6 +87,12 @@ func TestBoaFingerprinter_Match(t *testing.T) {
 			statusCode: 200,
 			want:       false,
 		},
+		{
+			name:       "Server: Boa (bare, no version) returns true",
+			server:     "Boa",
+			statusCode: 200,
+			want:       true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -142,6 +148,11 @@ func TestBoaFingerprinter_Fingerprint_Valid(t *testing.T) {
 			name:        "Boa (no version)",
 			server:      "Boa",
 			wantVersion: "",
+		},
+		{
+			name:        "Boa/0.94_custom (underscore in version)",
+			server:      "Boa/0.94_custom",
+			wantVersion: "0.94_custom",
 		},
 	}
 
