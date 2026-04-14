@@ -63,11 +63,22 @@ func (f *SNMPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 	}
 	stringBegin := idx + InfoOffset
 	if bytes.Contains(response, RequestID) {
+		var service *plugins.Service
 		if stringBegin < len(response) {
-			return plugins.CreateServiceFrom(target, plugins.ServiceSNMP{}, false,
-				string(response[stringBegin:]), plugins.UDP), nil
+			service = plugins.CreateServiceFrom(target, plugins.ServiceSNMP{}, false,
+				string(response[stringBegin:]), plugins.UDP)
+		} else {
+			service = plugins.CreateServiceFrom(target, plugins.ServiceSNMP{}, false, "", plugins.UDP)
 		}
-		return plugins.CreateServiceFrom(target, plugins.ServiceSNMP{}, false, "", plugins.UDP), nil
+		if target.Misconfigs {
+			service.SecurityFindings = []plugins.SecurityFinding{{
+				ID:          "snmp-default-community",
+				Severity:    plugins.SeverityHigh,
+				Description: "SNMP service responds to default 'public' community string",
+				Evidence:    "community_string=public",
+			}}
+		}
+		return service, nil
 	}
 	return nil, nil
 }
