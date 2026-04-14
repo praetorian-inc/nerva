@@ -127,4 +127,3 @@ func buildMiniHTTPDCPE(version string) string {
 	}
 	return fmt.Sprintf("cpe:2.3:a:acme:mini_httpd:%s:*:*:*:*:*:*:*", version)
 }
-
