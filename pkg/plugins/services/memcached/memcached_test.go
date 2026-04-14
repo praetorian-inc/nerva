@@ -15,7 +15,12 @@
 package memcached
 
 import (
+	"fmt"
+	"log"
+	"net"
+	"net/netip"
 	"testing"
+	"time"
 
 	"github.com/ory/dockertest/v3"
 
@@ -327,5 +332,207 @@ func TestBuildMemcachedCPE(t *testing.T) {
 				t.Errorf("buildMemcachedCPE() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// TestMemcachedSecurityFindings verifies that security findings are set on a detected Memcached service.
+func TestMemcachedSecurityFindings(t *testing.T) {
+	// Start mock TCP server on random port
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Failed to start mock server: %v", err)
+	}
+	defer listener.Close()
+
+	tcpAddr := listener.Addr().(*net.TCPAddr)
+	serverPort := tcpAddr.Port
+
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		// Read the request
+		buf := make([]byte, 1024)
+		_, _ = conn.Read(buf)
+		// Write a valid Memcached version response
+		_, _ = conn.Write([]byte("VERSION 1.6.22\r\n"))
+	}()
+
+	time.Sleep(10 * time.Millisecond)
+
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", serverPort), 5*time.Second)
+	if err != nil {
+		t.Fatalf("Failed to connect to mock server: %v", err)
+	}
+	defer conn.Close()
+
+	addrStr := fmt.Sprintf("127.0.0.1:%d", serverPort)
+	addrPort := netip.MustParseAddrPort(addrStr)
+	target := plugins.Target{
+		Host:       "127.0.0.1",
+		Address:    addrPort,
+		Misconfigs: true,
+	}
+
+	plugin := &MEMCACHEDPlugin{}
+	service, err := plugin.Run(conn, 5*time.Second, target)
+	if err != nil {
+		t.Fatalf("Run() returned unexpected error: %v", err)
+	}
+	if service == nil {
+		t.Fatal("Run() returned nil, want non-nil service")
+	}
+
+	if !service.AnonymousAccess {
+		t.Error("expected AnonymousAccess to be true")
+	}
+	if len(service.SecurityFindings) != 1 {
+		t.Fatalf("expected 1 finding, got %d", len(service.SecurityFindings))
+	}
+	if service.SecurityFindings[0].ID != "memcached-no-auth" {
+		t.Errorf("expected finding ID 'memcached-no-auth', got %q", service.SecurityFindings[0].ID)
+	}
+	if service.SecurityFindings[0].Severity != plugins.SeverityHigh {
+		t.Errorf("expected severity high, got %s", service.SecurityFindings[0].Severity)
+	}
+}
+
+// TestMemcachedSecurityFindingsLive spins up a real Memcached container and verifies
+// that the plugin detects anonymous access and emits the memcached-no-auth finding.
+func TestMemcachedSecurityFindingsLive(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping docker test in short mode")
+	}
+
+	pool, err := dockertest.NewPool("")
+	if err != nil {
+		log.Fatalf("could not connect to docker: %s", err)
+	}
+
+	resource, err := pool.RunWithOptions(&dockertest.RunOptions{
+		Repository: "memcached",
+	})
+	if err != nil {
+		t.Fatalf("could not start memcached container: %s", err)
+	}
+	defer pool.Purge(resource) //nolint:errcheck
+
+	rawAddr := resource.GetHostPort("11211/tcp")
+
+	// GetHostPort may return "localhost:PORT"; normalise to 127.0.0.1 so
+	// netip.ParseAddrPort succeeds.
+	host, port, err := net.SplitHostPort(rawAddr)
+	if err != nil {
+		t.Fatalf("could not split host:port %q: %v", rawAddr, err)
+	}
+	if host == "localhost" || host == "0.0.0.0" || host == "::" {
+		host = "127.0.0.1"
+	}
+	targetAddr := net.JoinHostPort(host, port)
+
+	err = pool.Retry(func() error {
+		time.Sleep(3 * time.Second)
+		conn, dialErr := net.DialTimeout("tcp", targetAddr, 5*time.Second)
+		if dialErr != nil {
+			return dialErr
+		}
+		conn.Close()
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("failed to connect to memcached container: %s", err)
+	}
+
+	conn, err := net.DialTimeout("tcp", targetAddr, 5*time.Second)
+	if err != nil {
+		t.Fatalf("failed to open connection to memcached container: %s", err)
+	}
+	defer conn.Close()
+
+	addrPort := netip.MustParseAddrPort(targetAddr)
+	target := plugins.Target{
+		Host:       addrPort.Addr().String(),
+		Address:    addrPort,
+		Misconfigs: true,
+	}
+
+	plugin := &MEMCACHEDPlugin{}
+	service, err := plugin.Run(conn, 5*time.Second, target)
+	if err != nil {
+		t.Fatalf("Run() returned unexpected error: %v", err)
+	}
+	if service == nil {
+		t.Fatal("Run() returned nil, want non-nil service")
+	}
+
+	if !service.AnonymousAccess {
+		t.Error("expected AnonymousAccess to be true")
+	}
+	if len(service.SecurityFindings) != 1 {
+		t.Fatalf("expected 1 finding, got %d", len(service.SecurityFindings))
+	}
+	if service.SecurityFindings[0].ID != "memcached-no-auth" {
+		t.Errorf("expected finding ID 'memcached-no-auth', got %q", service.SecurityFindings[0].ID)
+	}
+	if service.SecurityFindings[0].Severity != plugins.SeverityHigh {
+		t.Errorf("expected severity high, got %s", service.SecurityFindings[0].Severity)
+	}
+}
+
+// TestMemcachedNoSecurityFindingsWithoutFlag verifies that no findings are set when Misconfigs is false.
+func TestMemcachedNoSecurityFindingsWithoutFlag(t *testing.T) {
+	// Start mock TCP server on random port
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Failed to start mock server: %v", err)
+	}
+	defer listener.Close()
+
+	tcpAddr := listener.Addr().(*net.TCPAddr)
+	serverPort := tcpAddr.Port
+
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		buf := make([]byte, 1024)
+		_, _ = conn.Read(buf)
+		_, _ = conn.Write([]byte("VERSION 1.6.22\r\n"))
+	}()
+
+	time.Sleep(10 * time.Millisecond)
+
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", serverPort), 5*time.Second)
+	if err != nil {
+		t.Fatalf("Failed to connect to mock server: %v", err)
+	}
+	defer conn.Close()
+
+	addrStr := fmt.Sprintf("127.0.0.1:%d", serverPort)
+	addrPort := netip.MustParseAddrPort(addrStr)
+	target := plugins.Target{
+		Host:       "127.0.0.1",
+		Address:    addrPort,
+		Misconfigs: false,
+	}
+
+	plugin := &MEMCACHEDPlugin{}
+	service, err := plugin.Run(conn, 5*time.Second, target)
+	if err != nil {
+		t.Fatalf("Run() returned unexpected error: %v", err)
+	}
+	if service == nil {
+		t.Fatal("Run() returned nil, want non-nil service")
+	}
+
+	if service.AnonymousAccess {
+		t.Error("expected AnonymousAccess to be false when Misconfigs is false")
+	}
+	if len(service.SecurityFindings) != 0 {
+		t.Errorf("expected 0 findings, got %d", len(service.SecurityFindings))
 	}
 }
