@@ -109,6 +109,12 @@ func TestMiniHTTPDFingerprinter_Fingerprint_Valid(t *testing.T) {
 			wantCPE:       "cpe:2.3:a:acme:mini_httpd:1.19:*:*:*:*:*:*:*",
 		},
 		{
+			name:        "mini_httpd with version but no build date",
+			serverHdr:   "mini_httpd/1.30",
+			wantVersion: "1.30",
+			wantCPE:     "cpe:2.3:a:acme:mini_httpd:1.30:*:*:*:*:*:*:*",
+		},
+		{
 			name:        "mini_httpd without version",
 			serverHdr:   "mini_httpd",
 			wantVersion: "",
