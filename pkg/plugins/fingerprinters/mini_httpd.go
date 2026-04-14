@@ -13,17 +13,16 @@
 // limitations under the License.
 
 /*
-Package fingerprinters provides HTTP fingerprinting for ACME Labs mini_httpd and micro_httpd.
+Package fingerprinters provides HTTP fingerprinting for ACME Labs mini_httpd.
 
 # Detection Strategy
 
-mini_httpd and micro_httpd are lightweight embedded web servers by ACME Labs,
+mini_httpd is a lightweight embedded web server by ACME Labs,
 commonly found on embedded devices and minimal Linux installations. Detection uses
 the Server header:
 
   - mini_httpd with version: "mini_httpd/1.30 26Oct2018"
   - mini_httpd without version: "mini_httpd"
-  - micro_httpd (never includes a version): "micro_httpd"
 
 # Example Usage
 
@@ -44,7 +43,7 @@ import (
 	"strings"
 )
 
-// MiniHTTPDFingerprinter detects ACME Labs mini_httpd and micro_httpd via Server header
+// MiniHTTPDFingerprinter detects ACME Labs mini_httpd via Server header
 type MiniHTTPDFingerprinter struct{}
 
 // miniHTTPDVersionRegex extracts version from mini_httpd Server header
@@ -78,11 +77,6 @@ func (f *MiniHTTPDFingerprinter) Match(resp *http.Response) bool {
 		return true
 	}
 
-	// Exact match for "micro_httpd" (never includes a version)
-	if server == "micro_httpd" {
-		return true
-	}
-
 	return false
 }
 
@@ -98,20 +92,6 @@ func (f *MiniHTTPDFingerprinter) Fingerprint(resp *http.Response, body []byte) (
 	}
 
 	metadata := make(map[string]any)
-
-	// Determine variant: mini_httpd or micro_httpd
-	if server == "micro_httpd" {
-		metadata["variant"] = "micro_httpd"
-		return &FingerprintResult{
-			Technology: "mini_httpd",
-			Version:    "",
-			CPEs:       []string{buildMicroHTTPDCPE()},
-			Metadata:   metadata,
-		}, nil
-	}
-
-	// mini_httpd variant
-	metadata["variant"] = "mini_httpd"
 
 	// Extract version from Server header
 	version := ""
@@ -148,6 +128,3 @@ func buildMiniHTTPDCPE(version string) string {
 	return fmt.Sprintf("cpe:2.3:a:acme:mini_httpd:%s:*:*:*:*:*:*:*", version)
 }
 
-func buildMicroHTTPDCPE() string {
-	return "cpe:2.3:a:acme:micro_httpd:*:*:*:*:*:*:*:*"
-}

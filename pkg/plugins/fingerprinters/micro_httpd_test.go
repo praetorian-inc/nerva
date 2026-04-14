@@ -19,32 +19,27 @@ import (
 	"testing"
 )
 
-func TestMiniHTTPDFingerprinter_Name(t *testing.T) {
-	fp := &MiniHTTPDFingerprinter{}
-	if got := fp.Name(); got != "mini_httpd" {
-		t.Errorf("Name() = %q, want %q", got, "mini_httpd")
+func TestMicroHTTPDFingerprinter_Name(t *testing.T) {
+	fp := &MicroHTTPDFingerprinter{}
+	if got := fp.Name(); got != "micro_httpd" {
+		t.Errorf("Name() = %q, want %q", got, "micro_httpd")
 	}
 }
 
-func TestMiniHTTPDFingerprinter_Match(t *testing.T) {
+func TestMicroHTTPDFingerprinter_Match(t *testing.T) {
 	tests := []struct {
 		name   string
 		server string
 		want   bool
 	}{
 		{
-			name:   "Server: mini_httpd/1.30 26Oct2018 returns true",
-			server: "mini_httpd/1.30 26Oct2018",
+			name:   "Server: micro_httpd returns true",
+			server: "micro_httpd",
 			want:   true,
 		},
 		{
-			name:   "Server: mini_httpd/1.19 19dec2003 returns true",
-			server: "mini_httpd/1.19 19dec2003",
-			want:   true,
-		},
-		{
-			name:   "Server: mini_httpd (exact, no version) returns true",
-			server: "mini_httpd",
+			name:   "Server: micro_httpd/1.0 returns true (hypothetical version)",
+			server: "micro_httpd/1.0",
 			want:   true,
 		},
 		{
@@ -63,15 +58,20 @@ func TestMiniHTTPDFingerprinter_Match(t *testing.T) {
 			want:   false,
 		},
 		{
-			name:   "Server: mini_httpd_modified returns false",
-			server: "mini_httpd_modified",
+			name:   "Server: mini_httpd/1.30 returns false (different product)",
+			server: "mini_httpd/1.30",
+			want:   false,
+		},
+		{
+			name:   "Server: micro_httpd_modified returns false",
+			server: "micro_httpd_modified",
 			want:   false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			fp := &MiniHTTPDFingerprinter{}
+			fp := &MicroHTTPDFingerprinter{}
 			resp := &http.Response{
 				Header: make(http.Header),
 			}
@@ -86,39 +86,30 @@ func TestMiniHTTPDFingerprinter_Match(t *testing.T) {
 	}
 }
 
-func TestMiniHTTPDFingerprinter_Fingerprint_Valid(t *testing.T) {
+func TestMicroHTTPDFingerprinter_Fingerprint_Valid(t *testing.T) {
 	tests := []struct {
-		name          string
-		serverHdr     string
-		wantVersion   string
-		wantBuildDate string
-		wantCPE       string
+		name        string
+		serverHdr   string
+		wantVersion string
+		wantCPE     string
 	}{
 		{
-			name:          "mini_httpd/1.30 with build date",
-			serverHdr:     "mini_httpd/1.30 26Oct2018",
-			wantVersion:   "1.30",
-			wantBuildDate: "26Oct2018",
-			wantCPE:       "cpe:2.3:a:acme:mini_httpd:1.30:*:*:*:*:*:*:*",
-		},
-		{
-			name:          "mini_httpd/1.19 with build date",
-			serverHdr:     "mini_httpd/1.19 19dec2003",
-			wantVersion:   "1.19",
-			wantBuildDate: "19dec2003",
-			wantCPE:       "cpe:2.3:a:acme:mini_httpd:1.19:*:*:*:*:*:*:*",
-		},
-		{
-			name:        "mini_httpd without version",
-			serverHdr:   "mini_httpd",
+			name:        "micro_httpd (standard, no version)",
+			serverHdr:   "micro_httpd",
 			wantVersion: "",
-			wantCPE:     "cpe:2.3:a:acme:mini_httpd:*:*:*:*:*:*:*:*",
+			wantCPE:     "cpe:2.3:a:acme:micro_httpd:*:*:*:*:*:*:*:*",
+		},
+		{
+			name:        "micro_httpd/1.0 (hypothetical version)",
+			serverHdr:   "micro_httpd/1.0",
+			wantVersion: "1.0",
+			wantCPE:     "cpe:2.3:a:acme:micro_httpd:1.0:*:*:*:*:*:*:*",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			fp := &MiniHTTPDFingerprinter{}
+			fp := &MicroHTTPDFingerprinter{}
 			resp := &http.Response{
 				Header: make(http.Header),
 			}
@@ -132,22 +123,11 @@ func TestMiniHTTPDFingerprinter_Fingerprint_Valid(t *testing.T) {
 				t.Fatal("Fingerprint() returned nil result")
 			}
 
-			if result.Technology != "mini_httpd" {
-				t.Errorf("Technology = %q, want %q", result.Technology, "mini_httpd")
+			if result.Technology != "micro_httpd" {
+				t.Errorf("Technology = %q, want %q", result.Technology, "micro_httpd")
 			}
 			if result.Version != tt.wantVersion {
 				t.Errorf("Version = %q, want %q", result.Version, tt.wantVersion)
-			}
-
-			// Check build_date metadata
-			if tt.wantBuildDate != "" {
-				if buildDate, ok := result.Metadata["build_date"].(string); !ok || buildDate != tt.wantBuildDate {
-					t.Errorf("Metadata[build_date] = %v, want %q", result.Metadata["build_date"], tt.wantBuildDate)
-				}
-			} else {
-				if _, hasBuildDate := result.Metadata["build_date"]; hasBuildDate {
-					t.Errorf("Metadata[build_date] should not be present, got %v", result.Metadata["build_date"])
-				}
 			}
 
 			// Check CPE
@@ -160,13 +140,13 @@ func TestMiniHTTPDFingerprinter_Fingerprint_Valid(t *testing.T) {
 	}
 }
 
-func TestMiniHTTPDFingerprinter_Fingerprint_Invalid(t *testing.T) {
+func TestMicroHTTPDFingerprinter_Fingerprint_Invalid(t *testing.T) {
 	tests := []struct {
 		name   string
 		server string
 	}{
 		{
-			name:   "nginx (not mini/micro_httpd)",
+			name:   "nginx (not micro_httpd)",
 			server: "nginx/1.18.0",
 		},
 		{
@@ -174,18 +154,18 @@ func TestMiniHTTPDFingerprinter_Fingerprint_Invalid(t *testing.T) {
 			server: "",
 		},
 		{
-			name:   "Apache (different server)",
-			server: "Apache/2.4.52",
+			name:   "mini_httpd (different product)",
+			server: "mini_httpd/1.30",
 		},
 		{
 			name:   "CPE injection attempt in version",
-			server: "mini_httpd/1.30:*:*:*:*:*:*:*",
+			server: "micro_httpd/1.0:*:*:*:*:*:*:*",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			fp := &MiniHTTPDFingerprinter{}
+			fp := &MicroHTTPDFingerprinter{}
 			resp := &http.Response{
 				Header: make(http.Header),
 			}
@@ -204,34 +184,34 @@ func TestMiniHTTPDFingerprinter_Fingerprint_Invalid(t *testing.T) {
 	}
 }
 
-func TestBuildMiniHTTPDCPE(t *testing.T) {
+func TestBuildMicroHTTPDCPE(t *testing.T) {
 	tests := []struct {
 		name    string
 		version string
 		want    string
 	}{
 		{
-			name:    "With version 1.30",
-			version: "1.30",
-			want:    "cpe:2.3:a:acme:mini_httpd:1.30:*:*:*:*:*:*:*",
+			name:    "With version 1.0",
+			version: "1.0",
+			want:    "cpe:2.3:a:acme:micro_httpd:1.0:*:*:*:*:*:*:*",
 		},
 		{
 			name:    "Empty version uses wildcard",
 			version: "",
-			want:    "cpe:2.3:a:acme:mini_httpd:*:*:*:*:*:*:*:*",
+			want:    "cpe:2.3:a:acme:micro_httpd:*:*:*:*:*:*:*:*",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := buildMiniHTTPDCPE(tt.version); got != tt.want {
-				t.Errorf("buildMiniHTTPDCPE() = %q, want %q", got, tt.want)
+			if got := buildMicroHTTPDCPE(tt.version); got != tt.want {
+				t.Errorf("buildMicroHTTPDCPE() = %q, want %q", got, tt.want)
 			}
 		})
 	}
 }
 
-func TestMiniHTTPDFingerprinter_Integration(t *testing.T) {
+func TestMicroHTTPDFingerprinter_Integration(t *testing.T) {
 	// Save current registry state and restore after test
 	originalCount := len(GetFingerprinters())
 	t.Cleanup(func() {
@@ -239,29 +219,26 @@ func TestMiniHTTPDFingerprinter_Integration(t *testing.T) {
 	})
 
 	// Register the fingerprinter (should happen in init(), but we test it anyway)
-	fp := &MiniHTTPDFingerprinter{}
+	fp := &MicroHTTPDFingerprinter{}
 	Register(fp)
 
-	// Create a valid mini_httpd response
+	// Create a valid micro_httpd response
 	resp := &http.Response{
 		Header: make(http.Header),
 	}
-	resp.Header.Set("Server", "mini_httpd/1.30 26Oct2018")
+	resp.Header.Set("Server", "micro_httpd")
 
 	results := RunFingerprinters(resp, []byte{})
 
-	// Should find at least the mini_httpd fingerprinter
+	// Should find at least the micro_httpd fingerprinter
 	found := false
 	for _, result := range results {
-		if result.Technology == "mini_httpd" {
+		if result.Technology == "micro_httpd" {
 			found = true
-			if result.Version != "1.30" {
-				t.Errorf("Version = %q, want %q", result.Version, "1.30")
-			}
 		}
 	}
 
 	if !found {
-		t.Error("MiniHTTPDFingerprinter not found in results")
+		t.Error("MicroHTTPDFingerprinter not found in results")
 	}
 }
