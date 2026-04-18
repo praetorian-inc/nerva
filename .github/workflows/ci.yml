@@ -5,38 +5,17 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
-env:
-  CGO_ENABLED: 0
-
 jobs:
-  build-and-test:
-    name: Build and Test
-    runs-on: ubuntu-latest
-
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Set up Go
-      uses: actions/setup-go@v5
-      with:
-        go-version-file: 'go.mod'
-        cache: true
-
-    - name: Build
-      run: go build -trimpath -ldflags="-s -w" -o nerva ./cmd/nerva
-
-    - name: Run tests
-      run: go test -short ./...
-
-    - name: Run vet
-      run: go vet ./...
-
-    - name: Verify binary
-      run: |
-        test -x ./nerva || (echo "Binary not created" && exit 1)
-        ./nerva --help
+  ci:
+    uses: praetorian-inc/public-workflows/.github/workflows/go-ci.yml@f89bda45e8073b1b6ac20198164de2b71ebf0c69  # v1.0.2
+    permissions:
+      contents: read
+    with:
+      build-cmd-path: ./cmd/nerva
+      build-binary-name: nerva
+    secrets: inherit
