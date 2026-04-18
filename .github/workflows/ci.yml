@@ -18,4 +18,12 @@ jobs:
     with:
       build-cmd-path: ./cmd/nerva
       build-binary-name: nerva
+      # nerva's inline CI never ran golangci-lint; preserve that behavior here.
+      # Enabling lint requires migrating .golangci.yml to v2 and fixing ~70
+      # pre-existing issues in pkg/ (tracked separately).
+      enable-lint: false
+      # Preserve the old `go test -short` behavior so Docker-based service
+      # tests (gated by testing.Short() in pkg/test/testutil.go) continue to
+      # skip in CI. Dropping -short surfaces ~10 container-dependent tests.
+      test-flags: -short -race -coverprofile=coverage.out -covermode=atomic
     secrets: inherit
