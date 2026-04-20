@@ -48,10 +48,10 @@ var eolOSSeverity = map[string]plugins.Severity{
 var eolVersionMap = map[string]eolEntry{
 	"5.0": {"Windows 2000", plugins.SeverityCritical},
 	"5.2": {"Windows Server 2003", plugins.SeverityCritical},
-	"6.0": {"Windows Server 2008 / Vista", plugins.SeverityHigh},
-	"6.1": {"Windows 7 / Server 2008 R2", plugins.SeverityHigh},
-	"6.2": {"Windows 8 / Server 2012", plugins.SeverityMedium},
-	"6.3": {"Windows 8.1 / Server 2012 R2", plugins.SeverityMedium},
+	"6.0": {"Windows Server 2008 or Vista", plugins.SeverityHigh},
+	"6.1": {"Windows 7 or Server 2008 R2", plugins.SeverityHigh},
+	"6.2": {"Windows 8 or Server 2012", plugins.SeverityMedium},
+	"6.3": {"Windows 8.1 or Server 2012 R2", plugins.SeverityMedium},
 }
 
 const RDP = "rdp"
