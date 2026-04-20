@@ -148,7 +148,7 @@ func (p *HTTPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 			})
 		}
 	}
-	if target.Misconfigs {
+	if target.Misconfigs && resp.StatusCode/100 != 3 {
 		service.SecurityFindings = append(service.SecurityFindings, checkMissingSecurityHeaders(resp.Header, false)...)
 	}
 	return service, nil
@@ -226,7 +226,7 @@ func (p *HTTPSPlugin) Run(
 			})
 		}
 	}
-	if target.Misconfigs {
+	if target.Misconfigs && resp.StatusCode/100 != 3 {
 		service.SecurityFindings = append(service.SecurityFindings, checkMissingSecurityHeaders(resp.Header, true)...)
 	}
 	return service, nil
