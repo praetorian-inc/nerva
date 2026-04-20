@@ -148,6 +148,9 @@ func (p *HTTPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 			})
 		}
 	}
+	if target.Misconfigs {
+		service.SecurityFindings = append(service.SecurityFindings, checkMissingSecurityHeaders(resp.Header)...)
+	}
 	return service, nil
 }
 
@@ -223,6 +226,9 @@ func (p *HTTPSPlugin) Run(
 			})
 		}
 	}
+	if target.Misconfigs {
+		service.SecurityFindings = append(service.SecurityFindings, checkMissingSecurityHeaders(resp.Header)...)
+	}
 	return service, nil
 }
 
@@ -269,6 +275,37 @@ func formatTechnologyWithVersion(technology, version string) string {
 type fingerprintedTech struct {
 	name     string
 	severity plugins.Severity
+}
+
+func checkMissingSecurityHeaders(headers http.Header) []plugins.SecurityFinding {
+	findings := make([]plugins.SecurityFinding, 0, 3)
+
+	if headers.Get("Strict-Transport-Security") == "" {
+		findings = append(findings, plugins.SecurityFinding{
+			ID:          "http-missing-hsts",
+			Severity:    plugins.SeverityMedium,
+			Description: "HTTP response missing Strict-Transport-Security header",
+			Evidence:    "header not present: Strict-Transport-Security",
+		})
+	}
+	if headers.Get("Content-Security-Policy") == "" {
+		findings = append(findings, plugins.SecurityFinding{
+			ID:          "http-missing-csp",
+			Severity:    plugins.SeverityLow,
+			Description: "HTTP response missing Content-Security-Policy header",
+			Evidence:    "header not present: Content-Security-Policy",
+		})
+	}
+	if headers.Get("X-Frame-Options") == "" {
+		findings = append(findings, plugins.SecurityFinding{
+			ID:          "http-missing-x-frame-options",
+			Severity:    plugins.SeverityLow,
+			Description: "HTTP response missing X-Frame-Options header",
+			Evidence:    "header not present: X-Frame-Options",
+		})
+	}
+
+	return findings
 }
 
 // processFingerprintResult extracts technology (with version), CPEs, metadata, and severity from a FingerprintResult.
