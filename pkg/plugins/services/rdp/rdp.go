@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"net"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,6 +30,29 @@ import (
 
 type RDPPlugin struct{}
 type TLSPlugin struct{}
+
+type eolEntry struct {
+	name     string
+	severity plugins.Severity
+}
+
+var eolOSSeverity = map[string]plugins.Severity{
+	"Windows 2000":                plugins.SeverityCritical,
+	"Windows Server 2003":         plugins.SeverityCritical,
+	"Windows Server 2008":         plugins.SeverityHigh,
+	"Windows 7 or Server 2008 R2": plugins.SeverityHigh,
+	"Windows Server 2008 R2 DC":   plugins.SeverityHigh,
+	"Windows 8 or Server 2012":    plugins.SeverityMedium,
+}
+
+var eolVersionMap = map[string]eolEntry{
+	"5.0": {"Windows 2000", plugins.SeverityCritical},
+	"5.2": {"Windows Server 2003", plugins.SeverityCritical},
+	"6.0": {"Windows Server 2008 or Vista", plugins.SeverityHigh},
+	"6.1": {"Windows 7 or Server 2008 R2", plugins.SeverityHigh},
+	"6.2": {"Windows 8 or Server 2012", plugins.SeverityMedium},
+	"6.3": {"Windows 8.1 or Server 2012 R2", plugins.SeverityMedium},
+}
 
 const RDP = "rdp"
 
@@ -347,6 +371,49 @@ func DetectRDPAuth(conn net.Conn, timeout time.Duration) (*plugins.ServiceRDP, b
 	return &info, true, nil
 }
 
+// checkEOLOS maps an OS fingerprint string (from guessOS) to a SecurityFinding
+// if the OS is end-of-life. Returns nil if the OS is not EOL or fingerprint is empty.
+func checkEOLOS(fingerprint string) *plugins.SecurityFinding {
+	severity, ok := eolOSSeverity[fingerprint]
+	if !ok {
+		return nil
+	}
+	return &plugins.SecurityFinding{
+		ID:          "rdp-eol-os",
+		Severity:    severity,
+		Description: fmt.Sprintf("RDP service running end-of-life OS: %s", fingerprint),
+		Evidence:    fingerprint,
+	}
+}
+
+// checkEOLOSVersion maps a "Major.Minor.Build" version string (from NTLM OSVersion)
+// to a SecurityFinding if the OS is end-of-life. Returns nil if not EOL or parse error.
+func checkEOLOSVersion(osVersion string) *plugins.SecurityFinding {
+	parts := strings.SplitN(osVersion, ".", 3)
+	if len(parts) < 2 {
+		return nil
+	}
+	major, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return nil
+	}
+	minor, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return nil
+	}
+	key := fmt.Sprintf("%d.%d", major, minor)
+	entry, ok := eolVersionMap[key]
+	if !ok {
+		return nil
+	}
+	return &plugins.SecurityFinding{
+		ID:          "rdp-eol-os",
+		Severity:    entry.severity,
+		Description: fmt.Sprintf("RDP service running end-of-life OS: %s", entry.name),
+		Evidence:    osVersion,
+	}
+}
+
 func (p *RDPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
 	fingerprint, check, err := DetectRDP(conn, timeout)
 	if check && err != nil {
@@ -355,7 +422,13 @@ func (p *RDPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 		payload := plugins.ServiceRDP{
 			OSFingerprint: fingerprint,
 		}
-		return plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP), nil
+		service := plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP)
+		if target.Misconfigs && fingerprint != "" {
+			if finding := checkEOLOS(fingerprint); finding != nil {
+				service.SecurityFindings = append(service.SecurityFindings, *finding)
+			}
+		}
+		return service, nil
 	}
 	return nil, err
 }
@@ -365,7 +438,13 @@ func (p *TLSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 	if check && err != nil {
 		return nil, nil
 	} else if check && info != nil && err == nil {
-		return plugins.CreateServiceFrom(target, *info, true, "", plugins.TCP), nil
+		service := plugins.CreateServiceFrom(target, *info, true, "", plugins.TCP)
+		if target.Misconfigs && info.OSVersion != "" {
+			if finding := checkEOLOSVersion(info.OSVersion); finding != nil {
+				service.SecurityFindings = append(service.SecurityFindings, *finding)
+			}
+		}
+		return service, nil
 	}
 	return nil, err
 }
