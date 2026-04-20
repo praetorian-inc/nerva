@@ -149,7 +149,7 @@ func (p *HTTPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 		}
 	}
 	if target.Misconfigs {
-		service.SecurityFindings = append(service.SecurityFindings, checkMissingSecurityHeaders(resp.Header)...)
+		service.SecurityFindings = append(service.SecurityFindings, checkMissingSecurityHeaders(resp.Header, false)...)
 	}
 	return service, nil
 }
@@ -227,7 +227,7 @@ func (p *HTTPSPlugin) Run(
 		}
 	}
 	if target.Misconfigs {
-		service.SecurityFindings = append(service.SecurityFindings, checkMissingSecurityHeaders(resp.Header)...)
+		service.SecurityFindings = append(service.SecurityFindings, checkMissingSecurityHeaders(resp.Header, true)...)
 	}
 	return service, nil
 }
@@ -277,10 +277,10 @@ type fingerprintedTech struct {
 	severity plugins.Severity
 }
 
-func checkMissingSecurityHeaders(headers http.Header) []plugins.SecurityFinding {
+func checkMissingSecurityHeaders(headers http.Header, checkHSTS bool) []plugins.SecurityFinding {
 	findings := make([]plugins.SecurityFinding, 0, 3)
 
-	if headers.Get("Strict-Transport-Security") == "" {
+	if checkHSTS && headers.Get("Strict-Transport-Security") == "" {
 		findings = append(findings, plugins.SecurityFinding{
 			ID:          "http-missing-hsts",
 			Severity:    plugins.SeverityMedium,

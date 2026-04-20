@@ -15,8 +15,6 @@
 package http
 
 import (
-	"fmt"
-	"log"
 	"net"
 	"net/http"
 	"net/netip"
@@ -41,7 +39,7 @@ func findSecurityFinding(findings []plugins.SecurityFinding, id string) *plugins
 
 func TestCheckMissingSecurityHeaders_AllMissing(t *testing.T) {
 	headers := http.Header{}
-	findings := checkMissingSecurityHeaders(headers)
+	findings := checkMissingSecurityHeaders(headers, true)
 
 	assert.Len(t, findings, 3)
 
@@ -67,7 +65,7 @@ func TestCheckMissingSecurityHeaders_AllPresent(t *testing.T) {
 	headers.Set("Content-Security-Policy", "default-src 'self'")
 	headers.Set("X-Frame-Options", "DENY")
 
-	findings := checkMissingSecurityHeaders(headers)
+	findings := checkMissingSecurityHeaders(headers, true)
 
 	assert.Len(t, findings, 0)
 }
@@ -76,7 +74,7 @@ func TestCheckMissingSecurityHeaders_HSTSPresent(t *testing.T) {
 	headers := http.Header{}
 	headers.Set("Strict-Transport-Security", "max-age=31536000")
 
-	findings := checkMissingSecurityHeaders(headers)
+	findings := checkMissingSecurityHeaders(headers, true)
 
 	assert.Len(t, findings, 2)
 	assert.Nil(t, findSecurityFinding(findings, "http-missing-hsts"))
@@ -88,7 +86,7 @@ func TestCheckMissingSecurityHeaders_CSPPresent(t *testing.T) {
 	headers := http.Header{}
 	headers.Set("Content-Security-Policy", "default-src 'self'")
 
-	findings := checkMissingSecurityHeaders(headers)
+	findings := checkMissingSecurityHeaders(headers, true)
 
 	assert.Len(t, findings, 2)
 	assert.NotNil(t, findSecurityFinding(findings, "http-missing-hsts"))
@@ -100,12 +98,22 @@ func TestCheckMissingSecurityHeaders_XFrameOptionsPresent(t *testing.T) {
 	headers := http.Header{}
 	headers.Set("X-Frame-Options", "SAMEORIGIN")
 
-	findings := checkMissingSecurityHeaders(headers)
+	findings := checkMissingSecurityHeaders(headers, true)
 
 	assert.Len(t, findings, 2)
 	assert.NotNil(t, findSecurityFinding(findings, "http-missing-hsts"))
 	assert.NotNil(t, findSecurityFinding(findings, "http-missing-csp"))
 	assert.Nil(t, findSecurityFinding(findings, "http-missing-x-frame-options"))
+}
+
+func TestCheckMissingSecurityHeaders_HTTPNoHSTS(t *testing.T) {
+	headers := http.Header{}
+	findings := checkMissingSecurityHeaders(headers, false)
+
+	assert.Len(t, findings, 2)
+	assert.Nil(t, findSecurityFinding(findings, "http-missing-hsts"))
+	assert.NotNil(t, findSecurityFinding(findings, "http-missing-csp"))
+	assert.NotNil(t, findSecurityFinding(findings, "http-missing-x-frame-options"))
 }
 
 // ---------------------------------------------------------------------------
@@ -122,7 +130,7 @@ func TestHTTPPlugin_MissingSecurityHeaders_Live(t *testing.T) {
 
 	pool, err := dockertest.NewPool("")
 	if err != nil {
-		log.Fatalf("could not connect to docker: %s", err)
+		t.Skipf("skipping docker test; could not connect to docker: %s", err)
 	}
 
 	resource, err := pool.RunWithOptions(&dockertest.RunOptions{
@@ -160,7 +168,10 @@ func TestHTTPPlugin_MissingSecurityHeaders_Live(t *testing.T) {
 		t.Fatalf("server not ready: %s", retryErr)
 	}
 
-	addrPort := netip.MustParseAddrPort(fmt.Sprintf("%s:%s", host, port))
+	addrPort, err := netip.ParseAddrPort(targetAddr)
+	if err != nil {
+		t.Fatalf("ParseAddrPort(%q): %v", targetAddr, err)
+	}
 	target := plugins.Target{
 		Address:    addrPort,
 		Misconfigs: true,
@@ -187,10 +198,8 @@ func TestHTTPPlugin_MissingSecurityHeaders_Live(t *testing.T) {
 	}
 
 	hsts := findSecurityFinding(service.SecurityFindings, "http-missing-hsts")
-	if hsts == nil {
-		t.Errorf("expected http-missing-hsts finding, got findings: %v", service.SecurityFindings)
-	} else if hsts.Severity != plugins.SeverityMedium {
-		t.Errorf("http-missing-hsts severity = %q, want %q", hsts.Severity, plugins.SeverityMedium)
+	if hsts != nil {
+		t.Errorf("expected no http-missing-hsts finding for plain HTTP, got: %+v", *hsts)
 	}
 
 	csp := findSecurityFinding(service.SecurityFindings, "http-missing-csp")
