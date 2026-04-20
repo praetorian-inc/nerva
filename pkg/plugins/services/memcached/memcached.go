@@ -321,6 +321,16 @@ func DetectMemcached(conn net.Conn, timeout time.Duration) (string, bool, error)
 	return "", false, &utils.InvalidResponseError{Service: MEMCACHED}
 }
 
+// memcachedNoAuthFinding returns a SecurityFinding for an unauthenticated Memcached server.
+func memcachedNoAuthFinding() plugins.SecurityFinding {
+	return plugins.SecurityFinding{
+		ID:          "memcached-no-auth",
+		Severity:    plugins.SeverityHigh,
+		Description: "Memcached accessible without authentication",
+		Evidence:    "Responded to unauthenticated version/stats command",
+	}
+}
+
 func (p *MEMCACHEDPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
 	version, detected, err := DetectMemcached(conn, timeout)
 	if !detected {
@@ -336,7 +346,14 @@ func (p *MEMCACHEDPlugin) Run(conn net.Conn, timeout time.Duration, target plugi
 	cpe := buildMemcachedCPE(version)
 	payload.CPEs = []string{cpe}
 
-	return plugins.CreateServiceFrom(target, payload, false, version, plugins.TCP), nil
+	service := plugins.CreateServiceFrom(target, payload, false, version, plugins.TCP)
+	if target.Misconfigs {
+		service.AnonymousAccess = true
+		service.SecurityFindings = []plugins.SecurityFinding{
+			memcachedNoAuthFinding(),
+		}
+	}
+	return service, nil
 }
 
 func (p *MEMCACHEDPlugin) PortPriority(port uint16) bool {
