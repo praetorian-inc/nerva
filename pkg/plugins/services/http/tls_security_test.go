@@ -23,7 +23,6 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"fmt"
-	"log"
 	"math/big"
 	"net"
 	"net/netip"
@@ -398,7 +397,7 @@ func TestHTTPSPlugin_TLS12_NoFinding(t *testing.T) {
 func TestHTTPSPlugin_MisconfigsDisabled(t *testing.T) {
 	cert := generateSelfSignedCert(t)
 	// misconfigs=false: the plugin should NOT call checkWeakTLS
-	service := runHTTPSPluginAgainstTLSServer(t, cert, tls.VersionTLS10, false)
+	service := runHTTPSPluginAgainstTLSServer(t, cert, tls.VersionTLS12, false)
 
 	if service == nil {
 		t.Fatal("HTTPSPlugin.Run() returned nil service")
@@ -491,20 +490,19 @@ func startOpenSSLContainer(t *testing.T, pool *dockertest.Pool, tlsFlag string, 
 	return targetAddr, resource
 }
 
-// TestHTTPSPlugin_WeakTLS10_Live spins up an alpine:3.15 container running
-// openssl s_server pinned to TLS 1.0 and verifies that HTTPSPlugin.Run()
-// produces a tls-weak-version finding with severity High.
-func TestHTTPSPlugin_WeakTLS10_Live(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping docker test in short mode")
-	}
+// runTLSLiveTest is the shared body for Docker-based live TLS tests.
+// It starts an openssl s_server container pinned to the given TLS version,
+// connects, runs HTTPSPlugin.Run(), and asserts the expected finding.
+// If wantSeverity is nil, no tls-weak-version finding is expected.
+func runTLSLiveTest(t *testing.T, tlsFlag string, tlsVersion uint16, wantSeverity *plugins.Severity, wantEvidence string) {
+	t.Helper()
 
 	pool, err := dockertest.NewPool("")
 	if err != nil {
-		log.Fatalf("could not connect to docker: %s", err)
+		t.Fatalf("could not connect to docker: %s", err)
 	}
 
-	targetAddr, resource := startOpenSSLContainer(t, pool, "-tls1", tls.VersionTLS10)
+	targetAddr, resource := startOpenSSLContainer(t, pool, tlsFlag, tlsVersion)
 	defer pool.Purge(resource) //nolint:errcheck
 
 	conn, err := tls.DialWithDialer(
@@ -512,8 +510,8 @@ func TestHTTPSPlugin_WeakTLS10_Live(t *testing.T) {
 		"tcp", targetAddr,
 		&tls.Config{
 			InsecureSkipVerify: true, //nolint:gosec // test-only container
-			MinVersion:         tls.VersionTLS10,
-			MaxVersion:         tls.VersionTLS10,
+			MinVersion:         tlsVersion,
+			MaxVersion:         tlsVersion,
 		},
 	)
 	if err != nil {
@@ -521,8 +519,8 @@ func TestHTTPSPlugin_WeakTLS10_Live(t *testing.T) {
 	}
 	defer conn.Close()
 
-	if v := conn.ConnectionState().Version; v != tls.VersionTLS10 {
-		t.Fatalf("expected TLS 1.0, negotiated 0x%04x", v)
+	if v := conn.ConnectionState().Version; v != tlsVersion {
+		t.Fatalf("expected TLS version 0x%04x, negotiated 0x%04x", tlsVersion, v)
 	}
 
 	addrPort := netip.MustParseAddrPort(targetAddr)
@@ -541,129 +539,66 @@ func TestHTTPSPlugin_WeakTLS10_Live(t *testing.T) {
 	}
 
 	finding := findSecurityFinding(service, "tls-weak-version")
+
+	if wantSeverity == nil {
+		if finding != nil {
+			t.Errorf("expected no tls-weak-version finding, got: %+v", *finding)
+		}
+		return
+	}
+
 	if finding == nil {
 		t.Fatalf("expected tls-weak-version finding, got findings: %v", service.SecurityFindings)
 	}
-	if finding.Severity != plugins.SeverityHigh {
-		t.Errorf("severity = %q, want %q", finding.Severity, plugins.SeverityHigh)
+	if finding.Severity != *wantSeverity {
+		t.Errorf("severity = %q, want %q", finding.Severity, *wantSeverity)
 	}
-	if !strings.Contains(finding.Evidence, "TLS 1.0") {
-		t.Errorf("evidence = %q, want it to contain 'TLS 1.0'", finding.Evidence)
+	if !strings.Contains(finding.Evidence, wantEvidence) {
+		t.Errorf("evidence = %q, want it to contain %q", finding.Evidence, wantEvidence)
 	}
 }
 
-// TestHTTPSPlugin_WeakTLS11_Live spins up an alpine:3.15 container running
-// openssl s_server pinned to TLS 1.1 and verifies that HTTPSPlugin.Run()
-// produces a tls-weak-version finding with severity Medium.
-func TestHTTPSPlugin_WeakTLS11_Live(t *testing.T) {
+func TestHTTPSPlugin_WeakTLS_Live(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping docker test in short mode")
 	}
 
-	pool, err := dockertest.NewPool("")
-	if err != nil {
-		log.Fatalf("could not connect to docker: %s", err)
-	}
+	sevHigh := plugins.SeverityHigh
+	sevMedium := plugins.SeverityMedium
 
-	targetAddr, resource := startOpenSSLContainer(t, pool, "-tls1_1", tls.VersionTLS11)
-	defer pool.Purge(resource) //nolint:errcheck
-
-	conn, err := tls.DialWithDialer(
-		&net.Dialer{Timeout: 5 * time.Second},
-		"tcp", targetAddr,
-		&tls.Config{
-			InsecureSkipVerify: true, //nolint:gosec // test-only container
-			MinVersion:         tls.VersionTLS11,
-			MaxVersion:         tls.VersionTLS11,
+	tests := []struct {
+		name         string
+		tlsFlag      string
+		tlsVersion   uint16
+		wantSeverity *plugins.Severity
+		wantEvidence string
+	}{
+		{
+			name:         "TLS 1.0 returns High finding",
+			tlsFlag:      "-tls1",
+			tlsVersion:   tls.VersionTLS10,
+			wantSeverity: &sevHigh,
+			wantEvidence: "TLS 1.0",
 		},
-	)
-	if err != nil {
-		t.Fatalf("tls.DialWithDialer: %v", err)
-	}
-	defer conn.Close()
-
-	if v := conn.ConnectionState().Version; v != tls.VersionTLS11 {
-		t.Fatalf("expected TLS 1.1, negotiated 0x%04x", v)
-	}
-
-	addrPort := netip.MustParseAddrPort(targetAddr)
-	target := plugins.Target{
-		Address:    addrPort,
-		Misconfigs: true,
-	}
-
-	p := newHTTPSPlugin(t)
-	service, err := p.Run(conn, 5*time.Second, target)
-	if err != nil {
-		t.Fatalf("HTTPSPlugin.Run(): %v", err)
-	}
-	if service == nil {
-		t.Fatal("HTTPSPlugin.Run() returned nil")
-	}
-
-	finding := findSecurityFinding(service, "tls-weak-version")
-	if finding == nil {
-		t.Fatalf("expected tls-weak-version finding, got findings: %v", service.SecurityFindings)
-	}
-	if finding.Severity != plugins.SeverityMedium {
-		t.Errorf("severity = %q, want %q", finding.Severity, plugins.SeverityMedium)
-	}
-	if !strings.Contains(finding.Evidence, "TLS 1.1") {
-		t.Errorf("evidence = %q, want it to contain 'TLS 1.1'", finding.Evidence)
-	}
-}
-
-// TestHTTPSPlugin_TLS12_NoFinding_Live is the negative control: it spins up an
-// alpine:3.15 container running openssl s_server pinned to TLS 1.2 and verifies
-// that HTTPSPlugin.Run() does NOT produce a tls-weak-version finding.
-func TestHTTPSPlugin_TLS12_NoFinding_Live(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping docker test in short mode")
-	}
-
-	pool, err := dockertest.NewPool("")
-	if err != nil {
-		log.Fatalf("could not connect to docker: %s", err)
-	}
-
-	targetAddr, resource := startOpenSSLContainer(t, pool, "-tls1_2", tls.VersionTLS12)
-	defer pool.Purge(resource) //nolint:errcheck
-
-	conn, err := tls.DialWithDialer(
-		&net.Dialer{Timeout: 5 * time.Second},
-		"tcp", targetAddr,
-		&tls.Config{
-			InsecureSkipVerify: true, //nolint:gosec // test-only container
-			MinVersion:         tls.VersionTLS12,
-			MaxVersion:         tls.VersionTLS12,
+		{
+			name:         "TLS 1.1 returns Medium finding",
+			tlsFlag:      "-tls1_1",
+			tlsVersion:   tls.VersionTLS11,
+			wantSeverity: &sevMedium,
+			wantEvidence: "TLS 1.1",
 		},
-	)
-	if err != nil {
-		t.Fatalf("tls.DialWithDialer: %v", err)
-	}
-	defer conn.Close()
-
-	if v := conn.ConnectionState().Version; v != tls.VersionTLS12 {
-		t.Fatalf("expected TLS 1.2, negotiated 0x%04x", v)
-	}
-
-	addrPort := netip.MustParseAddrPort(targetAddr)
-	target := plugins.Target{
-		Address:    addrPort,
-		Misconfigs: true,
+		{
+			name:         "TLS 1.2 produces no finding",
+			tlsFlag:      "-tls1_2",
+			tlsVersion:   tls.VersionTLS12,
+			wantSeverity: nil,
+			wantEvidence: "",
+		},
 	}
 
-	p := newHTTPSPlugin(t)
-	service, err := p.Run(conn, 5*time.Second, target)
-	if err != nil {
-		t.Fatalf("HTTPSPlugin.Run(): %v", err)
-	}
-	if service == nil {
-		t.Fatal("HTTPSPlugin.Run() returned nil")
-	}
-
-	finding := findSecurityFinding(service, "tls-weak-version")
-	if finding != nil {
-		t.Errorf("expected no tls-weak-version finding for TLS 1.2, got: %+v", *finding)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			runTLSLiveTest(t, tc.tlsFlag, tc.tlsVersion, tc.wantSeverity, tc.wantEvidence)
+		})
 	}
 }
