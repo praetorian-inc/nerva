@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- AJP (Apache JServ Protocol) fingerprinter on port 8009 using CPing/CPong handshake (LAB-1842).
+  - Emits AJP protocol version ("1.3") and CPing-enabled flag in service metadata.
 - Complete README rewrite with accurate protocol documentation
 - Architecture diagram (Mermaid)
 - Use Cases section for security professionals
