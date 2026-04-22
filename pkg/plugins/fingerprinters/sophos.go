@@ -207,10 +207,12 @@ func sophosContainsTitle(bodyStr string) bool {
 // signal. Returns (false, "") if no matching cookie is found.
 //
 // Parsing notes per RFC 6265:
-//   - Cookie attribute NAMES (e.g., "Path") are case-insensitive, so the
-//     attribute name comparison uses strings.ToLower on the full cookie string.
-//   - Cookie PATH VALUES (/webconsole, /userportal) are case-sensitive per
-//     RFC 3986, so path value comparison is exact (lowercase against lowercase).
+//   - Matching is case-insensitive across both the Path attribute name and the
+//     path value segment: strings.ToLower is applied to the entire raw cookie
+//     string before the substring search. Sophos devices emit lowercase paths
+//     in practice; the case-insensitive comparison adds defensive breadth
+//     without widening attack surface (no attacker-controlled input reaches the
+//     output — only a boolean and hardcoded component strings are returned).
 //   - Cookie VALUES (JSESSIONID=...) are tainted — this function never copies
 //     or returns the cookie value, only matching on the Path attribute.
 func sophosHasPortalCookie(resp *http.Response) (bool, string) {

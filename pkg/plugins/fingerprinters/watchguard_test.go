@@ -162,11 +162,15 @@ func TestWatchGuardFingerprinter_Match(t *testing.T) {
 	}
 }
 
-func TestWatchGuardFingerprinter_TLSCertHelper(t *testing.T) {
+// TestWatchGuardCertIssuer tests isWatchGuardCertIssuer: the Tier-1 cert
+// predicate that checks only Issuer.CommonName for "Fireware web CA".
+func TestWatchGuardCertIssuer(t *testing.T) {
+	f := &WatchGuardFingerprinter{}
+
 	tests := []struct {
-		name    string
-		resp    *http.Response
-		want    bool
+		name string
+		resp *http.Response
+		want bool
 	}{
 		{
 			name: "nil resp returns false",
@@ -174,9 +178,9 @@ func TestWatchGuardFingerprinter_TLSCertHelper(t *testing.T) {
 			want: false,
 		},
 		{
-			name:    "nil TLS returns false",
-			resp:    &http.Response{StatusCode: 200, Header: http.Header{}},
-			want:    false,
+			name: "nil TLS returns false",
+			resp: &http.Response{StatusCode: 200, Header: http.Header{}},
+			want: false,
 		},
 		{
 			name: "empty PeerCertificates returns false",
@@ -207,14 +211,18 @@ func TestWatchGuardFingerprinter_TLSCertHelper(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "matching Subject Organization returns true",
+			// H4 regression: Subject.O with WatchGuard branding must NOT trigger
+			// the Tier-1 issuer check — only Issuer.CN is checked here.
+			name: "Subject.O=WatchGuard with non-Fireware issuer returns false",
 			resp: makeTLSResp(makeWatchGuardCert(t, "Some Public CA", "WatchGuard Technologies", "")),
-			want: true,
+			want: false,
 		},
 		{
-			name: "matching Subject OU returns true",
+			// H4 regression: Subject.OU with Fireware branding must NOT trigger
+			// the Tier-1 issuer check.
+			name: "Subject.OU=Fireware with non-Fireware issuer returns false",
 			resp: makeTLSResp(makeWatchGuardCert(t, "Some CA", "", "Fireware")),
-			want: true,
+			want: false,
 		},
 		{
 			name: "non-matching cert returns false",
@@ -225,11 +233,130 @@ func TestWatchGuardFingerprinter_TLSCertHelper(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := isWatchGuardCert(tt.resp); got != tt.want {
-				t.Errorf("isWatchGuardCert() = %v, want %v", got, tt.want)
+			if got := f.isWatchGuardCertIssuer(tt.resp); got != tt.want {
+				t.Errorf("isWatchGuardCertIssuer() = %v, want %v", got, tt.want)
 			}
 		})
 	}
+}
+
+// TestWatchGuardCertSubject tests isWatchGuardCertSubject: the Tier-2
+// corroborating cert predicate that checks Subject.O and Subject.OU.
+func TestWatchGuardCertSubject(t *testing.T) {
+	f := &WatchGuardFingerprinter{}
+
+	tests := []struct {
+		name string
+		resp *http.Response
+		want bool
+	}{
+		{
+			name: "nil resp returns false",
+			resp: nil,
+			want: false,
+		},
+		{
+			name: "nil TLS returns false",
+			resp: &http.Response{StatusCode: 200, Header: http.Header{}},
+			want: false,
+		},
+		{
+			name: "empty PeerCertificates returns false",
+			resp: &http.Response{
+				StatusCode: 200,
+				Header:     http.Header{},
+				TLS:        &tls.ConnectionState{PeerCertificates: []*x509.Certificate{}},
+			},
+			want: false,
+		},
+		{
+			// Issuer-only cert (no Subject branding) — isWatchGuardCertSubject
+			// must return false even when the Issuer is "Fireware web CA".
+			name: "Fireware web CA issuer but no Subject branding returns false",
+			resp: makeTLSResp(makeWatchGuardCert(t, "Fireware web CA", "", "")),
+			want: false,
+		},
+		{
+			name: "Subject.O contains WatchGuard returns true",
+			resp: makeTLSResp(makeWatchGuardCert(t, "Some Public CA", "WatchGuard Technologies", "")),
+			want: true,
+		},
+		{
+			name: "Subject.OU contains Fireware returns true",
+			resp: makeTLSResp(makeWatchGuardCert(t, "Some CA", "", "Fireware")),
+			want: true,
+		},
+		{
+			name: "non-WatchGuard Subject returns false",
+			resp: makeTLSResp(makeWatchGuardCert(t, "Let's Encrypt Authority X3", "Generic Corp", "IT Dept")),
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := f.isWatchGuardCertSubject(tt.resp); got != tt.want {
+				t.Errorf("isWatchGuardCertSubject() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestWatchGuardFingerprinter_H4Regression is the regression guard for H4:
+// Subject.O / Subject.OU alone (with no other WatchGuard signals) must NOT
+// produce a Fingerprint() match. Previously isWatchGuardCert returned true for
+// Subject.O="WatchGuard", which set tier1=true and bypassed the Tier-2 gate.
+func TestWatchGuardFingerprinter_H4Regression(t *testing.T) {
+	f := &WatchGuardFingerprinter{}
+
+	t.Run("H4: Subject.O=WatchGuard alone is NOT sufficient (no other signals)", func(t *testing.T) {
+		// Cert with Subject.O="WatchGuard Generic Corp" — no Fireware CA issuer,
+		// no WG cookie, no title, no body keywords, no strong Tier-2 signals.
+		cert := makeWatchGuardCert(t, "Some Unrelated CA", "WatchGuard Generic Corp", "")
+		resp := &http.Response{
+			StatusCode: 200,
+			Header:     http.Header{"Content-Type": []string{"text/html"}},
+			TLS: &tls.ConnectionState{
+				PeerCertificates: []*x509.Certificate{cert},
+			},
+		}
+		body := []byte(`<html><body><p>Completely generic page</p></body></html>`)
+
+		result, err := f.Fingerprint(resp, body)
+		if err != nil {
+			t.Fatalf("Fingerprint() error = %v", err)
+		}
+		if result != nil {
+			t.Errorf("Fingerprint() = %+v, want nil: Subject.O alone must not trigger detection", result)
+		}
+	})
+
+	t.Run("H4: Subject.O=WatchGuard + one strong Tier-2 body signal = match (corroborating role)", func(t *testing.T) {
+		// Same cert but now the body has a STRONG Tier-2 signal (form action).
+		// This proves isWatchGuardCertSubject correctly contributes as Tier-2.
+		cert := makeWatchGuardCert(t, "Some Unrelated CA", "WatchGuard Technologies", "")
+		resp := &http.Response{
+			StatusCode: 200,
+			Header:     http.Header{"Content-Type": []string{"text/html"}},
+			TLS: &tls.ConnectionState{
+				PeerCertificates: []*x509.Certificate{cert},
+			},
+		}
+		// Body contains one STRONG signal: form action="/auth/login".
+		// Combined with the cert Subject.O (also strong Tier-2), we have
+		// tier2Count=2 and tier2StrongCount=2 → detection fires.
+		body := []byte(`<html><body>
+<form action="/auth/login">Login</form>
+</body></html>`)
+
+		result, err := f.Fingerprint(resp, body)
+		if err != nil {
+			t.Fatalf("Fingerprint() error = %v", err)
+		}
+		if result == nil {
+			t.Error("Fingerprint() returned nil, want match: Subject.O + strong body signal should detect")
+		}
+	})
 }
 
 func TestExtractFirewareVersion(t *testing.T) {

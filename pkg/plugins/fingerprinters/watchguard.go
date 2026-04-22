@@ -15,6 +15,7 @@
 package fingerprinters
 
 import (
+	"crypto/x509"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -193,8 +194,8 @@ func (f *WatchGuardFingerprinter) Match(resp *http.Response) bool {
 		return true
 	}
 
-	// Fast path: TLS cert with Fireware CA issuer.
-	if isWatchGuardCert(resp) {
+	// Fast path: TLS cert with Fireware CA issuer (Tier-1 only).
+	if f.isWatchGuardCertIssuer(resp) {
 		return true
 	}
 
@@ -236,7 +237,10 @@ func (f *WatchGuardFingerprinter) Fingerprint(resp *http.Response, body []byte) 
 	if isWatchGuardCookie(resp) {
 		tier1 = true
 	}
-	if isWatchGuardCert(resp) {
+	// [H4] Only the Issuer CN is a Tier-1 cert signal. Subject.O / Subject.OU
+	// are operator-controlled fields (see isWatchGuardCertSubject) and are
+	// handled as Tier-2 below.
+	if f.isWatchGuardCertIssuer(resp) {
 		tier1 = true
 	}
 	if watchGuardTitlePattern.MatchString(bodyStr) {
@@ -244,7 +248,8 @@ func (f *WatchGuardFingerprinter) Fingerprint(resp *http.Response, body []byte) 
 	}
 
 	// Tier-2 signals: require ≥2 total AND ≥1 strong signal.
-	// Strong signals: Firebox-DB, form action /auth/login, wg-logo asset.
+	// Strong signals: Firebox-DB, form action /auth/login, wg-logo asset,
+	// or cert Subject.O/OU (cert-level match is stronger than a body keyword).
 	// Weak signals: body keyword "Firebox" or "WatchGuard Technologies".
 	tier2Count := 0
 	tier2StrongCount := 0
@@ -266,6 +271,14 @@ func (f *WatchGuardFingerprinter) Fingerprint(resp *http.Response, body []byte) 
 		tier2StrongCount++
 	}
 	if watchGuardLogoPattern.MatchString(bodyStr) {
+		tier2Count++
+		tier2StrongCount++
+	}
+	// [H4] Subject.O / Subject.OU from the leaf cert are operator-controlled
+	// fields. They contribute as a strong Tier-2 signal (cert-level match is
+	// more specific than a generic body keyword) but are NOT individually
+	// sufficient — the ≥2/≥1-strong gate below still applies.
+	if f.isWatchGuardCertSubject(resp) {
 		tier2Count++
 		tier2StrongCount++
 	}
@@ -332,56 +345,67 @@ func isWatchGuardCookie(resp *http.Response) bool {
 	return false
 }
 
-// isWatchGuardCert inspects the TLS peer-certificate chain for WatchGuard
-// markers. Safe against nil/empty TLS state. Returns true when:
-//   - Issuer CommonName contains "Fireware web CA" (Tier-1 — strong, WatchGuard's
-//     default self-signed CA; no public CA issues with this CN), OR
-//   - Subject Organization contains "WatchGuard" (Tier-2 corroborating signal), OR
-//   - Subject OrganizationalUnit contains "Fireware" (Tier-2 corroborating signal)
-//
-// [H4] Subject.CommonName is NOT checked for branding — it is entirely
-// attacker-controlled on customer-replaced certificates.
-//
-// Real devices ship with a self-signed "Fireware web CA" by default;
-// operators CAN replace this, so cert absence alone does not negate
-// detection. Cert presence is a high-confidence Tier-1 positive.
-func isWatchGuardCert(resp *http.Response) bool {
+// getWatchGuardLeafCert returns the leaf certificate from resp.TLS, applying
+// the 4-layer nil-guard pattern (resp nil, TLS nil, empty slice, nil leaf).
+// Returns nil if any layer is absent.
+func getWatchGuardLeafCert(resp *http.Response) *x509.Certificate {
 	if resp == nil || resp.TLS == nil {
-		return false
+		return nil
 	}
 	if len(resp.TLS.PeerCertificates) == 0 {
-		return false
+		return nil
 	}
-	leaf := resp.TLS.PeerCertificates[0]
+	return resp.TLS.PeerCertificates[0] // may still be nil; callers must check
+}
+
+// isWatchGuardCertIssuer returns true iff the leaf cert's Issuer.CommonName
+// contains "Fireware web CA" — WatchGuard's self-signed default issuer.
+//
+// This is a Tier-1 signal because no public CA would issue with that exact CN.
+// A legitimate customer-replaced cert would carry a public CA issuer whose CN
+// is NOT "Fireware web CA"; its absence therefore means the cert is not
+// diagnostic, but presence is near-conclusive.
+//
+// [H4] Subject.CommonName is NOT checked — it is entirely attacker-controlled
+// on customer-replaced certificates.
+func (f *WatchGuardFingerprinter) isWatchGuardCertIssuer(resp *http.Response) bool {
+	leaf := getWatchGuardLeafCert(resp)
 	if leaf == nil {
 		return false
 	}
-
-	// Issuer CN — strongest signal (default "Fireware web CA").
-	// This is Tier-1: no public CA would issue with this CN.
-	if strings.Contains(
+	return strings.Contains(
 		strings.ToLower(leaf.Issuer.CommonName),
 		"fireware web ca",
-	) {
-		return true
-	}
+	)
+}
 
-	// Subject O — WatchGuard-customized. Treated as Tier-1 here because
-	// isWatchGuardCert is only called from cert-specific paths; Subject.O
-	// is user-controlled but still distinctive in the cert context.
+// isWatchGuardCertSubject returns true iff the leaf cert's Subject.Organization
+// contains "WatchGuard" or Subject.OrganizationalUnit contains "Fireware".
+//
+// These fields are operator-controlled on customer-replaced certificates, so
+// this is a Tier-2 CORROBORATING signal — NOT individually sufficient to
+// trigger detection. Callers must add this result to tier2Count (and
+// tier2StrongCount, since a cert-level match is stronger than a generic body
+// keyword).
+//
+// Security note: a malicious operator can craft cert Subject fields; requiring
+// at least one other Tier-2 signal (and the ≥2 / ≥1-strong gate) prevents
+// false-positive Firebox classification from cert-subject spoofing alone.
+func (f *WatchGuardFingerprinter) isWatchGuardCertSubject(resp *http.Response) bool {
+	leaf := getWatchGuardLeafCert(resp)
+	if leaf == nil {
+		return false
+	}
 	for _, org := range leaf.Subject.Organization {
 		if strings.Contains(strings.ToLower(org), "watchguard") {
 			return true
 		}
 	}
-
-	// Subject OU — Fireware-customized. Corroborating signal.
 	for _, ou := range leaf.Subject.OrganizationalUnit {
 		if strings.Contains(strings.ToLower(ou), "fireware") {
 			return true
 		}
 	}
-
 	return false
 }
 
