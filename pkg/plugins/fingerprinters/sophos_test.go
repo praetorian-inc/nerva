@@ -545,6 +545,22 @@ func TestExtractSophosVersion(t *testing.T) {
 			body: `<link rel="stylesheet" href="/css/typography.css?version=19.5.x.abc">`,
 			want: "",
 		},
+		{
+			// H3-Sophos: version string longer than sophosMaxVersionLen (24 chars)
+			// must be rejected by the length cap before the regex runs.
+			// "1234567890123456789.8.9.0" = 25 chars → rejected.
+			name: "H3: oversized version (25 chars) rejected by length cap",
+			body: `<link rel="stylesheet" href="/css/typography.css?version=1234567890123456789.8.9.0">`,
+			want: "",
+		},
+		{
+			// H3-Sophos boundary: a version string at or under the 24-char cap
+			// that satisfies the regex must be accepted.
+			// "12345678.12345678.1.1" = 21 chars → accepted.
+			name: "H3: version within 24-char cap is accepted",
+			body: `<link rel="stylesheet" href="/css/typography.css?version=12345678.12345678.1.1">`,
+			want: "12345678.12345678.1.1",
+		},
 	}
 
 	for _, tt := range tests {

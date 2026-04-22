@@ -15,6 +15,7 @@
 package fingerprinters
 
 import (
+	"bytes"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -141,6 +142,20 @@ func TestWatchGuardFingerprinter_Match(t *testing.T) {
 			statusCode: 200,
 			headers:    http.Header{"Server": []string{"nginx"}},
 			want:       false,
+		},
+		{
+			// H5 regression: HasPrefix enforces a name boundary. A cookie whose
+			// name has "wg_portald_session_id" as a substring but not as a prefix
+			// must not match. Future refactors from HasPrefix to Contains would
+			// silently break this guarantee; this test pins the intent.
+			// No text/html Content-Type so that the only candidate signal is the
+			// cookie, making it the load-bearing check.
+			name:       "H5 regression: cookie name with wg_portald prefix but different name does NOT match",
+			statusCode: 200,
+			headers: http.Header{
+				"Set-Cookie": []string{"x_wg_portald_session_id=abc; Path=/"},
+			},
+			want: false,
 		},
 	}
 
@@ -992,5 +1007,42 @@ func TestWatchGuardFingerprinter_ShodanVectors(t *testing.T) {
 				t.Error("CPEs is empty, expected at least one CPE string")
 			}
 		})
+	}
+}
+
+// TestWatchGuardFingerprinter_H1_BodySizeCap pins the H1 hardening:
+// body content beyond maxBodyScanBytes (1 MiB) must NOT contribute to detection.
+// A WatchGuard version marker placed after the cap boundary must be invisible
+// even when a Tier-1 cookie causes a match.
+func TestWatchGuardFingerprinter_H1_BodySizeCap(t *testing.T) {
+	f := &WatchGuardFingerprinter{}
+
+	// Build body: exactly 1 MiB of filler, then a version marker + title.
+	// If H1 works, only the first 1 MiB (all filler) is scanned, so the marker
+	// and title are invisible to the body-analysis code paths.
+	filler := bytes.Repeat([]byte("a"), 1<<20)
+	marker := []byte(`<!-- Fireware v12.5.9 --><title>WatchGuard Access Portal</title>`)
+	overBody := append(filler, marker...)
+
+	// A Tier-1 cookie fires a match regardless of body content, so the response
+	// is non-nil. The load-bearing assertion is that Version is empty — the
+	// marker is beyond the cap and must not leak into detection.
+	resp := &http.Response{
+		StatusCode: 200,
+		Header: http.Header{
+			"Set-Cookie":   []string{"wg_portald_session_id=x; Path=/"},
+			"Content-Type": []string{"text/html"},
+		},
+	}
+
+	result, err := f.Fingerprint(resp, overBody)
+	if err != nil {
+		t.Fatalf("Fingerprint() error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected non-nil result via Tier-1 cookie; got nil")
+	}
+	if result.Version != "" {
+		t.Errorf("H1: version marker beyond body cap leaked into detection, Version=%q", result.Version)
 	}
 }
