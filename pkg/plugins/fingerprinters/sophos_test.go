@@ -301,6 +301,81 @@ func TestSophosFirewallFingerprinter_Fingerprint(t *testing.T) {
 			body:       `<html><body></body></html>`,
 			wantResult: false,
 		},
+		// ── S2: JSESSIONID path-cookie Tier-1 signal ─────────────────────────────
+		{
+			// S2 test: JSESSIONID scoped to /webconsole alone is sufficient.
+			name:       "detects from JSESSIONID Path=/webconsole cookie alone",
+			statusCode: 200,
+			headers: http.Header{
+				"Set-Cookie":   []string{"JSESSIONID=abc123; Path=/webconsole; HttpOnly"},
+				"Content-Type": []string{"text/html"},
+			},
+			body:              `<html><body>Generic body without Sophos markers</body></html>`,
+			wantResult:        true,
+			wantTech:          "sophos-firewall",
+			wantInterfaceType: "web-admin",
+		},
+		{
+			// S2 test: JSESSIONID scoped to /userportal alone is sufficient.
+			name:       "detects from JSESSIONID Path=/userportal cookie alone",
+			statusCode: 200,
+			headers: http.Header{
+				"Set-Cookie":   []string{"JSESSIONID=abc123; Path=/userportal; Secure"},
+				"Content-Type": []string{"text/html"},
+			},
+			body:              `<html><body>Generic body without Sophos markers</body></html>`,
+			wantResult:        true,
+			wantTech:          "sophos-firewall",
+			wantInterfaceType: "user-portal",
+		},
+		{
+			// S2 test: Path attribute name matching is case-insensitive per RFC 6265.
+			// "PATH=/WebConsole" must match (attribute name case-insensitive;
+			// path value /WebConsole treated as-is, but we lowercase the whole raw
+			// header for attribute lookup — so /WebConsole → /webconsole matches).
+			name:       "case-insensitive cookie path attribute match",
+			statusCode: 200,
+			headers: http.Header{
+				"Set-Cookie":   []string{"Foo=bar; PATH=/WebConsole"},
+				"Content-Type": []string{"text/html"},
+			},
+			body:              `<html><body>Generic body</body></html>`,
+			wantResult:        true,
+			wantInterfaceType: "web-admin",
+		},
+		{
+			// S2 test: unrelated Path= cookie must NOT match.
+			name:       "does not match unrelated Path= cookie",
+			statusCode: 200,
+			headers: http.Header{
+				"Set-Cookie":   []string{"session=abc; Path=/admin"},
+				"Content-Type": []string{"text/html"},
+			},
+			body:       `<html><body>Generic body without Sophos markers</body></html>`,
+			wantResult: false,
+		},
+		// ── S4: UTM 9.x / Cyberoam false-positive regression ─────────────────────
+		{
+			// S4 test: Sophos UTM 9.x page with only <title>Sophos UTM 9</title>
+			// must NOT match — no /webconsole/, /userportal/, JS marker, or xxxx header.
+			name:       "does not match Sophos UTM 9.x title without SFOS markers",
+			statusCode: 200,
+			headers: http.Header{
+				"Content-Type": []string{"text/html"},
+			},
+			body:       `<html><head><title>Sophos UTM 9</title></head><body>Generic page</body></html>`,
+			wantResult: false,
+		},
+		{
+			// S4 test: Cyberoam legacy page mentioning Sophos must NOT match.
+			name:       "does not match Cyberoam legacy page mentioning Sophos",
+			statusCode: 200,
+			headers: http.Header{
+				"Content-Type": []string{"text/html"},
+			},
+			body:       `<html><body>Powered by Cyberoam, a Sophos company</body></html>`,
+			wantResult: false,
+		},
 	}
 
 	for _, tt := range tests {

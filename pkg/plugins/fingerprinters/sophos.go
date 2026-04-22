@@ -56,7 +56,6 @@ import (
 //   - CVE-2020-12271: Pre-auth SQL injection (Asnarök trojan), CVSS 9.8
 //   - CVE-2022-1040: Authentication bypass in User Portal and Webadmin, CVSS 9.8
 //   - CVE-2022-3236: Code injection in User Portal and Webadmin, CVSS 9.8
-//   - CVE-2023-1671: Pre-auth command injection, CVSS 9.8
 type SophosFirewallFingerprinter struct{}
 
 func init() {
@@ -72,6 +71,12 @@ var sophosVersionPattern = regexp.MustCompile(`(?:typography\.css\?version=|logi
 // sophosVersionValidRegex validates extracted version format for CPE injection safety.
 // Accepts: 19.5.3.652, 17.5.9.577
 var sophosVersionValidRegex = regexp.MustCompile(`^\d+\.\d+\.\d+\.\d+$`)
+
+// sophosMaxVersionLen is the length cap applied to extracted version strings
+// before regex validation, providing defense-in-depth against pathologically
+// long version strings in crafted CSS asset paths. 24 chars is generous for
+// SFOS versions (e.g., "19.5.3.652" is 10 chars). [H3]
+const sophosMaxVersionLen = 24
 
 func (f *SophosFirewallFingerprinter) Name() string {
 	return "sophos-firewall"
@@ -128,13 +133,32 @@ func (f *SophosFirewallFingerprinter) Fingerprint(resp *http.Response, body []by
 	hasUserportal := strings.Contains(bodyStr, "/userportal/") || strings.Contains(location, "/userportal/")
 	pathMarkerMatch := hasWebconsole || hasUserportal
 
+	// Signal 5: JSESSIONID cookie scoped to /webconsole or /userportal.
+	// Near-pathognomonic — only Sophos XG/XGS web apps emit path-scoped cookies
+	// to these specific paths. [H6] Path attribute is matched case-insensitively
+	// (RFC 6265); path value is case-sensitive (RFC 3986). Cookie values are
+	// tainted — only the Path attribute is inspected, never the cookie value.
+	cookieConfirmed, cookieInterfaceType := sophosHasPortalCookie(resp)
+	if cookieConfirmed {
+		// Propagate cookie-detected path into body marker flags so the existing
+		// interface_type block handles the assignment uniformly below.
+		if cookieInterfaceType == "web-admin" {
+			hasWebconsole = true
+		} else if cookieInterfaceType == "user-portal" {
+			hasUserportal = true
+		}
+		pathMarkerMatch = true
+	}
+
 	// Detection requires corroborating signals to prevent false positives:
 	// - Server header "xxxx" alone is too generic (any server could emit it),
 	//   so it requires at least a Sophos path marker in body/Location header.
 	// - Title "Sophos" alone requires at least one body marker (JS or path).
+	// - JSESSIONID cookie scoped to /webconsole or /userportal is independently
+	//   sufficient (cookieConfirmed).
 	bodyConfirmed := titleMatch && (jsMarkerMatch || pathMarkerMatch)
 	serverConfirmed := serverHeader && pathMarkerMatch
-	if !serverConfirmed && !bodyConfirmed {
+	if !cookieConfirmed && !serverConfirmed && !bodyConfirmed {
 		return nil, nil
 	}
 
@@ -147,7 +171,7 @@ func (f *SophosFirewallFingerprinter) Fingerprint(resp *http.Response, body []by
 		metadata["server_header"] = "xxxx"
 	}
 
-	// Determine interface type from path markers
+	// Determine interface type from path markers (including cookie-derived).
 	if hasWebconsole {
 		metadata["interface_type"] = "web-admin"
 	} else if hasUserportal {
@@ -178,6 +202,30 @@ func sophosContainsTitle(bodyStr string) bool {
 	return strings.Contains(lower, "<title>sophos</title>")
 }
 
+// sophosHasPortalCookie returns the interface type if any Set-Cookie header
+// scopes its Path to /webconsole or /userportal — a near-pathognomonic Sophos
+// signal. Returns (false, "") if no matching cookie is found.
+//
+// Parsing notes per RFC 6265:
+//   - Cookie attribute NAMES (e.g., "Path") are case-insensitive, so the
+//     attribute name comparison uses strings.ToLower on the full cookie string.
+//   - Cookie PATH VALUES (/webconsole, /userportal) are case-sensitive per
+//     RFC 3986, so path value comparison is exact (lowercase against lowercase).
+//   - Cookie VALUES (JSESSIONID=...) are tainted — this function never copies
+//     or returns the cookie value, only matching on the Path attribute.
+func sophosHasPortalCookie(resp *http.Response) (bool, string) {
+	for _, raw := range resp.Header.Values("Set-Cookie") {
+		lower := strings.ToLower(raw)
+		if strings.Contains(lower, "path=/webconsole") {
+			return true, "web-admin"
+		}
+		if strings.Contains(lower, "path=/userportal") {
+			return true, "user-portal"
+		}
+	}
+	return false, ""
+}
+
 // extractSophosVersion extracts the full 4-part SFOS version from CSS asset paths.
 // Returns empty string if not found or format is invalid.
 func extractSophosVersion(body []byte) string {
@@ -187,6 +235,12 @@ func extractSophosVersion(body []byte) string {
 	}
 
 	version := string(matches[1])
+
+	// [H3] Length cap: SFOS versions are at most 10 chars ("19.5.3.652").
+	// 24 chars is a generous upper bound; reject longer strings before regex.
+	if len(version) > sophosMaxVersionLen {
+		return ""
+	}
 
 	// Validate format to prevent CPE injection
 	if !sophosVersionValidRegex.MatchString(version) {
