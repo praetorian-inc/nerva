@@ -20,9 +20,14 @@ and printing infrastructure:
     ProLiant servers. Detected via Server: HP-iLO-Server/<version> or
     HPE-iLO-Server/<version>.
 
-  - HP Embedded Web Server (EWS): the built-in HTTP server in HP LaserJet,
-    PageWide, OfficeJet, and DesignJet printers. Detected via
-    Server: HP HTTP Server; HP <model family>.
+  - HP Embedded Web Server (EWS): the built-in HTTP server in HP printers.
+    Detection is broad — any "HP HTTP Server; HP <model>" response is matched
+    regardless of product family. However, family-specific CPEs are only emitted
+    for the four NVD-published product lines (LaserJet, PageWide, OfficeJet,
+    DesignJet). All other EWS responses receive the generic
+    cpe:2.3:o:hp:laserjet_firmware:*:*:... fallback to avoid fabricating product
+    names that have no entries in the NVD CPE dictionary (which would produce
+    zero CVE matches and pollute findings).
 
   - HP ChaiSOE / ChaiServer: the embedded application framework (ChaiScript
     over Embedded, or "Chai Server") used in older HP printers. Detected via
@@ -34,7 +39,8 @@ CPE names follow the NVD underscore form (not the hyphen form seen in some
 ticket descriptions):
 
   - iLO: cpe:2.3:o:hp:integrated_lights_out_firmware:<version>:*:*:*:*:*:*:*
-  - EWS: cpe:2.3:o:hp:laserjet_<slug>_firmware:*:*:*:*:*:*:*:*
+  - EWS (known family): cpe:2.3:o:hp:<family>_<model>_firmware:*:*:*:*:*:*:*:*
+  - EWS (unknown family): cpe:2.3:o:hp:laserjet_firmware:*:*:*:*:*:*:*:* (generic fallback)
   - ChaiSOE: cpe:2.3:a:hp:chaisoe:<version>:*:*:*:*:*:*:*
 
 # What We Deliberately Do NOT Detect
@@ -367,13 +373,34 @@ func buildiLOCPE(version string) string {
 	return fmt.Sprintf("cpe:2.3:o:hp:integrated_lights_out_firmware:%s:*:*:*:*:*:*:*", version)
 }
 
-// buildEWSCPE builds the CPE for an HP printer EWS fingerprint using the raw
-// normalized slug as the product name. The slug already contains the product
-// family prefix (laserjet_, pagewide_, officejet_, designjet_) derived from
-// the Server header, so we must NOT add another `laserjet_`.
+// Known HP EWS product family prefixes. When the normalized slug starts with one
+// of these, we emit a family-specific CPE (which downstream vulnerability
+// databases can match against). For any other slug — including unknown or
+// freeform values from non-LaserJet/PageWide/OfficeJet/DesignJet HP products —
+// we fall back to the generic laserjet_firmware CPE to avoid fabricating
+// product names that do not exist in the NVD CPE dictionary.
+var ewsKnownFamilies = []string{"laserjet_", "pagewide_", "officejet_", "designjet_"}
+
+// buildEWSCPE builds the CPE for an HP printer EWS fingerprint.
+// Detection via ewsRe is intentionally broad (any "HP HTTP Server; HP <model>"
+// response), but CPE emission is tightened: a family-specific CPE is only
+// produced when the normalized slug begins with one of the four known NVD
+// product families. Any other slug — or an empty slug — receives the generic
+// laserjet_firmware fallback to avoid emitting fabricated product names that
+// produce zero CVE matches.
 func buildEWSCPE(slug string) string {
 	if slug == "" {
-		return "cpe:2.3:o:hp:laserjet_firmware:*:*:*:*:*:*:*:*" // generic fallback
+		return "cpe:2.3:o:hp:laserjet_firmware:*:*:*:*:*:*:*:*"
+	}
+	matchedFamily := false
+	for _, prefix := range ewsKnownFamilies {
+		if strings.HasPrefix(slug, prefix) {
+			matchedFamily = true
+			break
+		}
+	}
+	if !matchedFamily {
+		return "cpe:2.3:o:hp:laserjet_firmware:*:*:*:*:*:*:*:*"
 	}
 	return fmt.Sprintf("cpe:2.3:o:hp:%s_firmware:*:*:*:*:*:*:*:*", slug)
 }

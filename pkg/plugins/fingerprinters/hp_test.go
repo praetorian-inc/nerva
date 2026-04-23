@@ -316,6 +316,15 @@ func TestHPLaserJetFingerprinter_Fingerprint_Valid(t *testing.T) {
 			wantModel: "LaserJet Enterprise M553",
 			wantCPE:   "cpe:2.3:o:hp:laserjet_enterprise_m553_firmware:*:*:*:*:*:*:*:*",
 		},
+		{
+			// Detection fires (EWS regex still matches) but the normalized slug
+			// "foobar" does not belong to any NVD-published family, so we emit
+			// the generic laserjet_firmware fallback rather than a fabricated CPE.
+			name:      "non-family header falls back to generic CPE",
+			server:    "HP HTTP Server; HP FooBar",
+			wantModel: "FooBar",
+			wantCPE:   "cpe:2.3:o:hp:laserjet_firmware:*:*:*:*:*:*:*:*",
+		},
 	}
 
 	for _, tt := range tests {
@@ -592,8 +601,15 @@ func TestBuildEWSCPE(t *testing.T) {
 		slug string
 		want string
 	}{
+		// Known families — family-specific CPE emitted.
 		{"laserjet_enterprise_m553", "cpe:2.3:o:hp:laserjet_enterprise_m553_firmware:*:*:*:*:*:*:*:*"},
 		{"pagewide_pro_477dw", "cpe:2.3:o:hp:pagewide_pro_477dw_firmware:*:*:*:*:*:*:*:*"},
+		{"officejet_pro_8710", "cpe:2.3:o:hp:officejet_pro_8710_firmware:*:*:*:*:*:*:*:*"},
+		{"designjet_t630", "cpe:2.3:o:hp:designjet_t630_firmware:*:*:*:*:*:*:*:*"},
+		// Unknown family slug — falls back to generic to avoid fabricating NVD product names.
+		{"foobar", "cpe:2.3:o:hp:laserjet_firmware:*:*:*:*:*:*:*:*"},
+		{"scanjet_n9120", "cpe:2.3:o:hp:laserjet_firmware:*:*:*:*:*:*:*:*"},
+		// Empty slug — generic fallback.
 		{"", "cpe:2.3:o:hp:laserjet_firmware:*:*:*:*:*:*:*:*"},
 	}
 	for _, tt := range tests {
@@ -697,6 +713,11 @@ func TestSanitizeHeaderValue(t *testing.T) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 func TestHPFingerprinters_Integration(t *testing.T) {
+	originalFingerprinters := append([]HTTPFingerprinter(nil), httpFingerprinters...)
+	t.Cleanup(func() {
+		httpFingerprinters = originalFingerprinters
+	})
+
 	// Register each fingerprinter explicitly (mirrors boa_test.go pattern) to
 	// tolerate registry_test.go setting httpFingerprinters = nil before this test.
 	iloFP := &HPiLOFingerprinter{}
@@ -796,14 +817,13 @@ func TestHPLaserJetFingerprinter_FallbackCPE(t *testing.T) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 func TestHPFingerprinters_LengthCap(t *testing.T) {
-	long := strings.Repeat("A", 600)
 	variants := []struct {
 		fp     HTTPFingerprinter
 		header string
 	}{
-		{&HPiLOFingerprinter{}, long},
-		{&HPLaserJetFingerprinter{}, long},
-		{&HPChaiSOEFingerprinter{}, long},
+		{&HPiLOFingerprinter{}, "HP-iLO-Server/" + strings.Repeat("1", 600)},
+		{&HPLaserJetFingerprinter{}, "HP HTTP Server; HP LaserJet " + strings.Repeat("A", 600)},
+		{&HPChaiSOEFingerprinter{}, "HP-ChaiSOE/" + strings.Repeat("1", 600)},
 	}
 	for _, v := range variants {
 		resp := &http.Response{StatusCode: 200, Header: make(http.Header)}
