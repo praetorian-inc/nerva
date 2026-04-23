@@ -28,12 +28,6 @@ import (
 // ActiveHTTPFingerprinter (Name, Match, Fingerprint, ProbeEndpoint).
 var _ ActiveHTTPFingerprinter = &WatchGuardFingerprinter{}
 
-// TestWatchGuardFingerprinter_ActiveInterface is the runtime companion.
-// The compile-time var above is the actual guard; this test documents intent.
-func TestWatchGuardFingerprinter_ActiveInterface(t *testing.T) {
-	var _ ActiveHTTPFingerprinter = &WatchGuardFingerprinter{}
-}
-
 func TestWatchGuardFingerprinter_Name(t *testing.T) {
 	f := &WatchGuardFingerprinter{}
 	if got := f.Name(); got != "watchguard-firebox" {

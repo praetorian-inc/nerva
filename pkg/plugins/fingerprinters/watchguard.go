@@ -212,7 +212,7 @@ func (f *WatchGuardFingerprinter) Fingerprint(resp *http.Response, body []byte) 
 	// Inline admin-surface check: Fireware Web UI title is authoritative;
 	// ports 8080 and 4117 are the documented WatchGuard management ports.
 	isAdmin := component == "Fireware Web UI"
-	if !isAdmin && resp != nil && resp.Request != nil && resp.Request.URL != nil {
+	if !isAdmin && resp.Request != nil && resp.Request.URL != nil {
 		port := resp.Request.URL.Port()
 		isAdmin = port == "8080" || port == "4117"
 	}
