@@ -21,10 +21,15 @@ import (
 	"strings"
 )
 
-// SophosFirewallFingerprinter detects Sophos XG/XGS Firewall appliances.
+// SophosFirewallFingerprinter detects Sophos Firewall (SFOS) deployments.
+// Coverage is firmware-level, so all hardware and packaging variants that
+// run SFOS are detected uniformly: XG and XGS hardware series, SF-V virtual
+// appliances, Firewall Cloud, and Home Edition. The HTTP management surface
+// is identical across these variants; the underlying hardware model is not
+// exposed over HTTP and is therefore not reported in metadata.
 //
 // Detection Strategy:
-// Sophos XG/XGS Firewall exposes web admin and user portal interfaces.
+// Sophos Firewall exposes web admin and user portal interfaces.
 // Detection uses multiple signals:
 //
 //  1. Server Header: "xxxx" (exactly 4 x's, case-insensitive) — Sophos-specific
@@ -56,6 +61,12 @@ import (
 //   - CVE-2020-12271: Pre-auth SQL injection (Asnarök trojan), CVSS 9.8
 //   - CVE-2022-1040: Authentication bypass in User Portal and Webadmin, CVSS 9.8
 //   - CVE-2022-3236: Code injection in User Portal and Webadmin, CVSS 9.8
+//
+// APT Context:
+// Sophos documented sustained Chinese state-backed targeting of perimeter
+// Sophos Firewalls in the "Pacific Rim" report (Oct 2024), spanning 5+ years
+// of exploitation overlapping with Volt Typhoon, APT31, and APT41 activity
+// clusters. Root cause: end-of-life, unpatched, or forgotten edge devices.
 type SophosFirewallFingerprinter struct{}
 
 func init() {
