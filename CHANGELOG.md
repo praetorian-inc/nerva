@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- ConnectWise ScreenConnect HTTP fingerprinter (LAB-1838, CVE-2024-1709, CVE-2024-1708)
 - Complete README rewrite with accurate protocol documentation
 - Architecture diagram (Mermaid)
 - Use Cases section for security professionals
