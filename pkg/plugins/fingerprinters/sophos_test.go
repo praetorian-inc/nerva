@@ -376,6 +376,36 @@ func TestSophosFirewallFingerprinter_Fingerprint(t *testing.T) {
 			body:       `<html><body>Powered by Cyberoam, a Sophos company</body></html>`,
 			wantResult: false,
 		},
+		// ── S5: JS marker sole-sufficient (locked-down SFOS) ─────────────────────
+		{
+			// S5 test: uiLangToHTMLLangAttributeValueMapping is sole-sufficient.
+			// Covers locked-down SFOS deployments that strip the Server header,
+			// blank the <title>, and serve assets from non-standard paths.
+			// Synthetic fixture — no real IPs, hostnames, or cookie values.
+			name:       "detects locked-down SFOS via JS marker alone",
+			statusCode: 200,
+			headers: http.Header{
+				"Content-Type":  []string{"text/html;charset=utf-8"},
+				"Cache-Control": []string{"no-cache"},
+				"Connection":    []string{"Keep-Alive"},
+				// Deliberately NO Server header.
+			},
+			body: `<!DOCTYPE html>
+<html>
+<head>
+<title></title>
+<link rel="stylesheet" href="/themes/lite1/css/typography.css?version=abc123def456">
+</head>
+<body>
+<script>var uiLangToHTMLLangAttributeValueMapping = {};</script>
+</body>
+</html>`,
+			wantResult:        true,
+			wantTech:          "sophos-firewall",
+			wantCPEPrefix:     "cpe:2.3:o:sophos:sfos:*",
+			wantVersion:       "",  // hash-like placeholder is not a valid 4-part version
+			wantInterfaceType: "", // unknown portal — no webconsole/userportal path
+		},
 	}
 
 	for _, tt := range tests {

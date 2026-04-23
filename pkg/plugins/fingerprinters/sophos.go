@@ -167,9 +167,16 @@ func (f *SophosFirewallFingerprinter) Fingerprint(resp *http.Response, body []by
 	// - Title "Sophos" alone requires at least one body marker (JS or path).
 	// - JSESSIONID cookie scoped to /webconsole or /userportal is independently
 	//   sufficient (cookieConfirmed).
+	// - uiLangToHTMLLangAttributeValueMapping is a 40-char compound JS identifier
+	//   that appears only in Sophos Firewall login pages. Covers locked-down
+	//   deployments that strip the Server header, blank the <title>, and serve
+	//   assets from non-standard paths (i.e., neither /webconsole/ nor
+	//   /userportal/ in the body). The Match() text/html gate provides the
+	//   adversarial-contamination guardrail.
 	bodyConfirmed := titleMatch && (jsMarkerMatch || pathMarkerMatch)
 	serverConfirmed := serverHeader && pathMarkerMatch
-	if !cookieConfirmed && !serverConfirmed && !bodyConfirmed {
+	jsConfirmed := jsMarkerMatch
+	if !cookieConfirmed && !serverConfirmed && !bodyConfirmed && !jsConfirmed {
 		return nil, nil
 	}
 
