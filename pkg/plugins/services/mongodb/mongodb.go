@@ -17,6 +17,7 @@ package mongodb
 import (
 	"encoding/binary"
 	"fmt"
+	"math"
 	"net"
 	"strings"
 	"time"
@@ -267,6 +268,75 @@ func checkMongoDBResponse(response []byte, expectedRequestID uint32) (bool, erro
 	return true, nil
 }
 
+// skipBSONValue advances pos past one BSON element value of the given type.
+// Returns the new position and true on success, or (0, false) if the document
+// is too short or the type is unrecognized.
+func skipBSONValue(bsonDoc []byte, pos int, elementType byte) (int, bool) {
+	switch elementType {
+	case 0x01: // double
+		if pos+8 > len(bsonDoc) {
+			return 0, false
+		}
+		return pos + 8, true
+	case 0x02: // string
+		if pos+4 > len(bsonDoc) {
+			return 0, false
+		}
+		strLen := int(binary.LittleEndian.Uint32(bsonDoc[pos : pos+4]))
+		if strLen < 0 || pos+4+strLen > len(bsonDoc) {
+			return 0, false
+		}
+		return pos + 4 + strLen, true
+	case 0x03, 0x04: // document, array
+		if pos+4 > len(bsonDoc) {
+			return 0, false
+		}
+		subDocLen := int(binary.LittleEndian.Uint32(bsonDoc[pos : pos+4]))
+		if subDocLen < 0 || pos+subDocLen > len(bsonDoc) {
+			return 0, false
+		}
+		return pos + subDocLen, true
+	case 0x05: // binary
+		if pos+5 > len(bsonDoc) {
+			return 0, false
+		}
+		binLen := int(binary.LittleEndian.Uint32(bsonDoc[pos : pos+4]))
+		if binLen < 0 || pos+5+binLen > len(bsonDoc) {
+			return 0, false
+		}
+		return pos + 5 + binLen, true
+	case 0x07: // ObjectId
+		if pos+12 > len(bsonDoc) {
+			return 0, false
+		}
+		return pos + 12, true
+	case 0x08: // boolean
+		if pos+1 > len(bsonDoc) {
+			return 0, false
+		}
+		return pos + 1, true
+	case 0x09: // UTC datetime
+		if pos+8 > len(bsonDoc) {
+			return 0, false
+		}
+		return pos + 8, true
+	case 0x0A: // null
+		return pos, true
+	case 0x10: // int32
+		if pos+4 > len(bsonDoc) {
+			return 0, false
+		}
+		return pos + 4, true
+	case 0x11, 0x12: // timestamp, int64
+		if pos+8 > len(bsonDoc) {
+			return 0, false
+		}
+		return pos + 8, true
+	default:
+		return 0, false
+	}
+}
+
 // parseBSONString extracts a string value for a given key from a BSON document
 // This is a minimal BSON parser focused on extracting string values
 func parseBSONString(bsonDoc []byte, key string) string {
@@ -279,8 +349,8 @@ func parseBSONString(bsonDoc []byte, key string) string {
 	// elements...
 	// 0x00 - terminator
 
-	docSize := binary.LittleEndian.Uint32(bsonDoc[0:4])
-	if docSize > uint32(len(bsonDoc)) {
+	docSize := int(binary.LittleEndian.Uint32(bsonDoc[0:4]))
+	if docSize < 0 || docSize > len(bsonDoc) {
 		return ""
 	}
 
@@ -312,67 +382,21 @@ func parseBSONString(bsonDoc []byte, key string) string {
 			if pos+4 > len(bsonDoc) {
 				return ""
 			}
-			strLen := binary.LittleEndian.Uint32(bsonDoc[pos : pos+4])
+			strLen := int(binary.LittleEndian.Uint32(bsonDoc[pos : pos+4]))
 			pos += 4
-			// Validate uint32 bounds BEFORE casting to int to prevent overflow
-			if strLen == 0 || strLen > uint32(len(bsonDoc)-pos) {
+			if strLen <= 0 || pos+strLen > len(bsonDoc) {
 				return ""
 			}
-			strLenInt := int(strLen) // Safe to cast now
 			// Return string without null terminator
-			return string(bsonDoc[pos : pos+strLenInt-1])
+			return string(bsonDoc[pos : pos+strLen-1])
 		}
 
 		// Skip value based on type
-		switch elementType {
-		case 0x01: // double
-			pos += 8
-		case 0x02: // string
-			if pos+4 > len(bsonDoc) {
-				return ""
-			}
-			strLen := binary.LittleEndian.Uint32(bsonDoc[pos : pos+4])
-			// Validate uint32 bounds BEFORE casting to int to prevent overflow
-			if strLen > uint32(len(bsonDoc)-pos-4) {
-				return ""
-			}
-			pos += 4 + int(strLen)
-		case 0x03, 0x04: // document, array
-			if pos+4 > len(bsonDoc) {
-				return ""
-			}
-			subDocLen := binary.LittleEndian.Uint32(bsonDoc[pos : pos+4])
-			// Validate uint32 bounds BEFORE casting to int to prevent overflow
-			if subDocLen > uint32(len(bsonDoc)-pos) {
-				return ""
-			}
-			pos += int(subDocLen)
-		case 0x05: // binary
-			if pos+5 > len(bsonDoc) {
-				return ""
-			}
-			binLen := binary.LittleEndian.Uint32(bsonDoc[pos : pos+4])
-			// Validate uint32 bounds BEFORE casting to int to prevent overflow
-			if binLen > uint32(len(bsonDoc)-pos-5) {
-				return ""
-			}
-			pos += 5 + int(binLen)
-		case 0x07: // ObjectId
-			pos += 12
-		case 0x08: // boolean
-			pos++
-		case 0x09: // UTC datetime
-			pos += 8
-		case 0x0A: // null
-			// no value
-		case 0x10: // int32
-			pos += 4
-		case 0x11, 0x12: // timestamp, int64
-			pos += 8
-		default:
-			// Unknown type, cannot continue parsing safely
+		newPos, ok := skipBSONValue(bsonDoc, pos, elementType)
+		if !ok {
 			return ""
 		}
+		pos = newPos
 	}
 
 	return ""
@@ -398,8 +422,8 @@ func parseBSONInt32(bsonDoc []byte, key string) (int32, bool) {
 	// elements...
 	// 0x00 - terminator
 
-	docSize := binary.LittleEndian.Uint32(bsonDoc[0:4])
-	if docSize > uint32(len(bsonDoc)) {
+	docSize := int(binary.LittleEndian.Uint32(bsonDoc[0:4]))
+	if docSize < 0 || docSize > len(bsonDoc) {
 		return 0, false
 	}
 
@@ -436,58 +460,87 @@ func parseBSONInt32(bsonDoc []byte, key string) (int32, bool) {
 		}
 
 		// Skip value based on type
-		switch elementType {
-		case 0x01: // double
-			pos += 8
-		case 0x02: // string
-			if pos+4 > len(bsonDoc) {
-				return 0, false
-			}
-			strLen := binary.LittleEndian.Uint32(bsonDoc[pos : pos+4])
-			// Validate uint32 bounds BEFORE casting to int to prevent overflow
-			if strLen > uint32(len(bsonDoc)-pos-4) {
-				return 0, false
-			}
-			pos += 4 + int(strLen)
-		case 0x03, 0x04: // document, array
-			if pos+4 > len(bsonDoc) {
-				return 0, false
-			}
-			subDocLen := binary.LittleEndian.Uint32(bsonDoc[pos : pos+4])
-			// Validate uint32 bounds BEFORE casting to int to prevent overflow
-			if subDocLen > uint32(len(bsonDoc)-pos) {
-				return 0, false
-			}
-			pos += int(subDocLen)
-		case 0x05: // binary
-			if pos+5 > len(bsonDoc) {
-				return 0, false
-			}
-			binLen := binary.LittleEndian.Uint32(bsonDoc[pos : pos+4])
-			// Validate uint32 bounds BEFORE casting to int to prevent overflow
-			if binLen > uint32(len(bsonDoc)-pos-5) {
-				return 0, false
-			}
-			pos += 5 + int(binLen)
-		case 0x07: // ObjectId
-			pos += 12
-		case 0x08: // boolean
-			pos++
-		case 0x09: // UTC datetime
-			pos += 8
-		case 0x0A: // null
-			// no value
-		case 0x10: // int32
-			pos += 4
-		case 0x11, 0x12: // timestamp, int64
-			pos += 8
-		default:
-			// Unknown type, cannot continue parsing safely
+		newPos, ok := skipBSONValue(bsonDoc, pos, elementType)
+		if !ok {
 			return 0, false
 		}
+		pos = newPos
 	}
 
 	return 0, false
+}
+
+// parseBSONDouble extracts a float64 value for a given key from a BSON document.
+// This is a minimal BSON parser focused on extracting double (type 0x01) values.
+func parseBSONDouble(bsonDoc []byte, key string) (float64, bool) {
+	if len(bsonDoc) < 5 {
+		return 0, false
+	}
+
+	// BSON document format:
+	// int32 - document size
+	// elements...
+	// 0x00 - terminator
+
+	docSize := int(binary.LittleEndian.Uint32(bsonDoc[0:4]))
+	if docSize < 0 || docSize > len(bsonDoc) {
+		return 0, false
+	}
+
+	pos := 4 // Start after size field
+	for pos < len(bsonDoc)-1 {
+		// Check for document terminator
+		if bsonDoc[pos] == 0x00 {
+			break
+		}
+
+		// Read element type
+		elementType := bsonDoc[pos]
+		pos++
+
+		// Read key (null-terminated string)
+		keyStart := pos
+		for pos < len(bsonDoc) && bsonDoc[pos] != 0x00 {
+			pos++
+		}
+		if pos >= len(bsonDoc) {
+			return 0, false
+		}
+		elementKey := string(bsonDoc[keyStart:pos])
+		pos++ // Skip null terminator
+
+		// If this is our target key and it's a double type (0x01)
+		if elementKey == key && elementType == 0x01 {
+			// double format: 8 bytes, little-endian IEEE 754
+			if pos+8 > len(bsonDoc) {
+				return 0, false
+			}
+			value := math.Float64frombits(binary.LittleEndian.Uint64(bsonDoc[pos : pos+8]))
+			return value, true
+		}
+
+		// Skip value based on type
+		newPos, ok := skipBSONValue(bsonDoc, pos, elementType)
+		if !ok {
+			return 0, false
+		}
+		pos = newPos
+	}
+
+	return 0, false
+}
+
+// parseBSONCommandOk checks if a BSON document contains an "ok" field equal to 1.
+// MongoDB typically returns "ok" as a double (1.0), but the wire protocol permits
+// int32 or int64 representations. We check all three to avoid false negatives.
+func parseBSONCommandOk(bsonDoc []byte) bool {
+	if val, found := parseBSONDouble(bsonDoc, "ok"); found {
+		return val == 1.0
+	}
+	if val, found := parseBSONInt32(bsonDoc, "ok"); found {
+		return val == 1
+	}
+	return false
 }
 
 // parseMaxWireVersion extracts maxWireVersion from a BSON document.
@@ -874,6 +927,46 @@ func tryGetMongoDBVersion(conn net.Conn, timeout time.Duration) string {
 	return ""
 }
 
+// checkMongoDBAuth attempts to determine if authentication is required by running
+// the listDatabases command. This command requires the listDatabases privilege,
+// which is unavailable to unauthenticated users on secured instances.
+//
+// Connection reuse safety: SendRecv resets the read deadline on every call, so
+// stale deadlines from prior probes are not a concern. Response validation
+// (checkMongoDBMsgResponse/checkMongoDBResponse) verifies the responseTo field
+// matches our requestID, rejecting any leftover bytes from prior exchanges.
+//
+// Returns true if authentication is NOT required (unauthenticated access possible).
+func checkMongoDBAuth(conn net.Conn, timeout time.Duration) bool {
+	// Try OP_MSG first (MongoDB 3.6+, covers vast majority of deployments)
+	requestID := uint32(200)
+	listDBsMsg := buildMongoDBMsgQuery("listDatabases", requestID)
+
+	response, err := utils.SendRecv(conn, listDBsMsg, timeout)
+	if err == nil && len(response) > 21 {
+		isValid, validErr := checkMongoDBMsgResponse(response, requestID)
+		if isValid && validErr == nil {
+			// Authoritative on MongoDB 3.6+; do not fall through to OP_QUERY
+			// even when ok=0 (auth required) — avoids an unnecessary second probe.
+			return parseBSONCommandOk(response[21:])
+		}
+	}
+
+	// Fallback to OP_QUERY for older MongoDB versions
+	requestID = uint32(201)
+	listDBsQuery := buildMongoDBQuery("listDatabases", requestID)
+
+	response, err = utils.SendRecv(conn, listDBsQuery, timeout)
+	if err == nil && len(response) > 36 {
+		isValid, validErr := checkMongoDBResponse(response, requestID)
+		if isValid && validErr == nil {
+			return parseBSONCommandOk(response[36:])
+		}
+	}
+
+	return false
+}
+
 // tryMongoDBMsgProtocol attempts MongoDB detection using the OP_MSG wire protocol.
 // This protocol only works on MongoDB 3.6+ (maxWireVersion >= 6).
 //
@@ -1065,7 +1158,19 @@ func (p *MONGODBPlugin) Run(conn net.Conn, timeout time.Duration, target plugins
 		cpe := buildMongoDBCPE(metadata.Version)
 		payload.CPEs = []string{cpe}
 
-		return plugins.CreateServiceFrom(target, payload, false, metadata.Version, plugins.TCP), nil
+		service := plugins.CreateServiceFrom(target, payload, false, metadata.Version, plugins.TCP)
+
+		if target.Misconfigs && checkMongoDBAuth(conn, timeout) {
+			service.AnonymousAccess = true
+			service.SecurityFindings = []plugins.SecurityFinding{{
+				ID:          "mongodb-no-auth",
+				Severity:    plugins.SeverityCritical,
+				Description: "MongoDB accessible without authentication",
+				Evidence:    "listDatabases command succeeded without credentials",
+			}}
+		}
+
+		return service, nil
 	}
 	return nil, err
 }
