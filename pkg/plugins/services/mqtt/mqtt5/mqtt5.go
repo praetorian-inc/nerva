@@ -33,20 +33,20 @@ func init() {
 	plugins.RegisterPlugin(&TLSPlugin{})
 }
 
-func testConnectRequest(conn net.Conn, requestBytes []byte, timeout time.Duration) (bool, error) {
+func testConnectRequest(conn net.Conn, requestBytes []byte, timeout time.Duration) (bool, []byte, error) {
 	response, err := utils.SendRecv(conn, requestBytes, timeout)
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
 	if len(response) == 0 {
-		return true, &utils.ServerNotEnable{}
+		return true, nil, &utils.ServerNotEnable{}
 	}
 
 	if response[0] == 0x20 {
 		// MQTT server
-		return true, nil
+		return true, response, nil
 	}
-	return true, &utils.InvalidResponseError{Service: MQTT}
+	return true, nil, &utils.InvalidResponseError{Service: MQTT}
 }
 
 func (p *MQTT5Plugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
@@ -130,9 +130,19 @@ func Run(conn net.Conn, timeout time.Duration, tls bool, target plugins.Target) 
 		0x41, 0x41, 0x41, 0x41, 0x41,
 	}
 
-	check, err := testConnectRequest(conn, mqttConnect5, timeout)
+	check, response, err := testConnectRequest(conn, mqttConnect5, timeout)
 	if check && err == nil {
-		return plugins.CreateServiceFrom(target, plugins.ServiceMQTT{}, tls, "5.0", plugins.TCP), nil
+		service := plugins.CreateServiceFrom(target, plugins.ServiceMQTT{}, tls, "5.0", plugins.TCP)
+		if target.Misconfigs && len(response) >= 4 && response[3] == 0x00 {
+			service.AnonymousAccess = true
+			service.SecurityFindings = []plugins.SecurityFinding{{
+				ID:          "mqtt-no-auth",
+				Severity:    plugins.SeverityHigh,
+				Description: "MQTT broker accessible without authentication",
+				Evidence:    "CONNACK reason code 0 (Success) received without credentials",
+			}}
+		}
+		return service, nil
 	} else if check && err != nil {
 		return nil, nil
 	}
