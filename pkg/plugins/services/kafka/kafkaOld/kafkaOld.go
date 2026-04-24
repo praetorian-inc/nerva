@@ -132,8 +132,8 @@ func Run(conn net.Conn, tls bool, timeout time.Duration, target plugins.Target) 
 	}
 	service := plugins.CreateServiceFrom(target, plugins.ServiceKafka{}, tls, "<=0.9.0.X", plugins.TCP)
 
-	// Detection succeeded via unauthenticated metadata request.
-	// Pre-0.9 Kafka has no SASL support, so success implies no authentication.
+	// The metadata query succeeded without any authentication handshake,
+	// which means the broker does not enforce SASL on this listener.
 	if target.Misconfigs {
 		service.AnonymousAccess = true
 		service.SecurityFindings = []plugins.SecurityFinding{{

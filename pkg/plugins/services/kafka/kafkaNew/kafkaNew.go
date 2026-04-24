@@ -15,8 +15,10 @@
 package kafkanew
 
 import (
+	"crypto/rand"
 	"encoding/binary"
 	"math"
+	"math/big"
 	"net"
 	"time"
 
@@ -145,11 +147,20 @@ func Run(conn net.Conn, tls bool, timeout time.Duration, target plugins.Target) 
 // determine whether the broker requires SASL authentication. On SASL-enabled
 // brokers, the connection is closed after ApiVersions unless a SASL handshake
 // follows, so a successful Metadata response means no SASL is required.
+//
+// The request asks for a single non-existent topic to bound the response size.
+// Requesting all topics (topic_count=0) can produce responses that exceed the
+// 4096-byte pluginutils.Recv buffer on clusters with many topics, causing
+// the length-equality check to reject a legitimate unauthenticated response.
 func checkNoSASL(conn net.Conn, timeout time.Duration) bool {
 	cid := genCorrelationID()
+	topicName, err := genRandomString(6)
+	if err != nil {
+		return false
+	}
 	metadataRequest := []byte{
-		// length (14 bytes follow: api_key(2) + api_version(2) + correlation_id(4) + client_id(2) + topic_count(4))
-		0x00, 0x00, 0x00, 0x0e,
+		// length placeholder (corrected below)
+		0x00, 0x00, 0x00, 0x00,
 		// request_api_key: Metadata = 3
 		0x00, 0x03,
 		// request_api_version: 0
@@ -158,19 +169,30 @@ func checkNoSASL(conn net.Conn, timeout time.Duration) bool {
 		cid[0], cid[1], cid[2], cid[3],
 		// client_id: empty string (length 0)
 		0x00, 0x00,
-		// topic_count: 0 (request metadata for all topics)
-		0x00, 0x00, 0x00, 0x00,
+		// topic_count: 1
+		0x00, 0x00, 0x00, 0x01,
+		// topic name (length-prefixed STRING)
+		0x00, 0x06, topicName[0], topicName[1], topicName[2], topicName[3],
+		topicName[4], topicName[5],
 	}
 
+	// Correct the length field (total packet minus the 4-byte length prefix)
+	binary.BigEndian.PutUint32(metadataRequest[0:4], uint32(len(metadataRequest)-4))
+
+	// SendRecv errors are intentionally swallowed: a network error (including
+	// the connection-close that SASL-enabled brokers perform after ApiVersions)
+	// is indistinguishable from a transient glitch at this layer. Both mean
+	// "we cannot confirm unauthenticated access", so we return false.
 	response, err := utils.SendRecv(conn, metadataRequest, timeout)
-	if err != nil || len(response) < 8 {
+	if err != nil || len(response) < 16 {
+		// Minimum Metadata v0 response: length(4) + correlation_id(4) +
+		// broker_count(4) + topic_count(4) = 16 bytes
 		return false
 	}
 
 	// Validate length field matches actual response
 	responseLength := binary.BigEndian.Uint32(response[0:4])
-	expectedLength := uint32(math.Max(float64(len(response)-4), 0))
-	if responseLength != expectedLength {
+	if responseLength != uint32(len(response)-4) {
 		return false
 	}
 
@@ -190,6 +212,20 @@ func checkNoSASL(conn net.Conn, timeout time.Duration) bool {
 func genCorrelationID() []byte {
 	cid := []byte{0x1e, 0x33, 0xf4, 0x81}
 	return cid
+}
+
+// genRandomString generates a random alphanumeric string of the given length.
+func genRandomString(length int) (string, error) {
+	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890"
+	str := make([]byte, length)
+	for i := 0; i < length; i++ {
+		num, err := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
+		if err != nil {
+			return "", err
+		}
+		str[i] = charset[num.Int64()]
+	}
+	return string(str), nil
 }
 
 /*

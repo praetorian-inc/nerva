@@ -83,11 +83,26 @@ func handleMockKafkaNew(conn net.Conn, saslRequired bool) {
 		copy(metaCID[:], metaBody[4:8])
 	}
 
-	// Build Metadata v0 response: length(4) + correlation_id(4) + broker_count(4) + topic_count(4)
-	metaResp := make([]byte, 4+4+4+4)
-	binary.BigEndian.PutUint32(metaResp[0:4], 4+4+4) // length of remaining bytes
+	// Extract topic name from the metadata request body:
+	//   api_key(2) + api_version(2) + correlation_id(4) + client_id_len(2) + client_id(0)
+	//   = 10 bytes of header, then topic_count(4) + topic_name_len(2) + topic_name(6)
+	var topicName [6]byte
+	if len(metaBody) >= 22 {
+		copy(topicName[:], metaBody[16:22])
+	}
+
+	// Build Metadata v0 response echoing the topic name:
+	//   length(4) + correlation_id(4) + broker_count(4) + topic_count(4) +
+	//   error_code(2) + topic_name_length(2) + topic_name(6) + partition_count(4)
+	metaResp := make([]byte, 4+4+4+4+2+2+6+4)
+	binary.BigEndian.PutUint32(metaResp[0:4], uint32(len(metaResp)-4))
 	copy(metaResp[4:8], metaCID[:])
-	// broker_count = 0, topic_count = 0 already (zero value)
+	binary.BigEndian.PutUint32(metaResp[8:12], 0)  // broker_count = 0
+	binary.BigEndian.PutUint32(metaResp[12:16], 1)  // topic_count = 1
+	binary.BigEndian.PutUint16(metaResp[16:18], 0)  // error_code = 0
+	binary.BigEndian.PutUint16(metaResp[18:20], 6)  // topic_name_length = 6
+	copy(metaResp[20:26], topicName[:])
+	binary.BigEndian.PutUint32(metaResp[26:30], 0) // partition_count = 0
 	if _, err := conn.Write(metaResp); err != nil {
 		return
 	}
@@ -200,6 +215,101 @@ func TestKafkaNewSecurityFindings(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestKafkaNewTruncatedResponse verifies that checkNoSASL rejects a response
+// whose declared length exceeds the bytes actually received (simulating the
+// 4096-byte pluginutils.Recv buffer truncating a large Metadata response).
+func TestKafkaNewTruncatedResponse(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Failed to start mock server: %v", err)
+	}
+	defer listener.Close()
+
+	go func() {
+		serverConn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer serverConn.Close()
+
+		lenBuf := make([]byte, 4)
+		// Read ApiVersions request
+		if err := readFull(serverConn, lenBuf); err != nil {
+			return
+		}
+		reqLen := binary.BigEndian.Uint32(lenBuf)
+		reqBody := make([]byte, reqLen)
+		if err := readFull(serverConn, reqBody); err != nil {
+			return
+		}
+		var cid [4]byte
+		if len(reqBody) >= 8 {
+			copy(cid[:], reqBody[4:8])
+		}
+
+		// Valid ApiVersions response
+		apiResp := make([]byte, 4+4+2+4)
+		binary.BigEndian.PutUint32(apiResp[0:4], 4+2+4)
+		copy(apiResp[4:8], cid[:])
+		if _, err := serverConn.Write(apiResp); err != nil {
+			return
+		}
+
+		// Read Metadata request
+		if err := readFull(serverConn, lenBuf); err != nil {
+			return
+		}
+		metaLen := binary.BigEndian.Uint32(lenBuf)
+		metaBody := make([]byte, metaLen)
+		if err := readFull(serverConn, metaBody); err != nil {
+			return
+		}
+		var metaCID [4]byte
+		if len(metaBody) >= 8 {
+			copy(metaCID[:], metaBody[4:8])
+		}
+
+		// Send a response whose length header claims 8000 bytes but only
+		// delivers ~100 bytes of body. pluginutils.Recv will return whatever
+		// fits in its 4096-byte buffer, so responseLength != len(response)-4.
+		truncatedResp := make([]byte, 100)
+		binary.BigEndian.PutUint32(truncatedResp[0:4], 8000) // lie about length
+		copy(truncatedResp[4:8], metaCID[:])
+		serverConn.Write(truncatedResp) //nolint:errcheck
+	}()
+
+	conn, err := net.DialTimeout("tcp", listener.Addr().String(), 5*time.Second)
+	if err != nil {
+		t.Fatalf("Failed to connect to mock server: %v", err)
+	}
+	defer conn.Close()
+
+	tcpAddr := listener.Addr().(*net.TCPAddr)
+	addrStr := net.JoinHostPort("127.0.0.1", strconv.Itoa(tcpAddr.Port))
+	addrPort := netip.MustParseAddrPort(addrStr)
+	target := plugins.Target{
+		Host:       "127.0.0.1",
+		Address:    addrPort,
+		Misconfigs: true,
+	}
+
+	service, err := Run(conn, false, 5*time.Second, target)
+	if err != nil {
+		t.Fatalf("Run() returned unexpected error: %v", err)
+	}
+	if service == nil {
+		t.Fatal("Run() returned nil, want non-nil service")
+	}
+
+	// The truncated metadata response should be rejected, so no finding
+	if service.AnonymousAccess {
+		t.Error("AnonymousAccess = true, want false (truncated response should be rejected)")
+	}
+	if len(service.SecurityFindings) != 0 {
+		t.Errorf("len(SecurityFindings) = %d, want 0", len(service.SecurityFindings))
 	}
 }
 
