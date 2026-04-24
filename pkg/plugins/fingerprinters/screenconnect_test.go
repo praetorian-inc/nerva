@@ -822,9 +822,9 @@ func TestScreenConnectVersionValidation(t *testing.T) {
 	}
 }
 
-// ── TestSanitizeHeaderValue ────────────────────────────────────────────────────
+// ── TestSanitizeScreenConnectHeaderValue ──────────────────────────────────────
 
-func TestSanitizeHeaderValue(t *testing.T) {
+func TestSanitizeScreenConnectHeaderValue(t *testing.T) {
 	tests := []struct {
 		name  string
 		input string
