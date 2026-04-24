@@ -57,18 +57,15 @@ func TestMqtt3(t *testing.T) {
 	}
 }
 
-// TestMQTT3SecurityFindingsAnonymousAccess verifies that anonymous access is detected
-// when the broker sends CONNACK with return code 0 (Connection Accepted).
-func TestMQTT3SecurityFindingsAnonymousAccess(t *testing.T) {
-	// CONNACK with return code 0 (Connection Accepted)
-	connackOK := []byte{0x20, 0x02, 0x00, 0x00}
-
+// startMockMQTTServer starts a TCP listener that accepts one connection,
+// reads the CONNECT packet, writes connackBytes, and closes.
+// Returns the listener (caller must defer Close) and the port.
+func startMockMQTTServer(t *testing.T, connackBytes []byte) (net.Listener, int) {
+	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("failed to start mock server: %v", err)
 	}
-	defer listener.Close()
-
 	serverPort := listener.Addr().(*net.TCPAddr).Port
 
 	go func() {
@@ -79,137 +76,77 @@ func TestMQTT3SecurityFindingsAnonymousAccess(t *testing.T) {
 		defer conn.Close()
 		buf := make([]byte, 4096)
 		_, _ = conn.Read(buf)
-		_, _ = conn.Write(connackOK)
+		_, _ = conn.Write(connackBytes)
 	}()
 
-	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", serverPort), 5*time.Second)
-	if err != nil {
-		t.Fatalf("failed to connect to mock server: %v", err)
-	}
-	defer conn.Close()
-
-	addrStr := fmt.Sprintf("127.0.0.1:%d", serverPort)
-	addrPort := netip.MustParseAddrPort(addrStr)
-	target := plugins.Target{
-		Host:       "127.0.0.1",
-		Address:    addrPort,
-		Misconfigs: true,
-	}
-
-	service, err := Run(conn, 5*time.Second, false, target)
-	if err != nil {
-		t.Fatalf("Run() returned unexpected error: %v", err)
-	}
-	if service == nil {
-		t.Fatal("Run() returned nil, want non-nil service")
-	}
-
-	assert.True(t, service.AnonymousAccess, "expected AnonymousAccess to be true")
-	assert.Len(t, service.SecurityFindings, 1, "expected 1 security finding")
-	if len(service.SecurityFindings) == 1 {
-		assert.Equal(t, "mqtt-no-auth", service.SecurityFindings[0].ID)
-		assert.Equal(t, plugins.SeverityHigh, service.SecurityFindings[0].Severity)
-	}
+	return listener, serverPort
 }
 
-// TestMQTT3SecurityFindingsAuthRequired verifies that no findings are set when the broker
-// requires authentication (return code 5: Not Authorized).
-func TestMQTT3SecurityFindingsAuthRequired(t *testing.T) {
-	// CONNACK with return code 5 (Not Authorized)
-	connackNotAuth := []byte{0x20, 0x02, 0x00, 0x05}
-
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("failed to start mock server: %v", err)
-	}
-	defer listener.Close()
-
-	serverPort := listener.Addr().(*net.TCPAddr).Port
-
-	go func() {
-		conn, err := listener.Accept()
-		if err != nil {
-			return
-		}
-		defer conn.Close()
-		buf := make([]byte, 4096)
-		_, _ = conn.Read(buf)
-		_, _ = conn.Write(connackNotAuth)
-	}()
-
-	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", serverPort), 5*time.Second)
-	if err != nil {
-		t.Fatalf("failed to connect to mock server: %v", err)
-	}
-	defer conn.Close()
-
-	addrStr := fmt.Sprintf("127.0.0.1:%d", serverPort)
-	addrPort := netip.MustParseAddrPort(addrStr)
-	target := plugins.Target{
-		Host:       "127.0.0.1",
-		Address:    addrPort,
-		Misconfigs: true,
+func TestMQTT3SecurityFindings(t *testing.T) {
+	tests := []struct {
+		name             string
+		connack          []byte
+		misconfigs       bool
+		wantAnonymous    bool
+		wantFindingCount int
+		wantFindingID    string
+	}{
+		{
+			name:             "anonymous access detected",
+			connack:          []byte{0x20, 0x02, 0x00, 0x00},
+			misconfigs:       true,
+			wantAnonymous:    true,
+			wantFindingCount: 1,
+			wantFindingID:    "mqtt-no-auth",
+		},
+		{
+			name:             "auth required",
+			connack:          []byte{0x20, 0x02, 0x00, 0x05},
+			misconfigs:       true,
+			wantAnonymous:    false,
+			wantFindingCount: 0,
+		},
+		{
+			name:             "misconfigs disabled",
+			connack:          []byte{0x20, 0x02, 0x00, 0x00},
+			misconfigs:       false,
+			wantAnonymous:    false,
+			wantFindingCount: 0,
+		},
 	}
 
-	service, err := Run(conn, 5*time.Second, false, target)
-	if err != nil {
-		t.Fatalf("Run() returned unexpected error: %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			listener, serverPort := startMockMQTTServer(t, tt.connack)
+			defer listener.Close()
+
+			conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", serverPort), 5*time.Second)
+			if err != nil {
+				t.Fatalf("failed to connect to mock server: %v", err)
+			}
+			defer conn.Close()
+
+			addrPort := netip.MustParseAddrPort(fmt.Sprintf("127.0.0.1:%d", serverPort))
+			target := plugins.Target{
+				Host:       "127.0.0.1",
+				Address:    addrPort,
+				Misconfigs: tt.misconfigs,
+			}
+
+			service, err := Run(conn, 5*time.Second, false, target)
+			if err != nil {
+				t.Fatalf("Run() returned unexpected error: %v", err)
+			}
+			if service == nil {
+				t.Fatal("Run() returned nil, want non-nil service")
+			}
+
+			assert.Equal(t, tt.wantAnonymous, service.AnonymousAccess)
+			assert.Len(t, service.SecurityFindings, tt.wantFindingCount)
+			if tt.wantFindingCount > 0 && len(service.SecurityFindings) > 0 {
+				assert.Equal(t, tt.wantFindingID, service.SecurityFindings[0].ID)
+				assert.Equal(t, plugins.SeverityHigh, service.SecurityFindings[0].Severity)
+			}
+		})
 	}
-	if service == nil {
-		t.Fatal("Run() returned nil, want non-nil service")
-	}
-
-	assert.False(t, service.AnonymousAccess, "expected AnonymousAccess to be false")
-	assert.Empty(t, service.SecurityFindings, "expected no security findings")
-}
-
-// TestMQTT3NoFindingsWithoutMisconfigFlag verifies that no findings are set when
-// Misconfigs is false, even if the broker would accept anonymous connections.
-func TestMQTT3NoFindingsWithoutMisconfigFlag(t *testing.T) {
-	// CONNACK with return code 0 (Connection Accepted)
-	connackOK := []byte{0x20, 0x02, 0x00, 0x00}
-
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("failed to start mock server: %v", err)
-	}
-	defer listener.Close()
-
-	serverPort := listener.Addr().(*net.TCPAddr).Port
-
-	go func() {
-		conn, err := listener.Accept()
-		if err != nil {
-			return
-		}
-		defer conn.Close()
-		buf := make([]byte, 4096)
-		_, _ = conn.Read(buf)
-		_, _ = conn.Write(connackOK)
-	}()
-
-	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", serverPort), 5*time.Second)
-	if err != nil {
-		t.Fatalf("failed to connect to mock server: %v", err)
-	}
-	defer conn.Close()
-
-	addrStr := fmt.Sprintf("127.0.0.1:%d", serverPort)
-	addrPort := netip.MustParseAddrPort(addrStr)
-	target := plugins.Target{
-		Host:       "127.0.0.1",
-		Address:    addrPort,
-		Misconfigs: false,
-	}
-
-	service, err := Run(conn, 5*time.Second, false, target)
-	if err != nil {
-		t.Fatalf("Run() returned unexpected error: %v", err)
-	}
-	if service == nil {
-		t.Fatal("Run() returned nil, want non-nil service")
-	}
-
-	assert.False(t, service.AnonymousAccess, "expected AnonymousAccess to be false")
-	assert.Empty(t, service.SecurityFindings, "expected no security findings")
 }

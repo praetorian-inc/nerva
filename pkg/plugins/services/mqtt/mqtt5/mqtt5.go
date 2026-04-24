@@ -87,6 +87,26 @@ func (p *TLSPlugin) Type() plugins.Protocol {
 	return plugins.TCPTLS
 }
 
+// decodeVBI decodes a Variable Byte Integer starting at offset in data.
+// Returns the decoded value and the number of bytes consumed.
+// Returns (0, 0) if the data is malformed or truncated.
+func decodeVBI(data []byte, offset int) (int, int) {
+	multiplier := 1
+	value := 0
+	for i := 0; i < 4; i++ {
+		if offset+i >= len(data) {
+			return 0, 0
+		}
+		encodedByte := data[offset+i]
+		value += int(encodedByte&0x7F) * multiplier
+		if encodedByte&0x80 == 0 {
+			return value, i + 1
+		}
+		multiplier *= 128
+	}
+	return 0, 0
+}
+
 // Run
 /*
    MQTT is a publish-subscribe protocol designed to be used as
@@ -133,14 +153,20 @@ func Run(conn net.Conn, timeout time.Duration, tls bool, target plugins.Target) 
 	check, response, err := testConnectRequest(conn, mqttConnect5, timeout)
 	if check && err == nil {
 		service := plugins.CreateServiceFrom(target, plugins.ServiceMQTT{}, tls, "5.0", plugins.TCP)
-		if target.Misconfigs && len(response) >= 4 && response[3] == 0x00 {
-			service.AnonymousAccess = true
-			service.SecurityFindings = []plugins.SecurityFinding{{
-				ID:          "mqtt-no-auth",
-				Severity:    plugins.SeverityHigh,
-				Description: "MQTT broker accessible without authentication",
-				Evidence:    "CONNACK reason code 0 (Success) received without credentials",
-			}}
+		if target.Misconfigs {
+			// CONNACK: [0x20][remaining_length_VBI][ack_flags][reason_code]...
+			// Decode VBI to find the reason code at the correct offset.
+			_, vbiLen := decodeVBI(response, 1)
+			reasonCodeOffset := 1 + vbiLen + 1 // packet_type(1) + VBI + ack_flags(1)
+			if vbiLen > 0 && reasonCodeOffset < len(response) && response[reasonCodeOffset] == 0x00 {
+				service.AnonymousAccess = true
+				service.SecurityFindings = []plugins.SecurityFinding{{
+					ID:          "mqtt-no-auth",
+					Severity:    plugins.SeverityHigh,
+					Description: "MQTT broker accessible without authentication",
+					Evidence:    "CONNACK reason code 0 (Success) received without credentials",
+				}}
+			}
 		}
 		return service, nil
 	} else if check && err != nil {
