@@ -177,7 +177,7 @@ func checkNoSASL(conn net.Conn, timeout time.Duration) bool {
 	}
 
 	// Correct the length field (total packet minus the 4-byte length prefix)
-	binary.BigEndian.PutUint32(metadataRequest[0:4], uint32(len(metadataRequest)-4))
+	binary.BigEndian.PutUint32(metadataRequest[0:4], uint32(len(metadataRequest)-4)) // #nosec G115
 
 	// SendRecv errors are intentionally swallowed: a network error (including
 	// the connection-close that SASL-enabled brokers perform after ApiVersions)
@@ -192,7 +192,8 @@ func checkNoSASL(conn net.Conn, timeout time.Duration) bool {
 
 	// Validate length field matches actual response
 	responseLength := binary.BigEndian.Uint32(response[0:4])
-	if responseLength != uint32(len(response)-4) {
+	responseBodyLen := uint32(len(response) - 4) // #nosec G115
+	if responseLength != responseBodyLen {
 		return false
 	}
 
