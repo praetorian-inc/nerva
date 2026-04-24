@@ -207,10 +207,7 @@ func dialTLSVersion(t *testing.T, addr string, version uint16) *tls.Conn {
 // connections at each version and asserts the expected SecurityFinding result.
 //
 // TLS 1.0/1.1 require GODEBUG=tls10server=1. In Go ≥1.22 this env var must be
-// set before the process starts; the test binary is compiled with it via the
-// `GODEBUG` build tag approach, so we set it programmatically here using
-// os.Setenv as a best-effort for local runs and rely on the environment being
-// pre-set in CI (see the verification command in the task).
+// set before the process starts (e.g. in CI or via a wrapper script).
 func TestCheckWeakTLS(t *testing.T) {
 	cert := generateSelfSignedCert(t)
 
@@ -447,7 +444,7 @@ func startOpenSSLContainer(t *testing.T, pool *dockertest.Pool, tlsFlag string, 
 
 	resource, err := pool.RunWithOptions(&dockertest.RunOptions{
 		Repository: "alpine",
-		Tag:        "3.15",
+		Tag:        "3.21",
 		Cmd: []string{"sh", "-c", openSSLServerCmd(tlsFlag)},
 		ExposedPorts: []string{"4433/tcp"},
 	})
