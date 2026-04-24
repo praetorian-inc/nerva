@@ -301,6 +301,111 @@ func TestSophosFirewallFingerprinter_Fingerprint(t *testing.T) {
 			body:       `<html><body></body></html>`,
 			wantResult: false,
 		},
+		// ── S2: JSESSIONID path-cookie Tier-1 signal ─────────────────────────────
+		{
+			// S2 test: JSESSIONID scoped to /webconsole alone is sufficient.
+			name:       "detects from JSESSIONID Path=/webconsole cookie alone",
+			statusCode: 200,
+			headers: http.Header{
+				"Set-Cookie":   []string{"JSESSIONID=abc123; Path=/webconsole; HttpOnly"},
+				"Content-Type": []string{"text/html"},
+			},
+			body:              `<html><body>Generic body without Sophos markers</body></html>`,
+			wantResult:        true,
+			wantTech:          "sophos-firewall",
+			wantInterfaceType: "web-admin",
+		},
+		{
+			// S2 test: JSESSIONID scoped to /userportal alone is sufficient.
+			name:       "detects from JSESSIONID Path=/userportal cookie alone",
+			statusCode: 200,
+			headers: http.Header{
+				"Set-Cookie":   []string{"JSESSIONID=abc123; Path=/userportal; Secure"},
+				"Content-Type": []string{"text/html"},
+			},
+			body:              `<html><body>Generic body without Sophos markers</body></html>`,
+			wantResult:        true,
+			wantTech:          "sophos-firewall",
+			wantInterfaceType: "user-portal",
+		},
+		{
+			// S2 test: Path attribute name matching is case-insensitive per RFC 6265.
+			// "PATH=/WebConsole" must match (attribute name case-insensitive;
+			// path value /WebConsole treated as-is, but we lowercase the whole raw
+			// header for attribute lookup — so /WebConsole → /webconsole matches).
+			name:       "case-insensitive cookie path attribute match",
+			statusCode: 200,
+			headers: http.Header{
+				"Set-Cookie":   []string{"Foo=bar; PATH=/WebConsole"},
+				"Content-Type": []string{"text/html"},
+			},
+			body:              `<html><body>Generic body</body></html>`,
+			wantResult:        true,
+			wantInterfaceType: "web-admin",
+		},
+		{
+			// S2 test: unrelated Path= cookie must NOT match.
+			name:       "does not match unrelated Path= cookie",
+			statusCode: 200,
+			headers: http.Header{
+				"Set-Cookie":   []string{"session=abc; Path=/admin"},
+				"Content-Type": []string{"text/html"},
+			},
+			body:       `<html><body>Generic body without Sophos markers</body></html>`,
+			wantResult: false,
+		},
+		// ── S4: UTM 9.x / Cyberoam false-positive regression ─────────────────────
+		{
+			// S4 test: Sophos UTM 9.x page with only <title>Sophos UTM 9</title>
+			// must NOT match — no /webconsole/, /userportal/, JS marker, or xxxx header.
+			name:       "does not match Sophos UTM 9.x title without SFOS markers",
+			statusCode: 200,
+			headers: http.Header{
+				"Content-Type": []string{"text/html"},
+			},
+			body:       `<html><head><title>Sophos UTM 9</title></head><body>Generic page</body></html>`,
+			wantResult: false,
+		},
+		{
+			// S4 test: Cyberoam legacy page mentioning Sophos must NOT match.
+			name:       "does not match Cyberoam legacy page mentioning Sophos",
+			statusCode: 200,
+			headers: http.Header{
+				"Content-Type": []string{"text/html"},
+			},
+			body:       `<html><body>Powered by Cyberoam, a Sophos company</body></html>`,
+			wantResult: false,
+		},
+		// ── S5: JS marker sole-sufficient (locked-down SFOS) ─────────────────────
+		{
+			// S5 test: uiLangToHTMLLangAttributeValueMapping is sole-sufficient.
+			// Covers locked-down SFOS deployments that strip the Server header,
+			// blank the <title>, and serve assets from non-standard paths.
+			// Synthetic fixture — no real IPs, hostnames, or cookie values.
+			name:       "detects locked-down SFOS via JS marker alone",
+			statusCode: 200,
+			headers: http.Header{
+				"Content-Type":  []string{"text/html;charset=utf-8"},
+				"Cache-Control": []string{"no-cache"},
+				"Connection":    []string{"Keep-Alive"},
+				// Deliberately NO Server header.
+			},
+			body: `<!DOCTYPE html>
+<html>
+<head>
+<title></title>
+<link rel="stylesheet" href="/themes/lite1/css/typography.css?version=abc123def456">
+</head>
+<body>
+<script>var uiLangToHTMLLangAttributeValueMapping = {};</script>
+</body>
+</html>`,
+			wantResult:        true,
+			wantTech:          "sophos-firewall",
+			wantCPEPrefix:     "cpe:2.3:o:sophos:sfos:*",
+			wantVersion:       "",  // hash-like placeholder is not a valid 4-part version
+			wantInterfaceType: "", // unknown portal — no webconsole/userportal path
+		},
 	}
 
 	for _, tt := range tests {
@@ -469,6 +574,22 @@ func TestExtractSophosVersion(t *testing.T) {
 			name: "rejects non-numeric version (injection guard)",
 			body: `<link rel="stylesheet" href="/css/typography.css?version=19.5.x.abc">`,
 			want: "",
+		},
+		{
+			// H3-Sophos: version string longer than sophosMaxVersionLen (24 chars)
+			// must be rejected by the length cap before the regex runs.
+			// "1234567890123456789.8.9.0" = 25 chars → rejected.
+			name: "H3: oversized version (25 chars) rejected by length cap",
+			body: `<link rel="stylesheet" href="/css/typography.css?version=1234567890123456789.8.9.0">`,
+			want: "",
+		},
+		{
+			// H3-Sophos boundary: a version string at or under the 24-char cap
+			// that satisfies the regex must be accepted.
+			// "12345678.12345678.1.1" = 21 chars → accepted.
+			name: "H3: version within 24-char cap is accepted",
+			body: `<link rel="stylesheet" href="/css/typography.css?version=12345678.12345678.1.1">`,
+			want: "12345678.12345678.1.1",
 		},
 	}
 
