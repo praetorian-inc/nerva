@@ -268,6 +268,75 @@ func checkMongoDBResponse(response []byte, expectedRequestID uint32) (bool, erro
 	return true, nil
 }
 
+// skipBSONValue advances pos past one BSON element value of the given type.
+// Returns the new position and true on success, or (0, false) if the document
+// is too short or the type is unrecognized.
+func skipBSONValue(bsonDoc []byte, pos int, elementType byte) (int, bool) {
+	switch elementType {
+	case 0x01: // double
+		if pos+8 > len(bsonDoc) {
+			return 0, false
+		}
+		return pos + 8, true
+	case 0x02: // string
+		if pos+4 > len(bsonDoc) {
+			return 0, false
+		}
+		strLen := binary.LittleEndian.Uint32(bsonDoc[pos : pos+4])
+		if strLen > uint32(len(bsonDoc)-pos-4) {
+			return 0, false
+		}
+		return pos + 4 + int(strLen), true
+	case 0x03, 0x04: // document, array
+		if pos+4 > len(bsonDoc) {
+			return 0, false
+		}
+		subDocLen := binary.LittleEndian.Uint32(bsonDoc[pos : pos+4])
+		if subDocLen > uint32(len(bsonDoc)-pos) {
+			return 0, false
+		}
+		return pos + int(subDocLen), true
+	case 0x05: // binary
+		if pos+5 > len(bsonDoc) {
+			return 0, false
+		}
+		binLen := binary.LittleEndian.Uint32(bsonDoc[pos : pos+4])
+		if binLen > uint32(len(bsonDoc)-pos-5) {
+			return 0, false
+		}
+		return pos + 5 + int(binLen), true
+	case 0x07: // ObjectId
+		if pos+12 > len(bsonDoc) {
+			return 0, false
+		}
+		return pos + 12, true
+	case 0x08: // boolean
+		if pos+1 > len(bsonDoc) {
+			return 0, false
+		}
+		return pos + 1, true
+	case 0x09: // UTC datetime
+		if pos+8 > len(bsonDoc) {
+			return 0, false
+		}
+		return pos + 8, true
+	case 0x0A: // null
+		return pos, true
+	case 0x10: // int32
+		if pos+4 > len(bsonDoc) {
+			return 0, false
+		}
+		return pos + 4, true
+	case 0x11, 0x12: // timestamp, int64
+		if pos+8 > len(bsonDoc) {
+			return 0, false
+		}
+		return pos + 8, true
+	default:
+		return 0, false
+	}
+}
+
 // parseBSONString extracts a string value for a given key from a BSON document
 // This is a minimal BSON parser focused on extracting string values
 func parseBSONString(bsonDoc []byte, key string) string {
@@ -325,55 +394,11 @@ func parseBSONString(bsonDoc []byte, key string) string {
 		}
 
 		// Skip value based on type
-		switch elementType {
-		case 0x01: // double
-			pos += 8
-		case 0x02: // string
-			if pos+4 > len(bsonDoc) {
-				return ""
-			}
-			strLen := binary.LittleEndian.Uint32(bsonDoc[pos : pos+4])
-			// Validate uint32 bounds BEFORE casting to int to prevent overflow
-			if strLen > uint32(len(bsonDoc)-pos-4) {
-				return ""
-			}
-			pos += 4 + int(strLen)
-		case 0x03, 0x04: // document, array
-			if pos+4 > len(bsonDoc) {
-				return ""
-			}
-			subDocLen := binary.LittleEndian.Uint32(bsonDoc[pos : pos+4])
-			// Validate uint32 bounds BEFORE casting to int to prevent overflow
-			if subDocLen > uint32(len(bsonDoc)-pos) {
-				return ""
-			}
-			pos += int(subDocLen)
-		case 0x05: // binary
-			if pos+5 > len(bsonDoc) {
-				return ""
-			}
-			binLen := binary.LittleEndian.Uint32(bsonDoc[pos : pos+4])
-			// Validate uint32 bounds BEFORE casting to int to prevent overflow
-			if binLen > uint32(len(bsonDoc)-pos-5) {
-				return ""
-			}
-			pos += 5 + int(binLen)
-		case 0x07: // ObjectId
-			pos += 12
-		case 0x08: // boolean
-			pos++
-		case 0x09: // UTC datetime
-			pos += 8
-		case 0x0A: // null
-			// no value
-		case 0x10: // int32
-			pos += 4
-		case 0x11, 0x12: // timestamp, int64
-			pos += 8
-		default:
-			// Unknown type, cannot continue parsing safely
+		newPos, ok := skipBSONValue(bsonDoc, pos, elementType)
+		if !ok {
 			return ""
 		}
+		pos = newPos
 	}
 
 	return ""
@@ -437,55 +462,11 @@ func parseBSONInt32(bsonDoc []byte, key string) (int32, bool) {
 		}
 
 		// Skip value based on type
-		switch elementType {
-		case 0x01: // double
-			pos += 8
-		case 0x02: // string
-			if pos+4 > len(bsonDoc) {
-				return 0, false
-			}
-			strLen := binary.LittleEndian.Uint32(bsonDoc[pos : pos+4])
-			// Validate uint32 bounds BEFORE casting to int to prevent overflow
-			if strLen > uint32(len(bsonDoc)-pos-4) {
-				return 0, false
-			}
-			pos += 4 + int(strLen)
-		case 0x03, 0x04: // document, array
-			if pos+4 > len(bsonDoc) {
-				return 0, false
-			}
-			subDocLen := binary.LittleEndian.Uint32(bsonDoc[pos : pos+4])
-			// Validate uint32 bounds BEFORE casting to int to prevent overflow
-			if subDocLen > uint32(len(bsonDoc)-pos) {
-				return 0, false
-			}
-			pos += int(subDocLen)
-		case 0x05: // binary
-			if pos+5 > len(bsonDoc) {
-				return 0, false
-			}
-			binLen := binary.LittleEndian.Uint32(bsonDoc[pos : pos+4])
-			// Validate uint32 bounds BEFORE casting to int to prevent overflow
-			if binLen > uint32(len(bsonDoc)-pos-5) {
-				return 0, false
-			}
-			pos += 5 + int(binLen)
-		case 0x07: // ObjectId
-			pos += 12
-		case 0x08: // boolean
-			pos++
-		case 0x09: // UTC datetime
-			pos += 8
-		case 0x0A: // null
-			// no value
-		case 0x10: // int32
-			pos += 4
-		case 0x11, 0x12: // timestamp, int64
-			pos += 8
-		default:
-			// Unknown type, cannot continue parsing safely
+		newPos, ok := skipBSONValue(bsonDoc, pos, elementType)
+		if !ok {
 			return 0, false
 		}
+		pos = newPos
 	}
 
 	return 0, false
@@ -541,55 +522,11 @@ func parseBSONDouble(bsonDoc []byte, key string) (float64, bool) {
 		}
 
 		// Skip value based on type
-		switch elementType {
-		case 0x01: // double
-			pos += 8
-		case 0x02: // string
-			if pos+4 > len(bsonDoc) {
-				return 0, false
-			}
-			strLen := binary.LittleEndian.Uint32(bsonDoc[pos : pos+4])
-			// Validate uint32 bounds BEFORE casting to int to prevent overflow
-			if strLen > uint32(len(bsonDoc)-pos-4) {
-				return 0, false
-			}
-			pos += 4 + int(strLen)
-		case 0x03, 0x04: // document, array
-			if pos+4 > len(bsonDoc) {
-				return 0, false
-			}
-			subDocLen := binary.LittleEndian.Uint32(bsonDoc[pos : pos+4])
-			// Validate uint32 bounds BEFORE casting to int to prevent overflow
-			if subDocLen > uint32(len(bsonDoc)-pos) {
-				return 0, false
-			}
-			pos += int(subDocLen)
-		case 0x05: // binary
-			if pos+5 > len(bsonDoc) {
-				return 0, false
-			}
-			binLen := binary.LittleEndian.Uint32(bsonDoc[pos : pos+4])
-			// Validate uint32 bounds BEFORE casting to int to prevent overflow
-			if binLen > uint32(len(bsonDoc)-pos-5) {
-				return 0, false
-			}
-			pos += 5 + int(binLen)
-		case 0x07: // ObjectId
-			pos += 12
-		case 0x08: // boolean
-			pos++
-		case 0x09: // UTC datetime
-			pos += 8
-		case 0x0A: // null
-			// no value
-		case 0x10: // int32
-			pos += 4
-		case 0x11, 0x12: // timestamp, int64
-			pos += 8
-		default:
-			// Unknown type, cannot continue parsing safely
+		newPos, ok := skipBSONValue(bsonDoc, pos, elementType)
+		if !ok {
 			return 0, false
 		}
+		pos = newPos
 	}
 
 	return 0, false
@@ -1000,6 +937,8 @@ func checkMongoDBAuth(conn net.Conn, timeout time.Duration) bool {
 	if err == nil && len(response) > 21 {
 		isValid, validErr := checkMongoDBMsgResponse(response, requestID)
 		if isValid && validErr == nil {
+			// Authoritative on MongoDB 3.6+; do not fall through to OP_QUERY
+			// even when ok=0 (auth required) — avoids an unnecessary second probe.
 			return parseBSONCommandOk(response[21:])
 		}
 	}

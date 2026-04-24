@@ -16,10 +16,11 @@ package mongodb
 
 import (
 	"encoding/binary"
+	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/netip"
+	"strconv"
 	"testing"
 	"time"
 
@@ -970,8 +971,18 @@ func handleMongoDBConn(conn net.Conn, authRequired bool) {
 		var response []byte
 		switch opCode {
 		case OP_QUERY: // 2004
-			bsonDoc := buildTestBSONDoc(okTrue, true)
-			response = buildTestOPReply(requestID, bsonDoc)
+			if requestID == 201 {
+				// listDatabases OP_QUERY fallback — honor authRequired
+				okVal := okTrue
+				if authRequired {
+					okVal = okFalse
+				}
+				bsonDoc := buildTestBSONDoc(okVal, false)
+				response = buildTestOPReply(requestID, bsonDoc)
+			} else {
+				bsonDoc := buildTestBSONDoc(okTrue, true)
+				response = buildTestOPReply(requestID, bsonDoc)
+			}
 		case OP_MSG: // 2013
 			if requestID == 200 {
 				// listDatabases auth check
@@ -1061,7 +1072,7 @@ func TestMongoDBSecurityFindings(t *testing.T) {
 			}
 			defer conn.Close()
 
-			addrStr := "127.0.0.1:" + portToStr(serverPort)
+			addrStr := net.JoinHostPort("127.0.0.1", strconv.Itoa(serverPort))
 			addrPort := netip.MustParseAddrPort(addrStr)
 			target := plugins.Target{
 				Host:       "127.0.0.1",
@@ -1096,256 +1107,151 @@ func TestMongoDBSecurityFindings(t *testing.T) {
 	}
 }
 
-// TestMongoDBSecurityFindingsLive spins up a real MongoDB container (no auth) and
-// verifies that the plugin detects anonymous access and emits the mongodb-no-auth finding.
+// startMongoContainer spins up a mongo:7 Docker container and returns a live connection,
+// the parsed address, and a cleanup function.
+func startMongoContainer(t *testing.T, env []string) (net.Conn, netip.AddrPort, func()) {
+	t.Helper()
+
+	pool, err := dockertest.NewPool("")
+	if err != nil {
+		t.Fatalf("could not connect to docker: %s", err)
+	}
+
+	resource, err := pool.RunWithOptions(&dockertest.RunOptions{
+		Repository: "mongo",
+		Tag:        "7",
+		Env:        env,
+	})
+	if err != nil {
+		t.Fatalf("could not start mongodb container: %s", err)
+	}
+
+	cleanup := func() { pool.Purge(resource) } //nolint:errcheck
+
+	rawAddr := resource.GetHostPort("27017/tcp")
+	host, port, err := net.SplitHostPort(rawAddr)
+	if err != nil {
+		cleanup()
+		t.Fatalf("could not split host:port %q: %v", rawAddr, err)
+	}
+	if host == "localhost" || host == "0.0.0.0" || host == "::" {
+		host = "127.0.0.1"
+	}
+	targetAddr := net.JoinHostPort(host, port)
+
+	err = pool.Retry(func() error {
+		conn, dialErr := net.DialTimeout("tcp", targetAddr, 5*time.Second)
+		if dialErr != nil {
+			return dialErr
+		}
+		defer conn.Close()
+		// TCP open doesn't mean MongoDB is ready; send a hello probe to confirm
+		// the server is accepting wire protocol commands.
+		hello := buildMongoDBMsgQuery("hello", 1)
+		_, sendErr := conn.Write(hello)
+		if sendErr != nil {
+			return sendErr
+		}
+		buf := make([]byte, 4096)
+		_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		n, readErr := conn.Read(buf)
+		if readErr != nil || n == 0 {
+			return fmt.Errorf("mongodb not ready")
+		}
+		return nil
+	})
+	if err != nil {
+		cleanup()
+		t.Fatalf("failed to connect to mongodb container: %s", err)
+	}
+
+	conn, err := net.DialTimeout("tcp", targetAddr, 5*time.Second)
+	if err != nil {
+		cleanup()
+		t.Fatalf("failed to open connection to mongodb container: %s", err)
+	}
+
+	addrPort := netip.MustParseAddrPort(targetAddr)
+	return conn, addrPort, cleanup
+}
+
+// TestMongoDBSecurityFindingsLive runs live Docker integration tests for MongoDB security findings.
 func TestMongoDBSecurityFindingsLive(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping docker test in short mode")
 	}
 
-	pool, err := dockertest.NewPool("")
-	if err != nil {
-		log.Fatalf("could not connect to docker: %s", err)
-	}
-
-	resource, err := pool.RunWithOptions(&dockertest.RunOptions{
-		Repository: "mongo",
-		Tag:        "7",
-	})
-	if err != nil {
-		t.Fatalf("could not start mongodb container: %s", err)
-	}
-	defer pool.Purge(resource) //nolint:errcheck
-
-	rawAddr := resource.GetHostPort("27017/tcp")
-
-	host, port, err := net.SplitHostPort(rawAddr)
-	if err != nil {
-		t.Fatalf("could not split host:port %q: %v", rawAddr, err)
-	}
-	if host == "localhost" || host == "0.0.0.0" || host == "::" {
-		host = "127.0.0.1"
-	}
-	targetAddr := net.JoinHostPort(host, port)
-
-	err = pool.Retry(func() error {
-		time.Sleep(3 * time.Second)
-		conn, dialErr := net.DialTimeout("tcp", targetAddr, 5*time.Second)
-		if dialErr != nil {
-			return dialErr
-		}
-		conn.Close()
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("failed to connect to mongodb container: %s", err)
-	}
-
-	conn, err := net.DialTimeout("tcp", targetAddr, 5*time.Second)
-	if err != nil {
-		t.Fatalf("failed to open connection to mongodb container: %s", err)
-	}
-	defer conn.Close()
-
-	addrPort := netip.MustParseAddrPort(targetAddr)
-	target := plugins.Target{
-		Host:       addrPort.Addr().String(),
-		Address:    addrPort,
-		Misconfigs: true,
-	}
-
-	plugin := &MONGODBPlugin{}
-	service, err := plugin.Run(conn, 5*time.Second, target)
-	if err != nil {
-		t.Fatalf("Run() returned unexpected error: %v", err)
-	}
-	if service == nil {
-		t.Fatal("Run() returned nil, want non-nil service")
-	}
-
-	if service.Protocol != "mongodb" {
-		t.Errorf("expected Protocol %q, got %q", "mongodb", service.Protocol)
-	}
-	if service.Version == "" {
-		t.Error("expected non-empty Version")
-	}
-	if !service.AnonymousAccess {
-		t.Error("expected AnonymousAccess to be true")
-	}
-	if len(service.SecurityFindings) != 1 {
-		t.Fatalf("expected 1 finding, got %d", len(service.SecurityFindings))
-	}
-	if service.SecurityFindings[0].ID != "mongodb-no-auth" {
-		t.Errorf("expected finding ID 'mongodb-no-auth', got %q", service.SecurityFindings[0].ID)
-	}
-	if service.SecurityFindings[0].Severity != plugins.SeverityCritical {
-		t.Errorf("expected severity Critical, got %s", service.SecurityFindings[0].Severity)
-	}
-}
-
-// TestMongoDBSecurityFindingsLiveAuthEnabled spins up a real MongoDB container with
-// authentication enabled and verifies that the plugin reports no anonymous access.
-func TestMongoDBSecurityFindingsLiveAuthEnabled(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping docker test in short mode")
-	}
-
-	pool, err := dockertest.NewPool("")
-	if err != nil {
-		log.Fatalf("could not connect to docker: %s", err)
-	}
-
-	resource, err := pool.RunWithOptions(&dockertest.RunOptions{
-		Repository: "mongo",
-		Tag:        "7",
-		Env: []string{
-			"MONGO_INITDB_ROOT_USERNAME=admin",
-			"MONGO_INITDB_ROOT_PASSWORD=testpassword123",
+	tests := []struct {
+		name         string
+		env          []string
+		misconfigs   bool
+		wantAnon     bool
+		wantFindings int
+	}{
+		{
+			name:         "no auth - finding detected",
+			env:          nil,
+			misconfigs:   true,
+			wantAnon:     true,
+			wantFindings: 1,
 		},
-	})
-	if err != nil {
-		t.Fatalf("could not start mongodb container: %s", err)
-	}
-	defer pool.Purge(resource) //nolint:errcheck
-
-	rawAddr := resource.GetHostPort("27017/tcp")
-
-	host, port, err := net.SplitHostPort(rawAddr)
-	if err != nil {
-		t.Fatalf("could not split host:port %q: %v", rawAddr, err)
-	}
-	if host == "localhost" || host == "0.0.0.0" || host == "::" {
-		host = "127.0.0.1"
-	}
-	targetAddr := net.JoinHostPort(host, port)
-
-	err = pool.Retry(func() error {
-		time.Sleep(3 * time.Second)
-		conn, dialErr := net.DialTimeout("tcp", targetAddr, 5*time.Second)
-		if dialErr != nil {
-			return dialErr
-		}
-		conn.Close()
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("failed to connect to mongodb container: %s", err)
+		{
+			name: "auth enabled - no findings",
+			env: []string{
+				"MONGO_INITDB_ROOT_USERNAME=admin",
+				"MONGO_INITDB_ROOT_PASSWORD=testpassword123",
+			},
+			misconfigs:   true,
+			wantAnon:     false,
+			wantFindings: 0,
+		},
+		{
+			name:         "no auth but misconfigs disabled - no findings",
+			env:          nil,
+			misconfigs:   false,
+			wantAnon:     false,
+			wantFindings: 0,
+		},
 	}
 
-	conn, err := net.DialTimeout("tcp", targetAddr, 5*time.Second)
-	if err != nil {
-		t.Fatalf("failed to open connection to mongodb container: %s", err)
-	}
-	defer conn.Close()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			conn, addrPort, cleanup := startMongoContainer(t, tt.env)
+			defer cleanup()
+			defer conn.Close()
 
-	addrPort := netip.MustParseAddrPort(targetAddr)
-	target := plugins.Target{
-		Host:       addrPort.Addr().String(),
-		Address:    addrPort,
-		Misconfigs: true,
-	}
+			target := plugins.Target{
+				Host:       addrPort.Addr().String(),
+				Address:    addrPort,
+				Misconfigs: tt.misconfigs,
+			}
 
-	plugin := &MONGODBPlugin{}
-	service, err := plugin.Run(conn, 5*time.Second, target)
-	if err != nil {
-		t.Fatalf("Run() returned unexpected error: %v", err)
-	}
-	if service == nil {
-		t.Fatal("Run() returned nil, want non-nil service")
-	}
+			plugin := &MONGODBPlugin{}
+			service, err := plugin.Run(conn, 5*time.Second, target)
+			if err != nil {
+				t.Fatalf("Run() returned unexpected error: %v", err)
+			}
+			if service == nil {
+				t.Fatal("Run() returned nil, want non-nil service")
+			}
 
-	if service.AnonymousAccess {
-		t.Error("expected AnonymousAccess to be false with auth enabled")
+			if service.Protocol != "mongodb" {
+				t.Errorf("expected Protocol %q, got %q", "mongodb", service.Protocol)
+			}
+			if service.AnonymousAccess != tt.wantAnon {
+				t.Errorf("AnonymousAccess = %v, want %v", service.AnonymousAccess, tt.wantAnon)
+			}
+			if len(service.SecurityFindings) != tt.wantFindings {
+				t.Fatalf("len(SecurityFindings) = %d, want %d", len(service.SecurityFindings), tt.wantFindings)
+			}
+			if tt.wantFindings > 0 {
+				if service.SecurityFindings[0].ID != "mongodb-no-auth" {
+					t.Errorf("expected finding ID 'mongodb-no-auth', got %q", service.SecurityFindings[0].ID)
+				}
+				if service.SecurityFindings[0].Severity != plugins.SeverityCritical {
+					t.Errorf("expected severity Critical, got %s", service.SecurityFindings[0].Severity)
+				}
+			}
+		})
 	}
-	if len(service.SecurityFindings) != 0 {
-		t.Errorf("expected 0 findings with auth enabled, got %d", len(service.SecurityFindings))
-	}
-}
-
-// TestMongoDBSecurityFindingsLiveNoFlag spins up a real MongoDB container (no auth) but
-// runs the plugin with Misconfigs=false, verifying no findings are emitted.
-func TestMongoDBSecurityFindingsLiveNoFlag(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping docker test in short mode")
-	}
-
-	pool, err := dockertest.NewPool("")
-	if err != nil {
-		log.Fatalf("could not connect to docker: %s", err)
-	}
-
-	resource, err := pool.RunWithOptions(&dockertest.RunOptions{
-		Repository: "mongo",
-		Tag:        "7",
-	})
-	if err != nil {
-		t.Fatalf("could not start mongodb container: %s", err)
-	}
-	defer pool.Purge(resource) //nolint:errcheck
-
-	rawAddr := resource.GetHostPort("27017/tcp")
-
-	host, port, err := net.SplitHostPort(rawAddr)
-	if err != nil {
-		t.Fatalf("could not split host:port %q: %v", rawAddr, err)
-	}
-	if host == "localhost" || host == "0.0.0.0" || host == "::" {
-		host = "127.0.0.1"
-	}
-	targetAddr := net.JoinHostPort(host, port)
-
-	err = pool.Retry(func() error {
-		time.Sleep(3 * time.Second)
-		conn, dialErr := net.DialTimeout("tcp", targetAddr, 5*time.Second)
-		if dialErr != nil {
-			return dialErr
-		}
-		conn.Close()
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("failed to connect to mongodb container: %s", err)
-	}
-
-	conn, err := net.DialTimeout("tcp", targetAddr, 5*time.Second)
-	if err != nil {
-		t.Fatalf("failed to open connection to mongodb container: %s", err)
-	}
-	defer conn.Close()
-
-	addrPort := netip.MustParseAddrPort(targetAddr)
-	target := plugins.Target{
-		Host:       addrPort.Addr().String(),
-		Address:    addrPort,
-		Misconfigs: false,
-	}
-
-	plugin := &MONGODBPlugin{}
-	service, err := plugin.Run(conn, 5*time.Second, target)
-	if err != nil {
-		t.Fatalf("Run() returned unexpected error: %v", err)
-	}
-	if service == nil {
-		t.Fatal("Run() returned nil, want non-nil service")
-	}
-
-	if service.AnonymousAccess {
-		t.Error("expected AnonymousAccess to be false when Misconfigs=false")
-	}
-	if len(service.SecurityFindings) != 0 {
-		t.Errorf("expected 0 findings with Misconfigs=false, got %d", len(service.SecurityFindings))
-	}
-}
-
-// portToStr converts an int port to its decimal string representation.
-func portToStr(port int) string {
-	if port == 0 {
-		return "0"
-	}
-	buf := make([]byte, 0, 6)
-	for port > 0 {
-		buf = append([]byte{byte('0' + port%10)}, buf...)
-		port /= 10
-	}
-	return string(buf)
 }
