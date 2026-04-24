@@ -126,7 +126,63 @@ func Run(conn net.Conn, tls bool, timeout time.Duration, target plugins.Target) 
 		return nil, nil
 	}
 
-	return plugins.CreateServiceFrom(target, plugins.ServiceKafka{}, tls, ">=0.10.0.0", plugins.TCP), nil
+	service := plugins.CreateServiceFrom(target, plugins.ServiceKafka{}, tls, ">=0.10.0.0", plugins.TCP)
+
+	if target.Misconfigs && checkNoSASL(conn, timeout) {
+		service.AnonymousAccess = true
+		service.SecurityFindings = []plugins.SecurityFinding{{
+			ID:          "kafka-no-sasl",
+			Severity:    plugins.SeverityHigh,
+			Description: "Kafka broker accessible without SASL authentication",
+			Evidence:    "Metadata request succeeded without SASL handshake",
+		}}
+	}
+
+	return service, nil
+}
+
+// checkNoSASL sends a Metadata v0 request after the ApiVersions handshake to
+// determine whether the broker requires SASL authentication. On SASL-enabled
+// brokers, the connection is closed after ApiVersions unless a SASL handshake
+// follows, so a successful Metadata response means no SASL is required.
+func checkNoSASL(conn net.Conn, timeout time.Duration) bool {
+	cid := genCorrelationID()
+	metadataRequest := []byte{
+		// length (14 bytes follow: api_key(2) + api_version(2) + correlation_id(4) + client_id(2) + topic_count(4))
+		0x00, 0x00, 0x00, 0x0e,
+		// request_api_key: Metadata = 3
+		0x00, 0x03,
+		// request_api_version: 0
+		0x00, 0x00,
+		// correlation_id
+		cid[0], cid[1], cid[2], cid[3],
+		// client_id: empty string (length 0)
+		0x00, 0x00,
+		// topic_count: 0 (request metadata for all topics)
+		0x00, 0x00, 0x00, 0x00,
+	}
+
+	response, err := utils.SendRecv(conn, metadataRequest, timeout)
+	if err != nil || len(response) < 8 {
+		return false
+	}
+
+	// Validate length field matches actual response
+	responseLength := binary.BigEndian.Uint32(response[0:4])
+	expectedLength := uint32(math.Max(float64(len(response)-4), 0))
+	if responseLength != expectedLength {
+		return false
+	}
+
+	// Validate correlation_id matches
+	correlationID := response[4:8]
+	for i := 0; i < 4; i++ {
+		if cid[i] != correlationID[i] {
+			return false
+		}
+	}
+
+	return true
 }
 
 /* Helper function to generate a correlation_id */

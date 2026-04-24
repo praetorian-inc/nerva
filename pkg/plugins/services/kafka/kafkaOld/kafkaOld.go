@@ -130,7 +130,21 @@ func Run(conn net.Conn, tls bool, timeout time.Duration, target plugins.Target) 
 	if !notReportError {
 		return nil, nil
 	}
-	return plugins.CreateServiceFrom(target, plugins.ServiceKafka{}, tls, "<=0.9.0.X", plugins.TCP), nil
+	service := plugins.CreateServiceFrom(target, plugins.ServiceKafka{}, tls, "<=0.9.0.X", plugins.TCP)
+
+	// Detection succeeded via unauthenticated metadata request.
+	// Pre-0.9 Kafka has no SASL support, so success implies no authentication.
+	if target.Misconfigs {
+		service.AnonymousAccess = true
+		service.SecurityFindings = []plugins.SecurityFinding{{
+			ID:          "kafka-no-sasl",
+			Severity:    plugins.SeverityHigh,
+			Description: "Kafka broker accessible without SASL authentication",
+			Evidence:    "Metadata request succeeded without SASL handshake",
+		}}
+	}
+
+	return service, nil
 }
 
 /* Helper function to generate a correlation_id */
