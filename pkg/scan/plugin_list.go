@@ -23,6 +23,7 @@ import (
 
 	// Standalone plugins for binary protocol detection
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/activemq"
+	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/ajp"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/amqp"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/anydesk"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/atg"

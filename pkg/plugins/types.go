@@ -69,6 +69,7 @@ func (s Severity) Valid() bool {
 
 const (
 	ProtoActiveMQOpenWire = "activemq-openwire"
+	ProtoAJP              = "ajp"
 	ProtoATG              = "atg"
 	ProtoAMQP             = "amqp"
 	ProtoAnyDesk          = "anydesk"
@@ -708,6 +709,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoActiveMQOpenWire:
 		var p ServiceActiveMQOpenWire
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoAJP:
+		var p ServiceAJP
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoATG:
@@ -1851,6 +1856,14 @@ type ServiceActiveMQOpenWire struct {
 }
 
 func (e ServiceActiveMQOpenWire) Type() string { return ProtoActiveMQOpenWire }
+
+type ServiceAJP struct {
+	ProtocolVersion string   `json:"protocol_version,omitempty"` // AJP wire protocol, e.g. "1.3" (AJPv13)
+	CPingEnabled    bool     `json:"cping_enabled,omitempty"`    // true when CPong was received
+	CPEs            []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceAJP) Type() string { return ProtoAJP }
 
 type ServiceATG struct {
 	StationName string   `json:"station_name,omitempty"`
