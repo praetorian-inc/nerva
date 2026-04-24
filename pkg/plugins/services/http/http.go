@@ -149,6 +149,9 @@ func (p *HTTPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 			})
 		}
 	}
+	if target.Misconfigs && resp.StatusCode/100 != 3 {
+		service.SecurityFindings = append(service.SecurityFindings, checkMissingSecurityHeaders(resp.Header, false)...)
+	}
 	return service, nil
 }
 
@@ -228,6 +231,9 @@ func (p *HTTPSPlugin) Run(
 		if finding := checkWeakTLS(conn); finding != nil {
 			service.SecurityFindings = append(service.SecurityFindings, *finding)
 		}
+		if resp.StatusCode/100 != 3 {
+			service.SecurityFindings = append(service.SecurityFindings, checkMissingSecurityHeaders(resp.Header, true)...)
+		}
 	}
 	return service, nil
 }
@@ -275,6 +281,37 @@ func formatTechnologyWithVersion(technology, version string) string {
 type fingerprintedTech struct {
 	name     string
 	severity plugins.Severity
+}
+
+func checkMissingSecurityHeaders(headers http.Header, checkHSTS bool) []plugins.SecurityFinding {
+	findings := make([]plugins.SecurityFinding, 0, 3)
+
+	if checkHSTS && headers.Get("Strict-Transport-Security") == "" {
+		findings = append(findings, plugins.SecurityFinding{
+			ID:          "http-missing-hsts",
+			Severity:    plugins.SeverityMedium,
+			Description: "HTTP response missing Strict-Transport-Security header",
+			Evidence:    "header not present: Strict-Transport-Security",
+		})
+	}
+	if headers.Get("Content-Security-Policy") == "" {
+		findings = append(findings, plugins.SecurityFinding{
+			ID:          "http-missing-csp",
+			Severity:    plugins.SeverityLow,
+			Description: "HTTP response missing Content-Security-Policy header",
+			Evidence:    "header not present: Content-Security-Policy",
+		})
+	}
+	if headers.Get("X-Frame-Options") == "" {
+		findings = append(findings, plugins.SecurityFinding{
+			ID:          "http-missing-x-frame-options",
+			Severity:    plugins.SeverityLow,
+			Description: "HTTP response missing X-Frame-Options header",
+			Evidence:    "header not present: X-Frame-Options",
+		})
+	}
+
+	return findings
 }
 
 // tlsVersionName returns a human-readable name for a TLS version constant.
