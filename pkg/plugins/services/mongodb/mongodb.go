@@ -532,11 +532,17 @@ func parseBSONDouble(bsonDoc []byte, key string) (float64, bool) {
 	return 0, false
 }
 
-// parseBSONCommandOk checks if a BSON document contains an "ok" field with value 1.0.
-// MongoDB commands return "ok": 1.0 on success and "ok": 0.0 on failure.
+// parseBSONCommandOk checks if a BSON document contains an "ok" field equal to 1.
+// MongoDB typically returns "ok" as a double (1.0), but the wire protocol permits
+// int32 or int64 representations. We check all three to avoid false negatives.
 func parseBSONCommandOk(bsonDoc []byte) bool {
-	val, found := parseBSONDouble(bsonDoc, "ok")
-	return found && val == 1.0
+	if val, found := parseBSONDouble(bsonDoc, "ok"); found {
+		return val == 1.0
+	}
+	if val, found := parseBSONInt32(bsonDoc, "ok"); found {
+		return val == 1
+	}
+	return false
 }
 
 // parseMaxWireVersion extracts maxWireVersion from a BSON document.
@@ -926,6 +932,11 @@ func tryGetMongoDBVersion(conn net.Conn, timeout time.Duration) string {
 // checkMongoDBAuth attempts to determine if authentication is required by running
 // the listDatabases command. This command requires the listDatabases privilege,
 // which is unavailable to unauthenticated users on secured instances.
+//
+// Connection reuse safety: SendRecv resets the read deadline on every call, so
+// stale deadlines from prior probes are not a concern. Response validation
+// (checkMongoDBMsgResponse/checkMongoDBResponse) verifies the responseTo field
+// matches our requestID, rejecting any leftover bytes from prior exchanges.
 //
 // Returns true if authentication is NOT required (unauthenticated access possible).
 func checkMongoDBAuth(conn net.Conn, timeout time.Duration) bool {

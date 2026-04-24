@@ -790,7 +790,7 @@ func TestParseBSONDouble(t *testing.T) {
 
 // TestParseBSONCommandOk tests the parseBSONCommandOk helper
 func TestParseBSONCommandOk(t *testing.T) {
-	buildOkDoc := func(val []byte) []byte {
+	buildOkDoubleDoc := func(val []byte) []byte {
 		doc := make([]byte, 0, 32)
 		sizeBuf := make([]byte, 4)
 		doc = append(doc, sizeBuf...)
@@ -803,19 +803,44 @@ func TestParseBSONCommandOk(t *testing.T) {
 		return doc
 	}
 
+	buildOkInt32Doc := func(val int32) []byte {
+		doc := make([]byte, 0, 32)
+		sizeBuf := make([]byte, 4)
+		doc = append(doc, sizeBuf...)
+		doc = append(doc, 0x10) // int32 type
+		doc = append(doc, []byte("ok")...)
+		doc = append(doc, 0x00)
+		valBuf := make([]byte, 4)
+		binary.LittleEndian.PutUint32(valBuf, uint32(val))
+		doc = append(doc, valBuf...)
+		doc = append(doc, 0x00) // terminator
+		binary.LittleEndian.PutUint32(doc[0:4], uint32(len(doc)))
+		return doc
+	}
+
 	tests := []struct {
 		name    string
 		bsonDoc []byte
 		want    bool
 	}{
 		{
-			name:    "ok=1.0 returns true",
-			bsonDoc: buildOkDoc([]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xF0, 0x3F}),
+			name:    "ok=1.0 double returns true",
+			bsonDoc: buildOkDoubleDoc([]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xF0, 0x3F}),
 			want:    true,
 		},
 		{
-			name:    "ok=0.0 returns false",
-			bsonDoc: buildOkDoc([]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}),
+			name:    "ok=0.0 double returns false",
+			bsonDoc: buildOkDoubleDoc([]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}),
+			want:    false,
+		},
+		{
+			name:    "ok=1 int32 returns true",
+			bsonDoc: buildOkInt32Doc(1),
+			want:    true,
+		},
+		{
+			name:    "ok=0 int32 returns false",
+			bsonDoc: buildOkInt32Doc(0),
 			want:    false,
 		},
 		{
