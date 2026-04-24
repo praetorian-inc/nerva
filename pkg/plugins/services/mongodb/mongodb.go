@@ -282,32 +282,29 @@ func skipBSONValue(bsonDoc []byte, pos int, elementType byte) (int, bool) {
 		if pos+4 > len(bsonDoc) {
 			return 0, false
 		}
-		strLen := binary.LittleEndian.Uint32(bsonDoc[pos : pos+4])
-		remaining := len(bsonDoc) - pos - 4 // non-negative: guarded by pos+4 <= len check
-		if remaining < 0 || strLen > uint32(remaining) {
+		strLen := int(binary.LittleEndian.Uint32(bsonDoc[pos : pos+4]))
+		if strLen < 0 || pos+4+strLen > len(bsonDoc) {
 			return 0, false
 		}
-		return pos + 4 + int(strLen), true
+		return pos + 4 + strLen, true
 	case 0x03, 0x04: // document, array
 		if pos+4 > len(bsonDoc) {
 			return 0, false
 		}
-		subDocLen := binary.LittleEndian.Uint32(bsonDoc[pos : pos+4])
-		remaining := len(bsonDoc) - pos // non-negative: guarded by pos+4 <= len check
-		if remaining < 0 || subDocLen > uint32(remaining) {
+		subDocLen := int(binary.LittleEndian.Uint32(bsonDoc[pos : pos+4]))
+		if subDocLen < 0 || pos+subDocLen > len(bsonDoc) {
 			return 0, false
 		}
-		return pos + int(subDocLen), true
+		return pos + subDocLen, true
 	case 0x05: // binary
 		if pos+5 > len(bsonDoc) {
 			return 0, false
 		}
-		binLen := binary.LittleEndian.Uint32(bsonDoc[pos : pos+4])
-		remaining := len(bsonDoc) - pos - 5 // non-negative: guarded by pos+5 <= len check
-		if remaining < 0 || binLen > uint32(remaining) {
+		binLen := int(binary.LittleEndian.Uint32(bsonDoc[pos : pos+4]))
+		if binLen < 0 || pos+5+binLen > len(bsonDoc) {
 			return 0, false
 		}
-		return pos + 5 + int(binLen), true
+		return pos + 5 + binLen, true
 	case 0x07: // ObjectId
 		if pos+12 > len(bsonDoc) {
 			return 0, false
@@ -352,8 +349,8 @@ func parseBSONString(bsonDoc []byte, key string) string {
 	// elements...
 	// 0x00 - terminator
 
-	docSize := binary.LittleEndian.Uint32(bsonDoc[0:4])
-	if docSize > uint32(len(bsonDoc)) {
+	docSize := int(binary.LittleEndian.Uint32(bsonDoc[0:4]))
+	if docSize < 0 || docSize > len(bsonDoc) {
 		return ""
 	}
 
@@ -385,15 +382,13 @@ func parseBSONString(bsonDoc []byte, key string) string {
 			if pos+4 > len(bsonDoc) {
 				return ""
 			}
-			strLen := binary.LittleEndian.Uint32(bsonDoc[pos : pos+4])
+			strLen := int(binary.LittleEndian.Uint32(bsonDoc[pos : pos+4]))
 			pos += 4
-			// Validate uint32 bounds BEFORE casting to int to prevent overflow
-			if strLen == 0 || strLen > uint32(len(bsonDoc)-pos) {
+			if strLen <= 0 || pos+strLen > len(bsonDoc) {
 				return ""
 			}
-			strLenInt := int(strLen) // Safe to cast now
 			// Return string without null terminator
-			return string(bsonDoc[pos : pos+strLenInt-1])
+			return string(bsonDoc[pos : pos+strLen-1])
 		}
 
 		// Skip value based on type
@@ -427,8 +422,8 @@ func parseBSONInt32(bsonDoc []byte, key string) (int32, bool) {
 	// elements...
 	// 0x00 - terminator
 
-	docSize := binary.LittleEndian.Uint32(bsonDoc[0:4])
-	if docSize > uint32(len(bsonDoc)) {
+	docSize := int(binary.LittleEndian.Uint32(bsonDoc[0:4]))
+	if docSize < 0 || docSize > len(bsonDoc) {
 		return 0, false
 	}
 
@@ -487,8 +482,8 @@ func parseBSONDouble(bsonDoc []byte, key string) (float64, bool) {
 	// elements...
 	// 0x00 - terminator
 
-	docSize := binary.LittleEndian.Uint32(bsonDoc[0:4])
-	if docSize > uint32(len(bsonDoc)) {
+	docSize := int(binary.LittleEndian.Uint32(bsonDoc[0:4]))
+	if docSize < 0 || docSize > len(bsonDoc) {
 		return 0, false
 	}
 
