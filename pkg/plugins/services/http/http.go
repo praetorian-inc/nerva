@@ -16,6 +16,7 @@ package http
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -148,6 +149,9 @@ func (p *HTTPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 			})
 		}
 	}
+	if target.Misconfigs && resp.StatusCode/100 != 3 {
+		service.SecurityFindings = append(service.SecurityFindings, checkMissingSecurityHeaders(resp.Header, false)...)
+	}
 	return service, nil
 }
 
@@ -223,6 +227,14 @@ func (p *HTTPSPlugin) Run(
 			})
 		}
 	}
+	if target.Misconfigs {
+		if finding := checkWeakTLS(conn); finding != nil {
+			service.SecurityFindings = append(service.SecurityFindings, *finding)
+		}
+		if resp.StatusCode/100 != 3 {
+			service.SecurityFindings = append(service.SecurityFindings, checkMissingSecurityHeaders(resp.Header, true)...)
+		}
+	}
 	return service, nil
 }
 
@@ -269,6 +281,81 @@ func formatTechnologyWithVersion(technology, version string) string {
 type fingerprintedTech struct {
 	name     string
 	severity plugins.Severity
+}
+
+func checkMissingSecurityHeaders(headers http.Header, checkHSTS bool) []plugins.SecurityFinding {
+	findings := make([]plugins.SecurityFinding, 0, 3)
+
+	if checkHSTS && headers.Get("Strict-Transport-Security") == "" {
+		findings = append(findings, plugins.SecurityFinding{
+			ID:          "http-missing-hsts",
+			Severity:    plugins.SeverityMedium,
+			Description: "HTTP response missing Strict-Transport-Security header",
+			Evidence:    "header not present: Strict-Transport-Security",
+		})
+	}
+	if headers.Get("Content-Security-Policy") == "" {
+		findings = append(findings, plugins.SecurityFinding{
+			ID:          "http-missing-csp",
+			Severity:    plugins.SeverityLow,
+			Description: "HTTP response missing Content-Security-Policy header",
+			Evidence:    "header not present: Content-Security-Policy",
+		})
+	}
+	if headers.Get("X-Frame-Options") == "" {
+		findings = append(findings, plugins.SecurityFinding{
+			ID:          "http-missing-x-frame-options",
+			Severity:    plugins.SeverityLow,
+			Description: "HTTP response missing X-Frame-Options header",
+			Evidence:    "header not present: X-Frame-Options",
+		})
+	}
+
+	return findings
+}
+
+// tlsVersionName returns a human-readable name for a TLS version constant.
+func tlsVersionName(version uint16) string {
+	switch version {
+	case tls.VersionTLS10:
+		return "TLS 1.0"
+	case tls.VersionTLS11:
+		return "TLS 1.1"
+	case tls.VersionTLS12:
+		return "TLS 1.2"
+	case tls.VersionTLS13:
+		return "TLS 1.3"
+	default:
+		return fmt.Sprintf("unknown (0x%04x)", version)
+	}
+}
+
+// checkWeakTLS inspects the negotiated TLS version on the connection and
+// returns a SecurityFinding if the version is TLS 1.0 or 1.1.
+func checkWeakTLS(conn net.Conn) *plugins.SecurityFinding {
+	tlsConn, ok := conn.(*tls.Conn)
+	if !ok {
+		return nil
+	}
+	version := tlsConn.ConnectionState().Version
+	switch version {
+	case tls.VersionTLS10:
+		return &plugins.SecurityFinding{
+			ID:          "tls-weak-version",
+			Severity:    plugins.SeverityHigh,
+			Description: "Server negotiated TLS 1.0, which has known vulnerabilities (BEAST, POODLE)",
+			Evidence:    "negotiated_version=" + tlsVersionName(version),
+		}
+	case tls.VersionTLS11:
+		return &plugins.SecurityFinding{
+			ID:          "tls-weak-version",
+			Severity:    plugins.SeverityMedium,
+			Description: "Server negotiated TLS 1.1, which is deprecated (RFC 8996)",
+			Evidence:    "negotiated_version=" + tlsVersionName(version),
+		}
+	default:
+		return nil
+	}
 }
 
 // processFingerprintResult extracts technology (with version), CPEs, metadata, and severity from a FingerprintResult.
