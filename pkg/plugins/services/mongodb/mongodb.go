@@ -283,7 +283,8 @@ func skipBSONValue(bsonDoc []byte, pos int, elementType byte) (int, bool) {
 			return 0, false
 		}
 		strLen := binary.LittleEndian.Uint32(bsonDoc[pos : pos+4])
-		if strLen > uint32(len(bsonDoc)-pos-4) {
+		remaining := len(bsonDoc) - pos - 4 // non-negative: guarded by pos+4 <= len check
+		if remaining < 0 || strLen > uint32(remaining) {
 			return 0, false
 		}
 		return pos + 4 + int(strLen), true
@@ -292,7 +293,8 @@ func skipBSONValue(bsonDoc []byte, pos int, elementType byte) (int, bool) {
 			return 0, false
 		}
 		subDocLen := binary.LittleEndian.Uint32(bsonDoc[pos : pos+4])
-		if subDocLen > uint32(len(bsonDoc)-pos) {
+		remaining := len(bsonDoc) - pos // non-negative: guarded by pos+4 <= len check
+		if remaining < 0 || subDocLen > uint32(remaining) {
 			return 0, false
 		}
 		return pos + int(subDocLen), true
@@ -301,7 +303,8 @@ func skipBSONValue(bsonDoc []byte, pos int, elementType byte) (int, bool) {
 			return 0, false
 		}
 		binLen := binary.LittleEndian.Uint32(bsonDoc[pos : pos+4])
-		if binLen > uint32(len(bsonDoc)-pos-5) {
+		remaining := len(bsonDoc) - pos - 5 // non-negative: guarded by pos+5 <= len check
+		if remaining < 0 || binLen > uint32(remaining) {
 			return 0, false
 		}
 		return pos + 5 + int(binLen), true
