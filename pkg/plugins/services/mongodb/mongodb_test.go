@@ -16,7 +16,16 @@ package mongodb
 
 import (
 	"encoding/binary"
+	"io"
+	"log"
+	"net"
+	"net/netip"
 	"testing"
+	"time"
+
+	"github.com/ory/dockertest/v3"
+
+	"github.com/praetorian-inc/nerva/pkg/plugins"
 )
 
 // TestParseBSONInt32 tests parsing of int32 values from BSON documents
@@ -631,4 +640,712 @@ func TestBuildMongoDBCPE(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestParseBSONDouble tests parsing of float64 values from BSON documents
+func TestParseBSONDouble(t *testing.T) {
+	tests := []struct {
+		name     string
+		bsonDoc  []byte
+		key      string
+		expected float64
+		found    bool
+	}{
+		{
+			name: "valid double 1.0",
+			bsonDoc: func() []byte {
+				doc := make([]byte, 0, 64)
+				sizeBuf := make([]byte, 4)
+				doc = append(doc, sizeBuf...)
+				doc = append(doc, 0x01) // double type
+				doc = append(doc, []byte("ok")...)
+				doc = append(doc, 0x00)
+				// 1.0 as IEEE 754 little-endian
+				doc = append(doc, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xF0, 0x3F)
+				doc = append(doc, 0x00) // terminator
+				binary.LittleEndian.PutUint32(doc[0:4], uint32(len(doc)))
+				return doc
+			}(),
+			key:      "ok",
+			expected: 1.0,
+			found:    true,
+		},
+		{
+			name: "valid double 0.0",
+			bsonDoc: func() []byte {
+				doc := make([]byte, 0, 64)
+				sizeBuf := make([]byte, 4)
+				doc = append(doc, sizeBuf...)
+				doc = append(doc, 0x01) // double type
+				doc = append(doc, []byte("ok")...)
+				doc = append(doc, 0x00)
+				// 0.0 as IEEE 754 little-endian
+				doc = append(doc, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)
+				doc = append(doc, 0x00) // terminator
+				binary.LittleEndian.PutUint32(doc[0:4], uint32(len(doc)))
+				return doc
+			}(),
+			key:      "ok",
+			expected: 0.0,
+			found:    true,
+		},
+		{
+			name: "key not found",
+			bsonDoc: func() []byte {
+				doc := make([]byte, 0, 64)
+				sizeBuf := make([]byte, 4)
+				doc = append(doc, sizeBuf...)
+				doc = append(doc, 0x01) // double type
+				doc = append(doc, []byte("other")...)
+				doc = append(doc, 0x00)
+				doc = append(doc, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xF0, 0x3F)
+				doc = append(doc, 0x00) // terminator
+				binary.LittleEndian.PutUint32(doc[0:4], uint32(len(doc)))
+				return doc
+			}(),
+			key:      "ok",
+			expected: 0.0,
+			found:    false,
+		},
+		{
+			name:     "empty document",
+			bsonDoc:  []byte{0x05, 0x00, 0x00, 0x00, 0x00},
+			key:      "ok",
+			expected: 0.0,
+			found:    false,
+		},
+		{
+			name:     "document too short",
+			bsonDoc:  []byte{0x01, 0x02},
+			key:      "ok",
+			expected: 0.0,
+			found:    false,
+		},
+		{
+			name: "wrong type (string instead of double)",
+			bsonDoc: func() []byte {
+				doc := make([]byte, 0, 64)
+				sizeBuf := make([]byte, 4)
+				doc = append(doc, sizeBuf...)
+				doc = append(doc, 0x02) // string type, not double
+				doc = append(doc, []byte("ok")...)
+				doc = append(doc, 0x00)
+				strLenBuf := make([]byte, 4)
+				binary.LittleEndian.PutUint32(strLenBuf, 2) // "1" + null
+				doc = append(doc, strLenBuf...)
+				doc = append(doc, []byte("1")...)
+				doc = append(doc, 0x00)
+				doc = append(doc, 0x00) // terminator
+				binary.LittleEndian.PutUint32(doc[0:4], uint32(len(doc)))
+				return doc
+			}(),
+			key:      "ok",
+			expected: 0.0,
+			found:    false,
+		},
+		{
+			name: "multiple fields with target double",
+			bsonDoc: func() []byte {
+				doc := make([]byte, 0, 128)
+				sizeBuf := make([]byte, 4)
+				doc = append(doc, sizeBuf...)
+
+				// First field: int32
+				doc = append(doc, 0x10)
+				doc = append(doc, []byte("maxWireVersion")...)
+				doc = append(doc, 0x00)
+				valBuf := make([]byte, 4)
+				binary.LittleEndian.PutUint32(valBuf, 21)
+				doc = append(doc, valBuf...)
+
+				// Second field: double (target)
+				doc = append(doc, 0x01)
+				doc = append(doc, []byte("ok")...)
+				doc = append(doc, 0x00)
+				doc = append(doc, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xF0, 0x3F) // 1.0
+
+				doc = append(doc, 0x00) // terminator
+				binary.LittleEndian.PutUint32(doc[0:4], uint32(len(doc)))
+				return doc
+			}(),
+			key:      "ok",
+			expected: 1.0,
+			found:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			value, found := parseBSONDouble(tt.bsonDoc, tt.key)
+			if found != tt.found {
+				t.Errorf("parseBSONDouble() found = %v, want %v", found, tt.found)
+			}
+			if value != tt.expected {
+				t.Errorf("parseBSONDouble() value = %v, want %v", value, tt.expected)
+			}
+		})
+	}
+}
+
+// TestParseBSONCommandOk tests the parseBSONCommandOk helper
+func TestParseBSONCommandOk(t *testing.T) {
+	buildOkDoc := func(val []byte) []byte {
+		doc := make([]byte, 0, 32)
+		sizeBuf := make([]byte, 4)
+		doc = append(doc, sizeBuf...)
+		doc = append(doc, 0x01) // double type
+		doc = append(doc, []byte("ok")...)
+		doc = append(doc, 0x00)
+		doc = append(doc, val...)
+		doc = append(doc, 0x00) // terminator
+		binary.LittleEndian.PutUint32(doc[0:4], uint32(len(doc)))
+		return doc
+	}
+
+	tests := []struct {
+		name    string
+		bsonDoc []byte
+		want    bool
+	}{
+		{
+			name:    "ok=1.0 returns true",
+			bsonDoc: buildOkDoc([]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xF0, 0x3F}),
+			want:    true,
+		},
+		{
+			name:    "ok=0.0 returns false",
+			bsonDoc: buildOkDoc([]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}),
+			want:    false,
+		},
+		{
+			name:    "missing ok field returns false",
+			bsonDoc: []byte{0x05, 0x00, 0x00, 0x00, 0x00},
+			want:    false,
+		},
+		{
+			name:    "empty document returns false",
+			bsonDoc: []byte{},
+			want:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseBSONCommandOk(tt.bsonDoc)
+			if got != tt.want {
+				t.Errorf("parseBSONCommandOk() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// buildTestBSONDoc builds a BSON document with the given "ok" double value,
+// and optionally includes maxWireVersion and version string fields.
+func buildTestBSONDoc(okVal []byte, includeVersion bool) []byte {
+	doc := make([]byte, 0, 128)
+	sizeBuf := make([]byte, 4)
+	doc = append(doc, sizeBuf...)
+
+	// ok field (double)
+	doc = append(doc, 0x01)
+	doc = append(doc, []byte("ok")...)
+	doc = append(doc, 0x00)
+	doc = append(doc, okVal...)
+
+	if includeVersion {
+		// maxWireVersion field (int32 = 21)
+		doc = append(doc, 0x10)
+		doc = append(doc, []byte("maxWireVersion")...)
+		doc = append(doc, 0x00)
+		mwv := make([]byte, 4)
+		binary.LittleEndian.PutUint32(mwv, 21)
+		doc = append(doc, mwv...)
+
+		// version field (string = "7.0.0")
+		versionStr := "7.0.0"
+		doc = append(doc, 0x02)
+		doc = append(doc, []byte("version")...)
+		doc = append(doc, 0x00)
+		strLenBuf := make([]byte, 4)
+		binary.LittleEndian.PutUint32(strLenBuf, uint32(len(versionStr)+1))
+		doc = append(doc, strLenBuf...)
+		doc = append(doc, []byte(versionStr)...)
+		doc = append(doc, 0x00)
+	}
+
+	doc = append(doc, 0x00) // terminator
+	binary.LittleEndian.PutUint32(doc[0:4], uint32(len(doc)))
+	return doc
+}
+
+// buildTestOPReply builds an OP_REPLY message wrapping a BSON document.
+func buildTestOPReply(requestID uint32, bsonDoc []byte) []byte {
+	msg := make([]byte, 0, 36+len(bsonDoc))
+	// Message length placeholder
+	msg = append(msg, 0x00, 0x00, 0x00, 0x00)
+	// Request ID (server-assigned, arbitrary)
+	reqIDBuf := make([]byte, 4)
+	binary.LittleEndian.PutUint32(reqIDBuf, requestID+1000)
+	msg = append(msg, reqIDBuf...)
+	// ResponseTo = requestID
+	respToBuf := make([]byte, 4)
+	binary.LittleEndian.PutUint32(respToBuf, requestID)
+	msg = append(msg, respToBuf...)
+	// OpCode OP_REPLY = 1
+	msg = append(msg, 0x01, 0x00, 0x00, 0x00)
+	// ResponseFlags = 0
+	msg = append(msg, 0x00, 0x00, 0x00, 0x00)
+	// CursorID = 0
+	msg = append(msg, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)
+	// StartingFrom = 0
+	msg = append(msg, 0x00, 0x00, 0x00, 0x00)
+	// NumberReturned = 1
+	msg = append(msg, 0x01, 0x00, 0x00, 0x00)
+	// BSON document
+	msg = append(msg, bsonDoc...)
+	// Set message length
+	binary.LittleEndian.PutUint32(msg[0:4], uint32(len(msg)))
+	return msg
+}
+
+// buildTestOPMsg builds an OP_MSG message wrapping a BSON document.
+func buildTestOPMsg(requestID uint32, bsonDoc []byte) []byte {
+	msg := make([]byte, 0, 21+len(bsonDoc))
+	// Message length placeholder
+	msg = append(msg, 0x00, 0x00, 0x00, 0x00)
+	// Request ID (server-assigned, arbitrary)
+	reqIDBuf := make([]byte, 4)
+	binary.LittleEndian.PutUint32(reqIDBuf, requestID+1000)
+	msg = append(msg, reqIDBuf...)
+	// ResponseTo = requestID
+	respToBuf := make([]byte, 4)
+	binary.LittleEndian.PutUint32(respToBuf, requestID)
+	msg = append(msg, respToBuf...)
+	// OpCode OP_MSG = 2013
+	msg = append(msg, 0xDD, 0x07, 0x00, 0x00)
+	// FlagBits = 0
+	msg = append(msg, 0x00, 0x00, 0x00, 0x00)
+	// Section kind 0
+	msg = append(msg, 0x00)
+	// BSON document
+	msg = append(msg, bsonDoc...)
+	// Set message length
+	binary.LittleEndian.PutUint32(msg[0:4], uint32(len(msg)))
+	return msg
+}
+
+// handleMongoDBConn handles incoming connections on the mock MongoDB server.
+// For OP_QUERY (opCode 2004): respond with OP_REPLY containing a full doc with ok=1.0,
+// maxWireVersion=21, version="7.0.0".
+// For OP_MSG with requestID 200 (the listDatabases auth check): respond with ok=1.0
+// (no auth required) or ok=0.0 (auth required) based on authRequired.
+// For other OP_MSG: respond with full doc (ok=1.0, maxWireVersion=21, version="7.0.0").
+func handleMongoDBConn(conn net.Conn, authRequired bool) {
+	defer conn.Close()
+	okTrue := []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xF0, 0x3F}  // 1.0
+	okFalse := []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00} // 0.0
+
+	for {
+		// Read 4-byte message length header
+		header := make([]byte, 4)
+		_, err := io.ReadFull(conn, header)
+		if err != nil {
+			return
+		}
+		msgLen := binary.LittleEndian.Uint32(header)
+		if msgLen < 16 {
+			return
+		}
+		// Read rest of message
+		rest := make([]byte, msgLen-4)
+		_, err = io.ReadFull(conn, rest)
+		if err != nil {
+			return
+		}
+		msg := append(header, rest...)
+
+		requestID := binary.LittleEndian.Uint32(msg[4:8])
+		opCode := binary.LittleEndian.Uint32(msg[12:16])
+
+		var response []byte
+		switch opCode {
+		case OP_QUERY: // 2004
+			bsonDoc := buildTestBSONDoc(okTrue, true)
+			response = buildTestOPReply(requestID, bsonDoc)
+		case OP_MSG: // 2013
+			if requestID == 200 {
+				// listDatabases auth check
+				var okVal []byte
+				if authRequired {
+					okVal = okFalse
+				} else {
+					okVal = okTrue
+				}
+				bsonDoc := buildTestBSONDoc(okVal, false)
+				response = buildTestOPMsg(requestID, bsonDoc)
+			} else {
+				// Other OP_MSG (hello, isMaster, buildInfo, etc.)
+				bsonDoc := buildTestBSONDoc(okTrue, true)
+				response = buildTestOPMsg(requestID, bsonDoc)
+			}
+		default:
+			return
+		}
+
+		if _, err := conn.Write(response); err != nil {
+			return
+		}
+	}
+}
+
+// TestMongoDBSecurityFindings verifies security finding detection via mock TCP server.
+func TestMongoDBSecurityFindings(t *testing.T) {
+	tests := []struct {
+		name          string
+		misconfigs    bool
+		authRequired  bool
+		wantAnon      bool
+		wantFindings  int
+		wantFindingID string
+		wantSeverity  plugins.Severity
+	}{
+		{
+			name:          "misconfigs=true auth not required",
+			misconfigs:    true,
+			authRequired:  false,
+			wantAnon:      true,
+			wantFindings:  1,
+			wantFindingID: "mongodb-no-auth",
+			wantSeverity:  plugins.SeverityCritical,
+		},
+		{
+			name:         "misconfigs=true auth required",
+			misconfigs:   true,
+			authRequired: true,
+			wantAnon:     false,
+			wantFindings: 0,
+		},
+		{
+			name:         "misconfigs=false",
+			misconfigs:   false,
+			authRequired: false,
+			wantAnon:     false,
+			wantFindings: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatalf("Failed to start mock server: %v", err)
+			}
+			defer listener.Close()
+
+			tcpAddr := listener.Addr().(*net.TCPAddr)
+			serverPort := tcpAddr.Port
+
+			go func() {
+				for {
+					conn, err := listener.Accept()
+					if err != nil {
+						return
+					}
+					go handleMongoDBConn(conn, tt.authRequired)
+				}
+			}()
+
+			conn, err := net.DialTimeout("tcp", listener.Addr().String(), 5*time.Second)
+			if err != nil {
+				t.Fatalf("Failed to connect to mock server: %v", err)
+			}
+			defer conn.Close()
+
+			addrStr := "127.0.0.1:" + portToStr(serverPort)
+			addrPort := netip.MustParseAddrPort(addrStr)
+			target := plugins.Target{
+				Host:       "127.0.0.1",
+				Address:    addrPort,
+				Misconfigs: tt.misconfigs,
+			}
+
+			plugin := &MONGODBPlugin{}
+			service, err := plugin.Run(conn, 5*time.Second, target)
+			if err != nil {
+				t.Fatalf("Run() returned unexpected error: %v", err)
+			}
+			if service == nil {
+				t.Fatal("Run() returned nil, want non-nil service")
+			}
+
+			if service.AnonymousAccess != tt.wantAnon {
+				t.Errorf("AnonymousAccess = %v, want %v", service.AnonymousAccess, tt.wantAnon)
+			}
+			if len(service.SecurityFindings) != tt.wantFindings {
+				t.Fatalf("len(SecurityFindings) = %d, want %d", len(service.SecurityFindings), tt.wantFindings)
+			}
+			if tt.wantFindings > 0 {
+				if service.SecurityFindings[0].ID != tt.wantFindingID {
+					t.Errorf("SecurityFindings[0].ID = %q, want %q", service.SecurityFindings[0].ID, tt.wantFindingID)
+				}
+				if service.SecurityFindings[0].Severity != tt.wantSeverity {
+					t.Errorf("SecurityFindings[0].Severity = %q, want %q", service.SecurityFindings[0].Severity, tt.wantSeverity)
+				}
+			}
+		})
+	}
+}
+
+// TestMongoDBSecurityFindingsLive spins up a real MongoDB container (no auth) and
+// verifies that the plugin detects anonymous access and emits the mongodb-no-auth finding.
+func TestMongoDBSecurityFindingsLive(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping docker test in short mode")
+	}
+
+	pool, err := dockertest.NewPool("")
+	if err != nil {
+		log.Fatalf("could not connect to docker: %s", err)
+	}
+
+	resource, err := pool.RunWithOptions(&dockertest.RunOptions{
+		Repository: "mongo",
+		Tag:        "7",
+	})
+	if err != nil {
+		t.Fatalf("could not start mongodb container: %s", err)
+	}
+	defer pool.Purge(resource) //nolint:errcheck
+
+	rawAddr := resource.GetHostPort("27017/tcp")
+
+	host, port, err := net.SplitHostPort(rawAddr)
+	if err != nil {
+		t.Fatalf("could not split host:port %q: %v", rawAddr, err)
+	}
+	if host == "localhost" || host == "0.0.0.0" || host == "::" {
+		host = "127.0.0.1"
+	}
+	targetAddr := net.JoinHostPort(host, port)
+
+	err = pool.Retry(func() error {
+		time.Sleep(3 * time.Second)
+		conn, dialErr := net.DialTimeout("tcp", targetAddr, 5*time.Second)
+		if dialErr != nil {
+			return dialErr
+		}
+		conn.Close()
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("failed to connect to mongodb container: %s", err)
+	}
+
+	conn, err := net.DialTimeout("tcp", targetAddr, 5*time.Second)
+	if err != nil {
+		t.Fatalf("failed to open connection to mongodb container: %s", err)
+	}
+	defer conn.Close()
+
+	addrPort := netip.MustParseAddrPort(targetAddr)
+	target := plugins.Target{
+		Host:       addrPort.Addr().String(),
+		Address:    addrPort,
+		Misconfigs: true,
+	}
+
+	plugin := &MONGODBPlugin{}
+	service, err := plugin.Run(conn, 5*time.Second, target)
+	if err != nil {
+		t.Fatalf("Run() returned unexpected error: %v", err)
+	}
+	if service == nil {
+		t.Fatal("Run() returned nil, want non-nil service")
+	}
+
+	if service.Protocol != "mongodb" {
+		t.Errorf("expected Protocol %q, got %q", "mongodb", service.Protocol)
+	}
+	if service.Version == "" {
+		t.Error("expected non-empty Version")
+	}
+	if !service.AnonymousAccess {
+		t.Error("expected AnonymousAccess to be true")
+	}
+	if len(service.SecurityFindings) != 1 {
+		t.Fatalf("expected 1 finding, got %d", len(service.SecurityFindings))
+	}
+	if service.SecurityFindings[0].ID != "mongodb-no-auth" {
+		t.Errorf("expected finding ID 'mongodb-no-auth', got %q", service.SecurityFindings[0].ID)
+	}
+	if service.SecurityFindings[0].Severity != plugins.SeverityCritical {
+		t.Errorf("expected severity Critical, got %s", service.SecurityFindings[0].Severity)
+	}
+}
+
+// TestMongoDBSecurityFindingsLiveAuthEnabled spins up a real MongoDB container with
+// authentication enabled and verifies that the plugin reports no anonymous access.
+func TestMongoDBSecurityFindingsLiveAuthEnabled(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping docker test in short mode")
+	}
+
+	pool, err := dockertest.NewPool("")
+	if err != nil {
+		log.Fatalf("could not connect to docker: %s", err)
+	}
+
+	resource, err := pool.RunWithOptions(&dockertest.RunOptions{
+		Repository: "mongo",
+		Tag:        "7",
+		Env: []string{
+			"MONGO_INITDB_ROOT_USERNAME=admin",
+			"MONGO_INITDB_ROOT_PASSWORD=testpassword123",
+		},
+	})
+	if err != nil {
+		t.Fatalf("could not start mongodb container: %s", err)
+	}
+	defer pool.Purge(resource) //nolint:errcheck
+
+	rawAddr := resource.GetHostPort("27017/tcp")
+
+	host, port, err := net.SplitHostPort(rawAddr)
+	if err != nil {
+		t.Fatalf("could not split host:port %q: %v", rawAddr, err)
+	}
+	if host == "localhost" || host == "0.0.0.0" || host == "::" {
+		host = "127.0.0.1"
+	}
+	targetAddr := net.JoinHostPort(host, port)
+
+	err = pool.Retry(func() error {
+		time.Sleep(3 * time.Second)
+		conn, dialErr := net.DialTimeout("tcp", targetAddr, 5*time.Second)
+		if dialErr != nil {
+			return dialErr
+		}
+		conn.Close()
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("failed to connect to mongodb container: %s", err)
+	}
+
+	conn, err := net.DialTimeout("tcp", targetAddr, 5*time.Second)
+	if err != nil {
+		t.Fatalf("failed to open connection to mongodb container: %s", err)
+	}
+	defer conn.Close()
+
+	addrPort := netip.MustParseAddrPort(targetAddr)
+	target := plugins.Target{
+		Host:       addrPort.Addr().String(),
+		Address:    addrPort,
+		Misconfigs: true,
+	}
+
+	plugin := &MONGODBPlugin{}
+	service, err := plugin.Run(conn, 5*time.Second, target)
+	if err != nil {
+		t.Fatalf("Run() returned unexpected error: %v", err)
+	}
+	if service == nil {
+		t.Fatal("Run() returned nil, want non-nil service")
+	}
+
+	if service.AnonymousAccess {
+		t.Error("expected AnonymousAccess to be false with auth enabled")
+	}
+	if len(service.SecurityFindings) != 0 {
+		t.Errorf("expected 0 findings with auth enabled, got %d", len(service.SecurityFindings))
+	}
+}
+
+// TestMongoDBSecurityFindingsLiveNoFlag spins up a real MongoDB container (no auth) but
+// runs the plugin with Misconfigs=false, verifying no findings are emitted.
+func TestMongoDBSecurityFindingsLiveNoFlag(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping docker test in short mode")
+	}
+
+	pool, err := dockertest.NewPool("")
+	if err != nil {
+		log.Fatalf("could not connect to docker: %s", err)
+	}
+
+	resource, err := pool.RunWithOptions(&dockertest.RunOptions{
+		Repository: "mongo",
+		Tag:        "7",
+	})
+	if err != nil {
+		t.Fatalf("could not start mongodb container: %s", err)
+	}
+	defer pool.Purge(resource) //nolint:errcheck
+
+	rawAddr := resource.GetHostPort("27017/tcp")
+
+	host, port, err := net.SplitHostPort(rawAddr)
+	if err != nil {
+		t.Fatalf("could not split host:port %q: %v", rawAddr, err)
+	}
+	if host == "localhost" || host == "0.0.0.0" || host == "::" {
+		host = "127.0.0.1"
+	}
+	targetAddr := net.JoinHostPort(host, port)
+
+	err = pool.Retry(func() error {
+		time.Sleep(3 * time.Second)
+		conn, dialErr := net.DialTimeout("tcp", targetAddr, 5*time.Second)
+		if dialErr != nil {
+			return dialErr
+		}
+		conn.Close()
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("failed to connect to mongodb container: %s", err)
+	}
+
+	conn, err := net.DialTimeout("tcp", targetAddr, 5*time.Second)
+	if err != nil {
+		t.Fatalf("failed to open connection to mongodb container: %s", err)
+	}
+	defer conn.Close()
+
+	addrPort := netip.MustParseAddrPort(targetAddr)
+	target := plugins.Target{
+		Host:       addrPort.Addr().String(),
+		Address:    addrPort,
+		Misconfigs: false,
+	}
+
+	plugin := &MONGODBPlugin{}
+	service, err := plugin.Run(conn, 5*time.Second, target)
+	if err != nil {
+		t.Fatalf("Run() returned unexpected error: %v", err)
+	}
+	if service == nil {
+		t.Fatal("Run() returned nil, want non-nil service")
+	}
+
+	if service.AnonymousAccess {
+		t.Error("expected AnonymousAccess to be false when Misconfigs=false")
+	}
+	if len(service.SecurityFindings) != 0 {
+		t.Errorf("expected 0 findings with Misconfigs=false, got %d", len(service.SecurityFindings))
+	}
+}
+
+// portToStr converts an int port to its decimal string representation.
+func portToStr(port int) string {
+	if port == 0 {
+		return "0"
+	}
+	buf := make([]byte, 0, 6)
+	for port > 0 {
+		buf = append([]byte{byte('0' + port%10)}, buf...)
+		port /= 10
+	}
+	return string(buf)
 }
