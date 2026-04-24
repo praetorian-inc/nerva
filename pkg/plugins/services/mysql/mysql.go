@@ -289,7 +289,14 @@ func checkMySQLAuth(conn net.Conn, timeout time.Duration, hs *handshakeInfo) boo
 	default:
 		// caching_sha2_password fast auth success: 0x01 0x03
 		if pktType == 0x01 && len(resp) > 5 && resp[5] == 0x03 {
-			// Read the following OK packet
+			// The OK packet may be coalesced with the fast-auth packet in the same read.
+			// Parse the first packet's length to find where the next packet starts.
+			firstLen := int(resp[0]) | int(resp[1])<<8 | int(resp[2])<<16
+			nextOffset := 4 + firstLen
+			if len(resp) >= nextOffset+5 && resp[nextOffset+4] == packetOK {
+				return true
+			}
+			// Read the following OK packet separately
 			resp3, err := utils.Recv(conn, timeout)
 			if err != nil || len(resp3) < 5 {
 				return false

@@ -451,16 +451,10 @@ func TestMySQLAuthSwitchAnonymousAccess(t *testing.T) {
 	standardCaps := uint32(clientProtocol41 | clientSecureConnection | clientPluginAuth)
 	handshakePkt := buildTestHandshake("8.0.28", "mysql_native_password", standardCaps)
 
-	// AuthSwitch packet: 4-byte header + 0xFE type + plugin name + null + data + null
+	// AuthSwitch packet: 4-byte header + 0xFE type + plugin name + null + auth data (empty null byte)
+	// Payload: 1 (0xFE) + 21 (plugin name) + 1 (null) + 1 (auth data) = 24 bytes
 	authSwitchPkt := []byte{
-		0x07, 0x00, 0x00, 0x02, // 7-byte payload, seq 2
-		packetAuthSwitch,                              // 0xFE
-		'm', 'y', 's', 'q', 'l', '_', 'n', 'a', 't', 'i', 'v', 'e', '_', 'p', 'a', 's', 's', 'w', 'o', 'r', 'd', 0x00, // plugin name
-		0x00, // auth data (empty)
-	}
-	// Fix length: payload after header is 1 + 21 + 1 = 23 bytes, seq 2
-	authSwitchPkt = []byte{
-		0x17, 0x00, 0x00, 0x02, // 23-byte payload, seq 2
+		0x18, 0x00, 0x00, 0x02, // 24-byte payload, seq 2
 		packetAuthSwitch,
 		'm', 'y', 's', 'q', 'l', '_', 'n', 'a', 't', 'i', 'v', 'e', '_', 'p', 'a', 's', 's', 'w', 'o', 'r', 'd', 0x00,
 		0x00,
@@ -533,7 +527,7 @@ func TestMySQLAuthSwitchWithERR(t *testing.T) {
 	handshakePkt := buildTestHandshake("8.0.28", "mysql_native_password", standardCaps)
 
 	authSwitchPkt := []byte{
-		0x17, 0x00, 0x00, 0x02,
+		0x18, 0x00, 0x00, 0x02,
 		packetAuthSwitch,
 		'm', 'y', 's', 'q', 'l', '_', 'n', 'a', 't', 'i', 'v', 'e', '_', 'p', 'a', 's', 's', 'w', 'o', 'r', 'd', 0x00,
 		0x00,
@@ -744,6 +738,9 @@ func TestMySQLDockerMisconfigAnonymousUser(t *testing.T) {
 		t.Fatalf("could not write init SQL: %s", err)
 	}
 	initSQL.Close()
+	if err := os.Chmod(initSQL.Name(), 0o644); err != nil {
+		t.Fatalf("could not chmod init SQL: %s", err)
+	}
 
 	pool, err := dockertest.NewPool("")
 	if err != nil {
