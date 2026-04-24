@@ -28,7 +28,7 @@ import (
 	"github.com/praetorian-inc/nerva/pkg/plugins"
 )
 
-func findSecurityFinding(findings []plugins.SecurityFinding, id string) *plugins.SecurityFinding {
+func findFinding(findings []plugins.SecurityFinding, id string) *plugins.SecurityFinding {
 	for i := range findings {
 		if findings[i].ID == id {
 			return &findings[i]
@@ -43,17 +43,17 @@ func TestCheckMissingSecurityHeaders_AllMissing(t *testing.T) {
 
 	assert.Len(t, findings, 3)
 
-	hsts := findSecurityFinding(findings, "http-missing-hsts")
+	hsts := findFinding(findings, "http-missing-hsts")
 	assert.NotNil(t, hsts)
 	assert.Equal(t, plugins.SeverityMedium, hsts.Severity)
 	assert.Equal(t, "header not present: Strict-Transport-Security", hsts.Evidence)
 
-	csp := findSecurityFinding(findings, "http-missing-csp")
+	csp := findFinding(findings, "http-missing-csp")
 	assert.NotNil(t, csp)
 	assert.Equal(t, plugins.SeverityLow, csp.Severity)
 	assert.Equal(t, "header not present: Content-Security-Policy", csp.Evidence)
 
-	xfo := findSecurityFinding(findings, "http-missing-x-frame-options")
+	xfo := findFinding(findings, "http-missing-x-frame-options")
 	assert.NotNil(t, xfo)
 	assert.Equal(t, plugins.SeverityLow, xfo.Severity)
 	assert.Equal(t, "header not present: X-Frame-Options", xfo.Evidence)
@@ -77,9 +77,9 @@ func TestCheckMissingSecurityHeaders_HSTSPresent(t *testing.T) {
 	findings := checkMissingSecurityHeaders(headers, true)
 
 	assert.Len(t, findings, 2)
-	assert.Nil(t, findSecurityFinding(findings, "http-missing-hsts"))
-	assert.NotNil(t, findSecurityFinding(findings, "http-missing-csp"))
-	assert.NotNil(t, findSecurityFinding(findings, "http-missing-x-frame-options"))
+	assert.Nil(t, findFinding(findings, "http-missing-hsts"))
+	assert.NotNil(t, findFinding(findings, "http-missing-csp"))
+	assert.NotNil(t, findFinding(findings, "http-missing-x-frame-options"))
 }
 
 func TestCheckMissingSecurityHeaders_CSPPresent(t *testing.T) {
@@ -89,9 +89,9 @@ func TestCheckMissingSecurityHeaders_CSPPresent(t *testing.T) {
 	findings := checkMissingSecurityHeaders(headers, true)
 
 	assert.Len(t, findings, 2)
-	assert.NotNil(t, findSecurityFinding(findings, "http-missing-hsts"))
-	assert.Nil(t, findSecurityFinding(findings, "http-missing-csp"))
-	assert.NotNil(t, findSecurityFinding(findings, "http-missing-x-frame-options"))
+	assert.NotNil(t, findFinding(findings, "http-missing-hsts"))
+	assert.Nil(t, findFinding(findings, "http-missing-csp"))
+	assert.NotNil(t, findFinding(findings, "http-missing-x-frame-options"))
 }
 
 func TestCheckMissingSecurityHeaders_XFrameOptionsPresent(t *testing.T) {
@@ -101,9 +101,9 @@ func TestCheckMissingSecurityHeaders_XFrameOptionsPresent(t *testing.T) {
 	findings := checkMissingSecurityHeaders(headers, true)
 
 	assert.Len(t, findings, 2)
-	assert.NotNil(t, findSecurityFinding(findings, "http-missing-hsts"))
-	assert.NotNil(t, findSecurityFinding(findings, "http-missing-csp"))
-	assert.Nil(t, findSecurityFinding(findings, "http-missing-x-frame-options"))
+	assert.NotNil(t, findFinding(findings, "http-missing-hsts"))
+	assert.NotNil(t, findFinding(findings, "http-missing-csp"))
+	assert.Nil(t, findFinding(findings, "http-missing-x-frame-options"))
 }
 
 func TestCheckMissingSecurityHeaders_HTTPNoHSTS(t *testing.T) {
@@ -111,9 +111,9 @@ func TestCheckMissingSecurityHeaders_HTTPNoHSTS(t *testing.T) {
 	findings := checkMissingSecurityHeaders(headers, false)
 
 	assert.Len(t, findings, 2)
-	assert.Nil(t, findSecurityFinding(findings, "http-missing-hsts"))
-	assert.NotNil(t, findSecurityFinding(findings, "http-missing-csp"))
-	assert.NotNil(t, findSecurityFinding(findings, "http-missing-x-frame-options"))
+	assert.Nil(t, findFinding(findings, "http-missing-hsts"))
+	assert.NotNil(t, findFinding(findings, "http-missing-csp"))
+	assert.NotNil(t, findFinding(findings, "http-missing-x-frame-options"))
 }
 
 // ---------------------------------------------------------------------------
@@ -197,19 +197,19 @@ func TestHTTPPlugin_MissingSecurityHeaders_Live(t *testing.T) {
 		t.Fatal("HTTPPlugin.Run() returned nil service")
 	}
 
-	hsts := findSecurityFinding(service.SecurityFindings, "http-missing-hsts")
+	hsts := findFinding(service.SecurityFindings, "http-missing-hsts")
 	if hsts != nil {
 		t.Errorf("expected no http-missing-hsts finding for plain HTTP, got: %+v", *hsts)
 	}
 
-	csp := findSecurityFinding(service.SecurityFindings, "http-missing-csp")
+	csp := findFinding(service.SecurityFindings, "http-missing-csp")
 	if csp == nil {
 		t.Errorf("expected http-missing-csp finding, got findings: %v", service.SecurityFindings)
 	} else if csp.Severity != plugins.SeverityLow {
 		t.Errorf("http-missing-csp severity = %q, want %q", csp.Severity, plugins.SeverityLow)
 	}
 
-	xfo := findSecurityFinding(service.SecurityFindings, "http-missing-x-frame-options")
+	xfo := findFinding(service.SecurityFindings, "http-missing-x-frame-options")
 	if xfo == nil {
 		t.Errorf("expected http-missing-x-frame-options finding, got findings: %v", service.SecurityFindings)
 	} else if xfo.Severity != plugins.SeverityLow {
