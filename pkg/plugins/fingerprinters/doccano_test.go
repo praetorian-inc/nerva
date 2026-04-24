@@ -35,6 +35,11 @@ func TestDoccanoFingerprinter_Match(t *testing.T) {
 		expected    bool
 	}{
 		{name: "matches text/html", contentType: "text/html", expected: true},
+		{
+			name:        "matches uppercase TEXT/HTML (RFC 7231 case-insensitive)",
+			contentType: "TEXT/HTML",
+			expected:    true,
+		},
 		{name: "matches text/html with charset", contentType: "text/html; charset=utf-8", expected: true},
 		{name: "matches application/xhtml+xml", contentType: "application/xhtml+xml", expected: true},
 		{name: "matches empty content type", contentType: "", expected: true},
@@ -141,8 +146,8 @@ func TestDoccanoFingerprinter_Fingerprint(t *testing.T) {
 			wantNil: true,
 		},
 		{
-			name:    "nil response returns nil (no panic)",
-			body:    "",
+			name:    "nil response returns nil (no panic, not from empty-body guard)",
+			body:    `<html><head><title>doccano - doccano</title><meta name="description" content="doccano is an open source annotation tools for machine learning practitioner."></head><body><div id="__nuxt"></div></body></html>`,
 			wantNil: true,
 			nilResp: true,
 		},

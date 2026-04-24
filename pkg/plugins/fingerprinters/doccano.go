@@ -79,8 +79,8 @@ func (f *DoccanoFingerprinter) Match(resp *http.Response) bool {
 	if resp == nil {
 		return false
 	}
-	ct := resp.Header.Get("Content-Type")
-	return strings.Contains(ct, "text/html") || strings.Contains(ct, "application/xhtml+xml") || ct == ""
+	ct := strings.ToLower(resp.Header.Get("Content-Type"))
+	return ct == "" || strings.Contains(ct, "text/html") || strings.Contains(ct, "application/xhtml+xml")
 }
 
 // Fingerprint detects Doccano by counting body signals. Returns nil if resp is nil,
