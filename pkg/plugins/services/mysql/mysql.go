@@ -64,6 +64,16 @@ const (
 	// protocolVersion = 10
 	maxPacketSize = 1 << 24 // 16MB max MySQL packet (MySQL protocol limit)
 	MYSQL         = "MySQL"
+
+	// MySQL capability flags (from MySQL protocol spec)
+	clientProtocol41      = 1 << 9  // CLIENT_PROTOCOL_41
+	clientSecureConnection = 1 << 15 // CLIENT_SECURE_CONNECTION
+	clientPluginAuth      = 1 << 19 // CLIENT_PLUGIN_AUTH
+
+	// MySQL response packet type bytes
+	packetOK         = 0x00
+	packetERR        = 0xFF
+	packetAuthSwitch = 0xFE
 )
 
 // Version detection regex patterns for MySQL-family servers
@@ -96,6 +106,207 @@ func init() {
 	plugins.RegisterPlugin(&MYSQLPlugin{})
 }
 
+// handshakeInfo holds auth-relevant fields parsed from the MySQL initial handshake packet.
+type handshakeInfo struct {
+	capabilityFlags uint32
+	characterSet    byte
+	authPluginName  string
+}
+
+// parseHandshake extracts auth-relevant fields from a MySQL initial handshake packet.
+// Returns nil if the packet is malformed or too short.
+func parseHandshake(response []byte) *handshakeInfo {
+	// Minimum size: 4-byte header + 1 version + 1 null byte for version string + 13 fields
+	if len(response) < 35 {
+		return nil
+	}
+
+	// Byte 4: protocol version (must be 10)
+	if response[4] != 10 {
+		return nil
+	}
+
+	// Skip server version string (null-terminated), starting at byte 5
+	pos := 5
+	for pos < len(response) && response[pos] != 0x00 {
+		pos++
+	}
+	if pos >= len(response) {
+		return nil
+	}
+	pos++ // skip null terminator
+
+	// Skip connection ID (4 bytes)
+	pos += 4
+	// Skip auth-plugin-data-part-1 (8 bytes)
+	pos += 8
+
+	// Filler byte must be 0x00
+	if pos >= len(response) || response[pos] != 0x00 {
+		return nil
+	}
+	pos++ // skip filler
+
+	// Capability flags lower 2 bytes
+	if pos+1 >= len(response) {
+		return nil
+	}
+	capsLow := uint32(response[pos]) | uint32(response[pos+1])<<8
+	pos += 2
+
+	// Character set (1 byte)
+	if pos >= len(response) {
+		return nil
+	}
+	charSet := response[pos]
+	pos++
+
+	// Status flags (2 bytes) - skip
+	pos += 2
+
+	// Capability flags upper 2 bytes
+	if pos+1 >= len(response) {
+		return nil
+	}
+	capsHigh := uint32(response[pos]) | uint32(response[pos+1])<<8
+	pos += 2
+
+	caps := capsLow | (capsHigh << 16)
+
+	// Auth plugin data length (1 byte)
+	var authDataLen int
+	if pos >= len(response) {
+		return nil
+	}
+	authDataLen = int(response[pos])
+	pos++
+
+	// Reserved (10 bytes) - skip
+	pos += 10
+
+	// Auth-plugin-data-part-2: max(13, authDataLen-8) bytes if CLIENT_SECURE_CONNECTION
+	if caps&uint32(clientSecureConnection) != 0 {
+		part2Len := authDataLen - 8
+		if part2Len < 13 {
+			part2Len = 13
+		}
+		pos += part2Len
+	}
+
+	// Auth plugin name (null-terminated) if CLIENT_PLUGIN_AUTH
+	authPluginName := ""
+	if caps&uint32(clientPluginAuth) != 0 && pos < len(response) {
+		end := pos
+		for end < len(response) && response[end] != 0x00 {
+			end++
+		}
+		authPluginName = string(response[pos:end])
+	}
+
+	return &handshakeInfo{
+		capabilityFlags: caps,
+		characterSet:    charSet,
+		authPluginName:  authPluginName,
+	}
+}
+
+// buildHandshakeResponse41 builds a MySQL HandshakeResponse41 packet with empty credentials.
+func buildHandshakeResponse41(hs *handshakeInfo) []byte {
+	// Client capability flags
+	clientCaps := uint32(clientProtocol41 | clientSecureConnection)
+	if hs.capabilityFlags&uint32(clientPluginAuth) != 0 {
+		clientCaps |= uint32(clientPluginAuth)
+	}
+
+	payload := []byte{}
+
+	// Capability flags (4 bytes, little-endian)
+	payload = append(payload,
+		byte(clientCaps&0xFF),
+		byte((clientCaps>>8)&0xFF),
+		byte((clientCaps>>16)&0xFF),
+		byte((clientCaps>>24)&0xFF),
+	)
+
+	// Max packet size: 16MB (little-endian: 0x00, 0x00, 0x00, 0x01 = 16777216)
+	payload = append(payload, 0x00, 0x00, 0x00, 0x01)
+
+	// Character set
+	payload = append(payload, hs.characterSet)
+
+	// Reserved: 23 zero bytes
+	payload = append(payload, make([]byte, 23)...)
+
+	// Username: empty (just null terminator)
+	payload = append(payload, 0x00)
+
+	// Auth response: length-prefixed, length=0
+	payload = append(payload, 0x00)
+
+	// Auth plugin name (null-terminated) if CLIENT_PLUGIN_AUTH
+	if clientCaps&uint32(clientPluginAuth) != 0 {
+		payload = append(payload, []byte(hs.authPluginName)...)
+		payload = append(payload, 0x00)
+	}
+
+	// Wrap in MySQL packet: 3-byte length (little-endian) + sequence number 1
+	pktLen := len(payload)
+	packet := []byte{
+		byte(pktLen & 0xFF),
+		byte((pktLen >> 8) & 0xFF),
+		byte((pktLen >> 16) & 0xFF),
+		0x01, // sequence number
+	}
+	packet = append(packet, payload...)
+	return packet
+}
+
+// checkMySQLAuth attempts anonymous login against a MySQL server that has already
+// sent its initial handshake. Returns true if anonymous access succeeds.
+func checkMySQLAuth(conn net.Conn, timeout time.Duration, hs *handshakeInfo) bool {
+	pkt := buildHandshakeResponse41(hs)
+	resp, err := utils.SendRecv(conn, pkt, timeout)
+	if err != nil || len(resp) < 5 {
+		return false
+	}
+
+	// MySQL response payload starts at byte 4
+	pktType := resp[4]
+	switch pktType {
+	case packetOK:
+		return true
+	case packetERR:
+		return false
+	case packetAuthSwitch:
+		// Auth switch request: send empty auth response
+		seqNum := resp[3] + 1
+		emptyAuth := []byte{0x00, 0x00, 0x00, seqNum}
+		resp2, err := utils.SendRecv(conn, emptyAuth, timeout)
+		if err != nil || len(resp2) < 5 {
+			return false
+		}
+		return resp2[4] == packetOK
+	default:
+		// caching_sha2_password fast auth success: 0x01 0x03
+		if pktType == 0x01 && len(resp) > 5 && resp[5] == 0x03 {
+			// The OK packet may be coalesced with the fast-auth packet in the same read.
+			// Parse the first packet's length to find where the next packet starts.
+			firstLen := int(resp[0]) | int(resp[1])<<8 | int(resp[2])<<16
+			nextOffset := 4 + firstLen
+			if len(resp) >= nextOffset+5 && resp[nextOffset+4] == packetOK {
+				return true
+			}
+			// Read the following OK packet separately
+			resp3, err := utils.Recv(conn, timeout)
+			if err != nil || len(resp3) < 5 {
+				return false
+			}
+			return resp3[4] == packetOK
+		}
+		return false
+	}
+}
+
 // Run checks if the identified service is a MySQL (or MariaDB) server using
 // two methods. Upon the connection of a client to a MySQL server it can return
 // one of two responses. Either the server returns an initial handshake packet
@@ -123,7 +334,20 @@ func (p *MYSQLPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.T
 			ErrorCode:    0,
 			CPEs:         []string{cpe},
 		}
-		return plugins.CreateServiceFrom(target, payload, false, mysqlVersionStr, plugins.TCP), nil
+		service := plugins.CreateServiceFrom(target, payload, false, mysqlVersionStr, plugins.TCP)
+		if target.Misconfigs {
+			hs := parseHandshake(response)
+			if hs != nil && checkMySQLAuth(conn, timeout, hs) {
+				service.AnonymousAccess = true
+				service.SecurityFindings = []plugins.SecurityFinding{{
+					ID:          "mysql-no-auth",
+					Severity:    plugins.SeverityCritical,
+					Description: "MySQL accessible without authentication",
+					Evidence:    "Anonymous login succeeded without credentials",
+				}}
+			}
+		}
+		return service, nil
 	}
 
 	errorStr, errorCode, err := CheckErrorMessagePacket(response)
