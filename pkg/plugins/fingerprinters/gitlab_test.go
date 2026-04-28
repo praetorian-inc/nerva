@@ -128,6 +128,24 @@ func TestGitLabFingerprinter_Fingerprint_HTMLMeta(t *testing.T) {
 			expectedEdition: "ce",
 			expectResult:    true,
 		},
+		{
+			name: "GitLab generator meta only (no og:site_name)",
+			body: `<html><head>
+<meta name="generator" content="GitLab Community Edition 16.3.0">
+</head></html>`,
+			expectedVersion: "16.3.0",
+			expectedEdition: "ce",
+			expectResult:    true,
+		},
+		{
+			name: "og:site_name reversed attribute order",
+			body: `<html><head>
+<meta property="og:site_name" content="GitLab">
+</head></html>`,
+			expectedVersion: "",
+			expectedEdition: "",
+			expectResult:    true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -513,7 +531,7 @@ func TestGitLabFingerprinter_Fingerprint_MixedDetection(t *testing.T) {
 }
 
 func TestGitLabFingerprinter_Fingerprint_PreSuffix(t *testing.T) {
-	// "-pre" suffix is captured by gitlabVersionRegex; edition is set to "pre" as coded.
+	// "-pre" suffix is stored as qualifier, NOT as edition — prevents invalid CPE.
 	body := []byte(`{"version":"17.0.0-pre","revision":"nightly"}`)
 
 	fp := &GitLabFingerprinter{}
@@ -531,11 +549,14 @@ func TestGitLabFingerprinter_Fingerprint_PreSuffix(t *testing.T) {
 	require.NotNil(t, result)
 	assert.Equal(t, "gitlab", result.Technology)
 	assert.Equal(t, "17.0.0", result.Version)
-	assert.Equal(t, "pre", result.Metadata["edition"])
+	assert.Equal(t, "pre", result.Metadata["qualifier"])
+	assert.Nil(t, result.Metadata["edition"], "pre must not be stored as edition")
+	assert.Equal(t, "cpe:2.3:a:gitlab:gitlab:17.0.0:*:*:*:*:*:*:*", result.CPEs[0])
 }
 
 func TestGitLabFingerprinter_Integration(t *testing.T) {
-	// Clear registry
+	saved := httpFingerprinters
+	t.Cleanup(func() { httpFingerprinters = saved })
 	httpFingerprinters = nil
 
 	fp := &GitLabFingerprinter{}
@@ -556,4 +577,152 @@ func TestGitLabFingerprinter_Integration(t *testing.T) {
 	assert.Equal(t, "gitlab", results[0].Technology)
 	assert.Equal(t, "17.0.0", results[0].Version)
 	assert.Equal(t, "ee", results[0].Metadata["edition"])
+}
+
+func TestGitLabFingerprinter_Fingerprint_NoRevisionJSON(t *testing.T) {
+	// Generic JSON API with a "version" field but no "revision" must NOT be detected as GitLab.
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "version only, no revision field",
+			body: `{"version":"17.0.0-ee"}`,
+		},
+		{
+			name: "version with empty revision",
+			body: `{"version":"17.0.0-ee","revision":""}`,
+		},
+		{
+			name: "non-GitLab JSON with version",
+			body: `{"version":"2.1.0","name":"some-app"}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fp := &GitLabFingerprinter{}
+			resp := &http.Response{
+				StatusCode: 200,
+				Header: http.Header{
+					"Content-Type": []string{"application/json"},
+				},
+				Body: io.NopCloser(bytes.NewReader([]byte(tt.body))),
+			}
+
+			result, err := fp.Fingerprint(resp, []byte(tt.body))
+
+			assert.NoError(t, err)
+			assert.Nil(t, result, "JSON without revision must not be detected as GitLab")
+		})
+	}
+}
+
+func TestGitLabFingerprinter_Fingerprint_RCVersion(t *testing.T) {
+	// Release candidate versions should parse correctly with edition preserved.
+	tests := []struct {
+		name              string
+		body              string
+		expectedVersion   string
+		expectedEdition   string
+		expectedQualifier string
+	}{
+		{
+			name:              "rc1 with EE",
+			body:              `{"version":"17.0.0-rc1-ee","revision":"abc123"}`,
+			expectedVersion:   "17.0.0",
+			expectedEdition:   "ee",
+			expectedQualifier: "rc1",
+		},
+		{
+			name:              "rc2 without edition",
+			body:              `{"version":"16.11.0-rc2","revision":"def456"}`,
+			expectedVersion:   "16.11.0",
+			expectedEdition:   "",
+			expectedQualifier: "rc2",
+		},
+		{
+			name:              "rc10 with CE",
+			body:              `{"version":"15.0.0-rc10-ce","revision":"ghi789"}`,
+			expectedVersion:   "15.0.0",
+			expectedEdition:   "ce",
+			expectedQualifier: "rc10",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fp := &GitLabFingerprinter{}
+			resp := &http.Response{
+				StatusCode: 200,
+				Header: http.Header{
+					"Content-Type": []string{"application/json"},
+				},
+				Body: io.NopCloser(bytes.NewReader([]byte(tt.body))),
+			}
+
+			result, err := fp.Fingerprint(resp, []byte(tt.body))
+
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			assert.Equal(t, "gitlab", result.Technology)
+			assert.Equal(t, tt.expectedVersion, result.Version)
+			assert.Equal(t, tt.expectedQualifier, result.Metadata["qualifier"])
+			if tt.expectedEdition != "" {
+				assert.Equal(t, tt.expectedEdition, result.Metadata["edition"])
+			} else {
+				assert.Nil(t, result.Metadata["edition"])
+			}
+		})
+	}
+}
+
+func TestGitLabFingerprinter_Fingerprint_RevisionValidation(t *testing.T) {
+	// Malicious revision values should be sanitized (dropped).
+	tests := []struct {
+		name           string
+		body           string
+		expectRevision bool
+	}{
+		{
+			name:           "valid hex revision",
+			body:           `{"version":"17.0.0-ee","revision":"abc123def456"}`,
+			expectRevision: true,
+		},
+		{
+			name:           "revision with injection characters",
+			body:           `{"version":"17.0.0-ee","revision":"abc;rm -rf /"}`,
+			expectRevision: false,
+		},
+		{
+			name:           "revision with shell expansion",
+			body:           `{"version":"17.0.0-ee","revision":"$(whoami)"}`,
+			expectRevision: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fp := &GitLabFingerprinter{}
+			resp := &http.Response{
+				StatusCode: 200,
+				Header: http.Header{
+					"Content-Type": []string{"application/json"},
+				},
+				Body: io.NopCloser(bytes.NewReader([]byte(tt.body))),
+			}
+
+			result, err := fp.Fingerprint(resp, []byte(tt.body))
+
+			require.NoError(t, err)
+			if tt.expectRevision {
+				require.NotNil(t, result)
+				assert.NotEmpty(t, result.Metadata["revision"])
+			} else {
+				// When revision is invalid, parseGitLabAPIVersion returns empty revision,
+				// and since we require revision for JSON detection, result should be nil.
+				assert.Nil(t, result, "invalid revision should prevent JSON-only detection")
+			}
+		})
+	}
 }

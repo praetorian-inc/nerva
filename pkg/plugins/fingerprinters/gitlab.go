@@ -92,9 +92,9 @@ type gitlabVersionResponse struct {
 	Revision string `json:"revision"`
 }
 
-// gitlabVersionRegex validates GitLab version format and extracts semver + optional edition suffix.
-// Valid formats: "17.0.0", "17.0.0-ee", "16.8.1-ce", "17.0.0-pre"
-var gitlabVersionRegex = regexp.MustCompile(`^(\d+\.\d+\.\d+)(?:-(ee|ce|pre))?$`)
+// gitlabVersionRegex validates GitLab version format and extracts semver, optional qualifier, and edition.
+// Valid formats: "17.0.0", "17.0.0-ee", "16.8.1-ce", "17.0.0-pre", "17.0.0-rc1-ee"
+var gitlabVersionRegex = regexp.MustCompile(`^(\d+\.\d+\.\d+)(?:-(pre|rc\d+))?(?:-(ee|ce))?$`)
 
 // gitlabSafeVersionRegex validates that the entire version string only contains safe characters.
 // Prevents CPE injection via colons, semicolons, parentheses, etc.
@@ -107,6 +107,10 @@ var gitlabGeneratorRegex = regexp.MustCompile(`(?i)<meta\s[^>]*name=["']generato
 // gitlabGeneratorRegexAlt extracts edition and version from generator meta tag with content before name.
 // Format: <meta content="GitLab Community Edition 17.0.0" name="generator">
 var gitlabGeneratorRegexAlt = regexp.MustCompile(`(?i)<meta\s[^>]*content=["']GitLab\s+(Community|Enterprise)\s+Edition\s+([0-9]+\.[0-9]+\.[0-9]+)["'][^>]*name=["']generator["']`)
+
+// gitlabOGSiteNameRegex matches <meta> with og:site_name property and "GitLab" content value.
+// Handles both attribute orders and anchors content value to prevent partial matches.
+var gitlabOGSiteNameRegex = regexp.MustCompile(`(?i)<meta\s+[^>]*?(?:content=["']GitLab["'][^>]*?property=["']og:site_name["']|property=["']og:site_name["'][^>]*?content=["']GitLab["'])`)
 
 func (f *GitLabFingerprinter) Name() string {
 	return "gitlab"
@@ -153,8 +157,8 @@ func (f *GitLabFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fi
 
 	bodyStr := string(body)
 
-	// Check HTML body for og:site_name="GitLab" meta tag
-	if strings.Contains(bodyStr, `<meta content="GitLab"`) {
+	// Check HTML body for og:site_name="GitLab" meta tag (both attribute orders)
+	if gitlabOGSiteNameRegex.MatchString(bodyStr) {
 		detected = true
 	}
 
@@ -163,20 +167,25 @@ func (f *GitLabFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fi
 	//      or <meta name="generator" content="GitLab Enterprise Edition 17.0.0">
 	if strings.Contains(bodyStr, `name="generator"`) || strings.Contains(bodyStr, `name='generator'`) {
 		version, edition = extractGitLabMetaGenerator(bodyStr)
+		if version != "" || edition != "" {
+			detected = true
+		}
 	}
 
-	// Try parsing body as /api/v4/version JSON response
-	var apiVersion, apiEdition, apiRevision string
-	apiVersion, apiEdition, apiRevision = parseGitLabAPIVersion(body)
-	if apiVersion != "" {
+	// Try parsing body as /api/v4/version JSON response.
+	// Require both version and revision — GitLab always returns both fields,
+	// and this prevents false positives from generic JSON APIs with a "version" field.
+	apiVersion, apiEdition, apiRevision, apiQualifier := parseGitLabAPIVersion(body)
+	if apiVersion != "" && apiRevision != "" {
 		detected = true
 		// API response takes precedence over HTML meta for version
 		version = apiVersion
 		if apiEdition != "" {
 			edition = apiEdition
 		}
-		if apiRevision != "" {
-			revision = apiRevision
+		revision = apiRevision
+		if apiQualifier != "" {
+			metadata["qualifier"] = apiQualifier
 		}
 	}
 
@@ -243,41 +252,47 @@ func extractGitLabMetaGenerator(body string) (version, edition string) {
 }
 
 // parseGitLabAPIVersion attempts to parse body as a /api/v4/version JSON response.
-// Returns version, edition, and revision if successful.
-func parseGitLabAPIVersion(body []byte) (version, edition, revision string) {
+// Returns version, edition, revision, and qualifier if successful.
+func parseGitLabAPIVersion(body []byte) (version, edition, revision, qualifier string) {
 	var data gitlabVersionResponse
 	if err := json.Unmarshal(body, &data); err != nil {
-		return "", "", ""
+		return "", "", "", ""
 	}
 	if data.Version == "" {
-		return "", "", ""
+		return "", "", "", ""
 	}
 
 	raw := data.Version
 
 	// Validate safe characters first
 	if !gitlabSafeVersionRegex.MatchString(raw) {
-		return "", "", ""
+		return "", "", "", ""
 	}
 
-	// Extract X.Y.Z and optional edition suffix
+	// Extract X.Y.Z, optional qualifier (pre/rcN), and optional edition (ee/ce)
 	matches := gitlabVersionRegex.FindStringSubmatch(raw)
 	if len(matches) < 2 {
-		return "", "", ""
+		return "", "", "", ""
 	}
 
 	version = matches[1]
 	if len(matches) >= 3 && matches[2] != "" {
-		edition = matches[2]
+		qualifier = matches[2]
+	}
+	if len(matches) >= 4 && matches[3] != "" {
+		edition = matches[3]
 	}
 
-	revision = data.Revision
-	return version, edition, revision
+	// Validate revision against safe-character set to prevent injection
+	if data.Revision != "" && gitlabSafeVersionRegex.MatchString(data.Revision) {
+		revision = data.Revision
+	}
+	return version, edition, revision, qualifier
 }
 
 // buildGitLabCPE generates a CPE 2.3 string for GitLab.
 // Format: cpe:2.3:a:gitlab:gitlab:{version}:*:*:*:{edition}:*:*:*
-// edition is "ce", "ee", or "*" when unknown.
+// edition is "ce", "ee", or "*" when unknown. Qualifiers (pre, rcN) are excluded from CPE.
 func buildGitLabCPE(version, edition string) string {
 	if version == "" {
 		version = "*"

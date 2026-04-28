@@ -31,10 +31,11 @@ import (
 )
 
 const (
-	gitlabImage     = "gitlab/gitlab-ce:17.0.0-ce.0"
-	gitlabContainer = "nerva-gitlab-test"
-	gitlabPort      = "8929"
+	gitlabImage = "gitlab/gitlab-ce:17.0.0-ce.0"
+	gitlabPort  = "8929"
 )
+
+var gitlabContainer = fmt.Sprintf("nerva-gitlab-test-%d", os.Getpid())
 
 func TestGitLabFingerprinter_Docker(t *testing.T) {
 	if os.Getenv("NERVA_INTEGRATION") == "" {
