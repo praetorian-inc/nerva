@@ -100,6 +100,14 @@ var gitlabVersionRegex = regexp.MustCompile(`^(\d+\.\d+\.\d+)(?:-(ee|ce|pre))?$`
 // Prevents CPE injection via colons, semicolons, parentheses, etc.
 var gitlabSafeVersionRegex = regexp.MustCompile(`^[0-9a-zA-Z.\-]+$`)
 
+// gitlabGeneratorRegex extracts edition and version from generator meta tag with name before content.
+// Format: <meta name="generator" content="GitLab Community Edition 17.0.0">
+var gitlabGeneratorRegex = regexp.MustCompile(`(?i)<meta\s[^>]*name=["']generator["'][^>]*content=["']GitLab\s+(Community|Enterprise)\s+Edition\s+([0-9]+\.[0-9]+\.[0-9]+)["']`)
+
+// gitlabGeneratorRegexAlt extracts edition and version from generator meta tag with content before name.
+// Format: <meta content="GitLab Community Edition 17.0.0" name="generator">
+var gitlabGeneratorRegexAlt = regexp.MustCompile(`(?i)<meta\s[^>]*content=["']GitLab\s+(Community|Enterprise)\s+Edition\s+([0-9]+\.[0-9]+\.[0-9]+)["'][^>]*name=["']generator["']`)
+
 func (f *GitLabFingerprinter) Name() string {
 	return "gitlab"
 }
@@ -111,7 +119,10 @@ func (f *GitLabFingerprinter) ProbeEndpoint() string {
 }
 
 // Match returns true if the response might be from GitLab.
-// Accepts HTML, JSON, and responses with X-GitLab-* headers.
+// This is deliberately broad: HTML is needed because passive detection parses
+// meta tags from the root page body, and JSON is needed because the active
+// /api/v4/version probe returns JSON. Fingerprint() performs the actual
+// GitLab-specific checks and returns nil for non-GitLab responses.
 func (f *GitLabFingerprinter) Match(resp *http.Response) bool {
 	// Check for X-GitLab-* headers (case-insensitive header key matching)
 	for key := range resp.Header {
@@ -194,12 +205,9 @@ func (f *GitLabFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fi
 }
 
 // extractGitLabMetaGenerator parses the HTML generator meta tag to extract version and edition.
-// Handles both double-quoted and single-quoted attribute values.
+// Handles both double-quoted and single-quoted attribute values, and both attribute orderings.
 func extractGitLabMetaGenerator(body string) (version, edition string) {
-	// Match both double-quote and single-quote variants
-	// Pattern: content="GitLab Community Edition 17.0.0" or content='GitLab Community Edition 17.0.0'
-	generatorRegex := regexp.MustCompile(`(?i)<meta\s[^>]*name=["']generator["'][^>]*content=["']GitLab\s+(Community|Enterprise)\s+Edition\s+([0-9]+\.[0-9]+\.[0-9]+)["']`)
-	matches := generatorRegex.FindStringSubmatch(body)
+	matches := gitlabGeneratorRegex.FindStringSubmatch(body)
 	if len(matches) >= 3 {
 		editionWord := strings.ToLower(matches[1])
 		rawVersion := matches[2]
@@ -217,8 +225,7 @@ func extractGitLabMetaGenerator(body string) (version, edition string) {
 	}
 
 	// Also try reversed attribute order: content=... name=...
-	generatorRegexAlt := regexp.MustCompile(`(?i)<meta\s[^>]*content=["']GitLab\s+(Community|Enterprise)\s+Edition\s+([0-9]+\.[0-9]+\.[0-9]+)["'][^>]*name=["']generator["']`)
-	matches = generatorRegexAlt.FindStringSubmatch(body)
+	matches = gitlabGeneratorRegexAlt.FindStringSubmatch(body)
 	if len(matches) >= 3 {
 		editionWord := strings.ToLower(matches[1])
 		rawVersion := matches[2]

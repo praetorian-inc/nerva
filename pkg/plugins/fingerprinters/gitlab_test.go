@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -351,6 +352,186 @@ func TestBuildGitLabCPE(t *testing.T) {
 			assert.Equal(t, tt.expected, result)
 		})
 	}
+}
+
+func TestGitLabFingerprinter_Fingerprint_HTMLMeta_ReversedOrder(t *testing.T) {
+	// Meta tag with content before name attribute — exercises gitlabGeneratorRegexAlt branch.
+	tests := []struct {
+		name            string
+		body            string
+		expectedVersion string
+		expectedEdition string
+	}{
+		{
+			name: "EE reversed attribute order",
+			body: `<html><head>
+<meta content="GitLab" property="og:site_name">
+<meta content="GitLab Enterprise Edition 16.5.3" name="generator">
+</head></html>`,
+			expectedVersion: "16.5.3",
+			expectedEdition: "ee",
+		},
+		{
+			name: "CE reversed attribute order",
+			body: `<html><head>
+<meta content="GitLab" property="og:site_name">
+<meta content="GitLab Community Edition 17.2.1" name="generator">
+</head></html>`,
+			expectedVersion: "17.2.1",
+			expectedEdition: "ce",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fp := &GitLabFingerprinter{}
+			resp := &http.Response{
+				StatusCode: 200,
+				Header: http.Header{
+					"Content-Type": []string{"text/html; charset=utf-8"},
+				},
+				Body: io.NopCloser(bytes.NewReader([]byte(tt.body))),
+			}
+
+			result, err := fp.Fingerprint(resp, []byte(tt.body))
+
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			assert.Equal(t, "gitlab", result.Technology)
+			assert.Equal(t, tt.expectedVersion, result.Version)
+			assert.Equal(t, tt.expectedEdition, result.Metadata["edition"])
+		})
+	}
+}
+
+func TestGitLabFingerprinter_Fingerprint_APIVersion_InvalidFormat(t *testing.T) {
+	// These versions pass gitlabSafeVersionRegex but fail gitlabVersionRegex (missing patch component
+	// or non-numeric), exercising the len(matches) < 2 early return in parseGitLabAPIVersion.
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "version missing patch component",
+			body: `{"version":"17.0","revision":"abc"}`,
+		},
+		{
+			name: "version with only major",
+			body: `{"version":"17","revision":"abc"}`,
+		},
+		{
+			name: "empty version field",
+			body: `{"version":"","revision":"abc"}`,
+		},
+		{
+			name: "version is non-numeric text",
+			body: `{"version":"latest","revision":"abc"}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fp := &GitLabFingerprinter{}
+			resp := &http.Response{
+				StatusCode: 200,
+				Header: http.Header{
+					"Content-Type": []string{"application/json"},
+				},
+				Body: io.NopCloser(bytes.NewReader([]byte(tt.body))),
+			}
+
+			result, err := fp.Fingerprint(resp, []byte(tt.body))
+
+			assert.NoError(t, err)
+			assert.Nil(t, result)
+		})
+	}
+}
+
+func TestGitLabFingerprinter_Fingerprint_EmptyBody(t *testing.T) {
+	// Empty body with no GitLab headers should return nil.
+	fp := &GitLabFingerprinter{}
+	body := []byte("")
+	resp := &http.Response{
+		StatusCode: 200,
+		Header: http.Header{
+			"Content-Type": []string{"text/html"},
+		},
+		Body: io.NopCloser(bytes.NewReader(body)),
+	}
+
+	result, err := fp.Fingerprint(resp, body)
+
+	assert.NoError(t, err)
+	assert.Nil(t, result)
+}
+
+func TestGitLabFingerprinter_Fingerprint_LargeBody(t *testing.T) {
+	// GitLab meta tag buried after 100KB of HTML padding — ensures regex still matches.
+	padding := strings.Repeat("<div>content</div>\n", 5000)
+	bodyStr := `<html><head>` + padding + `<meta content="GitLab" property="og:site_name"></head></html>`
+	body := []byte(bodyStr)
+
+	fp := &GitLabFingerprinter{}
+	resp := &http.Response{
+		StatusCode: 200,
+		Header: http.Header{
+			"Content-Type": []string{"text/html; charset=utf-8"},
+		},
+		Body: io.NopCloser(bytes.NewReader(body)),
+	}
+
+	result, err := fp.Fingerprint(resp, body)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "gitlab", result.Technology)
+}
+
+func TestGitLabFingerprinter_Fingerprint_MixedDetection(t *testing.T) {
+	// Both X-GitLab-* header and HTML meta generator present — HTML version wins.
+	bodyStr := `<html><head><meta content="GitLab" property="og:site_name"><meta name="generator" content="GitLab Community Edition 17.1.0"></head></html>`
+	body := []byte(bodyStr)
+
+	fp := &GitLabFingerprinter{}
+	header := http.Header{}
+	header.Set("X-GitLab-Meta", "value")
+	header.Set("Content-Type", "text/html; charset=utf-8")
+	resp := &http.Response{
+		StatusCode: 200,
+		Header:     header,
+		Body:       io.NopCloser(bytes.NewReader(body)),
+	}
+
+	result, err := fp.Fingerprint(resp, body)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "gitlab", result.Technology)
+	assert.Equal(t, "17.1.0", result.Version)
+	assert.Equal(t, "ce", result.Metadata["edition"])
+}
+
+func TestGitLabFingerprinter_Fingerprint_PreSuffix(t *testing.T) {
+	// "-pre" suffix is captured by gitlabVersionRegex; edition is set to "pre" as coded.
+	body := []byte(`{"version":"17.0.0-pre","revision":"nightly"}`)
+
+	fp := &GitLabFingerprinter{}
+	resp := &http.Response{
+		StatusCode: 200,
+		Header: http.Header{
+			"Content-Type": []string{"application/json"},
+		},
+		Body: io.NopCloser(bytes.NewReader(body)),
+	}
+
+	result, err := fp.Fingerprint(resp, body)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "gitlab", result.Technology)
+	assert.Equal(t, "17.0.0", result.Version)
+	assert.Equal(t, "pre", result.Metadata["edition"])
 }
 
 func TestGitLabFingerprinter_Integration(t *testing.T) {
