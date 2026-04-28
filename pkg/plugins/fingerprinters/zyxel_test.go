@@ -225,7 +225,7 @@ func TestZyxelFingerprinter_Fingerprint(t *testing.T) {
 			wantResult:    true,
 			wantTech:      "zyxel-firewall",
 			wantVersion:   "5.38",
-			wantCPEPrefix: "cpe:2.3:o:zyxel:atp_firmware:5.38:",
+			wantCPEPrefix: "cpe:2.3:o:zyxel:zld_firmware:5.38:",
 		},
 		{
 			name:       "extracts model name and uses model-specific CPE",
@@ -293,7 +293,7 @@ func TestZyxelFingerprinter_Fingerprint(t *testing.T) {
 			body:          "",
 			wantResult:    true,
 			wantTech:      "zyxel-firewall",
-			wantCPEPrefix: "cpe:2.3:o:zyxel:atp_firmware:",
+			wantCPEPrefix: "cpe:2.3:o:zyxel:zld_firmware:",
 		},
 		// Brand alone without model — should NOT detect
 		{
@@ -316,9 +316,9 @@ func TestZyxelFingerprinter_Fingerprint(t *testing.T) {
 			wantResult:    true,
 			wantTech:      "zyxel-firewall",
 		},
-		// USG model (not FLEX, not ATP, not VPN) — tests the default CPE branch
+		// USG model (not FLEX, not ATP, not VPN) — tests the USG CPE branch
 		{
-			name:       "generates default CPE for USG model",
+			name:       "generates USG CPE for USG model",
 			statusCode: 200,
 			headers: http.Header{
 				"Content-Type": []string{"text/html"},
@@ -326,8 +326,20 @@ func TestZyxelFingerprinter_Fingerprint(t *testing.T) {
 			body:          `<html><body><form action="/ztp/cgi-bin/handler"><p>Zyxel USG40</p></form></body></html>`,
 			wantResult:    true,
 			wantTech:      "zyxel-firewall",
-			wantCPEPrefix: "cpe:2.3:o:zyxel:atp_firmware:",
+			wantCPEPrefix: "cpe:2.3:o:zyxel:usg_firmware:",
 			wantModel:     "USG40",
+		},
+		// Redirect-only detection with no model — uses generic ZLD CPE
+		{
+			name:       "redirect-only detection uses generic ZLD CPE (no model available)",
+			statusCode: 302,
+			headers: http.Header{
+				"Location": []string{"/ztp/cgi-bin/handler"},
+			},
+			body:          "",
+			wantResult:    true,
+			wantTech:      "zyxel-firewall",
+			wantCPEPrefix: "cpe:2.3:o:zyxel:zld_firmware:",
 		},
 	}
 
@@ -366,7 +378,10 @@ func TestZyxelFingerprinter_Fingerprint(t *testing.T) {
 				t.Errorf("Version = %q, want %q", result.Version, tt.wantVersion)
 			}
 
-			if tt.wantCPEPrefix != "" && len(result.CPEs) > 0 {
+			if tt.wantCPEPrefix != "" {
+				if len(result.CPEs) == 0 {
+					t.Fatalf("CPEs is empty, want prefix %q", tt.wantCPEPrefix)
+				}
 				if !strings.HasPrefix(result.CPEs[0], tt.wantCPEPrefix) {
 					t.Errorf("CPE[0] = %q, want prefix %q", result.CPEs[0], tt.wantCPEPrefix)
 				}
@@ -422,9 +437,9 @@ func TestExtractZyxelVersion(t *testing.T) {
 			want:  "",
 		},
 		{
-			name:  "extracts numeric portion even when trailed by letters",
+			name:  "rejects version trailed by letters",
 			input: "version=5.38abc",
-			want:  "5.38", // regex captures "5.38" before the non-numeric suffix; validation passes
+			want:  "",
 		},
 		{
 			name:  "does not extract jQuery version from script path",
@@ -496,6 +511,16 @@ func TestExtractZyxelModel(t *testing.T) {
 			name:  "USG40",
 			input: "USG40 Administration",
 			want:  "USG40",
+		},
+		{
+			name:  "ATP100W",
+			input: "Welcome to ATP100W",
+			want:  "ATP100W",
+		},
+		{
+			name:  "USG FLEX 50AX",
+			input: "USG FLEX 50AX Login",
+			want:  "USG FLEX 50AX",
 		},
 		{
 			name:  "returns empty when no model found",
@@ -621,13 +646,15 @@ func TestZyxelCPEProduct(t *testing.T) {
 		model string
 		want  string
 	}{
-		{name: "empty model defaults to atp_firmware", model: "", want: "atp_firmware"},
+		{name: "empty model defaults to zld_firmware", model: "", want: "zld_firmware"},
 		{name: "ATP model", model: "ATP200", want: "atp_firmware"},
 		{name: "USG FLEX model", model: "USG FLEX 100", want: "usg_flex_firmware"},
-		{name: "USG FLEX H model", model: "USG FLEX 200H", want: "usg_flex_h_firmware"},
+		{name: "USG FLEX H model via suffix", model: "USG FLEX 200H", want: "usg_flex_h_firmware"},
+		{name: "USG FLEX AX model", model: "USG FLEX 50AX", want: "usg_flex_firmware"},
 		{name: "VPN model", model: "VPN300", want: "vpn_firmware"},
-		{name: "USG model defaults to atp_firmware", model: "USG40", want: "atp_firmware"},
-		{name: "USG-VPN model defaults to atp_firmware", model: "USG20-VPN", want: "atp_firmware"},
+		{name: "USG model", model: "USG40", want: "usg_firmware"},
+		{name: "USG-VPN model", model: "USG20-VPN", want: "usg_firmware"},
+		{name: "ATP W variant", model: "ATP100W", want: "atp_firmware"},
 	}
 
 	for _, tt := range tests {

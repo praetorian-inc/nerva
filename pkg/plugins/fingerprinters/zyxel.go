@@ -64,7 +64,8 @@ import (
 //   - USG FLEX H       → cpe:2.3:o:zyxel:usg_flex_h_firmware:{version}:*:*:*:*:*:*:*
 //   - USG FLEX         → cpe:2.3:o:zyxel:usg_flex_firmware:{version}:*:*:*:*:*:*:*
 //   - VPN              → cpe:2.3:o:zyxel:vpn_firmware:{version}:*:*:*:*:*:*:*
-//   - Default/USG      → cpe:2.3:o:zyxel:atp_firmware:{version}:*:*:*:*:*:*:*
+//   - USG series       → cpe:2.3:o:zyxel:usg_firmware:{version}:*:*:*:*:*:*:*
+//   - Unknown/no model → cpe:2.3:o:zyxel:zld_firmware:{version}:*:*:*:*:*:*:*
 //
 // Security Risks:
 //   - CVE-2024-11667 (CVSS 9.8): Directory traversal in web management interface;
@@ -88,8 +89,11 @@ func init() {
 //   - "Version: V5.38"      → captures "5.38"
 //   - "fw_ver=5.38.1"       → captures "5.38.1"
 //   - "fw: V5.38(ABZH.0)"   → captures "5.38"
+//
+// Requires a word boundary or non-alphanumeric character after the version to
+// prevent matching "5.38abc".
 var zyxelFirmwareContextPattern = regexp.MustCompile(
-	`(?i)(?:firmware|version|fw_?ver|fw)[:\s=]*V?(\d+\.\d+(?:\.\d+)?)(?:\([^)]*\))?`,
+	`(?i)(?:firmware|version|fw_?ver|fw)[:\s=]*V?(\d+\.\d+(?:\.\d+)?)(?:\([^)]*\))?(?:[^0-9a-zA-Z]|$)`,
 )
 
 // zyxelVPrefixPattern is a fallback that matches a version with an explicit
@@ -99,8 +103,11 @@ var zyxelFirmwareContextPattern = regexp.MustCompile(
 // Matches:
 //   - "V5.38"          → captures "5.38"
 //   - "V5.38(ABZH.0)"  → captures "5.38"
+//
+// Requires a word boundary or non-alphanumeric character after the version to
+// prevent matching "V5.38abc".
 var zyxelVPrefixPattern = regexp.MustCompile(
-	`V(\d+\.\d+(?:\.\d+)?)(?:\([A-Za-z0-9.]+\))?`,
+	`V(\d+\.\d+(?:\.\d+)?)(?:\([A-Za-z0-9.]+\))?(?:[^0-9a-zA-Z]|$)`,
 )
 
 // zyxelVersionValidRegex validates extracted version strings before CPE use.
@@ -112,10 +119,14 @@ var zyxelVersionValidRegex = regexp.MustCompile(`^\d+\.\d+(?:\.\d+)?$`)
 // (e.g., "5.38" is 4 chars).
 const zyxelMaxVersionLen = 20
 
+// zyxelBrandPattern is a precompiled case-insensitive regex for Zyxel brand detection.
+// Used in Fingerprint() to avoid strings.ToLower allocation on the full body.
+var zyxelBrandPattern = regexp.MustCompile(`(?i)zyxel`)
+
 // zyxelModelPattern matches Zyxel model identifiers in page body.
-// Ordered by specificity to avoid USG FLEX H being matched as USG FLEX.
+// Trailing optional letters cover product variants (ATP100W, USG FLEX 50AX, USG FLEX 200H).
 var zyxelModelPattern = regexp.MustCompile(
-	`(?i)\b(ATP\d{3}|USG\s+FLEX\s+\d+H|USG\s+FLEX\s+\d+|USG\d+(?:-VPN)?|VPN\d+)\b`,
+	`(?i)\b(ATP\d{3,4}[A-Z]{0,2}|USG\s+FLEX\s+\d+[A-Z]{0,2}|USG\d+(?:-VPN)?|VPN\d+[A-Z]?)\b`,
 )
 
 func (f *ZyxelFingerprinter) Name() string {
@@ -142,9 +153,9 @@ func (f *ZyxelFingerprinter) Match(resp *http.Response) bool {
 		}
 	}
 
-	// Accept text/html for body-based detection
+	// Accept text/html for body-based detection (case-insensitive)
 	ct := resp.Header.Get("Content-Type")
-	if strings.Contains(ct, "text/html") {
+	if strings.Contains(strings.ToLower(ct), "text/html") {
 		return true
 	}
 
@@ -172,8 +183,7 @@ func (f *ZyxelFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fin
 
 	// Signal 3 (corroborated): Zyxel brand + model identifier in body.
 	// Brand alone is insufficient — it appears on comparison pages and news sites.
-	bodyLower := strings.ToLower(bodyStr)
-	hasZyxelBrand := strings.Contains(bodyLower, "zyxel")
+	hasZyxelBrand := zyxelBrandPattern.MatchString(bodyStr)
 	hasModelID := zyxelModelPattern.MatchString(bodyStr)
 	brandPlusModel := hasZyxelBrand && hasModelID
 
@@ -222,20 +232,21 @@ func (f *ZyxelFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fin
 //
 // Returns empty string if no version is found or validation fails.
 func extractZyxelVersion(bodyStr string) string {
-	// Primary: firmware context required
 	for _, pat := range []*regexp.Regexp{zyxelFirmwareContextPattern, zyxelVPrefixPattern} {
-		matches := pat.FindStringSubmatch(bodyStr)
-		if len(matches) < 2 {
-			continue
+		allMatches := pat.FindAllStringSubmatch(bodyStr, -1)
+		for _, matches := range allMatches {
+			if len(matches) < 2 {
+				continue
+			}
+			version := matches[1]
+			if len(version) > zyxelMaxVersionLen {
+				continue
+			}
+			if !zyxelVersionValidRegex.MatchString(version) {
+				continue
+			}
+			return version
 		}
-		version := matches[1]
-		if len(version) > zyxelMaxVersionLen {
-			continue
-		}
-		if !zyxelVersionValidRegex.MatchString(version) {
-			continue
-		}
-		return version
 	}
 	return ""
 }
@@ -255,7 +266,7 @@ func extractZyxelModel(bodyStr string) string {
 // The mapping follows Zyxel's NVD CPE naming conventions.
 func zyxelCPEProduct(model string) string {
 	if model == "" {
-		return "atp_firmware"
+		return "zld_firmware"
 	}
 	upper := strings.ToUpper(model)
 	switch {
@@ -267,9 +278,11 @@ func zyxelCPEProduct(model string) string {
 		return "usg_flex_firmware"
 	case strings.HasPrefix(upper, "VPN"):
 		return "vpn_firmware"
+	case strings.HasPrefix(upper, "USG"):
+		return "usg_firmware"
 	default:
-		// USG series and any unrecognized model default to atp_firmware
-		return "atp_firmware"
+		// Unknown model: use generic ZLD firmware CPE to avoid misclassifying as ATP
+		return "zld_firmware"
 	}
 }
 
