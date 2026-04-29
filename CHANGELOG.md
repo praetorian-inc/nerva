@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- MOVEit Transfer SFTP detection via SSH banner (`SSH-2.0-MOVEit Transfer SFTP`) on port 22; emits `moveit` technology and `cpe:2.3:a:progress:moveit_transfer:*` for SSH services (LAB-1839).
 - Cleo Harmony/VLTrader/LexiCom, CrushFTP, and MOVEit Transfer HTTP fingerprinters for Managed File Transfer (MFT) product detection (LAB-1839).
   - Cleo: CVE-2024-50623, CVE-2024-55956
   - CrushFTP: CVE-2025-2825, CVE-2024-4040

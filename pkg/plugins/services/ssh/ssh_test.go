@@ -188,6 +188,55 @@ func TestBuildSSHFindings(t *testing.T) {
 	})
 }
 
+func TestSSHPlugin_BannerFingerprintingMOVEit(t *testing.T) {
+	const moveitBanner = "SSH-2.0-MOVEit Transfer SFTP\r\n"
+	const wildCardCPE = "cpe:2.3:a:progress:moveit_transfer:*:*:*:*:*:*:*:*"
+
+	payload := plugins.ServiceSSH{
+		Banner: moveitBanner,
+	}
+	applySSHBannerFingerprinting(&payload, moveitBanner)
+
+	if len(payload.Technologies) == 0 {
+		t.Fatal("Technologies is empty, want at least one")
+	}
+	if payload.Technologies[0] != "moveit" {
+		t.Errorf("Technologies[0] = %q, want moveit", payload.Technologies[0])
+	}
+
+	if len(payload.CPEs) == 0 {
+		t.Fatal("CPEs is empty, want at least one")
+	}
+	if payload.CPEs[0] != wildCardCPE {
+		t.Errorf("CPEs[0] = %q, want %q", payload.CPEs[0], wildCardCPE)
+	}
+
+	if payload.FingerprintMetadata == nil {
+		t.Fatal("FingerprintMetadata is nil")
+	}
+	meta, ok := payload.FingerprintMetadata["moveit"]
+	if !ok {
+		t.Fatal("FingerprintMetadata[moveit] is missing")
+	}
+	if v, ok := meta["product"].(string); !ok || v != "MOVEit Transfer SFTP" {
+		t.Errorf("FingerprintMetadata[moveit][product] = %v, want MOVEit Transfer SFTP", meta["product"])
+	}
+	if v, ok := meta["detection_method"].(string); !ok || v != "ssh_banner" {
+		t.Errorf("FingerprintMetadata[moveit][detection_method] = %v, want ssh_banner", meta["detection_method"])
+	}
+	if v, ok := meta["ssh_protocol_version"].(string); !ok || v != "2.0" {
+		t.Errorf("FingerprintMetadata[moveit][ssh_protocol_version] = %v, want 2.0", meta["ssh_protocol_version"])
+	}
+
+	// Non-MOVEit banner must leave payload unmodified
+	plain := plugins.ServiceSSH{Banner: "SSH-2.0-OpenSSH_8.9p1\r\n"}
+	applySSHBannerFingerprinting(&plain, plain.Banner)
+	if len(plain.Technologies) != 0 || len(plain.CPEs) != 0 || plain.FingerprintMetadata != nil {
+		t.Errorf("non-MOVEit banner should not populate Technologies/CPEs/FingerprintMetadata, got technologies=%v cpes=%v meta=%v",
+			plain.Technologies, plain.CPEs, plain.FingerprintMetadata)
+	}
+}
+
 func TestSSH(t *testing.T) {
 	testcases := []test.Testcase{
 		{

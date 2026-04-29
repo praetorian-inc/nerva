@@ -14,6 +14,9 @@
 
 /*
 Package fingerprinters provides HTTP fingerprinting for Progress MOVEit Transfer.
+Also detects MOVEit Transfer SFTP from the SSH version-exchange banner
+(`SSH-2.0-MOVEit Transfer SFTP`) via FingerprintMOVEitSSHBanner — used by the
+SSH service plugin to enrich port-22 results with the same MOVEit CPE.
 
 # What We Detect
 
@@ -292,6 +295,52 @@ func extractMOVEitVersion(body []byte) (version, docYear string) {
 		return "", year
 	}
 	return major, year
+}
+
+// moveitSSHBannerRegex matches the MOVEit Transfer SFTP version-string banner
+// per RFC 4253 §4.2 ("SSH-protoversion-softwareversion").
+//
+// Real example: "SSH-2.0-MOVEit Transfer SFTP\r\n"
+// Captured group 1 is the SSH protocol version (e.g. "2.0") — NOT the MOVEit
+// product version. Product version cannot be derived from this banner; obtain
+// it via /MOVEitisapi/MOVEitisapi.dll?action=capa (out of scope for nerva).
+//
+// nmap-service-probes carries the same matcher form. Trailing CR/LF tolerated;
+// anchored to prevent partial-line spoofing inside multi-line server banners.
+var moveitSSHBannerRegex = regexp.MustCompile(
+	`^SSH-([0-9]+\.[0-9]+)-MOVEit Transfer SFTP\s*$`,
+)
+
+// FingerprintMOVEitSSHBanner detects Progress MOVEit Transfer SFTP from a
+// connection banner. Returns nil for non-matching banners so callers can
+// distinguish "not MOVEit" from a hard error.
+//
+// The function only inspects the version-exchange line and does not perform
+// any active probing. It is safe to call on any SSH banner; the regex anchor
+// rejects partial matches.
+func FingerprintMOVEitSSHBanner(banner string) *FingerprintResult {
+	trimmed := strings.TrimRight(banner, "\r\n")
+	if len(trimmed) > 256 {
+		// SSH version-exchange lines are bounded at 255 bytes per RFC 4253 §4.2.
+		// Reject obviously oversized inputs.
+		return nil
+	}
+	m := moveitSSHBannerRegex.FindStringSubmatch(trimmed)
+	if m == nil {
+		return nil
+	}
+	return &FingerprintResult{
+		Technology: "moveit",
+		Version:    "",
+		CPEs:       []string{buildMOVEitCPE("")},
+		Metadata: map[string]any{
+			"vendor":               "Progress",
+			"product":              "MOVEit Transfer SFTP",
+			"detection_method":     "ssh_banner",
+			"ssh_protocol_version": m[1],
+			"banner":               trimmed,
+		},
+	}
 }
 
 // buildMOVEitCPE constructs the NVD-canonical CPE 2.3 string for MOVEit Transfer.

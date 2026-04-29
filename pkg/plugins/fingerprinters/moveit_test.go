@@ -545,6 +545,102 @@ func TestBuildMOVEitCPE(t *testing.T) {
 	}
 }
 
+// ── SSH banner fingerprinting ─────────────────────────────────────────────────
+
+func TestFingerprintMOVEitSSHBanner(t *testing.T) {
+	const wildCardCPE = "cpe:2.3:a:progress:moveit_transfer:*:*:*:*:*:*:*:*"
+
+	t.Run("positive cases", func(t *testing.T) {
+		tests := []struct {
+			name            string
+			banner          string
+			wantProtoVer    string
+			wantBannerField string
+		}{
+			{
+				name:            "real banner with CRLF",
+				banner:          "SSH-2.0-MOVEit Transfer SFTP\r\n",
+				wantProtoVer:    "2.0",
+				wantBannerField: "SSH-2.0-MOVEit Transfer SFTP",
+			},
+			{
+				name:            "banner without trailing CRLF",
+				banner:          "SSH-2.0-MOVEit Transfer SFTP",
+				wantProtoVer:    "2.0",
+				wantBannerField: "SSH-2.0-MOVEit Transfer SFTP",
+			},
+			{
+				name:            "SSH-1.99 protocol version",
+				banner:          "SSH-1.99-MOVEit Transfer SFTP\r\n",
+				wantProtoVer:    "1.99",
+				wantBannerField: "SSH-1.99-MOVEit Transfer SFTP",
+			},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				result := FingerprintMOVEitSSHBanner(tt.banner)
+				if result == nil {
+					t.Fatal("FingerprintMOVEitSSHBanner() returned nil, want non-nil")
+				}
+				if result.Technology != "moveit" {
+					t.Errorf("Technology = %q, want moveit", result.Technology)
+				}
+				if result.Version != "" {
+					t.Errorf("Version = %q, want empty (not derivable from banner)", result.Version)
+				}
+				if len(result.CPEs) == 0 {
+					t.Fatal("CPEs is empty, want at least one")
+				}
+				if result.CPEs[0] != wildCardCPE {
+					t.Errorf("CPE = %q, want %q", result.CPEs[0], wildCardCPE)
+				}
+				if result.Metadata == nil {
+					t.Fatal("Metadata is nil")
+				}
+				if v, ok := result.Metadata["ssh_protocol_version"].(string); !ok || v != tt.wantProtoVer {
+					t.Errorf("Metadata[ssh_protocol_version] = %v, want %q", result.Metadata["ssh_protocol_version"], tt.wantProtoVer)
+				}
+				if v, ok := result.Metadata["banner"].(string); !ok || v != tt.wantBannerField {
+					t.Errorf("Metadata[banner] = %v, want %q", result.Metadata["banner"], tt.wantBannerField)
+				}
+				if v, ok := result.Metadata["detection_method"].(string); !ok || v != "ssh_banner" {
+					t.Errorf("Metadata[detection_method] = %v, want ssh_banner", result.Metadata["detection_method"])
+				}
+				if v, ok := result.Metadata["product"].(string); !ok || v != "MOVEit Transfer SFTP" {
+					t.Errorf("Metadata[product] = %v, want MOVEit Transfer SFTP", result.Metadata["product"])
+				}
+				if v, ok := result.Metadata["vendor"].(string); !ok || v != "Progress" {
+					t.Errorf("Metadata[vendor] = %v, want Progress", result.Metadata["vendor"])
+				}
+			})
+		}
+	})
+
+	t.Run("negative cases", func(t *testing.T) {
+		negatives := []struct {
+			name   string
+			banner string
+		}{
+			{name: "empty string", banner: ""},
+			{name: "OpenSSH banner", banner: "SSH-2.0-OpenSSH_8.9p1\r\n"},
+			{name: "CrushFTP banner", banner: "SSH-2.0-CrushFTPSSHD\r\n"},
+			{name: "banner embedded mid-line (anchor must reject)", banner: "hello SSH-2.0-MOVEit Transfer SFTP world"},
+			{name: "extra suffix after product name", banner: "SSH-2.0-MOVEit Transfer SFTP modified suffix\r\n"},
+			{name: "oversized banner (>256 chars)", banner: "SSH-2.0-MOVEit Transfer SFTP" + string(make([]byte, 250))},
+		}
+
+		for _, tt := range negatives {
+			t.Run(tt.name, func(t *testing.T) {
+				result := FingerprintMOVEitSSHBanner(tt.banner)
+				if result != nil {
+					t.Errorf("FingerprintMOVEitSSHBanner(%q) = %+v, want nil", tt.banner, result)
+				}
+			})
+		}
+	})
+}
+
 // ── Integration test ──────────────────────────────────────────────────────────
 
 func TestMOVEitFingerprinter_Integration(t *testing.T) {

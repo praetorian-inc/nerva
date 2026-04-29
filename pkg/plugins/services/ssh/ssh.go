@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/praetorian-inc/nerva/pkg/plugins"
+	"github.com/praetorian-inc/nerva/pkg/plugins/fingerprinters"
 	utils "github.com/praetorian-inc/nerva/pkg/plugins/pluginutils"
 	"github.com/praetorian-inc/nerva/third_party/cryptolib/ssh"
 )
@@ -344,6 +345,7 @@ func (p *SSHPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 		payload := plugins.ServiceSSH{
 			Banner: banner,
 		}
+		applySSHBannerFingerprinting(&payload, banner)
 		return plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP), nil
 	}
 
@@ -420,6 +422,7 @@ func (p *SSHPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 			PasswordAuthEnabled: passwordAuth,
 			Algo:                fmt.Sprintf("%s", algo),
 		}
+		applySSHBannerFingerprinting(&payload, banner)
 		return makeSSHService(target, payload, algo, passwordAuth), nil
 	}
 	if firstKeyExchange := t.SessionID == nil; firstKeyExchange {
@@ -438,6 +441,7 @@ func (p *SSHPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 			PasswordAuthEnabled: passwordAuth,
 			Algo:                fmt.Sprintf("%s", algo),
 		}
+		applySSHBannerFingerprinting(&payload, banner)
 		return makeSSHService(target, payload, algo, passwordAuth), nil
 	}
 
@@ -451,6 +455,7 @@ func (p *SSHPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 			PasswordAuthEnabled: passwordAuth,
 			Algo:                fmt.Sprintf("%s", algo),
 		}
+		applySSHBannerFingerprinting(&payload, banner)
 		return makeSSHService(target, payload, algo, passwordAuth), nil
 	}
 	otherInit := &ssh.KexInitMsg{
@@ -474,6 +479,7 @@ func (p *SSHPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 			PasswordAuthEnabled: passwordAuth,
 			Algo:                fmt.Sprintf("%s", algo),
 		}
+		applySSHBannerFingerprinting(&payload, banner)
 		return makeSSHService(target, payload, algo, passwordAuth), nil
 	}
 	magics := ssh.HandshakeMagics{
@@ -492,6 +498,7 @@ func (p *SSHPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 			PasswordAuthEnabled: passwordAuth,
 			Algo:                fmt.Sprintf("%s", algo),
 		}
+		applySSHBannerFingerprinting(&payload, banner)
 		return makeSSHService(target, payload, algo, passwordAuth), nil
 	}
 	hostKey, err := ssh.ParsePublicKey(result.HostKey)
@@ -501,6 +508,7 @@ func (p *SSHPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 			PasswordAuthEnabled: passwordAuth,
 			Algo:                fmt.Sprintf("%s", algo),
 		}
+		applySSHBannerFingerprinting(&payload, banner)
 		return makeSSHService(target, payload, algo, passwordAuth), nil
 	}
 	fingerprint := ssh.FingerprintSHA256(hostKey)
@@ -514,6 +522,7 @@ func (p *SSHPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 		HostKeyType:         hostKey.Type(),
 		HostKeyFingerprint:  fingerprint,
 	}
+	applySSHBannerFingerprinting(&payload, banner)
 	return makeSSHService(target, payload, algo, passwordAuth), nil
 }
 
@@ -526,4 +535,19 @@ func (p *SSHPlugin) Type() plugins.Protocol {
 
 func (p *SSHPlugin) Priority() int {
 	return 2
+}
+
+// applySSHBannerFingerprinting enriches the payload with product-level
+// fingerprinting derived from the SSH version-exchange banner (e.g., MOVEit
+// Transfer SFTP). Mutates payload in place. No-op when the banner doesn't
+// match any known product.
+func applySSHBannerFingerprinting(payload *plugins.ServiceSSH, banner string) {
+	if r := fingerprinters.FingerprintMOVEitSSHBanner(banner); r != nil {
+		payload.Technologies = append(payload.Technologies, r.Technology)
+		payload.CPEs = append(payload.CPEs, r.CPEs...)
+		if payload.FingerprintMetadata == nil {
+			payload.FingerprintMetadata = map[string]map[string]any{}
+		}
+		payload.FingerprintMetadata[r.Technology] = r.Metadata
+	}
 }
