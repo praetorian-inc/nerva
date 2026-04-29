@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Cleo Harmony/VLTrader/LexiCom, CrushFTP, and MOVEit Transfer HTTP fingerprinters for Managed File Transfer (MFT) product detection (LAB-1839).
+  - Cleo: CVE-2024-50623, CVE-2024-55956
+  - CrushFTP: CVE-2025-2825, CVE-2024-4040
+  - MOVEit Transfer: CVE-2024-5806
 - ConnectWise ScreenConnect HTTP fingerprinter (LAB-1838, CVE-2024-1709, CVE-2024-1708)
 - HP iLO, HP Embedded Web Server (LaserJet/PageWide/OfficeJet/DesignJet), and HP ChaiSOE fingerprinters (LAB-1834).
 - AJP (Apache JServ Protocol) fingerprinter on port 8009 using CPing/CPong handshake (LAB-1842).
@@ -20,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CITATION.cff for research citations
 
 ### Changed
+- Cleo fingerprinter: probe endpoint changed to `/Synchronization`; added WWW-Authenticate realm detection (`www_authenticate` method); added body+server_header corroboration via VersaLex-specific markers; added Linux/Windows OS suffix tolerance in Server header.
+- CrushFTP fingerprinter: probe endpoint changed to `/WebInterface/`; removed version extraction from Server header (fixed string `"CrushFTP HTTP Server"`); added P3P header detection (`p3p_header` method) and cookie pair detection (`CrushAuth` + `currentAuth`); wildcard CPE emitted when no version found.
+- MOVEit fingerprinter: corrected doc-year-to-major-version mapping (2021→13, 2024→16); added DMZCookieTest cookie as primary Tier-1 detection signal (`dmz_cookie` method); added siLock cookie heritage identifier tracking in metadata.
 - Renamed examples/scan.go to examples/service-fingerprinting-example.go
 
 ## [1.0.0] - 2024
