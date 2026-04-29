@@ -303,6 +303,236 @@ func buildValidQPTMResponse() []byte {
 	return header
 }
 
+// TestEnrichIUA tests metadata extraction from IUA responses
+func TestEnrichIUA(t *testing.T) {
+	tests := []struct {
+		name            string
+		response        []byte
+		wantClass       uint8
+		wantType        uint8
+		wantErrorCode   uint32
+		wantInfoString  string
+		wantError       bool
+	}{
+		{
+			name:          "header-only ASP Up Ack no TLV params",
+			response:      buildValidASPUpAck(),
+			wantClass:     ASPSM_CLASS,
+			wantType:      ASP_UP_ACK,
+			wantErrorCode: 0,
+			wantInfoString: "",
+			wantError:     false,
+		},
+		{
+			name:           "response with Info String TLV",
+			response:       buildResponseWithInfoString("OpenSS7"),
+			wantClass:      ASPSM_CLASS,
+			wantType:       ASP_UP_ACK,
+			wantErrorCode:  0,
+			wantInfoString: "OpenSS7",
+			wantError:      false,
+		},
+		{
+			name:           "response with Error Code TLV",
+			response:       buildResponseWithErrorCode(0x00000001),
+			wantClass:      MGMT_CLASS,
+			wantType:       ERROR_TYPE,
+			wantErrorCode:  0x00000001,
+			wantInfoString: "",
+			wantError:      false,
+		},
+		{
+			name:           "response with both Info String and Error Code TLVs",
+			response:       buildResponseWithInfoAndError("invalid ASP", 0x00000001),
+			wantClass:      MGMT_CLASS,
+			wantType:       ERROR_TYPE,
+			wantErrorCode:  0x00000001,
+			wantInfoString: "invalid ASP",
+			wantError:      false,
+		},
+		{
+			name:      "too short response returns error",
+			response:  []byte{0x01, 0x00, 0x03},
+			wantError: true,
+		},
+		{
+			name:           "QPTM class response header only",
+			response:       buildValidQPTMResponse(),
+			wantClass:      QPTM_CLASS,
+			wantType:       0x01,
+			wantErrorCode:  0,
+			wantInfoString: "",
+			wantError:      false,
+		},
+		{
+			name:           "response with empty info string",
+			response:       buildResponseWithInfoString(""),
+			wantClass:      ASPSM_CLASS,
+			wantType:       ASP_UP_ACK,
+			wantErrorCode:  0,
+			wantInfoString: "",
+			wantError:      false,
+		},
+		{
+			name: "truncated TLV parameter length exceeds message",
+			response: func() []byte {
+				msg := make([]byte, 16)
+				msg[0] = 0x01        // Version
+				msg[1] = 0x00        // Reserved
+				msg[2] = ASPSM_CLASS // Message Class
+				msg[3] = ASP_UP_ACK  // Message Type
+				binary.BigEndian.PutUint32(msg[4:8], 16) // msgLength = 16
+				// TLV at offset 8: tag=0x0004, paramLength=20 (exceeds msgLength of 16)
+				binary.BigEndian.PutUint16(msg[8:10], 0x0004)
+				binary.BigEndian.PutUint16(msg[10:12], 20)
+				return msg
+			}(),
+			wantClass:      ASPSM_CLASS,
+			wantType:       ASP_UP_ACK,
+			wantErrorCode:  0,
+			wantInfoString: "",
+			wantError:      false,
+		},
+		{
+			name: "TLV with paramLength less than minimum",
+			response: func() []byte {
+				msg := make([]byte, 16)
+				msg[0] = 0x01        // Version
+				msg[1] = 0x00        // Reserved
+				msg[2] = ASPSM_CLASS // Message Class
+				msg[3] = ASP_UP_ACK  // Message Type
+				binary.BigEndian.PutUint32(msg[4:8], 16) // msgLength = 16
+				// TLV at offset 8: tag=0x0004, paramLength=2 (less than minimum of 4)
+				binary.BigEndian.PutUint16(msg[8:10], 0x0004)
+				binary.BigEndian.PutUint16(msg[10:12], 2)
+				return msg
+			}(),
+			wantClass:      ASPSM_CLASS,
+			wantType:       ASP_UP_ACK,
+			wantErrorCode:  0,
+			wantInfoString: "",
+			wantError:      false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotClass, gotType, gotCode, gotInfo, err := enrichIUA(tt.response)
+
+			if tt.wantError {
+				assert.Error(t, err)
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantClass, gotClass, "messageClass mismatch")
+			assert.Equal(t, tt.wantType, gotType, "messageType mismatch")
+			assert.Equal(t, tt.wantErrorCode, gotCode, "errorCode mismatch")
+			assert.Equal(t, tt.wantInfoString, gotInfo, "infoString mismatch")
+		})
+	}
+}
+
+// buildResponseWithInfoString constructs an ASP Up Ack with an Info String TLV (tag 0x0004).
+func buildResponseWithInfoString(info string) []byte {
+	infoBytes := []byte(info)
+	// paramLength includes the 4-byte tag+length fields
+	paramLength := uint16(4 + len(infoBytes))
+
+	// Pad the value to a 4-byte boundary
+	paddedValueLen := len(infoBytes)
+	if len(infoBytes)%4 != 0 {
+		paddedValueLen += 4 - (len(infoBytes) % 4)
+	}
+	// When the value is empty the TLV block is still 4 bytes (tag+length only)
+	if len(infoBytes) == 0 {
+		paddedValueLen = 0
+	}
+
+	totalLen := uint32(HEADER_LENGTH + 4 + paddedValueLen)
+
+	msg := make([]byte, totalLen)
+
+	// Header
+	msg[0] = 0x01        // Version
+	msg[1] = 0x00        // Reserved
+	msg[2] = ASPSM_CLASS // Message Class
+	msg[3] = ASP_UP_ACK  // Message Type
+	binary.BigEndian.PutUint32(msg[4:8], totalLen)
+
+	// TLV: Info String (tag 0x0004)
+	binary.BigEndian.PutUint16(msg[8:10], 0x0004)
+	binary.BigEndian.PutUint16(msg[10:12], paramLength)
+	copy(msg[12:], infoBytes)
+
+	return msg
+}
+
+// buildResponseWithErrorCode constructs an Error response with an Error Code TLV (tag 0x000c).
+func buildResponseWithErrorCode(code uint32) []byte {
+	// Error Code TLV: tag(2) + length(2) + value(4) = 8 bytes, already 4-byte aligned
+	totalLen := uint32(HEADER_LENGTH + 8)
+
+	msg := make([]byte, totalLen)
+
+	// Header
+	msg[0] = 0x01       // Version
+	msg[1] = 0x00       // Reserved
+	msg[2] = MGMT_CLASS // Message Class: MGMT
+	msg[3] = ERROR_TYPE // Message Type: Error
+	binary.BigEndian.PutUint32(msg[4:8], totalLen)
+
+	// TLV: Error Code (tag 0x000c), length = 8
+	binary.BigEndian.PutUint16(msg[8:10], 0x000c)
+	binary.BigEndian.PutUint16(msg[10:12], 0x0008)
+	binary.BigEndian.PutUint32(msg[12:16], code)
+
+	return msg
+}
+
+// buildResponseWithInfoAndError constructs an Error response with both Info String and Error Code TLVs.
+func buildResponseWithInfoAndError(info string, code uint32) []byte {
+	infoBytes := []byte(info)
+	infoParamLength := uint16(4 + len(infoBytes))
+
+	// Pad info value to 4-byte boundary
+	paddedInfoLen := len(infoBytes)
+	if len(infoBytes)%4 != 0 {
+		paddedInfoLen += 4 - (len(infoBytes) % 4)
+	}
+	if len(infoBytes) == 0 {
+		paddedInfoLen = 0
+	}
+
+	// Error Code TLV is always 8 bytes (4 header + 4 value, already aligned)
+	infoTLVSize := 4 + paddedInfoLen
+	errorTLVSize := 8
+	totalLen := uint32(HEADER_LENGTH + infoTLVSize + errorTLVSize)
+
+	msg := make([]byte, totalLen)
+
+	// Header
+	msg[0] = 0x01       // Version
+	msg[1] = 0x00       // Reserved
+	msg[2] = MGMT_CLASS // Message Class: MGMT
+	msg[3] = ERROR_TYPE // Message Type: Error
+	binary.BigEndian.PutUint32(msg[4:8], totalLen)
+
+	// TLV 1: Info String (tag 0x0004)
+	offset := HEADER_LENGTH
+	binary.BigEndian.PutUint16(msg[offset:offset+2], 0x0004)
+	binary.BigEndian.PutUint16(msg[offset+2:offset+4], infoParamLength)
+	copy(msg[offset+4:], infoBytes)
+	offset += 4 + paddedInfoLen
+
+	// TLV 2: Error Code (tag 0x000c)
+	binary.BigEndian.PutUint16(msg[offset:offset+2], 0x000c)
+	binary.BigEndian.PutUint16(msg[offset+2:offset+4], 0x0008)
+	binary.BigEndian.PutUint32(msg[offset+4:offset+8], code)
+
+	return msg
+}
+
 // mockConn implements net.Conn for testing
 type mockConn struct {
 	readData  []byte
