@@ -5,14 +5,24 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+    paths:
+      - '**/*.go'
+      - 'go.mod'
+      - 'go.sum'
+      - '.golangci*'
+      - 'Makefile'
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
   ci:
-    uses: praetorian-inc/public-workflows/.github/workflows/go-ci.yml@e7c1f39e9219a3256df321445d558e18cf3027c0  # v2.0.11
+    uses: praetorian-inc/public-workflows/.github/workflows/go-ci.yml@7c1302bdef0a72e7f5743738baa45272c8e1f8d7  # v2.1.0
     permissions:
       contents: read
     with:
