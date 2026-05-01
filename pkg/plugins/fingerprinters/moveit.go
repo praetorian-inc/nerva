@@ -13,7 +13,7 @@
 // limitations under the License.
 
 /*
-MOVEitFingerprinter detects Progress MOVEit Transfer instances over HTTP.
+Package fingerprinters provides HTTP fingerprinting for Progress MOVEit Transfer.
 Also detects MOVEit Transfer SFTP from the SSH version-exchange banner
 (`SSH-2.0-MOVEit Transfer SFTP`) via FingerprintMOVEitSSHBanner — used by the
 SSH service plugin to enrich port-22 results with the same MOVEit CPE.
