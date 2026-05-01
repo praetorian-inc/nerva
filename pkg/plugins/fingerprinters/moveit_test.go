@@ -310,6 +310,7 @@ func TestMOVEitFingerprinter_Fingerprint_Invalid(t *testing.T) {
 		{name: "Body length > 2 MiB rejected", statusCode: 200, body: `<div id="MOVEitPopUp"></div>` + string(make([]byte, 2*1024*1024+1))},
 		{name: "Status 500 rejected", statusCode: 500, body: `<div id="MOVEitPopUp"></div>`},
 		{name: "Status 503 rejected", statusCode: 503, body: `<div id="MOVEitPopUp"></div>`},
+		{name: "Status 199 rejected (lower boundary)", statusCode: 199, body: `<div id="MOVEitPopUp"></div>`},
 		{name: "Empty body", statusCode: 200, body: ""},
 		{name: "Partial marker: 'moveit' alone without full marker string", statusCode: 200, body: "<html><body>moveit to another folder</body></html>"},
 		{
@@ -509,6 +510,15 @@ func TestExtractMOVEitVersion(t *testing.T) {
 		{name: "2024 doc year → version 16 (corrected)", body: `<a href="https://docs.ipswitch.com/MOVEit/Transfer2024/Help/">Docs</a>`, wantVersion: "16", wantDocYear: "2024"},
 		{name: "Unknown year → doc_year returned, no version", body: `<a href="https://docs.ipswitch.com/MOVEit/Transfer2018/Help/">Docs</a>`, wantVersion: "", wantDocYear: "2018"},
 		{name: "No doc link → empty version and doc_year", body: `<div id="MOVEitPopUp"></div>`, wantVersion: "", wantDocYear: ""},
+		{
+			// moveitDocYearRegex.FindSubmatch returns the FIRST match. Lock the contract
+			// so a body containing both an old and a new doc-year link still resolves to
+			// the leading link's year, not the trailing one.
+			name:        "Multiple doc years: first match wins",
+			body:        `<a href="https://docs.ipswitch.com/MOVEit/Transfer2022/Help/">Old</a> <a href="https://docs.ipswitch.com/MOVEit/Transfer2024/Help/">New</a>`,
+			wantVersion: "14",
+			wantDocYear: "2022",
+		},
 	}
 
 	for _, tt := range tests {

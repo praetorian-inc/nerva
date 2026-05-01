@@ -256,6 +256,22 @@ func TestCleoFingerprinter_Fingerprint_Invalid(t *testing.T) {
 		{name: "Body length > 2 MiB rejected", statusCode: 200, body: "cleo harmony" + string(make([]byte, 2*1024*1024+1))},
 		{name: "Status 500 rejected", statusCode: 500, server: "Cleo Harmony/5.8.0.21", body: "<html><title>Cleo Harmony</title></html>"},
 		{name: "Status 503 rejected", statusCode: 503, body: "<html><title>Cleo Harmony</title></html>"},
+		{name: "Status 199 rejected (lower boundary)", statusCode: 199, server: "Cleo Harmony/5.8.0.21"},
+		{
+			// Server header regex must reject prefix-injection so that a vendor whose
+			// product name happens to end in "Cleo" (or a header that prepends fields
+			// before the brand string) does not falsely fingerprint as Cleo.
+			name:       "Server header with leading prefix not matched",
+			statusCode: 200,
+			server:     "NotCleo Harmony/5.8.0.21",
+		},
+		{
+			// Concatenated header values where "Cleo …" is not the leading product
+			// must not match — only the leading product slot is honoured per RFC 9110.
+			name:       "Server header substring inside another product banner",
+			statusCode: 200,
+			server:     "X-Powered-By: Cleo Harmony/5.8.0.21 (proxied)",
+		},
 		{name: "Empty body and no Cleo server header", statusCode: 200},
 		{name: "Cleo in body but no recognized variant", statusCode: 200, body: "<html><title>Cleo Admin</title><body>Cleo admin panel</body></html>"},
 	}

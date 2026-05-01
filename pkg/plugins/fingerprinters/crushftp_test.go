@@ -314,6 +314,7 @@ func TestCrushFTPFingerprinter_Fingerprint_Invalid(t *testing.T) {
 		{name: "Body length > 2 MiB rejected", statusCode: 200, body: "<title>CrushFTP WebInterface</title>" + string(make([]byte, 2*1024*1024+1))},
 		{name: "Status 500 rejected", statusCode: 500, server: "CrushFTP HTTP Server", body: "<html><title>CrushFTP WebInterface</title></html>"},
 		{name: "Status 503 rejected", statusCode: 503, body: "<html><title>CrushFTP WebInterface</title></html>"},
+		{name: "Status 199 rejected (lower boundary)", statusCode: 199, server: "CrushFTP HTTP Server"},
 		{name: "Empty body and no crushftp server header", statusCode: 200},
 	}
 

@@ -15,6 +15,7 @@
 package ssh
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -234,6 +235,72 @@ func TestSSHPlugin_BannerFingerprintingMOVEit(t *testing.T) {
 	if len(plain.Technologies) != 0 || len(plain.CPEs) != 0 || plain.FingerprintMetadata != nil {
 		t.Errorf("non-MOVEit banner should not populate Technologies/CPEs/FingerprintMetadata, got technologies=%v cpes=%v meta=%v",
 			plain.Technologies, plain.CPEs, plain.FingerprintMetadata)
+	}
+}
+
+// TestMakeSSHService_AppliesBannerFingerprinting locks in the centralized
+// integration: makeSSHService MUST run applySSHBannerFingerprinting on the
+// payload before constructing the *plugins.Service so every Run() return
+// path (including the early checkAlgo failure path) carries the banner-derived
+// Technologies / CPEs / FingerprintMetadata.
+//
+// Asserts on the marshaled metadata in service.Raw because CreateServiceFrom
+// serialises the payload into the Service.Raw json.RawMessage; that is the
+// shape downstream consumers actually observe.
+func TestMakeSSHService_AppliesBannerFingerprinting(t *testing.T) {
+	const moveitBanner = "SSH-2.0-MOVEit Transfer SFTP"
+	const wildCardCPE = "cpe:2.3:a:progress:moveit_transfer:*:*:*:*:*:*:*:*"
+
+	target := plugins.Target{Host: "test.moveit.local"}
+	payload := plugins.ServiceSSH{Banner: moveitBanner}
+
+	service := makeSSHService(target, payload, nil, false)
+	if service == nil {
+		t.Fatal("makeSSHService returned nil, want *plugins.Service")
+	}
+
+	// Round-trip the marshaled metadata so we observe the same shape downstream
+	// consumers see (Service.Raw is the canonical surface for ServiceSSH fields).
+	var got plugins.ServiceSSH
+	if err := json.Unmarshal(service.Raw, &got); err != nil {
+		t.Fatalf("json.Unmarshal(service.Raw) error = %v", err)
+	}
+
+	if len(got.Technologies) != 1 || got.Technologies[0] != "moveit" {
+		t.Errorf("Technologies = %v, want [\"moveit\"]", got.Technologies)
+	}
+
+	foundWildcardCPE := false
+	for _, cpe := range got.CPEs {
+		if cpe == wildCardCPE {
+			foundWildcardCPE = true
+			break
+		}
+	}
+	if !foundWildcardCPE {
+		t.Errorf("CPEs = %v, want to include %q", got.CPEs, wildCardCPE)
+	}
+
+	if got.FingerprintMetadata == nil {
+		t.Fatal("FingerprintMetadata is nil")
+	}
+	moveitMeta, ok := got.FingerprintMetadata["moveit"]
+	if !ok {
+		t.Fatal("FingerprintMetadata[\"moveit\"] is missing")
+	}
+	if v, ok := moveitMeta["detection_method"].(string); !ok || v != "ssh_banner" {
+		t.Errorf("FingerprintMetadata[moveit][detection_method] = %v, want ssh_banner", moveitMeta["detection_method"])
+	}
+
+	// Sanity: a non-MOVEit banner must NOT populate Technologies on the same path.
+	plain := makeSSHService(target, plugins.ServiceSSH{Banner: "SSH-2.0-OpenSSH_8.9p1"}, nil, false)
+	var plainGot plugins.ServiceSSH
+	if err := json.Unmarshal(plain.Raw, &plainGot); err != nil {
+		t.Fatalf("json.Unmarshal(plain.Raw) error = %v", err)
+	}
+	if len(plainGot.Technologies) != 0 || len(plainGot.CPEs) != 0 || plainGot.FingerprintMetadata != nil {
+		t.Errorf("non-MOVEit banner populated fingerprint fields: tech=%v cpes=%v meta=%v",
+			plainGot.Technologies, plainGot.CPEs, plainGot.FingerprintMetadata)
 	}
 }
 

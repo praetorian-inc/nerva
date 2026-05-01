@@ -86,8 +86,14 @@ var cleoVariants = []string{"Harmony", "VLTrader", "LexiCom"}
 // The OS suffix "(Windows Server 2019)" is tolerated — the capture group stops at the
 // space before "(" because [0-9.] does not match a space.
 // Bounded: 2–4 dotted digit groups; guards against adversarial input.
+//
+// Leading-anchor (^Cleo …) prevents prefix-injection false positives such as
+// `Server: NotCleo Harmony/5.8.0.21` or `Server: X-Powered-By: Cleo Harmony/…`.
+// RFC 9110 §10.2.4 / RFC 7231 specify Server as `product *( RWS ( product / comment ) )`
+// where the leading product is the primary identifier; we therefore only honour
+// the brand when it is in the leading-product slot of the header value.
 var cleoServerHeaderRegex = regexp.MustCompile(
-	`Cleo (Harmony|VLTrader|LexiCom)/([0-9]+(?:\.[0-9]+){1,3})`,
+	`^Cleo (Harmony|VLTrader|LexiCom)/([0-9]+(?:\.[0-9]+){1,3})`,
 )
 
 // cleoWWWAuthRegex matches the realm value in a WWW-Authenticate header for Cleo products.
