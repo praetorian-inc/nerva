@@ -178,7 +178,7 @@ func (f *CleoFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fing
 
 	// Attempt Tier-2: body match (title or body text contains exact product brand string).
 	if variant == "" {
-		variant = extractCleoVariantFromBody(body)
+		variant = extractCleoVariantFromBody(bodyLower)
 		if variant != "" {
 			detectionMethod = "body"
 		}
@@ -265,11 +265,12 @@ func hasCleoWeakBodyMarker(bodyLower string) bool {
 	return false
 }
 
-// extractCleoVariantFromBody scans the lowercased body for exact Cleo product brand strings.
+// extractCleoVariantFromBody scans the pre-lowercased body for exact Cleo product brand strings.
 // Returns the matched variant name (e.g. "Harmony") or "" if none found.
 // Checks title tag first (preferred), then broader body text.
-func extractCleoVariantFromBody(body []byte) string {
-	bodyLower := strings.ToLower(string(body))
+// The caller is responsible for lowercasing the body once and passing it here, so the
+// helper does not allocate a second copy of the body on every request.
+func extractCleoVariantFromBody(bodyLower string) string {
 	for _, variant := range cleoVariants {
 		needle := "cleo " + strings.ToLower(variant)
 		if strings.Contains(bodyLower, needle) {
