@@ -160,6 +160,45 @@ func TestCrushFTPFingerprinter_Fingerprint_Valid(t *testing.T) {
 			wantDetection: "cookies",
 		},
 		{
+			// title is a stronger Tier-1 signal than asset_path; both present → "title"
+			name:          "Detection priority: title beats asset_path",
+			statusCode:    200,
+			body:          `<html><head><title>CrushFTP WebInterface</title><script src="/WebInterface/Resources/js/crushftp.customize.js"></script></head></html>`,
+			wantVersion:   "",
+			wantCPE:       "cpe:2.3:a:crushftp:crushftp:*:*:*:*:*:*:*:*",
+			wantDetection: "title",
+		},
+		{
+			// p3p_header is stronger than title; both present → "p3p_header"
+			name:          "Detection priority: p3p_header beats title",
+			statusCode:    200,
+			p3p:           `/WebInterface/w3c/p3p.xml`,
+			body:          `<html><head><title>CrushFTP WebInterface</title></head></html>`,
+			wantVersion:   "",
+			wantCPE:       "cpe:2.3:a:crushftp:crushftp:*:*:*:*:*:*:*:*",
+			wantDetection: "p3p_header",
+		},
+		{
+			// p3p_header is stronger than asset_path; both present → "p3p_header"
+			name:          "Detection priority: p3p_header beats asset_path",
+			statusCode:    200,
+			p3p:           `/WebInterface/w3c/p3p.xml`,
+			body:          `<html><head><script src="/WebInterface/Resources/js/crushftp.customize.js"></script></head></html>`,
+			wantVersion:   "",
+			wantCPE:       "cpe:2.3:a:crushftp:crushftp:*:*:*:*:*:*:*:*",
+			wantDetection: "p3p_header",
+		},
+		{
+			// cookies are stronger than title; both present → "cookies"
+			name:          "Detection priority: cookies beat title",
+			statusCode:    200,
+			cookies:       [][2]string{{"CrushAuth", "a"}, {"currentAuth", "b"}},
+			body:          `<html><head><title>CrushFTP WebInterface</title></head></html>`,
+			wantVersion:   "",
+			wantCPE:       "cpe:2.3:a:crushftp:crushftp:*:*:*:*:*:*:*:*",
+			wantDetection: "cookies",
+		},
+		{
 			// /WebInterface/ is the primary probe endpoint
 			name:          "Active probe: /WebInterface/ sets probe_path",
 			statusCode:    404,

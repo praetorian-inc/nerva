@@ -149,13 +149,15 @@ func (f *CrushFTPFingerprinter) Fingerprint(resp *http.Response, body []byte) (*
 		return nil, nil
 	}
 
-	// Determine detection method by priority: server_header > cookies > p3p_header > title > asset_path.
+	// Determine detection method by priority. The chain assigns weakest signals first;
+	// stronger signals override (last write wins). Final order top-down:
+	// server_header > cookies > p3p_header > title > asset_path.
 	detectionMethod := "body"
-	if hasBrandInTitle {
-		detectionMethod = "title"
-	}
 	if hasAssetPath {
 		detectionMethod = "asset_path"
+	}
+	if hasBrandInTitle {
+		detectionMethod = "title"
 	}
 	if hasP3PHeader {
 		detectionMethod = "p3p_header"
