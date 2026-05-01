@@ -61,7 +61,14 @@ var weakMACs = map[string]bool{
 
 // makeSSHService creates a Service with the given SSH payload and attaches any
 // security findings derived from the algorithm negotiation and auth state.
+//
+// Banner-derived product fingerprinting (e.g., MOVEit Transfer SFTP) is applied
+// here so every Run() return path gets it without per-site bookkeeping. When
+// algo is nil and passwordAuth is false (e.g., the checkAlgo failure path),
+// buildSSHFindings returns no findings, making this helper safe to use for
+// partial-state early returns as well.
 func makeSSHService(target plugins.Target, payload plugins.ServiceSSH, algo map[string]string, passwordAuth bool) *plugins.Service {
+	applySSHBannerFingerprinting(&payload, payload.Banner)
 	service := plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP)
 	service.SecurityFindings = buildSSHFindings(algo, passwordAuth)
 	return service
@@ -345,8 +352,7 @@ func (p *SSHPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 		payload := plugins.ServiceSSH{
 			Banner: banner,
 		}
-		applySSHBannerFingerprinting(&payload, banner)
-		return plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP), nil
+		return makeSSHService(target, payload, nil, false), nil
 	}
 
 	// Check auth methods by attempting Password and KeyboardInteractive.
@@ -422,7 +428,6 @@ func (p *SSHPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 			PasswordAuthEnabled: passwordAuth,
 			Algo:                fmt.Sprintf("%s", algo),
 		}
-		applySSHBannerFingerprinting(&payload, banner)
 		return makeSSHService(target, payload, algo, passwordAuth), nil
 	}
 	if firstKeyExchange := t.SessionID == nil; firstKeyExchange {
@@ -441,7 +446,6 @@ func (p *SSHPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 			PasswordAuthEnabled: passwordAuth,
 			Algo:                fmt.Sprintf("%s", algo),
 		}
-		applySSHBannerFingerprinting(&payload, banner)
 		return makeSSHService(target, payload, algo, passwordAuth), nil
 	}
 
@@ -455,7 +459,6 @@ func (p *SSHPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 			PasswordAuthEnabled: passwordAuth,
 			Algo:                fmt.Sprintf("%s", algo),
 		}
-		applySSHBannerFingerprinting(&payload, banner)
 		return makeSSHService(target, payload, algo, passwordAuth), nil
 	}
 	otherInit := &ssh.KexInitMsg{
@@ -479,7 +482,6 @@ func (p *SSHPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 			PasswordAuthEnabled: passwordAuth,
 			Algo:                fmt.Sprintf("%s", algo),
 		}
-		applySSHBannerFingerprinting(&payload, banner)
 		return makeSSHService(target, payload, algo, passwordAuth), nil
 	}
 	magics := ssh.HandshakeMagics{
@@ -498,7 +500,6 @@ func (p *SSHPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 			PasswordAuthEnabled: passwordAuth,
 			Algo:                fmt.Sprintf("%s", algo),
 		}
-		applySSHBannerFingerprinting(&payload, banner)
 		return makeSSHService(target, payload, algo, passwordAuth), nil
 	}
 	hostKey, err := ssh.ParsePublicKey(result.HostKey)
@@ -508,7 +509,6 @@ func (p *SSHPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 			PasswordAuthEnabled: passwordAuth,
 			Algo:                fmt.Sprintf("%s", algo),
 		}
-		applySSHBannerFingerprinting(&payload, banner)
 		return makeSSHService(target, payload, algo, passwordAuth), nil
 	}
 	fingerprint := ssh.FingerprintSHA256(hostKey)
@@ -522,7 +522,6 @@ func (p *SSHPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 		HostKeyType:         hostKey.Type(),
 		HostKeyFingerprint:  fingerprint,
 	}
-	applySSHBannerFingerprinting(&payload, banner)
 	return makeSSHService(target, payload, algo, passwordAuth), nil
 }
 
