@@ -407,3 +407,360 @@ func TestS7comm_ValidateS7SetupResponseBoundsCheck(t *testing.T) {
 	assert.False(t, validateS7SetupResponse(maliciousResponse),
 		"8-byte response must be rejected to prevent out-of-bounds read at response[8]")
 }
+
+// makeProtectionResponse builds a synthetic SZL 0x0232 response with the given protection level
+// at the expected byte offset (protectionByteOffset = 39).
+func makeProtectionResponse(level byte) []byte {
+	resp := make([]byte, 40)
+	// TPKT header at [0..3]
+	resp[0] = 0x03
+	// S7 protocol ID at [7] (to pass any future validation)
+	resp[7] = 0x32
+	// Protection level byte at offset 39
+	resp[39] = level
+	return resp
+}
+
+func TestParseSZL0232Response(t *testing.T) {
+	tests := []struct {
+		name     string
+		response []byte
+		expected uint8
+	}{
+		{
+			name:     "level 1 no protection",
+			response: makeProtectionResponse(1),
+			expected: 1,
+		},
+		{
+			name:     "level 2 read-only",
+			response: makeProtectionResponse(2),
+			expected: 2,
+		},
+		{
+			name:     "level 3 full protection",
+			response: makeProtectionResponse(3),
+			expected: 3,
+		},
+		{
+			name:     "level 0 not extracted",
+			response: makeProtectionResponse(0),
+			expected: 0,
+		},
+		{
+			name:     "level 4 out of range",
+			response: makeProtectionResponse(4),
+			expected: 0,
+		},
+		{
+			name:     "response too short",
+			response: []byte{0x03, 0x00, 0x00, 0x08},
+			expected: 0,
+		},
+		{
+			name:     "empty response",
+			response: []byte{},
+			expected: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := parseSZL0232Response(tt.response)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+// TestS7commSecurityFindingsMockHandshake exercises the full Run() path with
+// Misconfigs=true. The mock server completes the COTP + S7 Setup handshake,
+// responds to the SZL 0x001C query with a minimal module-ID payload, then
+// responds to the SZL 0x0232 query with protection level 1. The test asserts
+// that Run() returns exactly one finding with ID "s7comm-no-protection" and
+// that the evidence contains "protection_level=1".
+func TestS7commSecurityFindingsMockHandshake(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+
+	p := &S7COMMPlugin{}
+
+	go func() {
+		defer server.Close()
+		buf := make([]byte, 512)
+
+		// Read COTP CR → send COTP CC
+		n, _ := server.Read(buf)
+		if n == 0 {
+			return
+		}
+		cotpCC := []byte{
+			0x03, 0x00, 0x00, 0x16,
+			0x11, 0xD0, 0x00, 0x01, 0x00, 0x01, 0x00,
+			0xC0, 0x01, 0x0A,
+			0xC1, 0x02, 0x01, 0x00,
+			0xC2, 0x02, 0x01, 0x02,
+		}
+		_, _ = server.Write(cotpCC)
+
+		// Read S7 Setup → send S7 Setup Ack
+		n, _ = server.Read(buf)
+		if n == 0 {
+			return
+		}
+		s7Ack := []byte{
+			0x03, 0x00, 0x00, 0x1B,
+			0x02, 0xF0, 0x80,
+			0x32, 0x03,
+			0x00, 0x00, 0x00, 0x00,
+			0x00, 0x08, 0x00, 0x00,
+			0xF0, 0x00,
+			0x00, 0x01, 0x00, 0x01,
+			0x01, 0xE0,
+		}
+		_, _ = server.Write(s7Ack)
+
+		// Read SZL 0x001C request → send minimal module-ID response.
+		// parseSZL001CResponse scans the raw byte slice for an order-code
+		// pattern and optionally a "CPU" substring; wrap the payload in a
+		// TPKT header so the response is non-empty and contains recognisable
+		// strings.
+		n, _ = server.Read(buf)
+		if n == 0 {
+			return
+		}
+		szl001CPayload := []byte("6ES7 214-1AG40-0XB0 V4.4.0 CPU 1214C DC/DC/DC")
+		szl001CLen := 4 + len(szl001CPayload)
+		szl001CResp := []byte{
+			0x03, 0x00,
+			byte(szl001CLen >> 8), byte(szl001CLen & 0xFF),
+		}
+		szl001CResp = append(szl001CResp, szl001CPayload...)
+		_, _ = server.Write(szl001CResp)
+
+		// Read SZL 0x0232 request → send protection-level=1 response.
+		n, _ = server.Read(buf)
+		if n == 0 {
+			return
+		}
+		_, _ = server.Write(makeProtectionResponse(1))
+	}()
+
+	target := plugins.Target{Misconfigs: true}
+	service, err := p.Run(client, 5*time.Second, target)
+
+	require.NoError(t, err)
+	require.NotNil(t, service)
+	require.Len(t, service.SecurityFindings, 1)
+	assert.Equal(t, "s7comm-no-protection", service.SecurityFindings[0].ID)
+	assert.Contains(t, service.SecurityFindings[0].Evidence, "protection_level=1")
+}
+
+// TestBuildProtectionEvidence covers the evidence-string builder across the
+// combinations of populated and absent PLC identification fields.
+func TestBuildProtectionEvidence(t *testing.T) {
+	tests := []struct {
+		name            string
+		protectionLevel uint8
+		moduleName      string
+		orderCode       string
+		wantContains    []string
+		wantAbsent      []string
+	}{
+		{
+			name:            "all fields populated",
+			protectionLevel: 1,
+			moduleName:      "CPU 1214C",
+			orderCode:       "6ES7 214-1AG40-0XB0",
+			wantContains:    []string{"protection_level=1", "module=CPU 1214C", "order_code=6ES7 214-1AG40-0XB0"},
+		},
+		{
+			name:            "protection level only",
+			protectionLevel: 2,
+			wantContains:    []string{"protection_level=2"},
+			wantAbsent:      []string{"module=", "order_code="},
+		},
+		{
+			name:            "protection level and module name only",
+			protectionLevel: 1,
+			moduleName:      "CPU 315-2 DP",
+			wantContains:    []string{"protection_level=1", "module=CPU 315-2 DP"},
+			wantAbsent:      []string{"order_code="},
+		},
+		{
+			name:            "protection level and order code only",
+			protectionLevel: 1,
+			orderCode:       "6ES7 315-2AH14-0AB0",
+			wantContains:    []string{"protection_level=1", "order_code=6ES7 315-2AH14-0AB0"},
+			wantAbsent:      []string{"module="},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			serviceData := plugins.ServiceS7comm{
+				ProtectionLevel: tt.protectionLevel,
+				ModuleName:      tt.moduleName,
+				OrderCode:       tt.orderCode,
+			}
+			evidence := buildProtectionEvidence(serviceData)
+
+			for _, want := range tt.wantContains {
+				assert.Contains(t, evidence, want)
+			}
+			for _, absent := range tt.wantAbsent {
+				assert.NotContains(t, evidence, absent)
+			}
+		})
+	}
+}
+
+// TestS7commNoFindingProtectedPLC verifies that Run() with Misconfigs=true
+// produces no security findings when the PLC reports protection level 3
+// (full protection).
+func TestS7commNoFindingProtectedPLC(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+
+	p := &S7COMMPlugin{}
+
+	go func() {
+		defer server.Close()
+		buf := make([]byte, 512)
+
+		// COTP CR → CC
+		n, _ := server.Read(buf)
+		if n == 0 {
+			return
+		}
+		cotpCC := []byte{
+			0x03, 0x00, 0x00, 0x16,
+			0x11, 0xD0, 0x00, 0x01, 0x00, 0x01, 0x00,
+			0xC0, 0x01, 0x0A,
+			0xC1, 0x02, 0x01, 0x00,
+			0xC2, 0x02, 0x01, 0x02,
+		}
+		_, _ = server.Write(cotpCC)
+
+		// S7 Setup → Ack
+		n, _ = server.Read(buf)
+		if n == 0 {
+			return
+		}
+		s7Ack := []byte{
+			0x03, 0x00, 0x00, 0x1B,
+			0x02, 0xF0, 0x80,
+			0x32, 0x03,
+			0x00, 0x00, 0x00, 0x00,
+			0x00, 0x08, 0x00, 0x00,
+			0xF0, 0x00,
+			0x00, 0x01, 0x00, 0x01,
+			0x01, 0xE0,
+		}
+		_, _ = server.Write(s7Ack)
+
+		// SZL 0x001C → minimal response (no meaningful module data needed)
+		n, _ = server.Read(buf)
+		if n == 0 {
+			return
+		}
+		szl001CPayload := []byte{0x03, 0x00, 0x00, 0x04} // minimal 4-byte TPKT, no order code
+		_, _ = server.Write(szl001CPayload)
+
+		// SZL 0x0232 → protection level 3 (full protection)
+		n, _ = server.Read(buf)
+		if n == 0 {
+			return
+		}
+		_, _ = server.Write(makeProtectionResponse(3))
+	}()
+
+	target := plugins.Target{Misconfigs: true}
+	service, err := p.Run(client, 5*time.Second, target)
+
+	require.NoError(t, err)
+	require.NotNil(t, service)
+	assert.Empty(t, service.SecurityFindings)
+}
+
+func TestS7commSecurityFindings(t *testing.T) {
+	tests := []struct {
+		name             string
+		protectionLevel  uint8
+		moduleName       string
+		orderCode        string
+		misconfigs       bool
+		wantFindingCount int
+		wantFindingID    string
+		wantSeverity     plugins.Severity
+		wantEvidenceKeys []string
+	}{
+		{
+			name:             "level 1 misconfigs enabled yields critical finding",
+			protectionLevel:  1,
+			moduleName:       "CPU 1214C DC/DC/DC",
+			orderCode:        "6ES7 214-1AG40-0XB0",
+			misconfigs:       true,
+			wantFindingCount: 1,
+			wantFindingID:    "s7comm-no-protection",
+			wantSeverity:     plugins.SeverityCritical,
+			wantEvidenceKeys: []string{"protection_level=1", "module=CPU 1214C DC/DC/DC", "order_code=6ES7 214-1AG40-0XB0"},
+		},
+		{
+			name:             "level 2 misconfigs enabled yields medium finding",
+			protectionLevel:  2,
+			moduleName:       "CPU 315-2 DP",
+			orderCode:        "6ES7 315-2AH14-0AB0",
+			misconfigs:       true,
+			wantFindingCount: 1,
+			wantFindingID:    "s7comm-read-only",
+			wantSeverity:     plugins.SeverityMedium,
+			wantEvidenceKeys: []string{"protection_level=2", "module=CPU 315-2 DP"},
+		},
+		{
+			name:             "level 3 misconfigs enabled yields no finding",
+			protectionLevel:  3,
+			misconfigs:       true,
+			wantFindingCount: 0,
+		},
+		{
+			name:             "level 0 not extracted yields no finding",
+			protectionLevel:  0,
+			misconfigs:       true,
+			wantFindingCount: 0,
+		},
+		{
+			name:             "level 1 misconfigs disabled yields no finding",
+			protectionLevel:  1,
+			misconfigs:       false,
+			wantFindingCount: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			serviceData := plugins.ServiceS7comm{
+				ProtectionLevel: tt.protectionLevel,
+				ModuleName:      tt.moduleName,
+				OrderCode:       tt.orderCode,
+			}
+
+			var findings []plugins.SecurityFinding
+			if tt.misconfigs {
+				findings = checkProtectionLevel(serviceData)
+			}
+
+			require.Len(t, findings, tt.wantFindingCount)
+			if tt.wantFindingCount == 0 {
+				return
+			}
+
+			assert.Equal(t, tt.wantFindingID, findings[0].ID)
+			assert.Equal(t, tt.wantSeverity, findings[0].Severity)
+			for _, key := range tt.wantEvidenceKeys {
+				assert.Contains(t, findings[0].Evidence, key)
+			}
+		})
+	}
+}

@@ -135,7 +135,55 @@ func (p *S7COMMPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.
 		serviceData.CPEs = generateCPEs(serviceData)
 	}
 
-	return plugins.CreateServiceFrom(target, serviceData, false, serviceData.FirmwareVersion, plugins.TCP), nil
+	service := plugins.CreateServiceFrom(target, serviceData, false, serviceData.FirmwareVersion, plugins.TCP)
+	if target.Misconfigs {
+		service.SecurityFindings = checkProtectionLevel(serviceData)
+	}
+	return service, nil
+}
+
+// checkProtectionLevel returns security findings based on the PLC's ProtectionLevel.
+// Level 1 means no access protection (Critical): all read/write operations are allowed without authentication.
+// Level 2 means read-only protection (Medium): read access requires no authentication (information disclosure).
+// Level 3 means full protection; level 0 means the value was not extracted. Neither generates a finding.
+func checkProtectionLevel(serviceData plugins.ServiceS7comm) []plugins.SecurityFinding {
+	evidence := buildProtectionEvidence(serviceData)
+
+	switch serviceData.ProtectionLevel {
+	case 1:
+		return []plugins.SecurityFinding{{
+			ID:          "s7comm-no-protection",
+			Severity:    plugins.SeverityCritical,
+			Description: "S7comm PLC has no access protection configured",
+			Evidence:    evidence,
+		}}
+	case 2:
+		return []plugins.SecurityFinding{{
+			ID:          "s7comm-read-only",
+			Severity:    plugins.SeverityMedium,
+			Description: "S7comm PLC configured with read-only protection",
+			Evidence:    evidence,
+		}}
+	default:
+		return nil
+	}
+}
+
+// buildProtectionEvidence assembles the evidence string for a protection-level finding,
+// including the raw level value and whatever PLC identification data is available.
+func buildProtectionEvidence(serviceData plugins.ServiceS7comm) string {
+	var sb strings.Builder
+	sb.WriteString("protection_level=")
+	sb.WriteByte('0' + serviceData.ProtectionLevel)
+	if serviceData.ModuleName != "" {
+		sb.WriteString(", module=")
+		sb.WriteString(serviceData.ModuleName)
+	}
+	if serviceData.OrderCode != "" {
+		sb.WriteString(", order_code=")
+		sb.WriteString(serviceData.OrderCode)
+	}
+	return sb.String()
 }
 
 // buildCOTPConnectionRequest constructs COTP CR packet with TPKT header
@@ -295,7 +343,44 @@ func extractSZLMetadata(conn net.Conn, timeout time.Duration, serviceData plugin
 		serviceData.PLCType = detectPLCType(serviceData.OrderCode)
 	}
 
+	// SZL 0x0232: Protection level
+	szlProtRequest := buildSZLRequest(0x0232, 0x0004)
+	protResponse, err := utils.SendRecv(conn, szlProtRequest, timeout)
+	if err == nil && len(protResponse) > 0 {
+		serviceData.ProtectionLevel = parseSZL0232Response(protResponse)
+	}
+
 	return serviceData
+}
+
+// parseSZL0232Response extracts the protection level from a SZL 0x0232 response.
+//
+// Response layout (after TPKT + COTP DT + S7 header + S7 params = 25 bytes):
+//
+//	SZL response header (return code, transport size, data length): 4 bytes
+//	SZL header (SZL ID, SZL index, item length, item count): 8 bytes
+//	Item data: first item begins after the SZL header.
+//	  Within each item: 2-byte index, then protection attributes.
+//	  The protection level byte is at offset 2 within the item (after the 2-byte index).
+//
+// Returns 0 if the response is too short, malformed, or contains an unexpected value.
+func parseSZL0232Response(response []byte) uint8 {
+	// Minimum offset to the start of SZL data payload.
+	// TPKT(4) + COTP DT(3) + S7 header(10) + S7 params(8) = 25 bytes.
+	// Then SZL response header(4) + SZL header(8) = 12 more bytes = offset 37.
+	// The first item's protection byte is at offset 2 within the item = offset 39.
+	const minLen = 40
+	const protectionByteOffset = 39
+
+	if len(response) < minLen {
+		return 0
+	}
+
+	level := response[protectionByteOffset]
+	if level < 1 || level > 3 {
+		return 0
+	}
+	return level
 }
 
 // buildSZLRequest constructs SZL read request
