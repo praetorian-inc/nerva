@@ -198,7 +198,7 @@ func (f *CleoFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fing
 		metadata["version"] = version
 	}
 	if serverHeader != "" {
-		metadata["server_header"] = sanitizeCleoHeaderValue(serverHeader)
+		metadata["server_header"] = sanitizeHTTPHeaderValue(serverHeader)
 	}
 
 	return &FingerprintResult{
@@ -277,22 +277,6 @@ func extractCleoVariantFromBody(body []byte) string {
 		}
 	}
 	return ""
-}
-
-// sanitizeCleoHeaderValue strips control characters and limits length to 256 chars
-// to prevent log injection from attacker-controlled headers.
-func sanitizeCleoHeaderValue(s string) string {
-	var b strings.Builder
-	for _, r := range s {
-		if r >= 0x20 && r != 0x7F {
-			b.WriteRune(r)
-		}
-	}
-	result := b.String()
-	if len(result) > 256 {
-		result = result[:256]
-	}
-	return result
 }
 
 // buildCleoCPE constructs the NVD-canonical CPE 2.3 string for the given Cleo product.

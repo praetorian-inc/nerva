@@ -197,7 +197,7 @@ func (f *CrushFTPFingerprinter) Fingerprint(resp *http.Response, body []byte) (*
 		metadata["probe_path"] = probePath
 	}
 	if serverHeader != "" {
-		metadata["server_header"] = sanitizeCrushFTPHeaderValue(serverHeader)
+		metadata["server_header"] = sanitizeHTTPHeaderValue(serverHeader)
 	}
 
 	return &FingerprintResult{
@@ -248,21 +248,6 @@ func extractCrushFTPVersion(body []byte) string {
 		}
 	}
 	return ""
-}
-
-// sanitizeCrushFTPHeaderValue strips control characters and limits length to 256 chars.
-func sanitizeCrushFTPHeaderValue(s string) string {
-	var b strings.Builder
-	for _, r := range s {
-		if r >= 0x20 && r != 0x7F {
-			b.WriteRune(r)
-		}
-	}
-	result := b.String()
-	if len(result) > 256 {
-		result = result[:256]
-	}
-	return result
 }
 
 // buildCrushFTPCPE constructs the NVD-canonical CPE 2.3 string for CrushFTP.
