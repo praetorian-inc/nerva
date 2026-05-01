@@ -171,7 +171,14 @@ func (f *MOVEitFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fi
 		return nil, nil
 	}
 
-	// Gate 3: CPE-injection defense.
+	// Gate 3: CPE-injection defense (fail-closed).
+	// The version validator below is anchored to digits-and-dots, so no
+	// untrusted byte can reach the CPE format string today. This body-level
+	// check is a belt-and-braces guard against future regressions in the
+	// version extractors. Trade-off: an operator who controls the response
+	// body can suppress detection by embedding ":*:" (e.g. in an HTML
+	// comment); we accept that false-negative as preferable to a CPE-format
+	// injection regression.
 	if strings.Contains(string(body), ":*:") {
 		return nil, nil
 	}
@@ -338,7 +345,7 @@ func FingerprintMOVEitSSHBanner(banner string) *FingerprintResult {
 			"product":              "MOVEit Transfer SFTP",
 			"detection_method":     "ssh_banner",
 			"ssh_protocol_version": m[1],
-			"banner":               trimmed,
+			"banner":               sanitizeHTTPHeaderValue(trimmed),
 		},
 	}
 }
