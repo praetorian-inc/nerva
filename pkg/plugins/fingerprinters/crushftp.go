@@ -13,7 +13,7 @@
 // limitations under the License.
 
 /*
-Package fingerprinters provides HTTP fingerprinting for CrushFTP file transfer server.
+CrushFTPFingerprinter detects CrushFTP file transfer server instances over HTTP.
 
 # What We Detect
 

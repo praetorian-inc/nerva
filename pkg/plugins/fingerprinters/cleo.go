@@ -13,7 +13,7 @@
 // limitations under the License.
 
 /*
-Package fingerprinters provides HTTP fingerprinting for Cleo Managed File Transfer products.
+CleoFingerprinter detects Cleo Managed File Transfer products over HTTP.
 
 # What We Detect
 
