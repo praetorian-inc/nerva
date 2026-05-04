@@ -86,6 +86,40 @@ func TestSanitizeHTTPHeaderValue(t *testing.T) {
 			input: strings.Repeat("a", 255) + "é",
 			want:  strings.Repeat("a", 255),
 		},
+		{
+			name:  "Cf ZWSP (U+200B) stripped",
+			input: "before\u200Bafter",
+			want:  "beforeafter",
+		},
+		{
+			name:  "Cf RLO (U+202E) stripped (Trojan Source bidi override)",
+			input: "before\u202Eafter",
+			want:  "beforeafter",
+		},
+		{
+			name:  "Cf BOM (U+FEFF) stripped",
+			input: "\uFEFFServer/1.0",
+			want:  "Server/1.0",
+		},
+		{
+			name:  "Cf soft-hyphen (U+00AD) stripped",
+			input: "Cleo\u00ADHarmony",
+			want:  "CleoHarmony",
+		},
+		{
+			name:  "Cf ZWJ (U+200D) stripped",
+			input: "before\u200Dafter",
+			want:  "beforeafter",
+		},
+		{
+			name:  "Combined Trojan-Source-style RLO input sanitized",
+			// Embedded U+202E (right-to-left override) demonstrates a
+			// Trojan-Source-style display-spoofing input. Sanitization
+			// must drop the override character so what an analyst reads
+			// in metadata matches the underlying bytes.
+			input: "Server-\u202Ekillme/1.0",
+			want:  "Server-killme/1.0",
+		},
 	}
 
 	for _, tt := range tests {

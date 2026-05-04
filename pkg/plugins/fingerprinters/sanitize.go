@@ -20,21 +20,23 @@ import (
 	"unicode/utf8"
 )
 
-// sanitizeHTTPHeaderValue strips control characters (Unicode classes Cc/Cf,
-// covering U+0000-U+001F, U+007F, and U+0080-U+009F) and bounds the result
-// to 256 bytes. The byte cap is rune-boundary safe — if the cap would split
-// a multi-byte UTF-8 rune, the result is trimmed back to the previous valid
-// rune boundary.
+// sanitizeHTTPHeaderValue strips control characters (Unicode category Cc:
+// U+0000-U+001F, U+007F, U+0080-U+009F) and format characters (Unicode
+// category Cf: BOM U+FEFF, bidi overrides U+202A-U+202E, zero-width
+// joiners/spaces U+200B-U+200D, soft-hyphen U+00AD, etc.) and bounds the
+// result to 256 bytes. The byte cap is rune-boundary safe — if the cap
+// would split a multi-byte UTF-8 rune, the result is trimmed back to the
+// previous valid rune boundary.
 //
 // Used to defang attacker-controlled HTTP header values (e.g. Server header)
-// before they are stored in result metadata or written to logs. Intended for
-// short identifier-like values; large free-form text should use a dedicated
-// formatter.
+// before they are stored in result metadata or written to logs. Stripping
+// Cf prevents Trojan-Source-style display spoofing (CVE-2021-42574) when
+// metadata is rendered in UTF-8-aware terminals or dashboards.
 func sanitizeHTTPHeaderValue(s string) string {
 	var b strings.Builder
 	b.Grow(len(s))
 	for _, r := range s {
-		if unicode.IsControl(r) {
+		if unicode.IsControl(r) || unicode.In(r, unicode.Cf) {
 			continue
 		}
 		b.WriteRune(r)
