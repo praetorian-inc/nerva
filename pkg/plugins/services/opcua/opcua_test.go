@@ -28,6 +28,20 @@ import (
 	"github.com/praetorian-inc/nerva/pkg/plugins"
 )
 
+// buildACK constructs a valid 28-byte OPC UA ACK response.
+func buildACK() []byte {
+	ack := make([]byte, 28)
+	copy(ack[0:3], []byte("ACK"))
+	ack[3] = 'F'
+	binary.LittleEndian.PutUint32(ack[4:8], 28)      // MessageSize
+	binary.LittleEndian.PutUint32(ack[8:12], 0)      // ProtocolVersion
+	binary.LittleEndian.PutUint32(ack[12:16], 65536) // ReceiveBufferSize
+	binary.LittleEndian.PutUint32(ack[16:20], 65536) // SendBufferSize
+	binary.LittleEndian.PutUint32(ack[20:24], 0)     // MaxMessageSize (0 = no limit)
+	binary.LittleEndian.PutUint32(ack[24:28], 0)     // MaxChunkCount (0 = no limit)
+	return ack
+}
+
 // mockConn implements net.Conn for testing
 type mockConn struct {
 	response []byte
@@ -56,9 +70,7 @@ func (m *mockConn) SetWriteDeadline(t time.Time) error { return nil }
 func TestOPCUAPlugin_ValidACK(t *testing.T) {
 	plugin := &OPCUAPlugin{}
 
-	// Valid ACK response (8 bytes minimum)
-	// "ACK" + "F" (final) + 4-byte message size
-	validACK := []byte{'A', 'C', 'K', 'F', 0x00, 0x00, 0x00, 0x08}
+	validACK := buildACK()
 
 	conn := &mockConn{response: validACK}
 	target := plugins.Target{
@@ -618,7 +630,7 @@ func runMockOPCUAServer(t *testing.T, server net.Conn, modes []uint32) {
 	if err != nil || n == 0 {
 		return
 	}
-	ack := []byte{'A', 'C', 'K', 'F', 0x08, 0x00, 0x00, 0x00}
+	ack := buildACK()
 	if _, err = server.Write(ack); err != nil {
 		return
 	}
@@ -679,7 +691,7 @@ func TestOPCUASecurityFindingsDisabled(t *testing.T) {
 		if n == 0 {
 			return
 		}
-		ack := []byte{'A', 'C', 'K', 'F', 0x08, 0x00, 0x00, 0x00}
+		ack := buildACK()
 		_, _ = server.Write(ack)
 	}()
 
@@ -1214,4 +1226,80 @@ func TestSkipResponseHeaderWithStringTable(t *testing.T) {
 	err := r.skipResponseHeader()
 	require.NoError(t, err)
 	assert.Equal(t, len(data), r.pos)
+}
+
+func TestReadArrayCount(t *testing.T) {
+	tests := []struct {
+		name      string
+		data      []byte
+		wantCount int
+		wantErr   bool
+	}{
+		{
+			name:      "null array (-1)",
+			data:      []byte{0xFF, 0xFF, 0xFF, 0xFF},
+			wantCount: -1,
+		},
+		{
+			name:      "zero elements",
+			data:      []byte{0x00, 0x00, 0x00, 0x00},
+			wantCount: 0,
+		},
+		{
+			name:      "valid count",
+			data:      []byte{0x03, 0x00, 0x00, 0x00},
+			wantCount: 3,
+		},
+		{
+			name:    "exceeds limit",
+			data:    []byte{0xE9, 0x03, 0x00, 0x00}, // 1001
+			wantErr: true,
+		},
+		{
+			name:    "negative -2 rejected",
+			data:    []byte{0xFE, 0xFF, 0xFF, 0xFF}, // -2 as int32 = 0xFFFFFFFE
+			wantErr: true,
+		},
+		{
+			name:    "truncated",
+			data:    []byte{0x01, 0x00},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := &opcuaReader{data: tt.data, pos: 0}
+			count, err := r.readArrayCount()
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, tt.wantCount, count)
+			}
+		})
+	}
+}
+
+func TestSkipByteStringRejectsInvalidNegative(t *testing.T) {
+	// -2 as uint32 = 0xFFFFFFFE, should be rejected (only -1/0xFFFFFFFF is null)
+	data := []byte{0xFE, 0xFF, 0xFF, 0xFF}
+	r := &opcuaReader{data: data, pos: 0}
+	err := r.skipByteString()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exceeds limit")
+}
+
+func TestOPCUAPlugin_ShortACK(t *testing.T) {
+	plugin := &OPCUAPlugin{}
+	// 8-byte ACK is now rejected (need full 28-byte ACK)
+	shortACK := []byte{'A', 'C', 'K', 'F', 0x08, 0x00, 0x00, 0x00}
+	conn := &mockConn{response: shortACK}
+	target := plugins.Target{
+		Address: netip.MustParseAddrPort("127.0.0.1:4840"),
+		Host:    "localhost",
+	}
+	service, err := plugin.Run(conn, time.Second, target)
+	require.NoError(t, err)
+	assert.Nil(t, service, "8-byte ACK should be rejected as too short")
 }
