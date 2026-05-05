@@ -16,6 +16,7 @@ package opcua
 
 import (
 	"encoding/binary"
+	"math"
 	"net"
 	"net/netip"
 	"testing"
@@ -1080,6 +1081,116 @@ func TestParseGetEndpointsTruncatedCases(t *testing.T) {
 		_, err := parseGetEndpointsResponse(truncated)
 		require.Error(t, err)
 	}
+}
+
+// TestSkipOverflow verifies that skip() with a very large n returns an error
+// rather than overflowing or panicking.
+func TestSkipOverflow(t *testing.T) {
+	data := []byte{0x01, 0x02, 0x03}
+	r := &opcuaReader{data: data, pos: 0}
+	err := r.skip(math.MaxInt)
+	require.Error(t, err)
+}
+
+// TestSkipNegative verifies that skip() with a negative n returns an error.
+func TestSkipNegative(t *testing.T) {
+	data := []byte{0x01, 0x02, 0x03}
+	r := &opcuaReader{data: data, pos: 0}
+	err := r.skip(-1)
+	require.Error(t, err)
+}
+
+// TestReadEndpointSecurityModeTruncatedAfterMode verifies that an endpoint
+// truncated after MessageSecurityMode (before SecurityPolicyUri) returns an error.
+func TestReadEndpointSecurityModeTruncatedAfterMode(t *testing.T) {
+	// Build a partial endpoint that stops immediately after the MessageSecurityMode uint32.
+	ep := make([]byte, 0, 32)
+	ep = appendInt32(ep, -1)  // EndpointUrl: null
+	ep = appendInt32(ep, -1)  // ApplicationUri: null
+	ep = appendInt32(ep, -1)  // ProductUri: null
+	ep = append(ep, 0x00)     // ApplicationName: LocalizedText mask
+	ep = appendUint32(ep, 0)  // ApplicationType
+	ep = appendInt32(ep, -1)  // GatewayServerUri: null
+	ep = appendInt32(ep, -1)  // DiscoveryProfileUri: null
+	ep = appendInt32(ep, -1)  // DiscoveryUrls: null array
+	ep = appendInt32(ep, -1)  // ServerCertificate: null
+	ep = appendUint32(ep, 1)  // MessageSecurityMode = None
+	// Truncated here — no SecurityPolicyUri, no UserIdentityTokens, etc.
+
+	r := &opcuaReader{data: ep, pos: 0}
+	_, err := r.readEndpointSecurityMode()
+	require.Error(t, err)
+}
+
+// TestSkipNodeIdNamespaceURIFlag verifies that skipNodeId correctly skips the
+// NamespaceURI string when bit 6 (0x40) is set in the encoding byte.
+func TestSkipNodeIdNamespaceURIFlag(t *testing.T) {
+	// TwoByte base (0x00) | NamespaceURI flag (0x40) = 0x40
+	// Layout: encoding(1) + TwoByte id(1) + NamespaceURI null string (int32=-1, 4 bytes) = 6 bytes total
+	data := make([]byte, 0, 8)
+	data = append(data, 0x40)    // encoding byte: TwoByte + NamespaceURI flag
+	data = append(data, 0x00)    // TwoByte identifier
+	data = appendInt32(data, -1) // NamespaceURI: null string
+
+	r := &opcuaReader{data: data, pos: 0}
+	err := r.skipNodeId()
+	require.NoError(t, err)
+	assert.Equal(t, 6, r.pos)
+}
+
+// TestSkipNodeIdServerIndexFlag verifies that skipNodeId correctly skips the
+// ServerIndex uint32 when bit 7 (0x80) is set in the encoding byte.
+func TestSkipNodeIdServerIndexFlag(t *testing.T) {
+	// TwoByte base (0x00) | ServerIndex flag (0x80) = 0x80
+	// Layout: encoding(1) + TwoByte id(1) + ServerIndex uint32(4) = 6 bytes total
+	data := make([]byte, 0, 8)
+	data = append(data, 0x80)    // encoding byte: TwoByte + ServerIndex flag
+	data = append(data, 0x00)    // TwoByte identifier
+	data = appendUint32(data, 7) // ServerIndex = 7
+
+	r := &opcuaReader{data: data, pos: 0}
+	err := r.skipNodeId()
+	require.NoError(t, err)
+	assert.Equal(t, 6, r.pos)
+}
+
+// TestSkipNodeIdBothFlags verifies that skipNodeId correctly handles both
+// NamespaceURI (bit 6) and ServerIndex (bit 7) flags simultaneously.
+func TestSkipNodeIdBothFlags(t *testing.T) {
+	// TwoByte base (0x00) | both flags (0xC0) = 0xC0
+	// Layout: encoding(1) + TwoByte id(1) + NamespaceURI null string(4) + ServerIndex uint32(4) = 10 bytes
+	data := make([]byte, 0, 12)
+	data = append(data, 0xC0)    // encoding byte: TwoByte + both flags
+	data = append(data, 0x00)    // TwoByte identifier
+	data = appendInt32(data, -1) // NamespaceURI: null string
+	data = appendUint32(data, 5) // ServerIndex = 5
+
+	r := &opcuaReader{data: data, pos: 0}
+	err := r.skipNodeId()
+	require.NoError(t, err)
+	assert.Equal(t, 10, r.pos)
+}
+
+// TestBuildCloseSecureChannel verifies that buildCloseSecureChannel produces a
+// well-formed CLO message with the correct header fields.
+func TestBuildCloseSecureChannel(t *testing.T) {
+	const wantChannelID = uint32(42)
+	const wantTokenID = uint32(7)
+	msg := buildCloseSecureChannel(wantChannelID, wantTokenID)
+
+	require.GreaterOrEqual(t, len(msg), 12, "CLO message must be at least 12 bytes")
+
+	// Header starts with "CLO" + 'F'
+	assert.Equal(t, []byte("CLO"), msg[0:3], "message type must be CLO")
+	assert.Equal(t, byte('F'), msg[3], "chunk type must be F (final)")
+
+	// Bytes 4-7: total message size must equal actual length
+	msgSize := binary.LittleEndian.Uint32(msg[4:8])
+	assert.Equal(t, uint32(len(msg)), msgSize, "declared size must match actual length")
+
+	// Bytes 8-11: channelID must match the input
+	channelID := binary.LittleEndian.Uint32(msg[8:12])
+	assert.Equal(t, wantChannelID, channelID, "channelID must match the supplied value")
 }
 
 // TestSkipResponseHeaderWithStringTable exercises the StringTable array branch.

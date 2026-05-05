@@ -173,6 +173,10 @@ func getEndpointSecurityModes(conn net.Conn, timeout time.Duration, endpointURL 
 		return nil, err
 	}
 
+	// Best-effort: close the secure channel to avoid exhausting server limits.
+	cloReq := buildCloseSecureChannel(channelID, tokenID)
+	_ = utils.Send(conn, cloReq, timeout)
+
 	return deduplicateModes(rawModes), nil
 }
 
@@ -310,7 +314,7 @@ func buildOpenSecureChannel() []byte {
 	msg := make([]byte, 0, totalSize)
 	msg = append(msg, []byte("OPN")...)
 	msg = append(msg, 'F')
-	msg = appendUint32(msg, uint32(totalSize)) // #nosec G115
+	msg = appendUint32(msg, uint32(totalSize))
 	msg = appendUint32(msg, 0) // secureChannelId = 0
 	msg = append(msg, secHdr...)
 	msg = append(msg, seqHdr...)
@@ -372,7 +376,7 @@ func buildGetEndpoints(channelID, tokenID uint32, endpointURL string) []byte {
 	msg := make([]byte, 0, totalSize)
 	msg = append(msg, []byte("MSG")...)
 	msg = append(msg, 'F')
-	msg = appendUint32(msg, uint32(totalSize)) // #nosec G115
+	msg = appendUint32(msg, uint32(totalSize))
 	msg = appendUint32(msg, channelID)
 	msg = append(msg, symHdr...)
 	msg = append(msg, seqHdr...)
@@ -482,7 +486,7 @@ func parseGetEndpointsResponse(data []byte) ([]string, error) {
 	if r.pos+4 > len(r.data) {
 		return nil, errors.New("opcua: MSG truncated before endpoints count")
 	}
-	count := int32(binary.LittleEndian.Uint32(r.data[r.pos : r.pos+4])) // #nosec G115
+	count := int32(binary.LittleEndian.Uint32(r.data[r.pos : r.pos+4]))
 	r.pos += 4
 
 	if count < 0 {
@@ -512,7 +516,7 @@ type opcuaReader struct {
 }
 
 func (r *opcuaReader) skip(n int) error {
-	if r.pos+n > len(r.data) {
+	if n < 0 || len(r.data)-r.pos < n {
 		return fmt.Errorf("opcua: need %d bytes at pos %d, have %d", n, r.pos, len(r.data))
 	}
 	r.pos += n
@@ -524,7 +528,7 @@ func (r *opcuaReader) skipByteString() error {
 	if r.pos+4 > len(r.data) {
 		return fmt.Errorf("opcua: need 4 bytes for string length at pos %d", r.pos)
 	}
-	length := int32(binary.LittleEndian.Uint32(r.data[r.pos : r.pos+4])) // #nosec G115
+	length := int32(binary.LittleEndian.Uint32(r.data[r.pos : r.pos+4]))
 	r.pos += 4
 	if length > 0 {
 		if err := r.skip(int(length)); err != nil {
@@ -551,26 +555,50 @@ func (r *opcuaReader) skipNodeId() error {
 	baseEncoding := encoding & 0x3F
 	switch baseEncoding {
 	case 0x00: // TwoByte: 1 byte identifier
-		return r.skip(1)
+		if err := r.skip(1); err != nil {
+			return err
+		}
 	case 0x01: // FourByte: 1 byte namespace + 2 byte identifier
-		return r.skip(3)
+		if err := r.skip(3); err != nil {
+			return err
+		}
 	case 0x02: // Numeric: 2 byte namespace + 4 byte identifier
-		return r.skip(6)
+		if err := r.skip(6); err != nil {
+			return err
+		}
 	case 0x03: // String: 2 byte namespace + OPC String
 		if err := r.skip(2); err != nil {
 			return err
 		}
-		return r.skipByteString()
+		if err := r.skipByteString(); err != nil {
+			return err
+		}
 	case 0x04: // GUID: 2 byte namespace + 16 bytes
-		return r.skip(18)
+		if err := r.skip(18); err != nil {
+			return err
+		}
 	case 0x05: // ByteString: 2 byte namespace + ByteString
 		if err := r.skip(2); err != nil {
 			return err
 		}
-		return r.skipByteString()
+		if err := r.skipByteString(); err != nil {
+			return err
+		}
 	default:
 		return fmt.Errorf("opcua: unknown NodeId encoding 0x%02x at pos %d", encoding, r.pos-1)
 	}
+	// Handle optional NamespaceURI (bit 6) and ServerIndex (bit 7) flags.
+	if encoding&0x40 != 0 {
+		if err := r.skipByteString(); err != nil {
+			return fmt.Errorf("opcua: NodeId skip NamespaceURI: %w", err)
+		}
+	}
+	if encoding&0x80 != 0 {
+		if err := r.skip(4); err != nil {
+			return fmt.Errorf("opcua: NodeId skip ServerIndex: %w", err)
+		}
+	}
+	return nil
 }
 
 // skipLocalizedText skips an OPC UA LocalizedText: mask byte, optional locale string, optional text string.
@@ -688,7 +716,7 @@ func (r *opcuaReader) skipResponseHeader() error {
 	if r.pos+4 > len(r.data) {
 		return errors.New("opcua: truncated before StringTable count")
 	}
-	count := int32(binary.LittleEndian.Uint32(r.data[r.pos : r.pos+4])) // #nosec G115
+	count := int32(binary.LittleEndian.Uint32(r.data[r.pos : r.pos+4]))
 	r.pos += 4
 	if count > maxArrayElements {
 		return fmt.Errorf("opcua: array count %d exceeds limit", count)
@@ -732,7 +760,7 @@ func (r *opcuaReader) skipApplicationDescription() error {
 	if r.pos+4 > len(r.data) {
 		return errors.New("opcua: truncated before DiscoveryUrls count")
 	}
-	urlCount := int32(binary.LittleEndian.Uint32(r.data[r.pos : r.pos+4])) // #nosec G115
+	urlCount := int32(binary.LittleEndian.Uint32(r.data[r.pos : r.pos+4]))
 	r.pos += 4
 	if urlCount > maxArrayElements {
 		return fmt.Errorf("opcua: array count %d exceeds limit", urlCount)
@@ -808,32 +836,86 @@ func (r *opcuaReader) readEndpointSecurityMode() (string, error) {
 
 	// Skip remaining fields: SecurityPolicyUri + UserIdentityTokens array + TransportProfileUri + SecurityLevel
 	if err := r.skipByteString(); err != nil { // SecurityPolicyUri
-		return modeName, nil // best-effort: return mode even if rest fails
+		return "", fmt.Errorf("opcua: endpoint skip SecurityPolicyUri: %w", err)
 	}
 
 	// UserIdentityTokens: array
 	if r.pos+4 > len(r.data) {
-		return modeName, nil
+		return "", errors.New("opcua: endpoint truncated before UserIdentityTokens count")
 	}
-	tokenCount := int32(binary.LittleEndian.Uint32(r.data[r.pos : r.pos+4])) // #nosec G115
+	tokenCount := int32(binary.LittleEndian.Uint32(r.data[r.pos : r.pos+4]))
 	r.pos += 4
 	if tokenCount > maxArrayElements {
-		return modeName, fmt.Errorf("opcua: array count %d exceeds limit", tokenCount)
+		return "", fmt.Errorf("opcua: array count %d exceeds limit", tokenCount)
 	}
 	if tokenCount > 0 {
 		for i := int32(0); i < tokenCount; i++ {
 			if err := r.skipUserTokenPolicy(); err != nil {
-				return modeName, nil // best-effort
+				return "", fmt.Errorf("opcua: endpoint skip UserTokenPolicy[%d]: %w", i, err)
 			}
 		}
 	}
 
 	if err := r.skipByteString(); err != nil { // TransportProfileUri
-		return modeName, nil
+		return "", fmt.Errorf("opcua: endpoint skip TransportProfileUri: %w", err)
 	}
-	_ = r.skip(1) // SecurityLevel: byte (best-effort)
+	if err := r.skip(1); err != nil { // SecurityLevel: byte
+		return "", fmt.Errorf("opcua: endpoint skip SecurityLevel: %w", err)
+	}
 
 	return modeName, nil
+}
+
+// buildCloseSecureChannel constructs a CLO message to close an open secure channel.
+//
+// Message layout:
+//
+//	Header (12 bytes): "CLO" + 'F' + msgSize(4) + channelID(4)
+//	Symmetric security header: tokenID(4)
+//	Sequence header: seqNum=3(4) + requestId=3(4)
+//	Body:
+//	  TypeId: FourByte NodeId (encoding=1, ns=0, id=452 = CloseSecureChannelRequest)
+//	  RequestHeader: minimal (null NodeId + timestamp + handle=2 + diagnostics + null string + timeout + ExtensionObject)
+func buildCloseSecureChannel(channelID, tokenID uint32) []byte {
+	body := make([]byte, 0, 64)
+
+	// TypeId: FourByte NodeId (encoding=1, ns=0, id=452 = CloseSecureChannelRequest)
+	body = append(body, 0x01)      // encoding: FourByte
+	body = append(body, 0x00)      // namespace index = 0
+	body = appendUint16(body, 452) // node id = 452
+
+	// RequestHeader (minimal)
+	body = append(body, 0x00, 0x00) // AuthenticationToken: null NodeId (TwoByte)
+	body = appendInt64(body, 0)     // Timestamp
+	body = appendUint32(body, 2)    // RequestHandle = 2
+	body = appendUint32(body, 0)    // ReturnDiagnostics = 0
+	body = appendInt32(body, -1)    // AuditEntryId: null
+	body = appendUint32(body, 0)    // TimeoutHint = 0
+	body = append(body, 0x00, 0x00) // AdditionalHeader: null NodeId (TwoByte)
+	body = append(body, 0x00)       // AdditionalHeader: encoding = no body
+
+	// Symmetric security header: tokenID(4)
+	symHdr := make([]byte, 4)
+	binary.LittleEndian.PutUint32(symHdr, tokenID)
+
+	// Sequence header: seqNum=3, requestId=3
+	seqHdr := make([]byte, 8)
+	binary.LittleEndian.PutUint32(seqHdr[0:4], 3)
+	binary.LittleEndian.PutUint32(seqHdr[4:8], 3)
+
+	// CLO transport header: "CLO" + 'F' + totalSize(4) + channelID(4)
+	totalSize := 4 + 4 + 4 + len(symHdr) + len(seqHdr) + len(body)
+
+	msg := make([]byte, 0, totalSize)
+	msg = append(msg, []byte("CLO")...)
+	msg = append(msg, 'F')
+	msg = appendUint32(msg, uint32(totalSize))
+	msg = appendUint32(msg, channelID)
+	msg = append(msg, symHdr...)
+	msg = append(msg, seqHdr...)
+	msg = append(msg, body...)
+
+	return msg
 }
 
 // buildOPCUAHello constructs an OPC UA Hello message.
@@ -865,10 +947,10 @@ func buildOPCUAHello(endpointURL string) []byte {
 
 	// Endpoint URL with length prefix
 	endpointBytes := []byte(endpointURL)
-	endpointLength := uint32(len(endpointBytes)) // #nosec G115
+	endpointLength := uint32(len(endpointBytes))
 
 	// Calculate total message size
-	messageSize := uint32(8 + // #nosec G115
+	messageSize := uint32(8 +
 		4 + // ProtocolVersion
 		4 + // ReceiveBufferSize
 		4 + // SendBufferSize
@@ -940,18 +1022,18 @@ func appendUint32(b []byte, v uint32) []byte {
 }
 
 func appendInt32(b []byte, v int32) []byte {
-	return appendUint32(b, uint32(v)) // #nosec G115
+	return appendUint32(b, uint32(v))
 }
 
 func appendInt64(b []byte, v int64) []byte {
 	var buf [8]byte
-	binary.LittleEndian.PutUint64(buf[:], uint64(v)) // #nosec G115
+	binary.LittleEndian.PutUint64(buf[:], uint64(v))
 	return append(b, buf[:]...)
 }
 
 // appendOPCString appends an OPC UA string: int32 byte-length prefix + UTF-8 bytes.
 // An empty string is encoded as length=0 (not null).
 func appendOPCString(b []byte, s string) []byte {
-	b = appendInt32(b, int32(len(s))) // #nosec G115
+	b = appendInt32(b, int32(len(s)))
 	return append(b, []byte(s)...)
 }
