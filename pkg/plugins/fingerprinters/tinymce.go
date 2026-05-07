@@ -71,14 +71,13 @@ import (
 	"strings"
 )
 
-// tinymceJSMajorMinorDoubleQuote matches patterns like majorVersion="5" and minorVersion="7.1"
-// Used in older TinyMCE JS bundles.
-var tinymceJSMajorDoubleQuote = regexp.MustCompile(`majorVersion="(\d+)"`)
-var tinymceJSMinorDoubleQuote = regexp.MustCompile(`minorVersion="([\d.]+)"`)
+// tinymceJSMajorVersion matches majorVersion with any combination of := delimiters and
+// single or double quotes, e.g. majorVersion="5", majorVersion:'5', majorVersion:"5".
+var tinymceJSMajorVersion = regexp.MustCompile(`majorVersion\s*[:=]\s*["'](\d+)["']`)
 
-// tinymceJSMajorMinorSingleQuote matches patterns like majorVersion:'6',minorVersion:'8.1'
-var tinymceJSMajorSingleQuote = regexp.MustCompile(`majorVersion:'(\d+)'`)
-var tinymceJSMinorSingleQuote = regexp.MustCompile(`minorVersion:'([\d.]+)'`)
+// tinymceJSMinorVersion matches minorVersion with any combination of := delimiters and
+// single or double quotes, e.g. minorVersion="7.1", minorVersion:'7.1', minorVersion:"7.1".
+var tinymceJSMinorVersion = regexp.MustCompile(`minorVersion\s*[:=]\s*["']([\d.]+)["']`)
 
 // tinymceSemverRegex matches the first X.Y.Z semver pattern anywhere in the text.
 var tinymceSemverRegex = regexp.MustCompile(`\b(\d+\.\d+\.\d+)\b`)
@@ -189,20 +188,16 @@ func buildTinyMCECPE(version string) string {
 
 // extractTinyMCEVersionFromJS parses the raw JS body for TinyMCE version markers.
 // It tries the following strategies in order:
-//  1. majorVersion="N" + minorVersion="N.N" style (double-quoted assignment)
-//  2. majorVersion:'N',minorVersion:'N.N' style (single-quoted object literal)
-//  3. First X.Y.Z semver pattern in the first 5000 bytes (fallback)
+//  1. majorVersion + minorVersion markers with any := delimiter and single or
+//     double quotes (e.g. ="5", :'5', :"5")
+//  2. First X.Y.Z semver pattern in the first 5000 bytes (fallback)
 //
 // Returns an empty string if no version can be determined.
 func extractTinyMCEVersionFromJS(body []byte) string {
-	// Limit the search window for the semver fallback to the first 5000 bytes.
-	// The major/minor patterns are tried against the full body.
-	search := body
-
-	// Strategy 1: double-quoted majorVersion="N" + minorVersion="N.N"
-	if m := tinymceJSMajorDoubleQuote.FindSubmatch(search); len(m) >= 2 {
+	// Strategy 1: majorVersion/minorVersion markers in any quote/delimiter style
+	if m := tinymceJSMajorVersion.FindSubmatch(body); len(m) >= 2 {
 		major := string(m[1])
-		if mn := tinymceJSMinorDoubleQuote.FindSubmatch(search); len(mn) >= 2 {
+		if mn := tinymceJSMinorVersion.FindSubmatch(body); len(mn) >= 2 {
 			v := sanitizeVersion(major + "." + string(mn[1]))
 			if v != "" {
 				return v
@@ -210,18 +205,7 @@ func extractTinyMCEVersionFromJS(body []byte) string {
 		}
 	}
 
-	// Strategy 2: single-quoted majorVersion:'N',minorVersion:'N.N'
-	if m := tinymceJSMajorSingleQuote.FindSubmatch(search); len(m) >= 2 {
-		major := string(m[1])
-		if mn := tinymceJSMinorSingleQuote.FindSubmatch(search); len(mn) >= 2 {
-			v := sanitizeVersion(major + "." + string(mn[1]))
-			if v != "" {
-				return v
-			}
-		}
-	}
-
-	// Strategy 3: first X.Y.Z semver in first 5000 bytes
+	// Strategy 2: first X.Y.Z semver in first 5000 bytes
 	window := body
 	if len(window) > 5000 {
 		window = window[:5000]

@@ -249,6 +249,12 @@ func TestTinyMCEActiveFingerprinter_Fingerprint_Valid(t *testing.T) {
 			expectedCPE:     "cpe:2.3:a:tinymce:tinymce:6.8.1:*:*:*:*:*:*:*",
 		},
 		{
+			name:            "majorVersion and minorVersion with double quotes (colon style - production format)",
+			body:            `{majorVersion:"5",minorVersion:"7.1",revision:"0"}`,
+			expectedVersion: "5.7.1",
+			expectedCPE:     "cpe:2.3:a:tinymce:tinymce:5.7.1:*:*:*:*:*:*:*",
+		},
+		{
 			name:            "semver fallback in first 5000 bytes",
 			body:            `/* TinyMCE 5.10.2 */var t={};`,
 			expectedVersion: "5.10.2",
@@ -345,6 +351,12 @@ func TestTinyMCEAltPathFingerprinter_Fingerprint_Valid(t *testing.T) {
 			body:            `{majorVersion:'6',minorVersion:'8.1',revision:'0'}`,
 			expectedVersion: "6.8.1",
 			expectedCPE:     "cpe:2.3:a:tinymce:tinymce:6.8.1:*:*:*:*:*:*:*",
+		},
+		{
+			name:            "majorVersion and minorVersion with double quotes (colon style - production format)",
+			body:            `{majorVersion:"5",minorVersion:"7.1",revision:"0"}`,
+			expectedVersion: "5.7.1",
+			expectedCPE:     "cpe:2.3:a:tinymce:tinymce:5.7.1:*:*:*:*:*:*:*",
 		},
 		{
 			name:            "semver fallback in first 5000 bytes",
