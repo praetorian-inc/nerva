@@ -199,14 +199,27 @@ func TestTinyMCEActiveFingerprinter_ProbeEndpoint(t *testing.T) {
 
 func TestTinyMCEActiveFingerprinter_Match(t *testing.T) {
 	tests := []struct {
-		name       string
-		statusCode int
-		expected   bool
+		name        string
+		statusCode  int
+		contentType string
+		expected    bool
 	}{
 		{
-			name:       "matches 200 OK",
+			name:       "matches 200 OK with no content-type",
 			statusCode: http.StatusOK,
 			expected:   true,
+		},
+		{
+			name:        "matches 200 OK with application/javascript content-type",
+			statusCode:  http.StatusOK,
+			contentType: "application/javascript",
+			expected:    true,
+		},
+		{
+			name:        "does not match 200 with text/html content-type",
+			statusCode:  http.StatusOK,
+			contentType: "text/html; charset=utf-8",
+			expected:    false,
 		},
 		{
 			name:       "does not match 404",
@@ -223,7 +236,11 @@ func TestTinyMCEActiveFingerprinter_Match(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			fp := &TinyMCEActiveFingerprinter{}
-			resp := &http.Response{StatusCode: tt.statusCode, Header: http.Header{}}
+			header := http.Header{}
+			if tt.contentType != "" {
+				header.Set("Content-Type", tt.contentType)
+			}
+			resp := &http.Response{StatusCode: tt.statusCode, Header: header}
 			assert.Equal(t, tt.expected, fp.Match(resp))
 		})
 	}
@@ -289,6 +306,28 @@ func TestTinyMCEActiveFingerprinter_Fingerprint_Valid(t *testing.T) {
 	}
 }
 
+// TestTinyMCEActiveFingerprinter_Fingerprint_NonTinyMCEBody verifies that a body
+// containing a semver but no TinyMCE JS markers does not produce a false version
+// via the semver fallback. This guards against random content (e.g. a plain HTML
+// page with app build numbers) being misidentified as a TinyMCE JS file.
+func TestTinyMCEActiveFingerprinter_Fingerprint_NonTinyMCEBody(t *testing.T) {
+	// Body has a semver-like version (1.40.1000) but no "tinymce" or "TinyMCE"
+	// JS marker - the semver fallback must be suppressed.
+	body := `/* app bundle v1.40.1000 */ var app = {};`
+	fp := &TinyMCEActiveFingerprinter{}
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{},
+		Body:       io.NopCloser(bytes.NewReader([]byte(body))),
+	}
+
+	result, err := fp.Fingerprint(resp, []byte(body))
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "", result.Version, "should not extract version from body with no TinyMCE JS markers")
+}
+
 // --- TinyMCEAltPathFingerprinter tests ---
 
 func TestTinyMCEAltPathFingerprinter_Name(t *testing.T) {
@@ -303,14 +342,27 @@ func TestTinyMCEAltPathFingerprinter_ProbeEndpoint(t *testing.T) {
 
 func TestTinyMCEAltPathFingerprinter_Match(t *testing.T) {
 	tests := []struct {
-		name       string
-		statusCode int
-		expected   bool
+		name        string
+		statusCode  int
+		contentType string
+		expected    bool
 	}{
 		{
-			name:       "matches 200 OK",
+			name:       "matches 200 OK with no content-type",
 			statusCode: http.StatusOK,
 			expected:   true,
+		},
+		{
+			name:        "matches 200 OK with application/javascript content-type",
+			statusCode:  http.StatusOK,
+			contentType: "application/javascript",
+			expected:    true,
+		},
+		{
+			name:        "does not match 200 with text/html content-type",
+			statusCode:  http.StatusOK,
+			contentType: "text/html; charset=utf-8",
+			expected:    false,
 		},
 		{
 			name:       "does not match 404",
@@ -327,7 +379,11 @@ func TestTinyMCEAltPathFingerprinter_Match(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			fp := &TinyMCEAltPathFingerprinter{}
-			resp := &http.Response{StatusCode: tt.statusCode, Header: http.Header{}}
+			header := http.Header{}
+			if tt.contentType != "" {
+				header.Set("Content-Type", tt.contentType)
+			}
+			resp := &http.Response{StatusCode: tt.statusCode, Header: header}
 			assert.Equal(t, tt.expected, fp.Match(resp))
 		})
 	}
@@ -391,6 +447,22 @@ func TestTinyMCEAltPathFingerprinter_Fingerprint_Valid(t *testing.T) {
 			assert.Contains(t, result.CPEs, tt.expectedCPE)
 		})
 	}
+}
+
+func TestTinyMCEActiveFingerprinter_ProbeAccept(t *testing.T) {
+	fp := &TinyMCEActiveFingerprinter{}
+	var iface HTTPFingerprinter = fp
+	provider, ok := iface.(AcceptHeaderProvider)
+	require.True(t, ok, "should implement AcceptHeaderProvider")
+	assert.Equal(t, "*/*", provider.ProbeAccept())
+}
+
+func TestTinyMCEAltPathFingerprinter_ProbeAccept(t *testing.T) {
+	fp := &TinyMCEAltPathFingerprinter{}
+	var iface HTTPFingerprinter = fp
+	provider, ok := iface.(AcceptHeaderProvider)
+	require.True(t, ok, "should implement AcceptHeaderProvider")
+	assert.Equal(t, "*/*", provider.ProbeAccept())
 }
 
 func TestTinyMCEFingerprinter_Integration(t *testing.T) {

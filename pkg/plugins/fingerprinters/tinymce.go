@@ -65,6 +65,7 @@ TinyMCE runs embedded in web applications on standard HTTP ports:
 package fingerprinters
 
 import (
+	"bytes"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -205,15 +206,18 @@ func extractTinyMCEVersionFromJS(body []byte) string {
 		}
 	}
 
-	// Strategy 2: first X.Y.Z semver in first 5000 bytes
+	// Strategy 2: first X.Y.Z semver in first 5000 bytes, but ONLY if body looks like TinyMCE JS
 	window := body
 	if len(window) > 5000 {
 		window = window[:5000]
 	}
-	if m := tinymceSemverRegex.FindSubmatch(window); len(m) >= 2 {
-		v := sanitizeVersion(string(m[1]))
-		if v != "" {
-			return v
+	// Guard: only use semver fallback if body contains a TinyMCE marker
+	if bytes.Contains(window, []byte("tinymce")) || bytes.Contains(window, []byte("TinyMCE")) {
+		if m := tinymceSemverRegex.FindSubmatch(window); len(m) >= 2 {
+			v := sanitizeVersion(string(m[1]))
+			if v != "" {
+				return v
+			}
 		}
 	}
 
@@ -233,10 +237,22 @@ func (f *TinyMCEActiveFingerprinter) ProbeEndpoint() string {
 	return "/Scripts/tinymce/tinymce.min.js"
 }
 
-// Match returns true for any 200-range response regardless of Content-Type,
-// because JS files may be served with various MIME types.
+// ProbeAccept returns "*/*" so that JavaScript files are returned with their
+// actual content rather than empty or error responses that some servers return
+// when receiving the default "application/json" Accept header.
+func (f *TinyMCEActiveFingerprinter) ProbeAccept() string {
+	return "*/*"
+}
+
+// Match returns true for 200 responses that are not HTML. HTML responses
+// indicate connection reuse returned the initial page instead of the JS file.
 func (f *TinyMCEActiveFingerprinter) Match(resp *http.Response) bool {
-	return resp.StatusCode == http.StatusOK
+	if resp.StatusCode != http.StatusOK {
+		return false
+	}
+	// Reject HTML responses - we expect JavaScript, not a page
+	contentType := resp.Header.Get("Content-Type")
+	return !strings.Contains(contentType, "text/html")
 }
 
 // Fingerprint parses the JS body to extract the TinyMCE version.
@@ -264,9 +280,22 @@ func (f *TinyMCEAltPathFingerprinter) ProbeEndpoint() string {
 	return "/tinymce/tinymce.min.js"
 }
 
-// Match returns true for any 200-range response regardless of Content-Type.
+// ProbeAccept returns "*/*" so that JavaScript files are returned with their
+// actual content rather than empty or error responses that some servers return
+// when receiving the default "application/json" Accept header.
+func (f *TinyMCEAltPathFingerprinter) ProbeAccept() string {
+	return "*/*"
+}
+
+// Match returns true for 200 responses that are not HTML. HTML responses
+// indicate connection reuse returned the initial page instead of the JS file.
 func (f *TinyMCEAltPathFingerprinter) Match(resp *http.Response) bool {
-	return resp.StatusCode == http.StatusOK
+	if resp.StatusCode != http.StatusOK {
+		return false
+	}
+	// Reject HTML responses - we expect JavaScript, not a page
+	contentType := resp.Header.Get("Content-Type")
+	return !strings.Contains(contentType, "text/html")
 }
 
 // Fingerprint parses the JS body to extract the TinyMCE version.
