@@ -355,28 +355,39 @@ func extractSZLMetadata(conn net.Conn, timeout time.Duration, serviceData plugin
 
 // parseSZL0232Response extracts the protection level from a SZL 0x0232 response.
 //
-// Response layout (after TPKT + COTP DT + S7 header + S7 params = 25 bytes):
+// Response layout:
 //
-//	SZL response header (return code, transport size, data length): 4 bytes
-//	SZL header (SZL ID, SZL index, item length, item count): 8 bytes
-//	Item data: first item begins after the SZL header.
-//	  Within each item: 2-byte index, then protection attributes.
-//	  The protection level byte is at offset 2 within the item (after the 2-byte index).
+//	TPKT header:     4 bytes  (offsets 0-3)
+//	COTP DT:         3 bytes  (offsets 4-6)
+//	S7 header:       10 bytes (offsets 7-16; param length at 13-14, big-endian)
+//	S7 params:       variable (length read from header; typically 12 bytes in responses)
+//	SZL data:        return_code(1) + transport_size(1) + data_length(2) = 4 bytes
+//	SZL header:      szl_id(2) + szl_index(2) + item_length(2) + item_count(2) = 8 bytes
+//	Item fields (SZL 0x0232, index 0x0004):
+//	  index(2) + sch_schal(2) + sch_par(2) + sch_rel(2) + ...
+//	  sch_rel (word 3) is the parameterized protection level: 1=none, 2=read, 3=full.
 //
 // Returns 0 if the response is too short, malformed, or contains an unexpected value.
 func parseSZL0232Response(response []byte) uint8 {
-	// Minimum offset to the start of SZL data payload.
-	// TPKT(4) + COTP DT(3) + S7 header(10) + S7 params(8) = 25 bytes.
-	// Then SZL response header(4) + SZL header(8) = 12 more bytes = offset 37.
-	// The first item's protection byte is at offset 2 within the item = offset 39.
-	const minLen = 40
-	const protectionByteOffset = 39
-
-	if len(response) < minLen {
+	// Need at least TPKT(4) + COTP DT(3) + S7 header(10) = 17 bytes to read param length.
+	const s7HeaderEnd = 17
+	if len(response) < s7HeaderEnd {
 		return 0
 	}
 
-	level := response[protectionByteOffset]
+	// S7 parameter length at offsets 13-14 (big-endian).
+	paramLen := int(response[13])<<8 | int(response[14])
+
+	// Protection level is the low byte of the sch_rel word in the first SZL item.
+	// Offset from data start: SZL response header(4) + SZL header(8) +
+	//   item index(2) + sch_schal(2) + sch_par(2) + sch_rel high byte(1) = 19.
+	protOffset := s7HeaderEnd + paramLen + 19
+
+	if len(response) <= protOffset {
+		return 0
+	}
+
+	level := response[protOffset]
 	if level < 1 || level > 3 {
 		return 0
 	}
