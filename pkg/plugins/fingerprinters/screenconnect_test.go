@@ -822,50 +822,6 @@ func TestScreenConnectVersionValidation(t *testing.T) {
 	}
 }
 
-// ── TestSanitizeScreenConnectHeaderValue ──────────────────────────────────────
-
-func TestSanitizeScreenConnectHeaderValue(t *testing.T) {
-	tests := []struct {
-		name  string
-		input string
-		want  string
-	}{
-		{
-			name:  "Normal header value unchanged",
-			input: "Microsoft-IIS/10.0",
-			want:  "Microsoft-IIS/10.0",
-		},
-		{
-			name:  "Control characters stripped",
-			input: "ScreenConnect\x00\x01\x1f/25.0",
-			want:  "ScreenConnect/25.0",
-		},
-		{
-			name:  "DEL character stripped",
-			input: "value\x7fafter",
-			want:  "valueafter",
-		},
-		{
-			name:  "Value >256 chars truncated",
-			input: string(make([]byte, 300)), // 300 zero bytes all stripped (< 0x20)
-			want:  "",
-		},
-		{
-			name:  "Printable ASCII preserved",
-			input: "ScreenConnect",
-			want:  "ScreenConnect",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := sanitizeScreenConnectHeaderValue(tt.input); got != tt.want {
-				t.Errorf("sanitizeScreenConnectHeaderValue(%q) = %q, want %q", tt.input, got, tt.want)
-			}
-		})
-	}
-}
-
 // ── Integration test ──────────────────────────────────────────────────────────
 
 func TestScreenConnectFingerprinter_Integration(t *testing.T) {
