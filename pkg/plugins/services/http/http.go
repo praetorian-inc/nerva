@@ -418,7 +418,13 @@ func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *ht
 			if err != nil {
 				continue
 			}
-			probeReq.Header.Set("Accept", "application/json")
+			// Set Accept header - use fingerprinter's preference if available
+			acceptHeader := "application/json"
+			fp := fingerprinters.GetFingerprinterByName(fpName)
+			if provider, ok := fp.(fingerprinters.AcceptHeaderProvider); ok {
+				acceptHeader = provider.ProbeAccept()
+			}
+			probeReq.Header.Set("Accept", acceptHeader)
 			probeReq.Header.Set("User-Agent", USERAGENT)
 			if host != "" {
 				probeReq.Host = host
@@ -435,8 +441,7 @@ func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *ht
 				continue
 			}
 
-			// Run the specific fingerprinter
-			fp := fingerprinters.GetFingerprinterByName(fpName)
+			// Run the specific fingerprinter (looked up above for Accept header)
 			if fp != nil && fp.Match(probeResp) {
 				if result, err := fp.Fingerprint(probeResp, probeBody); err == nil && result != nil {
 					tech, resultCPEs, metadata, severity := processFingerprintResult(result)
