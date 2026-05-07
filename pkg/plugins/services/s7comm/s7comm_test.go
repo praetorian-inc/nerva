@@ -60,6 +60,7 @@ func TestS7comm_InvalidResponse(t *testing.T) {
 		{"too short", []byte{0x03, 0x00}},
 		{"wrong TPKT version", []byte{0x02, 0x00, 0x00, 0x10, 0x11, 0xD0}},
 		{"disconnect request", []byte{0x03, 0x00, 0x00, 0x10, 0x11, 0x80}},
+		{"exactly 5 bytes", []byte{0x03, 0x00, 0x00, 0x05, 0x11}},
 	}
 
 	for _, tt := range tests {
@@ -170,6 +171,14 @@ func TestS7comm_ValidateS7SetupResponseInvalid(t *testing.T) {
 			0x32, 0x01, // Job instead of Ack-Data
 			0x00, 0x00, 0x00, 0x00,
 			0x00, 0x08, 0x00, 0x00,
+		}},
+		{"wrong TPKT version with 17+ bytes", []byte{
+			0x02, 0x00, 0x00, 0x15, // TPKT version=0x02 (invalid, not 0x03)
+			0x02, 0xF0, 0x80,
+			0x32, 0x03, // Otherwise valid S7 Ack-Data
+			0x00, 0x00, 0x00, 0x00,
+			0x00, 0x08, 0x00, 0x00,
+			0x00,
 		}},
 	}
 
@@ -406,4 +415,825 @@ func TestS7comm_ValidateS7SetupResponseBoundsCheck(t *testing.T) {
 	// Should safely reject without panic or out-of-bounds access
 	assert.False(t, validateS7SetupResponse(maliciousResponse),
 		"8-byte response must be rejected to prevent out-of-bounds read at response[8]")
+}
+
+// makeProtectionResponse builds a synthetic SZL 0x0232 response with the given
+// protection level placed at the correct sch_rel field offset.
+//
+// Layout: TPKT(4) + COTP DT(3) + S7 header(10) + S7 params(12) + SZL resp header(4) +
+// SZL header(8) + item: index(2) + sch_schal(2) + sch_par(2) + sch_rel(2) = 49 bytes.
+func makeProtectionResponse(level byte) []byte {
+	resp := make([]byte, 49)
+	// TPKT header
+	resp[0] = 0x03
+	resp[3] = 49
+	// COTP DT
+	resp[4] = 0x02
+	resp[5] = 0xF0
+	resp[6] = 0x80
+	// S7 header
+	resp[7] = 0x32         // Protocol ID
+	resp[8] = 0x07         // UserData
+	resp[14] = 0x0c        // Param length = 12 (low byte; high byte stays 0)
+	// SZL response header (at offset 29)
+	resp[29] = 0xFF        // Return code OK
+	resp[30] = 0x09        // Transport size
+	// SZL header (at offset 33)
+	resp[33] = 0x02        // SZL ID high
+	resp[34] = 0x32        // SZL ID low (0x0232)
+	resp[36] = 0x04        // SZL index low (0x0004)
+	resp[40] = 0x01        // Item count low = 1
+	// Item: index at 41-42, sch_schal at 43-44, sch_par at 45-46, sch_rel at 47-48
+	resp[42] = 0x04        // Item index low (0x0004)
+	resp[48] = level       // Protection level (low byte of sch_rel)
+	return resp
+}
+
+func TestParseSZL0232Response(t *testing.T) {
+	tests := []struct {
+		name     string
+		response []byte
+		expected uint8
+	}{
+		{
+			name:     "level 1 no protection",
+			response: makeProtectionResponse(1),
+			expected: 1,
+		},
+		{
+			name:     "level 2 read-only",
+			response: makeProtectionResponse(2),
+			expected: 2,
+		},
+		{
+			name:     "level 3 full protection",
+			response: makeProtectionResponse(3),
+			expected: 3,
+		},
+		{
+			name:     "level 0 not extracted",
+			response: makeProtectionResponse(0),
+			expected: 0,
+		},
+		{
+			name:     "level 4 out of range",
+			response: makeProtectionResponse(4),
+			expected: 0,
+		},
+		{
+			name:     "response too short",
+			response: []byte{0x03, 0x00, 0x00, 0x08},
+			expected: 0,
+		},
+		{
+			name: "valid header but truncated before protection byte",
+			response: func() []byte {
+				r := make([]byte, 30) // 17 + 12 + 1 = 30, need 49
+				r[0] = 0x03
+				r[7] = 0x32
+				r[14] = 0x0c // paramLen=12, protOffset=48, but len=30
+				return r
+			}(),
+			expected: 0,
+		},
+		{
+			name:     "empty response",
+			response: []byte{},
+			expected: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := parseSZL0232Response(tt.response)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+// TestS7commSecurityFindingsMockHandshake exercises the full Run() path with
+// Misconfigs=true. The mock server completes the COTP + S7 Setup handshake,
+// responds to the SZL 0x001C query with a minimal module-ID payload, then
+// responds to the SZL 0x0232 query with protection level 1. The test asserts
+// that Run() returns exactly one finding with ID "s7comm-no-protection" and
+// that the evidence contains "protection_level=1".
+func TestS7commSecurityFindingsMockHandshake(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+
+	p := &S7COMMPlugin{}
+
+	go func() {
+		defer server.Close()
+		buf := make([]byte, 512)
+
+		// Read COTP CR → send COTP CC
+		n, _ := server.Read(buf)
+		if n == 0 {
+			return
+		}
+		cotpCC := []byte{
+			0x03, 0x00, 0x00, 0x16,
+			0x11, 0xD0, 0x00, 0x01, 0x00, 0x01, 0x00,
+			0xC0, 0x01, 0x0A,
+			0xC1, 0x02, 0x01, 0x00,
+			0xC2, 0x02, 0x01, 0x02,
+		}
+		_, _ = server.Write(cotpCC)
+
+		// Read S7 Setup → send S7 Setup Ack
+		n, _ = server.Read(buf)
+		if n == 0 {
+			return
+		}
+		s7Ack := []byte{
+			0x03, 0x00, 0x00, 0x1B,
+			0x02, 0xF0, 0x80,
+			0x32, 0x03,
+			0x00, 0x00, 0x00, 0x00,
+			0x00, 0x08, 0x00, 0x00,
+			0xF0, 0x00,
+			0x00, 0x01, 0x00, 0x01,
+			0x01, 0xE0,
+		}
+		_, _ = server.Write(s7Ack)
+
+		// Read SZL 0x001C request → send minimal module-ID response.
+		// parseSZL001CResponse scans the raw byte slice for an order-code
+		// pattern and optionally a "CPU" substring; wrap the payload in a
+		// TPKT header so the response is non-empty and contains recognisable
+		// strings.
+		n, _ = server.Read(buf)
+		if n == 0 {
+			return
+		}
+		szl001CPayload := []byte("6ES7 214-1AG40-0XB0 V4.4.0 CPU 1214C DC/DC/DC")
+		szl001CLen := 4 + len(szl001CPayload)
+		szl001CResp := []byte{
+			0x03, 0x00,
+			byte(szl001CLen >> 8), byte(szl001CLen & 0xFF),
+		}
+		szl001CResp = append(szl001CResp, szl001CPayload...)
+		_, _ = server.Write(szl001CResp)
+
+		// Read SZL 0x0232 request → send protection-level=1 response.
+		n, _ = server.Read(buf)
+		if n == 0 {
+			return
+		}
+		_, _ = server.Write(makeProtectionResponse(1))
+	}()
+
+	target := plugins.Target{Misconfigs: true}
+	service, err := p.Run(client, 5*time.Second, target)
+
+	require.NoError(t, err)
+	require.NotNil(t, service)
+	require.Len(t, service.SecurityFindings, 1)
+	assert.Equal(t, "s7comm-no-protection", service.SecurityFindings[0].ID)
+	assert.Contains(t, service.SecurityFindings[0].Evidence, "protection_level=1")
+}
+
+// TestBuildProtectionEvidence covers the evidence-string builder across the
+// combinations of populated and absent PLC identification fields.
+func TestBuildProtectionEvidence(t *testing.T) {
+	tests := []struct {
+		name            string
+		protectionLevel uint8
+		moduleName      string
+		orderCode       string
+		wantContains    []string
+		wantAbsent      []string
+	}{
+		{
+			name:            "all fields populated",
+			protectionLevel: 1,
+			moduleName:      "CPU 1214C",
+			orderCode:       "6ES7 214-1AG40-0XB0",
+			wantContains:    []string{"protection_level=1", "module=CPU 1214C", "order_code=6ES7 214-1AG40-0XB0"},
+		},
+		{
+			name:            "protection level only",
+			protectionLevel: 2,
+			wantContains:    []string{"protection_level=2"},
+			wantAbsent:      []string{"module=", "order_code="},
+		},
+		{
+			name:            "protection level and module name only",
+			protectionLevel: 1,
+			moduleName:      "CPU 315-2 DP",
+			wantContains:    []string{"protection_level=1", "module=CPU 315-2 DP"},
+			wantAbsent:      []string{"order_code="},
+		},
+		{
+			name:            "protection level and order code only",
+			protectionLevel: 1,
+			orderCode:       "6ES7 315-2AH14-0AB0",
+			wantContains:    []string{"protection_level=1", "order_code=6ES7 315-2AH14-0AB0"},
+			wantAbsent:      []string{"module="},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			serviceData := plugins.ServiceS7comm{
+				ProtectionLevel: tt.protectionLevel,
+				ModuleName:      tt.moduleName,
+				OrderCode:       tt.orderCode,
+			}
+			evidence := buildProtectionEvidence(serviceData)
+
+			for _, want := range tt.wantContains {
+				assert.Contains(t, evidence, want)
+			}
+			for _, absent := range tt.wantAbsent {
+				assert.NotContains(t, evidence, absent)
+			}
+		})
+	}
+}
+
+// TestS7commNoFindingProtectedPLC verifies that Run() with Misconfigs=true
+// produces no security findings when the PLC reports protection level 3
+// (full protection).
+func TestS7commNoFindingProtectedPLC(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+
+	p := &S7COMMPlugin{}
+
+	go func() {
+		defer server.Close()
+		buf := make([]byte, 512)
+
+		// COTP CR → CC
+		n, _ := server.Read(buf)
+		if n == 0 {
+			return
+		}
+		cotpCC := []byte{
+			0x03, 0x00, 0x00, 0x16,
+			0x11, 0xD0, 0x00, 0x01, 0x00, 0x01, 0x00,
+			0xC0, 0x01, 0x0A,
+			0xC1, 0x02, 0x01, 0x00,
+			0xC2, 0x02, 0x01, 0x02,
+		}
+		_, _ = server.Write(cotpCC)
+
+		// S7 Setup → Ack
+		n, _ = server.Read(buf)
+		if n == 0 {
+			return
+		}
+		s7Ack := []byte{
+			0x03, 0x00, 0x00, 0x1B,
+			0x02, 0xF0, 0x80,
+			0x32, 0x03,
+			0x00, 0x00, 0x00, 0x00,
+			0x00, 0x08, 0x00, 0x00,
+			0xF0, 0x00,
+			0x00, 0x01, 0x00, 0x01,
+			0x01, 0xE0,
+		}
+		_, _ = server.Write(s7Ack)
+
+		// SZL 0x001C → minimal response (no meaningful module data needed)
+		n, _ = server.Read(buf)
+		if n == 0 {
+			return
+		}
+		szl001CPayload := []byte{0x03, 0x00, 0x00, 0x04} // minimal 4-byte TPKT, no order code
+		_, _ = server.Write(szl001CPayload)
+
+		// SZL 0x0232 → protection level 3 (full protection)
+		n, _ = server.Read(buf)
+		if n == 0 {
+			return
+		}
+		_, _ = server.Write(makeProtectionResponse(3))
+	}()
+
+	target := plugins.Target{Misconfigs: true}
+	service, err := p.Run(client, 5*time.Second, target)
+
+	require.NoError(t, err)
+	require.NotNil(t, service)
+	assert.Empty(t, service.SecurityFindings)
+}
+
+// TestS7commEmptyFirstResponse exercises the Run() path where SendRecv for the
+// first COTP CR returns zero bytes without an error (line 96-97). The mock
+// server reads the CR and then closes its end without writing anything, which
+// causes the client read to time out and return an empty slice.
+func TestS7commEmptyFirstResponse(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+
+	p := &S7COMMPlugin{}
+
+	go func() {
+		defer server.Close()
+		buf := make([]byte, 256)
+		// Absorb the COTP CR but write nothing back — the client read will
+		// time out and Recv returns []byte{}, nil which triggers len==0 path.
+		_, _ = server.Read(buf)
+		// Block until the client side times out; no write.
+		buf2 := make([]byte, 1)
+		_, _ = server.Read(buf2)
+	}()
+
+	target := plugins.Target{}
+	service, err := p.Run(client, 500*time.Millisecond, target)
+
+	assert.NoError(t, err)
+	assert.Nil(t, service)
+}
+
+// TestS7commAlternateTSAPFallback exercises lines 101-110: the first COTP CR
+// gets an invalid CC response (wrong PDU type), so Run() retries with the
+// alternate TSAP (TSAPDestOPConnection) and the second CC is valid.
+func TestS7commAlternateTSAPFallback(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+
+	p := &S7COMMPlugin{}
+
+	go func() {
+		defer server.Close()
+		buf := make([]byte, 512)
+
+		// First COTP CR → send an invalid CC (disconnect request PDU type 0x80)
+		n, _ := server.Read(buf)
+		if n == 0 {
+			return
+		}
+		invalidCC := []byte{
+			0x03, 0x00, 0x00, 0x07,
+			0x02, 0x80, 0x00, // PDU type 0x80 — not a CC
+		}
+		_, _ = server.Write(invalidCC)
+
+		// Second COTP CR (alternate TSAP) → send a valid CC
+		n, _ = server.Read(buf)
+		if n == 0 {
+			return
+		}
+		cotpCC := []byte{
+			0x03, 0x00, 0x00, 0x16,
+			0x11, 0xD0, 0x00, 0x01, 0x00, 0x01, 0x00,
+			0xC0, 0x01, 0x0A,
+			0xC1, 0x02, 0x01, 0x00,
+			0xC2, 0x02, 0x01, 0x02,
+		}
+		_, _ = server.Write(cotpCC)
+
+		// S7 Setup → send S7 Ack so Run() continues normally
+		n, _ = server.Read(buf)
+		if n == 0 {
+			return
+		}
+		s7Ack := []byte{
+			0x03, 0x00, 0x00, 0x1B,
+			0x02, 0xF0, 0x80,
+			0x32, 0x03,
+			0x00, 0x00, 0x00, 0x00,
+			0x00, 0x08, 0x00, 0x00,
+			0xF0, 0x00,
+			0x00, 0x01, 0x00, 0x01,
+			0x01, 0xE0,
+		}
+		_, _ = server.Write(s7Ack)
+
+		// Absorb SZL requests (may or may not arrive before server.Close())
+		_, _ = server.Read(buf)
+		_, _ = server.Read(buf)
+	}()
+
+	target := plugins.Target{}
+	service, err := p.Run(client, 5*time.Second, target)
+
+	// Alternate TSAP succeeded → basic S7comm service detected
+	assert.NoError(t, err)
+	assert.NotNil(t, service)
+	assert.Equal(t, "s7comm", service.Protocol)
+}
+
+// TestS7commAlternateTSAPSendRecvError exercises the error return in the
+// alternate TSAP branch (line ~105): after the first COTP CC is invalid,
+// the second SendRecv returns an error because the server closes the
+// connection before writing a response.
+func TestS7commAlternateTSAPSendRecvError(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+
+	p := &S7COMMPlugin{}
+
+	go func() {
+		defer server.Close()
+		buf := make([]byte, 512)
+
+		// First COTP CR → send invalid CC (wrong PDU type)
+		n, _ := server.Read(buf)
+		if n == 0 {
+			return
+		}
+		invalidCC := []byte{
+			0x03, 0x00, 0x00, 0x07,
+			0x02, 0x80, 0x00, // PDU type 0x80 — not a CC
+		}
+		_, _ = server.Write(invalidCC)
+
+		// Second COTP CR (alternate TSAP) → read then close without replying
+		_, _ = server.Read(buf)
+		// server.Close() via defer fires → client SendRecv returns ReadError
+	}()
+
+	target := plugins.Target{}
+	service, err := p.Run(client, 5*time.Second, target)
+
+	// Error propagated from alternate TSAP SendRecv
+	assert.Error(t, err)
+	assert.Nil(t, service)
+}
+
+// TestS7commAlternateTSAPEmptyResponse exercises the zero-length / invalid
+// response branch (line ~108) after the alternate TSAP attempt: the first CC
+// is invalid, the second attempt times out and returns an empty response, so
+// Run() returns nil, nil.
+func TestS7commAlternateTSAPEmptyResponse(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+
+	p := &S7COMMPlugin{}
+
+	go func() {
+		defer server.Close()
+		buf := make([]byte, 512)
+
+		// First COTP CR → invalid CC
+		n, _ := server.Read(buf)
+		if n == 0 {
+			return
+		}
+		invalidCC := []byte{
+			0x03, 0x00, 0x00, 0x07,
+			0x02, 0x80, 0x00,
+		}
+		_, _ = server.Write(invalidCC)
+
+		// Second COTP CR (alternate TSAP) → read but write nothing; client times out
+		_, _ = server.Read(buf)
+		// Block until client timeout by absorbing one more read
+		buf2 := make([]byte, 1)
+		_, _ = server.Read(buf2)
+	}()
+
+	target := plugins.Target{}
+	service, err := p.Run(client, 500*time.Millisecond, target)
+
+	assert.NoError(t, err)
+	assert.Nil(t, service)
+}
+
+// TestS7commS7SetupSendRecvError exercises lines 119-121: COTP handshake
+// succeeds but the server closes the connection before sending the S7 Setup
+// response. SendRecv returns an error, and Run() returns a basic detection.
+func TestS7commS7SetupSendRecvError(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+
+	p := &S7COMMPlugin{}
+
+	go func() {
+		defer server.Close()
+		buf := make([]byte, 512)
+
+		// COTP CR → valid CC
+		n, _ := server.Read(buf)
+		if n == 0 {
+			return
+		}
+		cotpCC := []byte{
+			0x03, 0x00, 0x00, 0x16,
+			0x11, 0xD0, 0x00, 0x01, 0x00, 0x01, 0x00,
+			0xC0, 0x01, 0x0A,
+			0xC1, 0x02, 0x01, 0x00,
+			0xC2, 0x02, 0x01, 0x02,
+		}
+		_, _ = server.Write(cotpCC)
+
+		// S7 Setup → read request then close without replying
+		_, _ = server.Read(buf)
+		// server.Close() via defer triggers a read error on the client side
+	}()
+
+	target := plugins.Target{}
+	service, err := p.Run(client, 5*time.Second, target)
+
+	// Basic detection returned (no error propagated from S7 Setup failure)
+	assert.NoError(t, err)
+	assert.NotNil(t, service)
+	assert.Equal(t, "s7comm", service.Protocol)
+}
+
+// TestS7commS7SetupInvalidResponse exercises lines 125-127: COTP handshake
+// succeeds but the S7 Setup response fails validateS7SetupResponse (wrong
+// protocol ID). Run() returns a basic detection without metadata.
+func TestS7commS7SetupInvalidResponse(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+
+	p := &S7COMMPlugin{}
+
+	go func() {
+		defer server.Close()
+		buf := make([]byte, 512)
+
+		// COTP CR → valid CC
+		n, _ := server.Read(buf)
+		if n == 0 {
+			return
+		}
+		cotpCC := []byte{
+			0x03, 0x00, 0x00, 0x16,
+			0x11, 0xD0, 0x00, 0x01, 0x00, 0x01, 0x00,
+			0xC0, 0x01, 0x0A,
+			0xC1, 0x02, 0x01, 0x00,
+			0xC2, 0x02, 0x01, 0x02,
+		}
+		_, _ = server.Write(cotpCC)
+
+		// S7 Setup → send response with wrong S7 protocol ID (0x33 instead of 0x32)
+		n, _ = server.Read(buf)
+		if n == 0 {
+			return
+		}
+		badS7Ack := []byte{
+			0x03, 0x00, 0x00, 0x1B,
+			0x02, 0xF0, 0x80,
+			0x33, 0x03, // Wrong protocol ID — fails validateS7SetupResponse
+			0x00, 0x00, 0x00, 0x00,
+			0x00, 0x08, 0x00, 0x00,
+			0xF0, 0x00,
+			0x00, 0x01, 0x00, 0x01,
+			0x01, 0xE0,
+		}
+		_, _ = server.Write(badS7Ack)
+	}()
+
+	target := plugins.Target{}
+	service, err := p.Run(client, 5*time.Second, target)
+
+	// Basic detection returned (no error propagated from S7 Setup validation failure)
+	assert.NoError(t, err)
+	assert.NotNil(t, service)
+	assert.Equal(t, "s7comm", service.Protocol)
+}
+
+// TestS7commReadOnlyFindingMockHandshake exercises the full Run() path with
+// Misconfigs=true and protection level 2. The mock server completes the full
+// COTP + S7 Setup handshake then responds to SZL queries with level 2. The
+// test asserts Run() returns exactly one finding with ID "s7comm-read-only"
+// and severity Medium.
+func TestS7commReadOnlyFindingMockHandshake(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+
+	p := &S7COMMPlugin{}
+
+	go func() {
+		defer server.Close()
+		buf := make([]byte, 512)
+
+		// COTP CR → CC
+		n, _ := server.Read(buf)
+		if n == 0 {
+			return
+		}
+		cotpCC := []byte{
+			0x03, 0x00, 0x00, 0x16,
+			0x11, 0xD0, 0x00, 0x01, 0x00, 0x01, 0x00,
+			0xC0, 0x01, 0x0A,
+			0xC1, 0x02, 0x01, 0x00,
+			0xC2, 0x02, 0x01, 0x02,
+		}
+		_, _ = server.Write(cotpCC)
+
+		// S7 Setup → Ack
+		n, _ = server.Read(buf)
+		if n == 0 {
+			return
+		}
+		s7Ack := []byte{
+			0x03, 0x00, 0x00, 0x1B,
+			0x02, 0xF0, 0x80,
+			0x32, 0x03,
+			0x00, 0x00, 0x00, 0x00,
+			0x00, 0x08, 0x00, 0x00,
+			0xF0, 0x00,
+			0x00, 0x01, 0x00, 0x01,
+			0x01, 0xE0,
+		}
+		_, _ = server.Write(s7Ack)
+
+		// SZL 0x001C → minimal module-ID response
+		n, _ = server.Read(buf)
+		if n == 0 {
+			return
+		}
+		szl001CPayload := []byte("6ES7 315-2AH14-0AB0 V2.8.0 CPU 315-2 DP")
+		szl001CLen := 4 + len(szl001CPayload)
+		szl001CResp := []byte{
+			0x03, 0x00,
+			byte(szl001CLen >> 8), byte(szl001CLen & 0xFF),
+		}
+		szl001CResp = append(szl001CResp, szl001CPayload...)
+		_, _ = server.Write(szl001CResp)
+
+		// SZL 0x0232 → protection level 2
+		n, _ = server.Read(buf)
+		if n == 0 {
+			return
+		}
+		_, _ = server.Write(makeProtectionResponse(2))
+	}()
+
+	target := plugins.Target{Misconfigs: true}
+	service, err := p.Run(client, 5*time.Second, target)
+
+	require.NoError(t, err)
+	require.NotNil(t, service)
+	require.Len(t, service.SecurityFindings, 1)
+	assert.Equal(t, "s7comm-read-only", service.SecurityFindings[0].ID)
+	assert.Equal(t, plugins.SeverityMedium, service.SecurityFindings[0].Severity)
+	assert.Contains(t, service.SecurityFindings[0].Evidence, "protection_level=2")
+}
+
+// TestS7commMisconfigsDisabledMockHandshake exercises the full Run() path with
+// Misconfigs=false. Even though the PLC reports protection level 1 (no
+// protection), Run() must return a service with no security findings because
+// misconfig scanning is disabled.
+func TestS7commMisconfigsDisabledMockHandshake(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+
+	p := &S7COMMPlugin{}
+
+	go func() {
+		defer server.Close()
+		buf := make([]byte, 512)
+
+		// COTP CR → CC
+		n, _ := server.Read(buf)
+		if n == 0 {
+			return
+		}
+		cotpCC := []byte{
+			0x03, 0x00, 0x00, 0x16,
+			0x11, 0xD0, 0x00, 0x01, 0x00, 0x01, 0x00,
+			0xC0, 0x01, 0x0A,
+			0xC1, 0x02, 0x01, 0x00,
+			0xC2, 0x02, 0x01, 0x02,
+		}
+		_, _ = server.Write(cotpCC)
+
+		// S7 Setup → Ack
+		n, _ = server.Read(buf)
+		if n == 0 {
+			return
+		}
+		s7Ack := []byte{
+			0x03, 0x00, 0x00, 0x1B,
+			0x02, 0xF0, 0x80,
+			0x32, 0x03,
+			0x00, 0x00, 0x00, 0x00,
+			0x00, 0x08, 0x00, 0x00,
+			0xF0, 0x00,
+			0x00, 0x01, 0x00, 0x01,
+			0x01, 0xE0,
+		}
+		_, _ = server.Write(s7Ack)
+
+		// SZL 0x001C → module-ID response with order code
+		n, _ = server.Read(buf)
+		if n == 0 {
+			return
+		}
+		szl001CPayload := []byte("6ES7 214-1AG40-0XB0 V4.4.0 CPU 1214C DC/DC/DC")
+		szl001CLen := 4 + len(szl001CPayload)
+		szl001CResp := []byte{
+			0x03, 0x00,
+			byte(szl001CLen >> 8), byte(szl001CLen & 0xFF),
+		}
+		szl001CResp = append(szl001CResp, szl001CPayload...)
+		_, _ = server.Write(szl001CResp)
+
+		// SZL 0x0232 → protection level 1 (no protection)
+		n, _ = server.Read(buf)
+		if n == 0 {
+			return
+		}
+		_, _ = server.Write(makeProtectionResponse(1))
+	}()
+
+	// Misconfigs=false: security findings must not be populated
+	target := plugins.Target{Misconfigs: false}
+	service, err := p.Run(client, 5*time.Second, target)
+
+	require.NoError(t, err)
+	require.NotNil(t, service)
+	assert.Equal(t, "s7comm", service.Protocol)
+	assert.Empty(t, service.SecurityFindings,
+		"security findings must be nil/empty when Misconfigs=false even if PLC has no protection")
+}
+
+func TestS7commSecurityFindings(t *testing.T) {
+	tests := []struct {
+		name             string
+		protectionLevel  uint8
+		moduleName       string
+		orderCode        string
+		misconfigs       bool
+		wantFindingCount int
+		wantFindingID    string
+		wantSeverity     plugins.Severity
+		wantEvidenceKeys []string
+	}{
+		{
+			name:             "level 1 misconfigs enabled yields critical finding",
+			protectionLevel:  1,
+			moduleName:       "CPU 1214C DC/DC/DC",
+			orderCode:        "6ES7 214-1AG40-0XB0",
+			misconfigs:       true,
+			wantFindingCount: 1,
+			wantFindingID:    "s7comm-no-protection",
+			wantSeverity:     plugins.SeverityCritical,
+			wantEvidenceKeys: []string{"protection_level=1", "module=CPU 1214C DC/DC/DC", "order_code=6ES7 214-1AG40-0XB0"},
+		},
+		{
+			name:             "level 2 misconfigs enabled yields medium finding",
+			protectionLevel:  2,
+			moduleName:       "CPU 315-2 DP",
+			orderCode:        "6ES7 315-2AH14-0AB0",
+			misconfigs:       true,
+			wantFindingCount: 1,
+			wantFindingID:    "s7comm-read-only",
+			wantSeverity:     plugins.SeverityMedium,
+			wantEvidenceKeys: []string{"protection_level=2", "module=CPU 315-2 DP"},
+		},
+		{
+			name:             "level 3 misconfigs enabled yields no finding",
+			protectionLevel:  3,
+			misconfigs:       true,
+			wantFindingCount: 0,
+		},
+		{
+			name:             "level 0 not extracted yields no finding",
+			protectionLevel:  0,
+			misconfigs:       true,
+			wantFindingCount: 0,
+		},
+		{
+			name:             "level 1 misconfigs disabled yields no finding",
+			protectionLevel:  1,
+			misconfigs:       false,
+			wantFindingCount: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			serviceData := plugins.ServiceS7comm{
+				ProtectionLevel: tt.protectionLevel,
+				ModuleName:      tt.moduleName,
+				OrderCode:       tt.orderCode,
+			}
+
+			var findings []plugins.SecurityFinding
+			if tt.misconfigs {
+				findings = checkProtectionLevel(serviceData)
+			}
+
+			require.Len(t, findings, tt.wantFindingCount)
+			if tt.wantFindingCount == 0 {
+				return
+			}
+
+			assert.Equal(t, tt.wantFindingID, findings[0].ID)
+			assert.Equal(t, tt.wantSeverity, findings[0].Severity)
+			for _, key := range tt.wantEvidenceKeys {
+				assert.Contains(t, findings[0].Evidence, key)
+			}
+		})
+	}
 }
