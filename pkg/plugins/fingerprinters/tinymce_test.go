@@ -186,7 +186,9 @@ func TestBuildTinyMCECPE(t *testing.T) {
 }
 
 func TestTinyMCEFingerprinter_Integration(t *testing.T) {
-	// Clear registry to isolate this test
+	// Save and restore global registry to avoid test pollution
+	original := httpFingerprinters
+	t.Cleanup(func() { httpFingerprinters = original })
 	httpFingerprinters = nil
 
 	fp := &TinyMCEFingerprinter{}
