@@ -71,6 +71,18 @@ import (
 	"strings"
 )
 
+// tinymceJSMajorMinorDoubleQuote matches patterns like majorVersion="5" and minorVersion="7.1"
+// Used in older TinyMCE JS bundles.
+var tinymceJSMajorDoubleQuote = regexp.MustCompile(`majorVersion="(\d+)"`)
+var tinymceJSMinorDoubleQuote = regexp.MustCompile(`minorVersion="([\d.]+)"`)
+
+// tinymceJSMajorMinorSingleQuote matches patterns like majorVersion:'6',minorVersion:'8.1'
+var tinymceJSMajorSingleQuote = regexp.MustCompile(`majorVersion:'(\d+)'`)
+var tinymceJSMinorSingleQuote = regexp.MustCompile(`minorVersion:'([\d.]+)'`)
+
+// tinymceSemverRegex matches the first X.Y.Z semver pattern anywhere in the text.
+var tinymceSemverRegex = regexp.MustCompile(`\b(\d+\.\d+\.\d+)\b`)
+
 // TinyMCEFingerprinter detects TinyMCE instances by scanning the HTML body for
 // TinyMCE script references. It is a passive fingerprinter that operates on the
 // initial "/" response and does not make additional HTTP requests.
@@ -95,6 +107,8 @@ var tinymcePathVersionRegex = regexp.MustCompile(`tinymce[/-](\d+\.\d+\.\d+[^/"]
 
 func init() {
 	Register(&TinyMCEFingerprinter{})
+	Register(&TinyMCEActiveFingerprinter{})
+	Register(&TinyMCEAltPathFingerprinter{})
 }
 
 func (f *TinyMCEFingerprinter) Name() string {
@@ -171,4 +185,114 @@ func buildTinyMCECPE(version string) string {
 		version = "*"
 	}
 	return fmt.Sprintf("cpe:2.3:a:tinymce:tinymce:%s:*:*:*:*:*:*:*", version)
+}
+
+// extractTinyMCEVersionFromJS parses the raw JS body for TinyMCE version markers.
+// It tries the following strategies in order:
+//  1. majorVersion="N" + minorVersion="N.N" style (double-quoted assignment)
+//  2. majorVersion:'N',minorVersion:'N.N' style (single-quoted object literal)
+//  3. First X.Y.Z semver pattern in the first 5000 bytes (fallback)
+//
+// Returns an empty string if no version can be determined.
+func extractTinyMCEVersionFromJS(body []byte) string {
+	// Limit the search window for the semver fallback to the first 5000 bytes.
+	// The major/minor patterns are tried against the full body.
+	search := body
+
+	// Strategy 1: double-quoted majorVersion="N" + minorVersion="N.N"
+	if m := tinymceJSMajorDoubleQuote.FindSubmatch(search); len(m) >= 2 {
+		major := string(m[1])
+		if mn := tinymceJSMinorDoubleQuote.FindSubmatch(search); len(mn) >= 2 {
+			v := sanitizeVersion(major + "." + string(mn[1]))
+			if v != "" {
+				return v
+			}
+		}
+	}
+
+	// Strategy 2: single-quoted majorVersion:'N',minorVersion:'N.N'
+	if m := tinymceJSMajorSingleQuote.FindSubmatch(search); len(m) >= 2 {
+		major := string(m[1])
+		if mn := tinymceJSMinorSingleQuote.FindSubmatch(search); len(mn) >= 2 {
+			v := sanitizeVersion(major + "." + string(mn[1]))
+			if v != "" {
+				return v
+			}
+		}
+	}
+
+	// Strategy 3: first X.Y.Z semver in first 5000 bytes
+	window := body
+	if len(window) > 5000 {
+		window = window[:5000]
+	}
+	if m := tinymceSemverRegex.FindSubmatch(window); len(m) >= 2 {
+		v := sanitizeVersion(string(m[1]))
+		if v != "" {
+			return v
+		}
+	}
+
+	return ""
+}
+
+// TinyMCEActiveFingerprinter actively probes /Scripts/tinymce/tinymce.min.js,
+// the most common local deployment path observed in real-world applications.
+// It parses the JS file body to extract the TinyMCE version.
+type TinyMCEActiveFingerprinter struct{}
+
+func (f *TinyMCEActiveFingerprinter) Name() string {
+	return "tinymce-active"
+}
+
+func (f *TinyMCEActiveFingerprinter) ProbeEndpoint() string {
+	return "/Scripts/tinymce/tinymce.min.js"
+}
+
+// Match returns true for any 200-range response regardless of Content-Type,
+// because JS files may be served with various MIME types.
+func (f *TinyMCEActiveFingerprinter) Match(resp *http.Response) bool {
+	return resp.StatusCode == http.StatusOK
+}
+
+// Fingerprint parses the JS body to extract the TinyMCE version.
+func (f *TinyMCEActiveFingerprinter) Fingerprint(resp *http.Response, body []byte) (*FingerprintResult, error) {
+	version := extractTinyMCEVersionFromJS(body)
+
+	return &FingerprintResult{
+		Technology: "tinymce",
+		Version:    version,
+		CPEs:       []string{buildTinyMCECPE(version)},
+		Metadata:   make(map[string]any),
+	}, nil
+}
+
+// TinyMCEAltPathFingerprinter actively probes /tinymce/tinymce.min.js,
+// another common local deployment path observed in real-world applications.
+// It shares the same version extraction logic as TinyMCEActiveFingerprinter.
+type TinyMCEAltPathFingerprinter struct{}
+
+func (f *TinyMCEAltPathFingerprinter) Name() string {
+	return "tinymce-alt-path"
+}
+
+func (f *TinyMCEAltPathFingerprinter) ProbeEndpoint() string {
+	return "/tinymce/tinymce.min.js"
+}
+
+// Match returns true for any 200-range response regardless of Content-Type.
+func (f *TinyMCEAltPathFingerprinter) Match(resp *http.Response) bool {
+	return resp.StatusCode == http.StatusOK
+}
+
+// Fingerprint parses the JS body to extract the TinyMCE version.
+func (f *TinyMCEAltPathFingerprinter) Fingerprint(resp *http.Response, body []byte) (*FingerprintResult, error) {
+	version := extractTinyMCEVersionFromJS(body)
+
+	return &FingerprintResult{
+		Technology: "tinymce",
+		Version:    version,
+		CPEs:       []string{buildTinyMCECPE(version)},
+		Metadata:   make(map[string]any),
+	}, nil
 }

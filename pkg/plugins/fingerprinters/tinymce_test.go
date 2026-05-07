@@ -185,6 +185,202 @@ func TestBuildTinyMCECPE(t *testing.T) {
 	}
 }
 
+// --- TinyMCEActiveFingerprinter tests ---
+
+func TestTinyMCEActiveFingerprinter_Name(t *testing.T) {
+	fp := &TinyMCEActiveFingerprinter{}
+	assert.Equal(t, "tinymce-active", fp.Name())
+}
+
+func TestTinyMCEActiveFingerprinter_ProbeEndpoint(t *testing.T) {
+	fp := &TinyMCEActiveFingerprinter{}
+	assert.Equal(t, "/Scripts/tinymce/tinymce.min.js", fp.ProbeEndpoint())
+}
+
+func TestTinyMCEActiveFingerprinter_Match(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusCode int
+		expected   bool
+	}{
+		{
+			name:       "matches 200 OK",
+			statusCode: http.StatusOK,
+			expected:   true,
+		},
+		{
+			name:       "does not match 404",
+			statusCode: http.StatusNotFound,
+			expected:   false,
+		},
+		{
+			name:       "does not match 403",
+			statusCode: http.StatusForbidden,
+			expected:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fp := &TinyMCEActiveFingerprinter{}
+			resp := &http.Response{StatusCode: tt.statusCode, Header: http.Header{}}
+			assert.Equal(t, tt.expected, fp.Match(resp))
+		})
+	}
+}
+
+func TestTinyMCEActiveFingerprinter_Fingerprint_Valid(t *testing.T) {
+	tests := []struct {
+		name            string
+		body            string
+		expectedVersion string
+		expectedCPE     string
+	}{
+		{
+			name:            "majorVersion and minorVersion with double quotes (equals sign style)",
+			body:            `var a={majorVersion="5",minorVersion="7.1",revision="0"};`,
+			expectedVersion: "5.7.1",
+			expectedCPE:     "cpe:2.3:a:tinymce:tinymce:5.7.1:*:*:*:*:*:*:*",
+		},
+		{
+			name:            "majorVersion and minorVersion with single quotes (colon style)",
+			body:            `{majorVersion:'6',minorVersion:'8.1',revision:'0'}`,
+			expectedVersion: "6.8.1",
+			expectedCPE:     "cpe:2.3:a:tinymce:tinymce:6.8.1:*:*:*:*:*:*:*",
+		},
+		{
+			name:            "semver fallback in first 5000 bytes",
+			body:            `/* TinyMCE 5.10.2 */var t={};`,
+			expectedVersion: "5.10.2",
+			expectedCPE:     "cpe:2.3:a:tinymce:tinymce:5.10.2:*:*:*:*:*:*:*",
+		},
+		{
+			name:            "no version found in body",
+			body:            `var tinymce={};`,
+			expectedVersion: "",
+			expectedCPE:     "cpe:2.3:a:tinymce:tinymce:*:*:*:*:*:*:*:*",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fp := &TinyMCEActiveFingerprinter{}
+			resp := &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{},
+				Body:       io.NopCloser(bytes.NewReader([]byte(tt.body))),
+			}
+
+			result, err := fp.Fingerprint(resp, []byte(tt.body))
+
+			require.NoError(t, err)
+			require.NotNil(t, result)
+
+			assert.Equal(t, "tinymce", result.Technology)
+			assert.Equal(t, tt.expectedVersion, result.Version)
+			assert.Contains(t, result.CPEs, tt.expectedCPE)
+		})
+	}
+}
+
+// --- TinyMCEAltPathFingerprinter tests ---
+
+func TestTinyMCEAltPathFingerprinter_Name(t *testing.T) {
+	fp := &TinyMCEAltPathFingerprinter{}
+	assert.Equal(t, "tinymce-alt-path", fp.Name())
+}
+
+func TestTinyMCEAltPathFingerprinter_ProbeEndpoint(t *testing.T) {
+	fp := &TinyMCEAltPathFingerprinter{}
+	assert.Equal(t, "/tinymce/tinymce.min.js", fp.ProbeEndpoint())
+}
+
+func TestTinyMCEAltPathFingerprinter_Match(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusCode int
+		expected   bool
+	}{
+		{
+			name:       "matches 200 OK",
+			statusCode: http.StatusOK,
+			expected:   true,
+		},
+		{
+			name:       "does not match 404",
+			statusCode: http.StatusNotFound,
+			expected:   false,
+		},
+		{
+			name:       "does not match 500",
+			statusCode: http.StatusInternalServerError,
+			expected:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fp := &TinyMCEAltPathFingerprinter{}
+			resp := &http.Response{StatusCode: tt.statusCode, Header: http.Header{}}
+			assert.Equal(t, tt.expected, fp.Match(resp))
+		})
+	}
+}
+
+func TestTinyMCEAltPathFingerprinter_Fingerprint_Valid(t *testing.T) {
+	tests := []struct {
+		name            string
+		body            string
+		expectedVersion string
+		expectedCPE     string
+	}{
+		{
+			name:            "majorVersion and minorVersion with double quotes (equals sign style)",
+			body:            `var a={majorVersion="5",minorVersion="7.1",revision="0"};`,
+			expectedVersion: "5.7.1",
+			expectedCPE:     "cpe:2.3:a:tinymce:tinymce:5.7.1:*:*:*:*:*:*:*",
+		},
+		{
+			name:            "majorVersion and minorVersion with single quotes (colon style)",
+			body:            `{majorVersion:'6',minorVersion:'8.1',revision:'0'}`,
+			expectedVersion: "6.8.1",
+			expectedCPE:     "cpe:2.3:a:tinymce:tinymce:6.8.1:*:*:*:*:*:*:*",
+		},
+		{
+			name:            "semver fallback in first 5000 bytes",
+			body:            `/* TinyMCE 5.10.2 */var t={};`,
+			expectedVersion: "5.10.2",
+			expectedCPE:     "cpe:2.3:a:tinymce:tinymce:5.10.2:*:*:*:*:*:*:*",
+		},
+		{
+			name:            "no version found in body",
+			body:            `var tinymce={};`,
+			expectedVersion: "",
+			expectedCPE:     "cpe:2.3:a:tinymce:tinymce:*:*:*:*:*:*:*:*",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fp := &TinyMCEAltPathFingerprinter{}
+			resp := &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{},
+				Body:       io.NopCloser(bytes.NewReader([]byte(tt.body))),
+			}
+
+			result, err := fp.Fingerprint(resp, []byte(tt.body))
+
+			require.NoError(t, err)
+			require.NotNil(t, result)
+
+			assert.Equal(t, "tinymce", result.Technology)
+			assert.Equal(t, tt.expectedVersion, result.Version)
+			assert.Contains(t, result.CPEs, tt.expectedCPE)
+		})
+	}
+}
+
 func TestTinyMCEFingerprinter_Integration(t *testing.T) {
 	// Save and restore global registry to avoid test pollution
 	original := httpFingerprinters
