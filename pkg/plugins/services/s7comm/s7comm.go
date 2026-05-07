@@ -128,7 +128,7 @@ func (p *S7COMMPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.
 	}
 
 	// Step 4: (Optional) SZL queries for metadata - graceful failure
-	serviceData = extractSZLMetadata(conn, timeout, serviceData)
+	serviceData = extractSZLMetadata(conn, timeout, serviceData, target.Misconfigs)
 
 	// Generate CPE if we have enough information
 	if serviceData.PLCType != "" {
@@ -137,7 +137,7 @@ func (p *S7COMMPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.
 
 	service := plugins.CreateServiceFrom(target, serviceData, false, serviceData.FirmwareVersion, plugins.TCP)
 	if target.Misconfigs {
-		service.SecurityFindings = checkProtectionLevel(serviceData)
+		service.SecurityFindings = append(service.SecurityFindings, checkProtectionLevel(serviceData)...)
 	}
 	return service, nil
 }
@@ -330,7 +330,7 @@ func validateS7SetupResponse(response []byte) bool {
 
 // extractSZLMetadata attempts SZL queries for device info
 // This function always returns serviceData (never fails completely)
-func extractSZLMetadata(conn net.Conn, timeout time.Duration, serviceData plugins.ServiceS7comm) plugins.ServiceS7comm {
+func extractSZLMetadata(conn net.Conn, timeout time.Duration, serviceData plugins.ServiceS7comm, misconfigs bool) plugins.ServiceS7comm {
 	// SZL 0x001C: Module identification
 	szlRequest := buildSZLRequest(0x001C, 0x0000)
 	response, err := utils.SendRecv(conn, szlRequest, timeout)
@@ -343,11 +343,13 @@ func extractSZLMetadata(conn net.Conn, timeout time.Duration, serviceData plugin
 		serviceData.PLCType = detectPLCType(serviceData.OrderCode)
 	}
 
-	// SZL 0x0232: Protection level
-	szlProtRequest := buildSZLRequest(0x0232, 0x0004)
-	protResponse, err := utils.SendRecv(conn, szlProtRequest, timeout)
-	if err == nil && len(protResponse) > 0 {
-		serviceData.ProtectionLevel = parseSZL0232Response(protResponse)
+	if misconfigs {
+		// SZL 0x0232: Protection level
+		szlProtRequest := buildSZLRequest(0x0232, 0x0004)
+		protResponse, err := utils.SendRecv(conn, szlProtRequest, timeout)
+		if err == nil && len(protResponse) > 0 {
+			serviceData.ProtectionLevel = parseSZL0232Response(protResponse)
+		}
 	}
 
 	return serviceData
@@ -377,6 +379,23 @@ func parseSZL0232Response(response []byte) uint8 {
 
 	// S7 parameter length at offsets 13-14 (big-endian).
 	paramLen := int(response[13])<<8 | int(response[14])
+
+	// Validate SZL return code (0xFF = success) and item count (>= 1).
+	// Return code is the first byte of the data section.
+	// Item count is a big-endian word at offset 10 within the data section
+	// (after return_code(1) + transport_size(1) + data_length(2) + szl_id(2) + szl_index(2) + item_length(2)).
+	rcOffset := s7HeaderEnd + paramLen
+	itemCountOffset := rcOffset + 10
+	if len(response) < itemCountOffset+2 {
+		return 0
+	}
+	if response[rcOffset] != 0xFF {
+		return 0
+	}
+	itemCount := int(response[itemCountOffset])<<8 | int(response[itemCountOffset+1])
+	if itemCount < 1 {
+		return 0
+	}
 
 	// Protection level is the low byte of the sch_rel word in the first SZL item.
 	// Offset from data start: SZL response header(4) + SZL header(8) +
