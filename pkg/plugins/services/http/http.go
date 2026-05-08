@@ -422,7 +422,9 @@ func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *ht
 			acceptHeader := "application/json"
 			fp := fingerprinters.GetFingerprinterByName(fpName)
 			if provider, ok := fp.(fingerprinters.AcceptHeaderProvider); ok {
-				acceptHeader = provider.ProbeAccept()
+				if probeAccept := provider.ProbeAccept(); probeAccept != "" {
+					acceptHeader = probeAccept
+				}
 			}
 			probeReq.Header.Set("Accept", acceptHeader)
 			probeReq.Header.Set("User-Agent", USERAGENT)
