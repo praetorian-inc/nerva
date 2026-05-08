@@ -62,15 +62,41 @@ func GRPCDialWithTimeout(target string, timeout time.Duration) (*grpc.ClientConn
 // Returns:
 //   - []byte: Marshaled response bytes
 //   - error: RPC error if failed
-func GRPCInvokeUnary(conn *grpc.ClientConn, method string, request []byte, timeout time.Duration) ([]byte, error) {
+func GRPCInvokeUnary(conn *grpc.ClientConn, method string, request []byte, timeout time.Duration, opts ...grpc.CallOption) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	var response []byte
-	err := conn.Invoke(ctx, method, request, &response)
+	err := conn.Invoke(ctx, method, request, &response, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("grpc invoke failed: %w", err)
 	}
 
 	return response, nil
+}
+
+// RawBytesCodec is a gRPC codec that passes raw bytes through without
+// protobuf marshaling. Used for fingerprinting where we craft raw protobuf
+// bytes manually to avoid importing full proto definitions.
+type RawBytesCodec struct{}
+
+func (RawBytesCodec) Marshal(v interface{}) ([]byte, error) {
+	b, ok := v.([]byte)
+	if !ok {
+		return nil, fmt.Errorf("RawBytesCodec: expected []byte, got %T", v)
+	}
+	return b, nil
+}
+
+func (RawBytesCodec) Unmarshal(data []byte, v interface{}) error {
+	bp, ok := v.(*[]byte)
+	if !ok {
+		return fmt.Errorf("RawBytesCodec: expected *[]byte, got %T", v)
+	}
+	*bp = data
+	return nil
+}
+
+func (RawBytesCodec) Name() string {
+	return "raw-bytes"
 }

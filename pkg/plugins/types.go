@@ -101,6 +101,7 @@ const (
 	ProtoGit              = "git"
 	ProtoGTPC             = "gtpc"
 	ProtoGTPPrime         = "gtpprime"
+	ProtoGRPC             = "grpc"
 	ProtoGTPU             = "gtpu"
 	ProtoH323             = "h323"
 	ProtoHARTIP           = "hartip"
@@ -321,6 +322,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoGTPPrime:
 		var p ServiceGTPPrime
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoGRPC:
+		var p ServiceGRPC
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoGTPU:
@@ -1229,6 +1234,14 @@ func (e ServiceGTPPrime) Type() string { return ProtoGTPPrime }
 type ServiceGTPU struct{}
 
 func (e ServiceGTPU) Type() string { return ProtoGTPU }
+
+type ServiceGRPC struct {
+	ReflectionEnabled bool     `json:"reflection_enabled"`
+	Services          []string `json:"services,omitempty"`
+	HealthStatus      string   `json:"health_status,omitempty"`
+}
+
+func (e ServiceGRPC) Type() string { return ProtoGRPC }
 
 type ServicePFCP struct {
 	RecoveryTimestamp uint32 `json:"recovery_timestamp,omitempty"`
