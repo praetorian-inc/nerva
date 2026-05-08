@@ -7,17 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-05-08
+
 ### Added
+
+#### New Fingerprinters
+- OPC UA security mode misconfiguration detection (LAB-2681)
+- S7comm protection level misconfiguration detection (LAB-2682)
+- Zyxel firewall HTTP fingerprinter (LAB-1840)
+- GitLab DevOps Platform fingerprinter (LAB-1837)
+- Doccano NLP annotation platform fingerprinter (LAB-1208)
 - ConnectWise ScreenConnect HTTP fingerprinter (LAB-1838, CVE-2024-1709, CVE-2024-1708)
-- HP iLO, HP Embedded Web Server (LaserJet/PageWide/OfficeJet/DesignJet), and HP ChaiSOE fingerprinters (LAB-1834).
-- AJP (Apache JServ Protocol) fingerprinter on port 8009 using CPing/CPong handshake (LAB-1842).
-  - Emits AJP protocol version ("1.3") and CPing-enabled flag in service metadata.
+- WatchGuard Firebox fingerprinter + Sophos re-audit (LAB-1853)
+- Roundcube Webmail HTTP fingerprinter
+- HP iLO, HP Embedded Web Server (LaserJet/PageWide/OfficeJet/DesignJet), and HP ChaiSOE fingerprinters (LAB-1834)
+- AJP (Apache JServ Protocol) fingerprinter on port 8009 using CPing/CPong handshake (LAB-1842)
+- Boa (abandoned embedded web server) fingerprinter (LAB-1830)
+- mini_httpd and micro_httpd HTTP fingerprinters (LAB-1829)
+
+#### Security Enrichment
+- Flag weak TLS versions in HTTPS fingerprinting (LAB-2262)
+- Flag missing security headers: HSTS, CSP, X-Frame-Options (LAB-2261)
+- Flag RDP end-of-life OS versions (LAB-2093)
+- Flag memcached detection as no-auth high severity (LAB-2094)
+- Flag SNMP default public community string (LAB-2092)
+- Detect MongoDB unauthenticated access as critical finding (LAB-2263)
+- MySQL anonymous access detection (LAB-2264)
+- MQTT anonymous access detection (LAB-2266)
+- Kafka SASL requirement check (LAB-2265)
+
+#### Documentation
 - Complete README rewrite with accurate protocol documentation
 - Architecture diagram (Mermaid)
 - Use Cases section for security professionals
 - Troubleshooting guide
 - Terminology glossary
 - CITATION.cff for research citations
+
+### Fixed
+- Avoid indefinite stall in ssh.Dial()
 
 ### Changed
 - Renamed examples/scan.go to examples/service-fingerprinting-example.go
