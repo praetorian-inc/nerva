@@ -50,6 +50,146 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Renamed examples/scan.go to examples/service-fingerprinting-example.go
 
+## [1.3.0] - 2026-04-10
+
+### Added
+
+#### New Fingerprinters
+- Sophos XG/XGS Firewall fingerprinter (LAB-1189)
+- lighttpd HTTP fingerprinter (LAB-1828)
+- LwM2M IoT device management plugin (LAB-1187)
+- pgAdmin PostgreSQL management fingerprinter (LAB-1183)
+- Backstage developer portal fingerprinter (LAB-1173)
+- Kubeflow Central Dashboard fingerprinter (LAB-1177)
+- MLflow ML platform fingerprinting plugin (LAB-1176)
+- Gradio ML web UI fingerprinter (LAB-1174)
+- MikroTik RouterOS fingerprinter (LAB-1196)
+- RTMP streaming protocol plugin (LAB-1861)
+- MS-RPC (DCE/RPC) plugin for Windows RPC detection (LAB-1860)
+- Cisco Smart Install plugin (LAB-1859)
+- MySQL X Protocol (mysqlx) plugin (LAB-1858)
+- Mongoose embedded web server fingerprinter (LAB-1826)
+- Streamlit fingerprinting plugin
+
+#### Security Enrichment
+- Security misconfiguration detection framework (LAB-1160)
+- SSH weak crypto and password auth detection (LAB-1716, LAB-1717)
+
+### Fixed
+- Handle SSH keyboard-interactive auth failure without info request
+- Report JDWP protocol identity when version detection fails
+- Add stack trace to pool panic recovery logging
+- Address additional panics in scan pool
+- Top-level recover handler for JDWP
+- CrimsonV3 false positive on MySQL X Protocol
+- Firebird false positive fix
+
+### Changed
+- GitHub Actions release workflow for cross-platform builds
+
+## [1.2.0] - 2026-03-27
+
+### Added
+
+#### New Fingerprinters
+- Redis Commander fingerprinting plugin
+- Microsoft Dynamics 365 / Power Apps Portals fingerprinter
+- OPNsense firewall fingerprinter
+- Ubiquiti UniFi/EdgeOS HTTP fingerprinters
+- Cisco ASA/FTD appliance fingerprinter
+- Open WebUI fingerprinting plugin
+- Home Assistant HTTP fingerprinter
+- YugabyteDB HTTP fingerprinter (LAB-1172)
+- Swagger/OpenAPI HTTP fingerprinter
+- CoAP service detection plugin
+- Oracle Service Cloud (RightNow) fingerprinter
+- AnyDesk remote desktop detector (LAB-1181)
+- Apache Guacamole HTTP fingerprinter
+- pfSense fingerprinter (reimplemented as HTTP fingerprinter)
+- M2PA (MTP2 Peer Adaptation) fingerprinter
+- M2UA fingerprinting plugin for port 2904/SCTP
+- Ollama LLM inference server fingerprinter
+- WordPress HTTP fingerprinter
+- Citrix ICA virtual desktop plugin
+- Adobe Experience Manager (AEM) HTTP fingerprinter
+
+#### Security Enrichment
+- Security misconfiguration detection foundation (LAB-1642)
+
+#### Infrastructure
+- Proxy and DNS resolution support with ProxyDialer and caching
+
+### Fixed
+- Convert remaining camelCase metadata keys to snake_case
+- Preserve external API parsing struct tags as camelCase
+- Reimplement pfSense as HTTP fingerprinter instead of standalone plugin
+
+### Changed
+- Standardize JSON output to snake_case convention (LAB-1427)
+
+## [1.1.0] - 2026-03-13
+
+### Added
+
+#### New Fingerprinters
+- PPTP service fingerprinting plugin
+- IRC/IRCS service fingerprinting plugin
+- Git daemon service fingerprinting plugin
+- XMPP/Jabber service fingerprinting plugin
+- MinIO object storage detection
+- VMware vSphere fingerprinting (ESXi, vCenter, vSphere)
+- Express.js HTTP fingerprinter
+- Weaviate vector database HTTP fingerprinter
+- LibreChat service detection and version fingerprinting
+- H.323 protocol with structured H.225.0 parsing
+- Microsoft Exchange Server fingerprinter
+- Apache HTTP Server fingerprinter
+- Apache Tomcat HTTP fingerprinter
+- Tengine HTTP fingerprinter
+- SonicWall firewall/VPN fingerprinter
+- Check Point security gateway fingerprinter
+- Juniper SRX/Junos firewall fingerprinter
+- Portainer Docker management fingerprinter
+- Qdrant vector database fingerprinter (LAB-1163)
+- CockroachDB HTTP fingerprinter
+- Gitea HTTP fingerprinter
+- TiDB HTTP fingerprinter
+- Keycloak HTTP fingerprinter (including WildFly variant)
+- Splunk fingerprinter
+- Go pprof HTTP fingerprinter
+- SAP NetWeaver/ICM HTTP fingerprinter
+- Harbor container registry fingerprinter
+- Gotenberg fingerprinting plugin
+- NVIDIA Triton Inference Server fingerprinter
+- TeamViewer fingerprinting plugin (LAB-1180)
+- LocalAI HTTP fingerprinter
+- vLLM HTTP fingerprinter
+- 4 HTTP fingerprinters from PALIG hunt
+
+#### Protocols
+- SUA (SCTP User Adaptation) fingerprinting plugin
+- M2UA fingerprinting plugin
+
+#### Infrastructure
+- Channel-based worker pool for concurrent scanning
+- Scan resume capability with worker pool integration
+- Worker utilization metrics in progress output
+- IPv6 literal address support in target parsing
+- Fingerprint metadata propagation through HTTP pipeline
+
+### Fixed
+- XMPP split TCP segment handling
+- RTSP bounds check to prevent panic on truncated responses
+- Hostname URL-prefix check to prevent false positives
+- Checkpoint false positive reduction (require 2+ body matches)
+- SonicWall version extraction for real-world responses
+- Juniper J-Web detection improvements
+- Weaviate anonymous access flagging in metadata
+- Apache httpd OS and module extraction
+
+### Changed
+- External contribution notification workflow
+
 ## [1.0.0] - 2024
 
 ### Added
