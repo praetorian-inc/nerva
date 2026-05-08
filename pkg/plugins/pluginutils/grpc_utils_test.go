@@ -142,6 +142,19 @@ func TestRawBytesCodec_Unmarshal(t *testing.T) {
 	}
 }
 
+func TestRawBytesCodec_Unmarshal_CopyIsIndependent(t *testing.T) {
+	codec := RawBytesCodec{}
+	original := []byte{0x0a, 0x0b, 0x0c}
+	var dest []byte
+	if err := codec.Unmarshal(original, &dest); err != nil {
+		t.Fatalf("Unmarshal() unexpected error: %v", err)
+	}
+	original[0] = 0xff
+	if dest[0] != 0x0a {
+		t.Errorf("Unmarshal() copy not independent: dest[0] = %#x, want %#x after modifying original", dest[0], 0x0a)
+	}
+}
+
 func TestRawBytesCodec_Name(t *testing.T) {
 	codec := RawBytesCodec{}
 	if got := codec.Name(); got != "raw-bytes" {

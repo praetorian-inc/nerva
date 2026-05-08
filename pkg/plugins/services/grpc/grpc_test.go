@@ -187,9 +187,41 @@ func TestExtractServiceNames_EdgeCases(t *testing.T) {
 		},
 		{
 			name: "unknown wire type terminates parsing",
-			// Wire type 5 (32-bit fixed) is not handled, triggers return
-			// Tag: field 1, wire type 5 = 0x0d
-			data:    []byte{0x0d, 0x01, 0x02, 0x03, 0x04},
+			// Wire type 6 is unknown and not handled, triggers return
+			// Tag: field 1, wire type 6 = 0x0e
+			data:    []byte{0x0e, 0x01, 0x02, 0x03, 0x04},
+			wantLen: 0,
+		},
+		{
+			name: "wire type 5 (32-bit fixed) is skipped",
+			data: func() []byte {
+				svc := []byte("grpc.health.v1.Health")
+				inner := append([]byte{0x0a, byte(len(svc))}, svc...)
+				prefix := []byte{0x0d, 0x01, 0x02, 0x03, 0x04}
+				return append(prefix, append([]byte{0x0a, byte(len(inner))}, inner...)...)
+			}(),
+			wantLen: 1,
+		},
+		{
+			name: "wire type 1 (64-bit fixed) is skipped",
+			data: func() []byte {
+				svc := []byte("grpc.health.v1.Health")
+				inner := append([]byte{0x0a, byte(len(svc))}, svc...)
+				prefix := []byte{0x09, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08}
+				return append(prefix, append([]byte{0x0a, byte(len(inner))}, inner...)...)
+			}(),
+			wantLen: 1,
+		},
+		{
+			name: "deep nesting beyond limit returns no panic",
+			data: func() []byte {
+				svc := []byte("grpc.health.v1.Health")
+				msg := append([]byte{0x0a, byte(len(svc))}, svc...)
+				for i := 0; i < 12; i++ {
+					msg = append([]byte{0x0a, byte(len(msg))}, msg...)
+				}
+				return msg
+			}(),
 			wantLen: 0,
 		},
 		{

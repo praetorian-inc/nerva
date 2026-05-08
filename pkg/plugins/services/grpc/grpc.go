@@ -235,6 +235,13 @@ func parseReflectionResponse(data []byte) []string {
 // extractServiceNames recursively walks protobuf data looking for string fields
 // that look like gRPC service names (contain dots, printable ASCII).
 func extractServiceNames(data []byte, services *[]string) {
+	extractServiceNamesDepth(data, services, 0)
+}
+
+func extractServiceNamesDepth(data []byte, services *[]string, depth int) {
+	if depth > 10 {
+		return
+	}
 	i := 0
 	for i < len(data) {
 		tag := data[i]
@@ -249,6 +256,11 @@ func extractServiceNames(data []byte, services *[]string) {
 			if i < len(data) {
 				i++
 			}
+		case 1: // 64-bit (fixed64, sfixed64, double)
+			if i+8 > len(data) {
+				return
+			}
+			i += 8
 		case 2: // length-delimited
 			if i >= len(data) {
 				return
@@ -256,7 +268,7 @@ func extractServiceNames(data []byte, services *[]string) {
 			// Read varint length
 			length, bytesRead := readVarint(data[i:])
 			i += bytesRead
-			if i+length > len(data) || length < 0 {
+			if length < 0 || length > len(data)-i {
 				return
 			}
 			fieldData := data[i : i+length]
@@ -270,8 +282,13 @@ func extractServiceNames(data []byte, services *[]string) {
 				}
 			} else if length > 0 {
 				// Recurse into nested message
-				extractServiceNames(fieldData, services)
+				extractServiceNamesDepth(fieldData, services, depth+1)
 			}
+		case 5: // 32-bit (fixed32, sfixed32, float)
+			if i+4 > len(data) {
+				return
+			}
+			i += 4
 		default:
 			// Unknown wire type, stop parsing this level
 			return

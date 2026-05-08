@@ -93,7 +93,7 @@ func (RawBytesCodec) Unmarshal(data []byte, v interface{}) error {
 	if !ok {
 		return fmt.Errorf("RawBytesCodec: expected *[]byte, got %T", v)
 	}
-	*bp = data
+	*bp = append([]byte(nil), data...)
 	return nil
 }
 
