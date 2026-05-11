@@ -282,11 +282,10 @@ func sanitizeConfluenceHeaderValue(s string) string {
 	for _, r := range s {
 		if r >= 0x20 && r != 0x7F {
 			b.WriteRune(r)
+			if b.Len() >= 256 {
+				break
+			}
 		}
 	}
-	result := b.String()
-	if len(result) > 256 {
-		result = result[:256]
-	}
-	return result
+	return b.String()
 }
