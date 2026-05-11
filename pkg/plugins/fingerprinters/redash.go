@@ -51,6 +51,7 @@ cpe:2.3:a:redash:redash:{version}:*:*:*:*:*:*:*
 package fingerprinters
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -114,8 +115,12 @@ func (f *RedashFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fi
 	ct := strings.ToLower(resp.Header.Get("Content-Type"))
 
 	// Active probe: try JSON parsing first when content type is JSON or body looks like JSON.
-	if strings.Contains(ct, "application/json") || (len(body) > 0 && body[0] == '{') {
-		return f.fingerprintJSON(body)
+	trimmed := bytes.TrimLeft(body, " \t\r\n")
+	if strings.Contains(ct, "application/json") || (len(trimmed) > 0 && trimmed[0] == '{') {
+		if result, err := f.fingerprintJSON(body); result != nil || err != nil {
+			return result, err
+		}
+		// JSON probe failed — fall back to HTML signal counting
 	}
 
 	// Passive: HTML signal counting.
@@ -156,19 +161,11 @@ func (f *RedashFingerprinter) fingerprintJSON(body []byte) (*FingerprintResult, 
 	}
 
 	// Require Redash-unique field combinations to avoid false positives (e.g., MLflow).
-	// At least two of the three Redash-specific fields must be present.
-	redashFieldCount := 0
-	if data.OrgSlug != "" {
-		redashFieldCount++
+	// org_slug is the most Redash-unique field — require it plus at least one other.
+	if data.OrgSlug == "" {
+		return nil, nil
 	}
-	if data.CSRFToken != "" {
-		redashFieldCount++
-	}
-	if data.ClientConfig != nil {
-		redashFieldCount++
-	}
-
-	if redashFieldCount < 2 {
+	if data.CSRFToken == "" && data.ClientConfig == nil {
 		return nil, nil
 	}
 

@@ -202,6 +202,12 @@ func TestMetabaseFingerprinter_Fingerprint_ActiveProbe(t *testing.T) {
 			body:    `{not valid json`,
 			wantNil: true,
 		},
+		{
+			name:        "unsanitizable version tag falls back to wildcard CPE",
+			body:        `{"version": {"tag": "v1.2.3-beta", "date": "2023-10-01", "hash": "abc1234"}, "engines": {"postgres": {}}}`,
+			wantVersion: "",
+			wantCPE:     "cpe:2.3:a:metabase:metabase:*:*:*:*:*:*:*:*",
+		},
 	}
 
 	for _, tt := range tests {

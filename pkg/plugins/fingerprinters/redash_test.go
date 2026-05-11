@@ -216,6 +216,11 @@ func TestRedashFingerprinter_Fingerprint_ActiveProbe(t *testing.T) {
 			body:    `{"experiment_id": "0", "name": "Default", "artifact_location": "mlflow-artifacts:/0"}`,
 			wantNil: true,
 		},
+		{
+			name:    "csrf_token + client_config without org_slug -> nil",
+			body:    `{"csrf_token": "abc123", "client_config": {"version": "10.1.0"}}`,
+			wantNil: true,
+		},
 	}
 
 	for _, tt := range tests {

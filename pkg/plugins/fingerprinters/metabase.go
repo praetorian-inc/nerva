@@ -122,7 +122,10 @@ func (f *MetabaseFingerprinter) Fingerprint(resp *http.Response, body []byte) (*
 
 	// Active probe: JSON response from /api/session/properties
 	if strings.Contains(ct, "application/json") {
-		return f.fingerprintJSON(body)
+		if result, err := f.fingerprintJSON(body); result != nil || err != nil {
+			return result, err
+		}
+		// JSON probe failed — fall back to HTML signal counting
 	}
 
 	// Passive: HTML detection
@@ -154,8 +157,7 @@ func (f *MetabaseFingerprinter) fingerprintHTML(body []byte) (*FingerprintResult
 		Version:    "",
 		CPEs:       []string{buildMetabaseCPE("")},
 		Metadata: map[string]any{
-			"login_path":          "/auth/login",
-			"setup_token_present": false,
+			"login_path": "/auth/login",
 		},
 		Severity: plugins.SeverityHigh,
 	}, nil

@@ -110,19 +110,22 @@ func (f *SupersetFingerprinter) Fingerprint(resp *http.Response, body []byte) (*
 		return nil, nil
 	}
 
-	// Try active JSON probe first
-	var info supersetInfoResponse
-	if err := json.Unmarshal(body, &info); err == nil && info.StatusCode == 200 && info.Result.Version != "" {
-		version := sanitizeSupersetVersion(info.Result.Version)
-		return &FingerprintResult{
-			Technology: "superset",
-			Version:    version,
-			CPEs:       []string{buildSupersetCPE(version)},
-			Metadata: map[string]any{
-				"login_path": "/login/",
-			},
-			Severity: plugins.SeverityHigh,
-		}, nil
+	// Try active JSON probe only when response is JSON
+	ct := strings.ToLower(resp.Header.Get("Content-Type"))
+	if strings.Contains(ct, "application/json") {
+		var info supersetInfoResponse
+		if err := json.Unmarshal(body, &info); err == nil && info.StatusCode == 200 && info.Result.Version != "" {
+			version := sanitizeSupersetVersion(info.Result.Version)
+			return &FingerprintResult{
+				Technology: "superset",
+				Version:    version,
+				CPEs:       []string{buildSupersetCPE(version)},
+				Metadata: map[string]any{
+					"login_path": "/login/",
+				},
+				Severity: plugins.SeverityHigh,
+			}, nil
+		}
 	}
 
 	// Passive HTML signal counting
