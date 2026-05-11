@@ -329,3 +329,69 @@ func TestDNP3(t *testing.T) {
 		})
 	}
 }
+
+// TestDNP3SecurityFinding verifies that security findings are set when Misconfigs is true.
+func TestDNP3SecurityFinding(t *testing.T) {
+	server, client := net.Pipe()
+
+	go func() {
+		buf := make([]byte, 256)
+		_, _ = server.Read(buf)
+		_, _ = server.Write(buildValidDNP3Response())
+		server.Close()
+	}()
+
+	addr := netip.MustParseAddrPort("127.0.0.1:20000")
+	target := plugins.Target{Host: "127.0.0.1", Address: addr, Misconfigs: true}
+
+	p := &DNP3Plugin{}
+	service, err := p.Run(client, 5*time.Second, target)
+	if err != nil {
+		t.Fatalf("Run() returned unexpected error: %v", err)
+	}
+	if service == nil {
+		t.Fatal("Run() returned nil, want non-nil service")
+	}
+	if !service.AnonymousAccess {
+		t.Error("expected AnonymousAccess to be true")
+	}
+	if len(service.SecurityFindings) != 1 {
+		t.Fatalf("expected 1 finding, got %d", len(service.SecurityFindings))
+	}
+	if service.SecurityFindings[0].ID != "dnp3-no-auth" {
+		t.Errorf("expected finding ID 'dnp3-no-auth', got %q", service.SecurityFindings[0].ID)
+	}
+	if service.SecurityFindings[0].Severity != plugins.SeverityHigh {
+		t.Errorf("expected severity high, got %s", service.SecurityFindings[0].Severity)
+	}
+}
+
+// TestDNP3NoSecurityFinding verifies that no findings are set when Misconfigs is false.
+func TestDNP3NoSecurityFinding(t *testing.T) {
+	server, client := net.Pipe()
+
+	go func() {
+		buf := make([]byte, 256)
+		_, _ = server.Read(buf)
+		_, _ = server.Write(buildValidDNP3Response())
+		server.Close()
+	}()
+
+	addr := netip.MustParseAddrPort("127.0.0.1:20000")
+	target := plugins.Target{Host: "127.0.0.1", Address: addr, Misconfigs: false}
+
+	p := &DNP3Plugin{}
+	service, err := p.Run(client, 5*time.Second, target)
+	if err != nil {
+		t.Fatalf("Run() returned unexpected error: %v", err)
+	}
+	if service == nil {
+		t.Fatal("Run() returned nil, want non-nil service")
+	}
+	if service.AnonymousAccess {
+		t.Error("expected AnonymousAccess to be false when Misconfigs is false")
+	}
+	if len(service.SecurityFindings) != 0 {
+		t.Errorf("expected 0 findings, got %d", len(service.SecurityFindings))
+	}
+}

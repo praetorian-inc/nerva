@@ -116,7 +116,21 @@ func (p *Plugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target
 		}
 	}
 
+	if target.Misconfigs && service != nil {
+		service.AnonymousAccess = true
+		service.SecurityFindings = []plugins.SecurityFinding{bacnetNoAuthFinding()}
+	}
 	return service, nil
+}
+
+// bacnetNoAuthFinding returns a SecurityFinding for an unauthenticated BACnet/IP server.
+func bacnetNoAuthFinding() plugins.SecurityFinding {
+	return plugins.SecurityFinding{
+		ID:          "bacnet-no-auth",
+		Severity:    plugins.SeverityHigh,
+		Description: "BACnet/IP accessible without authentication",
+		Evidence:    "Responded to unauthenticated BACnet Who-Is request",
+	}
 }
 
 // sanitizeString filters a string to contain only printable ASCII characters (0x20-0x7E).

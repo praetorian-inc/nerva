@@ -275,6 +275,78 @@ func TestGenerateCPE(t *testing.T) {
 	}
 }
 
+// TestModbusSecurityFinding verifies that security findings are set when Misconfigs is true.
+func TestModbusSecurityFinding(t *testing.T) {
+	// Mock returns a valid Modbus success response (function code 0x02, byte count 1, data 0x00)
+	// Transaction ID bytes [0,1] are overwritten by mockModbusConn.Read with the echoed txID
+	mockConn := &mockModbusConn{
+		responseData: []byte{
+			0xFF, 0xFF, // placeholder transaction ID (overwritten by mock)
+			0x00, 0x00, // protocol ID
+			0x00, 0x03, // length: 3 bytes follow
+			0x01,       // unit ID
+			0x02,       // function code (Read Discrete Input success)
+			0x01,       // byte count: 1
+			0x00,       // data: bit value 0 (high bits zero, passes (>>1)==0x00 check)
+		},
+	}
+
+	plugin := &MODBUSPlugin{}
+	target := plugins.Target{Host: "127.0.0.1", Misconfigs: true}
+
+	service, err := plugin.Run(mockConn, 5*time.Second, target)
+	if err != nil {
+		t.Fatalf("Run() returned unexpected error: %v", err)
+	}
+	if service == nil {
+		t.Fatal("Run() returned nil, want non-nil service")
+	}
+	if !service.AnonymousAccess {
+		t.Error("expected AnonymousAccess to be true")
+	}
+	if len(service.SecurityFindings) != 1 {
+		t.Fatalf("expected 1 finding, got %d", len(service.SecurityFindings))
+	}
+	if service.SecurityFindings[0].ID != "modbus-no-auth" {
+		t.Errorf("expected finding ID 'modbus-no-auth', got %q", service.SecurityFindings[0].ID)
+	}
+	if service.SecurityFindings[0].Severity != plugins.SeverityHigh {
+		t.Errorf("expected severity high, got %s", service.SecurityFindings[0].Severity)
+	}
+}
+
+// TestModbusNoSecurityFinding verifies that no findings are set when Misconfigs is false.
+func TestModbusNoSecurityFinding(t *testing.T) {
+	mockConn := &mockModbusConn{
+		responseData: []byte{
+			0xFF, 0xFF, // placeholder transaction ID (overwritten by mock)
+			0x00, 0x00, // protocol ID
+			0x00, 0x03, // length: 3 bytes follow
+			0x01,       // unit ID
+			0x02,       // function code (Read Discrete Input success)
+			0x01,       // byte count: 1
+			0x00,       // data
+		},
+	}
+
+	plugin := &MODBUSPlugin{}
+	target := plugins.Target{Host: "127.0.0.1", Misconfigs: false}
+
+	service, err := plugin.Run(mockConn, 5*time.Second, target)
+	if err != nil {
+		t.Fatalf("Run() returned unexpected error: %v", err)
+	}
+	if service == nil {
+		t.Fatal("Run() returned nil, want non-nil service")
+	}
+	if service.AnonymousAccess {
+		t.Error("expected AnonymousAccess to be false when Misconfigs is false")
+	}
+	if len(service.SecurityFindings) != 0 {
+		t.Errorf("expected 0 findings, got %d", len(service.SecurityFindings))
+	}
+}
+
 // TestRunWithShortResponse tests the vulnerability fix for CWE-125 (out-of-bounds read)
 // A malicious Modbus server could send a response shorter than expected (e.g., 8 bytes),
 // which would cause an out-of-bounds read when accessing response[ModbusHeaderLength+2] (index 9).

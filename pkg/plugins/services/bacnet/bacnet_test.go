@@ -15,8 +15,10 @@
 package bacnet
 
 import (
+	"net"
 	"net/netip"
 	"testing"
+	"time"
 
 	"github.com/praetorian-inc/nerva/pkg/plugins"
 )
@@ -260,5 +262,94 @@ func TestNormalizeCPE(t *testing.T) {
 				t.Errorf("expected %s, got %s", tt.expected, result)
 			}
 		})
+	}
+}
+
+// validIAmBytes is the 25-byte I-Am response used in security finding tests.
+// BVLC [0-3]: Type=0x81, Function=0x0A, Length=0x0019 (25 bytes total)
+// NPDU [4-5]: Version=0x01, Control=0x00
+// APDU [6-7]: Type=0x10 (Unconfirmed-Request), Service=0x00 (I-Am)
+// I-Am fields [8-18] + padding [19-24]
+var validIAmBytes = []byte{
+	0x81, 0x0A, 0x00, 0x19, // BVLC
+	0x01, 0x00,             // NPDU
+	0x10, 0x00,             // APDU
+	0xC4,                   // Object ID tag
+	0x02, 0x00, 0x00, 0x01, // Device instance 1
+	0x21, 0x50,             // Max APDU 80
+	0x91, 0x03,             // Segmentation none
+	0x21, 0x05,             // Vendor ID 5
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Padding
+}
+
+// TestBACnetSecurityFinding verifies that security findings are set when Misconfigs is true.
+func TestBACnetSecurityFinding(t *testing.T) {
+	server, client := net.Pipe()
+
+	go func() {
+		buf := make([]byte, 256)
+		_, _ = server.Read(buf)
+		_, _ = server.Write(validIAmBytes)
+		server.Close()
+	}()
+
+	target := plugins.Target{
+		Address:    netip.MustParseAddrPort("192.168.1.100:47808"),
+		Host:       "test.local",
+		Misconfigs: true,
+	}
+
+	p := &Plugin{}
+	service, err := p.Run(client, 5*time.Second, target)
+	if err != nil {
+		t.Fatalf("Run() returned unexpected error: %v", err)
+	}
+	if service == nil {
+		t.Fatal("Run() returned nil, want non-nil service")
+	}
+	if !service.AnonymousAccess {
+		t.Error("expected AnonymousAccess to be true")
+	}
+	if len(service.SecurityFindings) != 1 {
+		t.Fatalf("expected 1 finding, got %d", len(service.SecurityFindings))
+	}
+	if service.SecurityFindings[0].ID != "bacnet-no-auth" {
+		t.Errorf("expected finding ID 'bacnet-no-auth', got %q", service.SecurityFindings[0].ID)
+	}
+	if service.SecurityFindings[0].Severity != plugins.SeverityHigh {
+		t.Errorf("expected severity high, got %s", service.SecurityFindings[0].Severity)
+	}
+}
+
+// TestBACnetNoSecurityFinding verifies that no findings are set when Misconfigs is false.
+func TestBACnetNoSecurityFinding(t *testing.T) {
+	server, client := net.Pipe()
+
+	go func() {
+		buf := make([]byte, 256)
+		_, _ = server.Read(buf)
+		_, _ = server.Write(validIAmBytes)
+		server.Close()
+	}()
+
+	target := plugins.Target{
+		Address:    netip.MustParseAddrPort("192.168.1.100:47808"),
+		Host:       "test.local",
+		Misconfigs: false,
+	}
+
+	p := &Plugin{}
+	service, err := p.Run(client, 5*time.Second, target)
+	if err != nil {
+		t.Fatalf("Run() returned unexpected error: %v", err)
+	}
+	if service == nil {
+		t.Fatal("Run() returned nil, want non-nil service")
+	}
+	if service.AnonymousAccess {
+		t.Error("expected AnonymousAccess to be false when Misconfigs is false")
+	}
+	if len(service.SecurityFindings) != 0 {
+		t.Errorf("expected 0 findings, got %d", len(service.SecurityFindings))
 	}
 }
