@@ -15,6 +15,7 @@
 package dnp3
 
 import (
+	"log"
 	"net"
 	"net/netip"
 	"testing"
@@ -352,6 +353,146 @@ func TestDNP3SecurityFinding(t *testing.T) {
 	if service == nil {
 		t.Fatal("Run() returned nil, want non-nil service")
 	}
+	if !service.AnonymousAccess {
+		t.Error("expected AnonymousAccess to be true")
+	}
+	if len(service.SecurityFindings) != 1 {
+		t.Fatalf("expected 1 finding, got %d", len(service.SecurityFindings))
+	}
+	if service.SecurityFindings[0].ID != "dnp3-no-auth" {
+		t.Errorf("expected finding ID 'dnp3-no-auth', got %q", service.SecurityFindings[0].ID)
+	}
+	if service.SecurityFindings[0].Severity != plugins.SeverityHigh {
+		t.Errorf("expected severity high, got %s", service.SecurityFindings[0].Severity)
+	}
+}
+
+// buildMasterDNP3Response creates a valid DNP3 frame with the DIR bit set (master device role).
+func buildMasterDNP3Response() []byte {
+	// Control byte 0x80 = DIR=1 (from master), all other bits clear
+	frame := []byte{
+		0x05, 0x64, // Start bytes
+		0x05,       // Length
+		0x80,       // Control: DIR=1 (master), ACK function
+		0x01, 0x00, // Dest address (little-endian)
+		0x00, 0x00, // Src address (outstation address)
+	}
+	crc := calculateDNP3CRC(frame[1:])
+	frame = append(frame, byte(crc&0xFF), byte(crc>>8))
+	return frame
+}
+
+// TestDNP3SecurityFindingMasterResponse verifies findings regardless of device role.
+// A master device responding (DIR=1) is still an unauthenticated DNP3 endpoint.
+func TestDNP3SecurityFindingMasterResponse(t *testing.T) {
+	server, client := net.Pipe()
+
+	go func() {
+		buf := make([]byte, 256)
+		_, _ = server.Read(buf)
+		_, _ = server.Write(buildMasterDNP3Response())
+		server.Close()
+	}()
+
+	addr := netip.MustParseAddrPort("127.0.0.1:20000")
+	target := plugins.Target{Host: "127.0.0.1", Address: addr, Misconfigs: true}
+
+	p := &DNP3Plugin{}
+	service, err := p.Run(client, 5*time.Second, target)
+	if err != nil {
+		t.Fatalf("Run() returned unexpected error: %v", err)
+	}
+	if service == nil {
+		t.Fatal("Run() returned nil on master response, want non-nil service")
+	}
+	if !service.AnonymousAccess {
+		t.Error("expected AnonymousAccess to be true for master response")
+	}
+	if len(service.SecurityFindings) != 1 {
+		t.Fatalf("expected 1 finding on master response, got %d", len(service.SecurityFindings))
+	}
+	if service.SecurityFindings[0].ID != "dnp3-no-auth" {
+		t.Errorf("expected finding ID 'dnp3-no-auth', got %q", service.SecurityFindings[0].ID)
+	}
+	if service.SecurityFindings[0].Severity != plugins.SeverityHigh {
+		t.Errorf("expected severity high, got %s", service.SecurityFindings[0].Severity)
+	}
+	// Confirm device role is correctly parsed as master
+	meta := service.Metadata()
+	if dnp3Meta, ok := meta.(plugins.ServiceDNP3); ok {
+		if dnp3Meta.DeviceRole != "master" {
+			t.Errorf("expected device role 'master', got %q", dnp3Meta.DeviceRole)
+		}
+	}
+}
+
+// TestDNP3SecurityFindingLive spins up a real DNP3 outstation and verifies misconfig detection.
+func TestDNP3SecurityFindingLive(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping docker test in short mode")
+	}
+
+	pool, err := dockertest.NewPool("")
+	if err != nil {
+		log.Fatalf("could not connect to docker: %s", err)
+	}
+
+	resource, err := pool.RunWithOptions(&dockertest.RunOptions{
+		Repository: "hassanalsaffar/opendnp3",
+		Tag:        "latest",
+		Cmd:        []string{"outstation"},
+	})
+	if err != nil {
+		t.Skipf("could not start dnp3 container (image may be unavailable): %s", err)
+	}
+	defer pool.Purge(resource) //nolint:errcheck
+
+	rawAddr := resource.GetHostPort("20000/tcp")
+
+	host, port, err := net.SplitHostPort(rawAddr)
+	if err != nil {
+		t.Fatalf("could not split host:port %q: %v", rawAddr, err)
+	}
+	if host == "localhost" || host == "0.0.0.0" || host == "::" {
+		host = "127.0.0.1"
+	}
+	targetAddr := net.JoinHostPort(host, port)
+
+	err = pool.Retry(func() error {
+		time.Sleep(3 * time.Second)
+		conn, dialErr := net.DialTimeout("tcp", targetAddr, 5*time.Second)
+		if dialErr != nil {
+			return dialErr
+		}
+		conn.Close()
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("failed to connect to dnp3 container: %s", err)
+	}
+
+	conn, err := net.DialTimeout("tcp", targetAddr, 5*time.Second)
+	if err != nil {
+		t.Fatalf("failed to open connection to dnp3 container: %s", err)
+	}
+	defer conn.Close()
+
+	addrPort := netip.MustParseAddrPort(targetAddr)
+	target := plugins.Target{
+		Host:       addrPort.Addr().String(),
+		Address:    addrPort,
+		Misconfigs: true,
+	}
+
+	p := &DNP3Plugin{}
+	service, err := p.Run(conn, 5*time.Second, target)
+	if err != nil {
+		t.Fatalf("Run() returned unexpected error: %v", err)
+	}
+	if service == nil {
+		t.Fatal("Run() returned nil, want non-nil service")
+	}
+
 	if !service.AnonymousAccess {
 		t.Error("expected AnonymousAccess to be true")
 	}
