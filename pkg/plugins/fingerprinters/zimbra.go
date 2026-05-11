@@ -251,22 +251,6 @@ func hasZimbraCookie(resp *http.Response) bool {
 	return false
 }
 
-// sanitizeZimbraHeaderValue strips control characters and limits length to
-// prevent log injection or oversized metadata values from attacker-controlled headers.
-func sanitizeZimbraHeaderValue(s string) string {
-	var b strings.Builder
-	for _, r := range s {
-		if r >= 0x20 && r != 0x7F {
-			b.WriteRune(r)
-		}
-	}
-	result := b.String()
-	if len(result) > 256 {
-		result = result[:256]
-	}
-	return result
-}
-
 // buildZimbraCPE constructs a CPE 2.3 string for Zimbra Collaboration Suite.
 // When version is empty, a wildcard CPE is emitted.
 func buildZimbraCPE(version string) string {

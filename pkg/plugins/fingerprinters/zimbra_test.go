@@ -502,48 +502,6 @@ func TestHasZimbraCookie(t *testing.T) {
 	}
 }
 
-// ── TestSanitizeZimbraHeaderValue ─────────────────────────────────────────────
-
-func TestSanitizeZimbraHeaderValue(t *testing.T) {
-	tests := []struct {
-		name  string
-		input string
-		want  string
-	}{
-		{
-			name:  "Normal header value unchanged",
-			input: "Zimbra/8.8.15",
-			want:  "Zimbra/8.8.15",
-		},
-		{
-			name:  "Control characters stripped",
-			input: "Zimbra\x00\x01\x1f/8.8.15",
-			want:  "Zimbra/8.8.15",
-		},
-		{
-			name:  "DEL character stripped",
-			input: "value\x7fafter",
-			want:  "valueafter",
-		},
-		{
-			name:  "Value >256 chars truncated",
-			input: string(make([]byte, 300)),
-			want:  "",
-		},
-		{
-			name:  "Printable ASCII preserved",
-			input: "Zimbra Collaboration",
-			want:  "Zimbra Collaboration",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, sanitizeZimbraHeaderValue(tt.input))
-		})
-	}
-}
-
 // ── Integration test ──────────────────────────────────────────────────────────
 
 func TestZimbraFingerprinter_Integration(t *testing.T) {
