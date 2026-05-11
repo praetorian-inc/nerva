@@ -123,11 +123,11 @@ func (f *ColdFusionFingerprinter) Match(resp *http.Response) bool {
 	}
 
 	// Body-scan candidate: any text/html response in 200–499 range.
-	if strings.Contains(resp.Header.Get("Content-Type"), "text/html") {
+	if strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "text/html") {
 		return true
 	}
 
-	return true
+	return false
 }
 
 // Fingerprint performs full detection and extracts technology information.
@@ -264,13 +264,12 @@ func sanitizeColdFusionHeaderValue(s string) string {
 	for _, r := range s {
 		if r >= 0x20 && r != 0x7F {
 			b.WriteRune(r)
+			if b.Len() >= 256 {
+				break
+			}
 		}
 	}
-	result := b.String()
-	if len(result) > 256 {
-		result = result[:256]
-	}
-	return result
+	return b.String()
 }
 
 // buildColdFusionCPE constructs a CPE 2.3 string for Adobe ColdFusion.

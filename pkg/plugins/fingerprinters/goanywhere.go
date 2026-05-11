@@ -136,7 +136,7 @@ func (f *GoAnywhereFingerprinter) Match(resp *http.Response) bool {
 	if resp.StatusCode < 200 || resp.StatusCode >= 500 {
 		return false
 	}
-	return strings.Contains(resp.Header.Get("Content-Type"), "text/html")
+	return strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "text/html")
 }
 
 // Fingerprint performs full detection and extracts technology information.
@@ -164,16 +164,16 @@ func (f *GoAnywhereFingerprinter) Fingerprint(resp *http.Response, body []byte) 
 		return nil, nil
 	}
 
+	bodyLower := strings.ToLower(string(body))
+
 	// Gate 3: CPE-injection defense — reject bodies containing `:*:`.
 	// An attacker-controlled response could attempt to inject CPE metacharacters
 	// via a crafted version string embedded in the page.
-	if strings.Contains(string(body), ":*:") {
+	if strings.Contains(bodyLower, ":*:") {
 		return nil, nil
 	}
 
 	// Brand-token detection: at least one signal must be present.
-	bodyLower := strings.ToLower(string(body))
-
 	hasBrandInBody := strings.Contains(bodyLower, "goanywhere")
 	hasBrandInTitle := goanywhereTitleRegex.Match(body)
 
@@ -184,7 +184,7 @@ func (f *GoAnywhereFingerprinter) Fingerprint(resp *http.Response, body []byte) 
 	// Determine detection method.
 	detectionMethod := "body"
 	if resp.Request != nil && resp.Request.URL != nil {
-		if resp.Request.URL.Path == "/goanywhere/" {
+		if strings.EqualFold(resp.Request.URL.Path, "/goanywhere/") {
 			detectionMethod = "active_probe"
 		}
 	}
@@ -231,23 +231,6 @@ func extractGoAnywhereVersion(body []byte) string {
 	}
 
 	return ""
-}
-
-// sanitizeGoAnywhereHeaderValue strips control characters and limits length to
-// prevent log injection or oversized metadata values from attacker-controlled
-// headers. Mirrors the pattern used by screenconnect.go.
-func sanitizeGoAnywhereHeaderValue(s string) string {
-	var b strings.Builder
-	for _, r := range s {
-		if r >= 0x20 && r != 0x7F {
-			b.WriteRune(r)
-		}
-	}
-	result := b.String()
-	if len(result) > 256 {
-		result = result[:256]
-	}
-	return result
 }
 
 // buildGoAnywhereCPE constructs a CPE 2.3 string for Fortra GoAnywhere MFT.

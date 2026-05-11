@@ -17,6 +17,7 @@ package fingerprinters
 import (
 	"net/http"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -90,12 +91,12 @@ func TestColdFusionFingerprinter_Match(t *testing.T) {
 		{
 			name:       "302 redirect passes (in 200-499 range)",
 			statusCode: 302,
-			want:       true,
+			want:       false,
 		},
 		{
 			name:       "404 Not Found passes (in 200-499 range)",
 			statusCode: 404,
-			want:       true,
+			want:       false,
 		},
 		{
 			name:       "100 Informational rejected",
@@ -120,13 +121,13 @@ func TestColdFusionFingerprinter_Match(t *testing.T) {
 		{
 			name:       "499 passes (upper boundary of accepted range)",
 			statusCode: 499,
-			want:       true,
+			want:       false,
 		},
 		{
-			name:       "Server header with unrelated value, no CF header, no content-type still passes on status",
+			name:       "Unrelated Server header without CF or text/html rejected",
 			statusCode: 200,
 			server:     "Apache/2.4",
-			want:       true,
+			want:       false,
 		},
 	}
 
@@ -525,14 +526,8 @@ func TestSanitizeColdFusionHeaderValue(t *testing.T) {
 		},
 		{
 			name:  "Value longer than 256 chars truncated",
-			input: "ColdFusion/" + string(make([]byte, 300)),
-			want: func() string {
-				s := "ColdFusion/"
-				if len(s) > 256 {
-					return s[:256]
-				}
-				return s
-			}(),
+			input: strings.Repeat("A", 300),
+			want:  strings.Repeat("A", 256),
 		},
 		{
 			name:  "Printable ASCII preserved",
@@ -652,6 +647,7 @@ func TestColdFusionFingerprinter_Integration(t *testing.T) {
 		StatusCode: 200,
 		Header:     make(http.Header),
 	}
+	resp.Header.Set("Content-Type", "text/html; charset=utf-8")
 
 	results := RunFingerprinters(resp, []byte(realisticColdFusionAdminBody))
 
