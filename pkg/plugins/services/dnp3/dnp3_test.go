@@ -15,7 +15,6 @@
 package dnp3
 
 import (
-	"log"
 	"net"
 	"net/netip"
 	"testing"
@@ -419,10 +418,12 @@ func TestDNP3SecurityFindingMasterResponse(t *testing.T) {
 	}
 	// Confirm device role is correctly parsed as master
 	meta := service.Metadata()
-	if dnp3Meta, ok := meta.(plugins.ServiceDNP3); ok {
-		if dnp3Meta.DeviceRole != "master" {
-			t.Errorf("expected device role 'master', got %q", dnp3Meta.DeviceRole)
-		}
+	dnp3Meta, ok := meta.(plugins.ServiceDNP3)
+	if !ok {
+		t.Fatalf("expected metadata type plugins.ServiceDNP3, got %T", meta)
+	}
+	if dnp3Meta.DeviceRole != "master" {
+		t.Errorf("expected device role 'master', got %q", dnp3Meta.DeviceRole)
 	}
 }
 
@@ -434,7 +435,7 @@ func TestDNP3SecurityFindingLive(t *testing.T) {
 
 	pool, err := dockertest.NewPool("")
 	if err != nil {
-		log.Fatalf("could not connect to docker: %s", err)
+		t.Fatalf("could not connect to docker: %s", err)
 	}
 
 	resource, err := pool.RunWithOptions(&dockertest.RunOptions{
@@ -459,7 +460,6 @@ func TestDNP3SecurityFindingLive(t *testing.T) {
 	targetAddr := net.JoinHostPort(host, port)
 
 	err = pool.Retry(func() error {
-		time.Sleep(3 * time.Second)
 		conn, dialErr := net.DialTimeout("tcp", targetAddr, 5*time.Second)
 		if dialErr != nil {
 			return dialErr

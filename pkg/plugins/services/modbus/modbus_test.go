@@ -15,7 +15,6 @@
 package modbus
 
 import (
-	"log"
 	"net"
 	"net/netip"
 	"testing"
@@ -397,7 +396,7 @@ func TestModbusSecurityFindingLive(t *testing.T) {
 
 	pool, err := dockertest.NewPool("")
 	if err != nil {
-		log.Fatalf("could not connect to docker: %s", err)
+		t.Fatalf("could not connect to docker: %s", err)
 	}
 
 	resource, err := pool.RunWithOptions(&dockertest.RunOptions{
@@ -420,7 +419,6 @@ func TestModbusSecurityFindingLive(t *testing.T) {
 	targetAddr := net.JoinHostPort(host, port)
 
 	err = pool.Retry(func() error {
-		time.Sleep(3 * time.Second)
 		conn, dialErr := net.DialTimeout("tcp", targetAddr, 5*time.Second)
 		if dialErr != nil {
 			return dialErr
