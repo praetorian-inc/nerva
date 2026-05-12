@@ -523,6 +523,60 @@ func DetectCassandra(conn net.Conn, timeout time.Duration) (cassandraMetadata, b
 	return metadata, true, nil
 }
 
+// checkCassandraAuth sends a CQL STARTUP frame and checks if the server requires authentication.
+// Returns true if authentication is NOT required (READY response), false if auth is required
+// (AUTHENTICATE response) or the probe fails.
+//
+// Parameters:
+//   - conn: Network connection to Cassandra server (already used for OPTIONS/SUPPORTED)
+//   - timeout: Timeout for network operations
+//   - cqlVersion: CQL version string to use in STARTUP frame (e.g., "3.0.0")
+func checkCassandraAuth(conn net.Conn, timeout time.Duration, cqlVersion string) bool {
+	// Build STARTUP frame body: string_map with CQL_VERSION key
+	// string_map format: [short n][string key][string value]...
+	// string format: [short length][bytes]
+	key := "CQL_VERSION"
+	val := cqlVersion
+
+	// Pre-calculate body length:
+	// 2 (map count) + 2 (key len) + len(key) + 2 (val len) + len(val)
+	bodyLen := 2 + 2 + len(key) + 2 + len(val)
+
+	body := make([]byte, 0, bodyLen)
+	// Number of entries: 1
+	body = append(body, 0x00, 0x01)
+	// Key: "CQL_VERSION"
+	body = append(body, byte(len(key)>>8), byte(len(key))) // #nosec G115 -- safe: key is constant "CQL_VERSION" (11 bytes)
+	body = append(body, []byte(key)...)
+	// Value
+	body = append(body, byte(len(val)>>8), byte(len(val))) // #nosec G115 -- safe: val is short version string (e.g. "3.0.0")
+	body = append(body, []byte(val)...)
+
+	// Build STARTUP frame header (9 bytes) + body
+	frame := make([]byte, 0, 9+len(body))
+	frame = append(frame,
+		PROTOCOL_V4_REQUEST, // version: v4 request
+		0x00,                // flags: none
+		0x00, 0x01,          // stream: 1 (different from OPTIONS stream 0)
+		0x01,                // opcode: STARTUP (0x01)
+	)
+	// Body length (4 bytes big-endian)
+	bLen := uint32(len(body)) // #nosec G115 -- safe: body is ~20 bytes fixed CQL STARTUP map
+	frame = append(frame, byte(bLen>>24), byte(bLen>>16), byte(bLen>>8), byte(bLen)) // #nosec G115 -- safe: bLen fits in uint32; individual bytes extracted safely
+	frame = append(frame, body...)
+
+	response, err := utils.SendRecv(conn, frame, timeout)
+	if err != nil || len(response) < 9 {
+		return false
+	}
+
+	// Check opcode in response header byte 4
+	opcode := response[4]
+	// READY (0x02) = no auth required
+	// AUTHENTICATE (0x03) = auth required
+	return opcode == 0x02
+}
+
 // Run implements the Plugin interface for Cassandra fingerprinting.
 //
 // Returns:
@@ -548,7 +602,23 @@ func (p *CassandraPlugin) Run(conn net.Conn, timeout time.Duration, target plugi
 		CPEs:             []string{cpe},
 	}
 
-	return plugins.CreateServiceFrom(target, payload, false, metadata.Version, plugins.TCP), nil
+	service := plugins.CreateServiceFrom(target, payload, false, metadata.Version, plugins.TCP)
+	if target.Misconfigs {
+		cqlVer := metadata.CQLVersion
+		if cqlVer == "" {
+			cqlVer = "3.0.0"
+		}
+		if checkCassandraAuth(conn, timeout, cqlVer) {
+			service.AnonymousAccess = true
+			service.SecurityFindings = []plugins.SecurityFinding{{
+				ID:          "cassandra-no-auth",
+				Severity:    plugins.SeverityHigh,
+				Description: "Cassandra accessible without authentication",
+				Evidence:    "CQL STARTUP succeeded without authentication challenge",
+			}}
+		}
+	}
+	return service, nil
 }
 
 // PortPriority returns true if the port is the default Cassandra CQL port (9042).
