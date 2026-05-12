@@ -221,12 +221,15 @@ func buildAuthOKPacket() []byte {
 
 // buildAuthMD5Packet constructs a PostgreSQL AuthenticationMD5Password packet.
 func buildAuthMD5Packet() []byte {
-	// Type 'R' + length 12 + auth type 5 (MD5) + 4-byte salt
-	pkt := make([]byte, 17)
+	// Type 'R' (1) + length 12 (4) + auth type 5 (4) + salt (4) = 13 bytes
+	pkt := make([]byte, 13)
 	pkt[0] = AuthReq
 	binary.BigEndian.PutUint32(pkt[1:5], 12)
 	binary.BigEndian.PutUint32(pkt[5:9], 5) // MD5
-	// salt bytes 9-13
+	pkt[9] = 0xDE                           // salt
+	pkt[10] = 0xAD
+	pkt[11] = 0xBE
+	pkt[12] = 0xEF
 	return pkt
 }
 

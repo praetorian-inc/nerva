@@ -342,18 +342,21 @@ func TestCouchDBAdminPartyFingerprinter_Match(t *testing.T) {
 		name        string
 		statusCode  int
 		contentType string
+		server      string
 		expected    bool
 	}{
 		{
 			name:        "200 with JSON content type → true (admin party)",
 			statusCode:  200,
 			contentType: "application/json",
+			server:      "CouchDB/3.4.2 (Erlang OTP/25)",
 			expected:    true,
 		},
 		{
 			name:        "200 with JSON charset → true",
 			statusCode:  200,
 			contentType: "application/json; charset=utf-8",
+			server:      "CouchDB/3.4.2 (Erlang OTP/25)",
 			expected:    true,
 		},
 		{
@@ -374,6 +377,20 @@ func TestCouchDBAdminPartyFingerprinter_Match(t *testing.T) {
 			contentType: "application/json",
 			expected:    false,
 		},
+		{
+			name:        "200 with JSON but non-CouchDB server → false",
+			statusCode:  200,
+			contentType: "application/json",
+			server:      "nginx/1.24",
+			expected:    false,
+		},
+		{
+			name:        "200 with JSON and no server header (proxy) → true",
+			statusCode:  200,
+			contentType: "application/json",
+			server:      "",
+			expected:    true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -384,6 +401,9 @@ func TestCouchDBAdminPartyFingerprinter_Match(t *testing.T) {
 				Header: http.Header{
 					"Content-Type": []string{tt.contentType},
 				},
+			}
+			if tt.server != "" {
+				resp.Header.Set("Server", tt.server)
 			}
 			assert.Equal(t, tt.expected, fp.Match(resp))
 		})

@@ -57,7 +57,15 @@ func (f *CouchDBAdminPartyFingerprinter) ProbeEndpoint() string {
 func (f *CouchDBAdminPartyFingerprinter) Match(resp *http.Response) bool {
 	// Admin party: 200 with JSON array
 	// Auth required: 401 Unauthorized
-	return resp.StatusCode == 200 && strings.Contains(resp.Header.Get("Content-Type"), "application/json")
+	if resp.StatusCode != 200 || !strings.Contains(resp.Header.Get("Content-Type"), "application/json") {
+		return false
+	}
+	// If Server header is present, require it to contain "CouchDB" to avoid
+	// misattributing arbitrary JSON-array endpoints. Absent header (reverse proxy) passes through.
+	if server := resp.Header.Get("Server"); server != "" && !strings.Contains(server, "CouchDB") {
+		return false
+	}
+	return true
 }
 
 func (f *CouchDBAdminPartyFingerprinter) Fingerprint(resp *http.Response, body []byte) (*FingerprintResult, error) {

@@ -570,6 +570,12 @@ func checkCassandraAuth(conn net.Conn, timeout time.Duration, cqlVersion string)
 		return false
 	}
 
+	// Verify stream ID matches our STARTUP request (stream 1)
+	stream := binary.BigEndian.Uint16(response[2:4])
+	if stream != 1 {
+		return false
+	}
+
 	// Check opcode in response header byte 4
 	opcode := response[4]
 	// READY (0x02) = no auth required

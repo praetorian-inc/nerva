@@ -249,7 +249,7 @@ func checkInfluxDBAuth(conn net.Conn, target plugins.Target, timeout time.Durati
 
 	// 200 OK with results = no auth required
 	// 401 Unauthorized = auth required
-	return strings.Contains(responseStr, "HTTP/1.1 200") || strings.Contains(responseStr, "HTTP/1.0 200")
+	return strings.HasPrefix(responseStr, "HTTP/1.1 200") || strings.HasPrefix(responseStr, "HTTP/1.0 200")
 }
 
 func (p *InfluxDBPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
