@@ -204,14 +204,14 @@ func (p *SMTPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 						Evidence:    "EHLO response lacks AUTH capability",
 					})
 				}
-			}
-			if checkOpenRelay(conn, timeout) {
-				service.SecurityFindings = append(service.SecurityFindings, plugins.SecurityFinding{
-					ID:          "smtp-open-relay",
-					Severity:    plugins.SeverityHigh,
-					Description: "SMTP server accepts mail relay between non-local addresses",
-					Evidence:    "Server accepted RCPT TO:<test@example.org> after MAIL FROM:<test@example.com>",
-				})
+				if checkOpenRelay(conn, timeout) {
+					service.SecurityFindings = append(service.SecurityFindings, plugins.SecurityFinding{
+						ID:          "smtp-open-relay",
+						Severity:    plugins.SeverityHigh,
+						Description: "SMTP server accepts mail relay between non-local addresses",
+						Evidence:    "Server accepted RCPT TO:<test@example.org> after MAIL FROM:<test@example.com>",
+					})
+				}
 			}
 		}
 		return service, nil
