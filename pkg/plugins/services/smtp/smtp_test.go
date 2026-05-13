@@ -482,6 +482,47 @@ func TestSMTPSecurityFindingsOpenRelayWithAuth(t *testing.T) {
 	}
 }
 
+// TestSMTPSecurityFindingsMailFromRejected verifies that smtp-open-relay is NOT emitted
+// when the server rejects MAIL FROM with a 550 response. The open relay probe should not
+// proceed to RCPT TO in this case.
+func TestSMTPSecurityFindingsMailFromRejected(t *testing.T) {
+	greeting := "220 mail.example.com ESMTP\r\n"
+	ehloResponse := "250-mail.example.com\r\n250 SIZE 10240000\r\n"
+
+	serverPort, cleanup := startMockSMTPServerRelay(t, greeting, ehloResponse,
+		"550 Sender rejected\r\n", "250 OK\r\n", "250 OK\r\n")
+	defer cleanup()
+
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", serverPort), 5*time.Second)
+	if err != nil {
+		t.Fatalf("Failed to connect to mock server: %v", err)
+	}
+	defer conn.Close()
+
+	addrStr := fmt.Sprintf("127.0.0.1:%d", serverPort)
+	addrPort := netip.MustParseAddrPort(addrStr)
+	target := plugins.Target{
+		Host:       "127.0.0.1",
+		Address:    addrPort,
+		Misconfigs: true,
+	}
+
+	plugin := &SMTPPlugin{}
+	service, err := plugin.Run(conn, 5*time.Second, target)
+	if err != nil {
+		t.Fatalf("Run() returned unexpected error: %v", err)
+	}
+	if service == nil {
+		t.Fatal("Run() returned nil, want non-nil service")
+	}
+
+	for _, f := range service.SecurityFindings {
+		if f.ID == "smtp-open-relay" {
+			t.Error("smtp-open-relay should not be emitted when MAIL FROM is rejected")
+		}
+	}
+}
+
 func TestSMTP(t *testing.T) {
 	testcases := []test.Testcase{
 		{

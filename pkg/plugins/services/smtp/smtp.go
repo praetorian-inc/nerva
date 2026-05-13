@@ -155,8 +155,7 @@ func checkOpenRelay(conn net.Conn, timeout time.Duration) bool {
 	// Send MAIL FROM with external address
 	resp, err := utils.SendRecv(conn, []byte("MAIL FROM:<test@example.com>\r\n"), timeout)
 	if err != nil || len(resp) < 3 || !bytes.Equal(resp[0:3], []byte("250")) {
-		// MAIL FROM rejected or error — clean up and return
-		_, _ = utils.SendRecv(conn, []byte("RSET\r\n"), timeout)
+		// MAIL FROM rejected or error — no transaction to reset
 		return false
 	}
 
@@ -170,7 +169,8 @@ func checkOpenRelay(conn net.Conn, timeout time.Duration) bool {
 		return false
 	}
 	// 250 = accepted relay → open relay confirmed
-	return bytes.Equal(resp[0:3], []byte("250"))
+	// 251 = "User not local; will forward" (RFC 5321 §3.3) → also confirms open relay
+	return bytes.Equal(resp[0:3], []byte("250")) || bytes.Equal(resp[0:3], []byte("251"))
 }
 
 func (p *SMTPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
