@@ -58,6 +58,14 @@ type ActiveHTTPFingerprinter interface {
 	ProbeEndpoint() string
 }
 
+// AcceptHeaderProvider is an optional interface that ActiveHTTPFingerprinters
+// can implement to specify a custom Accept header for their probe requests.
+// If not implemented, the default "application/json" is used.
+type AcceptHeaderProvider interface {
+	// ProbeAccept returns the Accept header value to use for the probe request.
+	ProbeAccept() string
+}
+
 var httpFingerprinters []HTTPFingerprinter
 
 // Register adds a fingerprinter to the registry
