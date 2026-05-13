@@ -149,6 +149,30 @@ func DetectSMTP(conn net.Conn, tls bool, timeout time.Duration) (Data, bool, err
 	return Data{}, true, &utils.InvalidResponseError{Service: protocol}
 }
 
+// checkOpenRelay sends MAIL FROM and RCPT TO with non-local addresses to test
+// whether the server will relay mail. Returns true if the server accepts relay.
+func checkOpenRelay(conn net.Conn, timeout time.Duration) bool {
+	// Send MAIL FROM with external address
+	resp, err := utils.SendRecv(conn, []byte("MAIL FROM:<test@example.com>\r\n"), timeout)
+	if err != nil || len(resp) < 3 || !bytes.Equal(resp[0:3], []byte("250")) {
+		// MAIL FROM rejected or error — clean up and return
+		_, _ = utils.SendRecv(conn, []byte("RSET\r\n"), timeout)
+		return false
+	}
+
+	// Send RCPT TO with a different external domain
+	resp, err = utils.SendRecv(conn, []byte("RCPT TO:<test@example.org>\r\n"), timeout)
+
+	// Always clean up
+	_, _ = utils.SendRecv(conn, []byte("RSET\r\n"), timeout)
+
+	if err != nil || len(resp) < 3 {
+		return false
+	}
+	// 250 = accepted relay → open relay confirmed
+	return bytes.Equal(resp[0:3], []byte("250"))
+}
+
 func (p *SMTPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
 	data, check, err := DetectSMTP(conn, false, timeout)
 	if err == nil && check {
@@ -180,6 +204,14 @@ func (p *SMTPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 						Evidence:    "EHLO response lacks AUTH capability",
 					})
 				}
+			}
+			if checkOpenRelay(conn, timeout) {
+				service.SecurityFindings = append(service.SecurityFindings, plugins.SecurityFinding{
+					ID:          "smtp-open-relay",
+					Severity:    plugins.SeverityHigh,
+					Description: "SMTP server accepts mail relay between non-local addresses",
+					Evidence:    "Server accepted RCPT TO:<test@example.org> after MAIL FROM:<test@example.com>",
+				})
 			}
 		}
 		return service, nil
