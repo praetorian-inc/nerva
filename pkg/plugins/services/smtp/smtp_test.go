@@ -54,7 +54,7 @@ func startMockSMTPServer(t *testing.T, greeting, ehloResponse string) (int, func
 }
 
 // TestSMTPSecurityFindingsCleartext verifies the smtp-cleartext finding is emitted
-// and smtp-open-relay is NOT emitted when AUTH is present in the EHLO response.
+// and smtp-no-auth is NOT emitted when AUTH is present in the EHLO response.
 func TestSMTPSecurityFindingsCleartext(t *testing.T) {
 	greeting := "220 mail.example.com ESMTP\r\n"
 	ehloResponse := "250-mail.example.com\r\n250-AUTH LOGIN PLAIN\r\n250 SMTPUTF8\r\n"
@@ -93,6 +93,46 @@ func TestSMTPSecurityFindingsCleartext(t *testing.T) {
 	}
 	if service.SecurityFindings[0].Severity != plugins.SeverityLow {
 		t.Errorf("expected severity low, got %s", service.SecurityFindings[0].Severity)
+	}
+}
+
+// TestSMTPSecurityFindingsAuthLastToken verifies smtp-no-auth is NOT emitted when AUTH
+// is the last token on an EHLO line (trailing \r\n attached to token).
+func TestSMTPSecurityFindingsAuthLastToken(t *testing.T) {
+	greeting := "220 mail.example.com ESMTP\r\n"
+	ehloResponse := "250-mail.example.com\r\n250 AUTH\r\n"
+
+	serverPort, cleanup := startMockSMTPServer(t, greeting, ehloResponse)
+	defer cleanup()
+
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", serverPort), 5*time.Second)
+	if err != nil {
+		t.Fatalf("Failed to connect to mock server: %v", err)
+	}
+	defer conn.Close()
+
+	addrStr := fmt.Sprintf("127.0.0.1:%d", serverPort)
+	addrPort := netip.MustParseAddrPort(addrStr)
+	target := plugins.Target{
+		Host:       "127.0.0.1",
+		Address:    addrPort,
+		Misconfigs: true,
+	}
+
+	plugin := &SMTPPlugin{}
+	service, err := plugin.Run(conn, 5*time.Second, target)
+	if err != nil {
+		t.Fatalf("Run() returned unexpected error: %v", err)
+	}
+	if service == nil {
+		t.Fatal("Run() returned nil, want non-nil service")
+	}
+
+	if len(service.SecurityFindings) != 1 {
+		t.Fatalf("expected 1 finding (smtp-cleartext only), got %d: %+v", len(service.SecurityFindings), service.SecurityFindings)
+	}
+	if service.SecurityFindings[0].ID != "smtp-cleartext" {
+		t.Errorf("expected finding ID 'smtp-cleartext', got %q", service.SecurityFindings[0].ID)
 	}
 }
 
@@ -150,7 +190,7 @@ func TestSMTPSecurityFindingsNoAuth(t *testing.T) {
 	}
 }
 
-// TestSMTPSecurityFindingsEHLOError verifies that smtp-open-relay is NOT emitted when the
+// TestSMTPSecurityFindingsEHLOError verifies that smtp-no-auth is NOT emitted when the
 // server rejects EHLO with an error response (e.g. 500). In this case DetectSMTP returns
 // nil AuthMethods and only smtp-cleartext should be emitted.
 func TestSMTPSecurityFindingsEHLOError(t *testing.T) {

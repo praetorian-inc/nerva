@@ -167,7 +167,7 @@ func (p *SMTPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 			if len(data.AuthMethods) > 0 {
 				hasAuth := false
 				for _, method := range data.AuthMethods {
-					if strings.EqualFold(method, "AUTH") {
+					if strings.EqualFold(strings.TrimRight(method, "\r\n"), "AUTH") {
 						hasAuth = true
 						break
 					}
