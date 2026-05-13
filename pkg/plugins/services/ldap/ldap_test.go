@@ -47,14 +47,14 @@ func buildLDAPBindFailureResponse(requestMsgIDBytes []byte) []byte {
 
 // buildLDAPBindSuccessResponse constructs a minimal LDAP anonymous bind success response.
 func buildLDAPBindSuccessResponse() []byte {
-	// Anonymous bind uses msgID = 1 (0x00 0x00 0x00 0x01)
+	// Anonymous bind uses msgID = 2 (0x00 0x00 0x00 0x02)
 	// 0x30 0x0f sequence (15 bytes follow)
-	// 0x02 0x04 0x00 0x00 0x00 0x01  -- msgID = 1
+	// 0x02 0x04 0x00 0x00 0x00 0x02  -- msgID = 2
 	// 0x61 0x07                       -- bind response, 7 bytes
 	// 0x0a 0x01 0x00                  -- resultCode = 0 (success)
 	// 0x04 0x00                       -- matchedDN = ""
 	// 0x04 0x00                       -- errorMessage = ""
-	return []byte{0x30, 0x0f, 0x02, 0x04, 0x00, 0x00, 0x00, 0x01, 0x61, 0x07, 0x0a, 0x01, 0x00, 0x04, 0x00, 0x04, 0x00}
+	return []byte{0x30, 0x0f, 0x02, 0x04, 0x00, 0x00, 0x00, 0x02, 0x61, 0x07, 0x0a, 0x01, 0x00, 0x04, 0x00, 0x04, 0x00}
 }
 
 // TestLDAPSecurityFindingsCleartextAndAnonymousBind verifies that both ldap-cleartext and
@@ -96,8 +96,6 @@ func TestLDAPSecurityFindingsCleartextAndAnonymousBind(t *testing.T) {
 		}
 		_, _ = conn.Write(buildLDAPBindSuccessResponse())
 	}()
-
-	time.Sleep(10 * time.Millisecond)
 
 	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", serverPort), 5*time.Second)
 	if err != nil {
@@ -177,12 +175,10 @@ func TestLDAPSecurityFindingsCleartextOnly(t *testing.T) {
 		if err2 != nil || n2 == 0 {
 			return
 		}
-		// Return failure response for anonymous bind (reuse msgID=1 from anon bind)
-		failResp := []byte{0x30, 0x0f, 0x02, 0x04, 0x00, 0x00, 0x00, 0x01, 0x61, 0x07, 0x0a, 0x01, 0x31, 0x04, 0x00, 0x04, 0x00}
+		// Return failure response for anonymous bind (reuse msgID=2 from anon bind)
+		failResp := []byte{0x30, 0x0f, 0x02, 0x04, 0x00, 0x00, 0x00, 0x02, 0x61, 0x07, 0x0a, 0x01, 0x31, 0x04, 0x00, 0x04, 0x00}
 		_, _ = conn.Write(failResp)
 	}()
-
-	time.Sleep(10 * time.Millisecond)
 
 	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", serverPort), 5*time.Second)
 	if err != nil {
@@ -245,8 +241,6 @@ func TestLDAPSecurityFindingsDisabled(t *testing.T) {
 		resp := buildLDAPBindFailureResponse(msgIDBytes)
 		_, _ = conn.Write(resp)
 	}()
-
-	time.Sleep(10 * time.Millisecond)
 
 	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", serverPort), 5*time.Second)
 	if err != nil {

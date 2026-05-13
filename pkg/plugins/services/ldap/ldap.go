@@ -171,28 +171,48 @@ func DetectLDAP(conn net.Conn, timeout time.Duration) (bool, error) {
 // checkAnonymousBind sends an LDAP anonymous bind request (empty DN and password)
 // and returns true if the server responds with resultCode 0 (success).
 func checkAnonymousBind(conn net.Conn, timeout time.Duration) bool {
-	// BER-encoded anonymous bind: sequence(msgID=1, bindRequest(version=3, name="", auth=""))
-	anonBindReq := []byte{0x30, 0x0c, 0x02, 0x01, 0x01, 0x60, 0x07, 0x02, 0x01, 0x03, 0x04, 0x00, 0x80, 0x00}
+	// BER-encoded anonymous bind: sequence(msgID=2, bindRequest(version=3, name="", auth=""))
+	anonBindReq := []byte{0x30, 0x0c, 0x02, 0x01, 0x02, 0x60, 0x07, 0x02, 0x01, 0x03, 0x04, 0x00, 0x80, 0x00}
 
 	response, err := utils.SendRecv(conn, anonBindReq, timeout)
 	if err != nil || len(response) < 7 {
 		return false
 	}
 
-	// Parse bind response: 0x30 (sequence), length, 0x02 (int) msgID bytes..., 0x61 (bind response tag),
-	// length, 0x0a (enumerated), 0x01 (length), result code
-	for i := 0; i < len(response)-4; i++ {
-		if response[i] == 0x61 { // bind response tag
-			// Inside bind response, find 0x0a (enumerated type) for result code
-			inner := response[i+2:]
-			for j := 0; j < len(inner)-2; j++ {
-				if inner[j] == 0x0a && inner[j+1] == 0x01 {
-					return inner[j+2] == 0x00
-				}
-			}
-		}
+	// Parse bind response structurally:
+	// Byte 0: 0x30 (sequence tag)
+	// Byte 1: sequence length
+	// Byte 2: 0x02 (integer tag for msgID)
+	// Byte 3: msgID length (N)
+	// Bytes 4..4+N-1: msgID value
+	// Byte 4+N: 0x61 (bind response tag)
+	// Byte 5+N: bind response length
+	// Byte 6+N: 0x0a (enumerated tag for resultCode)
+	// Byte 7+N: 0x01 (resultCode length, always 1)
+	// Byte 8+N: resultCode value — success if 0x00
+	if len(response) < 4 {
+		return false
 	}
-	return false
+	if response[0] != 0x30 {
+		return false
+	}
+	if response[2] != 0x02 {
+		return false
+	}
+	n := int(response[3])
+	if len(response) < 9+n {
+		return false
+	}
+	if response[4+n] != 0x61 {
+		return false
+	}
+	if response[6+n] != 0x0a {
+		return false
+	}
+	if response[7+n] != 0x01 {
+		return false
+	}
+	return response[8+n] == 0x00
 }
 
 func (p *LDAPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {

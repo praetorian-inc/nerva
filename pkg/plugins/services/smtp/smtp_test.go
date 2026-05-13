@@ -50,8 +50,6 @@ func startMockSMTPServer(t *testing.T, greeting, ehloResponse string) (int, func
 		_, _ = conn.Write([]byte(ehloResponse))
 	}()
 
-	time.Sleep(10 * time.Millisecond)
-
 	return serverPort, func() { listener.Close() }
 }
 
@@ -98,9 +96,9 @@ func TestSMTPSecurityFindingsCleartext(t *testing.T) {
 	}
 }
 
-// TestSMTPSecurityFindingsOpenRelay verifies that smtp-open-relay is emitted alongside
+// TestSMTPSecurityFindingsNoAuth verifies that smtp-no-auth is emitted alongside
 // smtp-cleartext when the EHLO response contains no AUTH capability.
-func TestSMTPSecurityFindingsOpenRelay(t *testing.T) {
+func TestSMTPSecurityFindingsNoAuth(t *testing.T) {
 	greeting := "220 mail.example.com ESMTP\r\n"
 	ehloResponse := "250-mail.example.com\r\n250-SIZE 10240000\r\n250 SMTPUTF8\r\n"
 
@@ -131,7 +129,7 @@ func TestSMTPSecurityFindingsOpenRelay(t *testing.T) {
 	}
 
 	if len(service.SecurityFindings) != 2 {
-		t.Fatalf("expected 2 findings (smtp-cleartext + smtp-open-relay), got %d: %+v", len(service.SecurityFindings), service.SecurityFindings)
+		t.Fatalf("expected 2 findings (smtp-cleartext + smtp-no-auth), got %d: %+v", len(service.SecurityFindings), service.SecurityFindings)
 	}
 
 	ids := map[string]bool{}
@@ -141,13 +139,13 @@ func TestSMTPSecurityFindingsOpenRelay(t *testing.T) {
 	if !ids["smtp-cleartext"] {
 		t.Error("expected smtp-cleartext finding")
 	}
-	if !ids["smtp-open-relay"] {
-		t.Error("expected smtp-open-relay finding")
+	if !ids["smtp-no-auth"] {
+		t.Error("expected smtp-no-auth finding")
 	}
 
 	for _, f := range service.SecurityFindings {
-		if f.ID == "smtp-open-relay" && f.Severity != plugins.SeverityHigh {
-			t.Errorf("expected smtp-open-relay severity high, got %s", f.Severity)
+		if f.ID == "smtp-no-auth" && f.Severity != plugins.SeverityLow {
+			t.Errorf("expected smtp-no-auth severity low, got %s", f.Severity)
 		}
 	}
 }
@@ -192,8 +190,8 @@ func TestSMTPSecurityFindingsEHLOError(t *testing.T) {
 		t.Errorf("expected finding ID 'smtp-cleartext', got %q", service.SecurityFindings[0].ID)
 	}
 	for _, f := range service.SecurityFindings {
-		if f.ID == "smtp-open-relay" {
-			t.Error("smtp-open-relay should not be emitted when EHLO returns an error")
+		if f.ID == "smtp-no-auth" {
+			t.Error("smtp-no-auth should not be emitted when EHLO returns an error")
 		}
 	}
 }

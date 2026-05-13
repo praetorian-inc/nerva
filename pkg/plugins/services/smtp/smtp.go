@@ -167,16 +167,16 @@ func (p *SMTPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 			if len(data.AuthMethods) > 0 {
 				hasAuth := false
 				for _, method := range data.AuthMethods {
-					if strings.Contains(strings.ToUpper(method), "AUTH") {
+					if strings.EqualFold(method, "AUTH") {
 						hasAuth = true
 						break
 					}
 				}
 				if !hasAuth {
 					service.SecurityFindings = append(service.SecurityFindings, plugins.SecurityFinding{
-						ID:          "smtp-open-relay",
-						Severity:    plugins.SeverityHigh,
-						Description: "SMTP server does not advertise authentication, potential open relay",
+						ID:          "smtp-no-auth",
+						Severity:    plugins.SeverityLow,
+						Description: "SMTP server does not advertise AUTH capability in EHLO response",
 						Evidence:    "EHLO response lacks AUTH capability",
 					})
 				}

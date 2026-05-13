@@ -54,8 +54,6 @@ func TestIMAPSecurityFindings(t *testing.T) {
 		_, _ = conn.Write([]byte(capResponse))
 	}()
 
-	time.Sleep(10 * time.Millisecond)
-
 	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", serverPort), 5*time.Second)
 	if err != nil {
 		t.Fatalf("Failed to connect to mock server: %v", err)
@@ -115,8 +113,6 @@ func TestIMAPSecurityFindingsDisabled(t *testing.T) {
 		_, _ = conn.Read(buf)
 		_, _ = conn.Write([]byte(capResponse))
 	}()
-
-	time.Sleep(10 * time.Millisecond)
 
 	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", serverPort), 5*time.Second)
 	if err != nil {
