@@ -168,6 +168,33 @@ func DetectLDAP(conn net.Conn, timeout time.Duration) (bool, error) {
 	return false, nil
 }
 
+// checkAnonymousBind sends an LDAP anonymous bind request (empty DN and password)
+// and returns true if the server responds with resultCode 0 (success).
+func checkAnonymousBind(conn net.Conn, timeout time.Duration) bool {
+	// BER-encoded anonymous bind: sequence(msgID=1, bindRequest(version=3, name="", auth=""))
+	anonBindReq := []byte{0x30, 0x0c, 0x02, 0x01, 0x01, 0x60, 0x07, 0x02, 0x01, 0x03, 0x04, 0x00, 0x80, 0x00}
+
+	response, err := utils.SendRecv(conn, anonBindReq, timeout)
+	if err != nil || len(response) < 7 {
+		return false
+	}
+
+	// Parse bind response: 0x30 (sequence), length, 0x02 (int) msgID bytes..., 0x61 (bind response tag),
+	// length, 0x0a (enumerated), 0x01 (length), result code
+	for i := 0; i < len(response)-4; i++ {
+		if response[i] == 0x61 { // bind response tag
+			// Inside bind response, find 0x0a (enumerated type) for result code
+			inner := response[i+2:]
+			for j := 0; j < len(inner)-2; j++ {
+				if inner[j] == 0x0a && inner[j+1] == 0x01 {
+					return inner[j+2] == 0x00
+				}
+			}
+		}
+	}
+	return false
+}
+
 func (p *LDAPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
 	isLDAP, err := DetectLDAP(conn, timeout)
 	if err != nil {
@@ -175,7 +202,23 @@ func (p *LDAPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 	}
 
 	if isLDAP {
-		return plugins.CreateServiceFrom(target, plugins.ServiceLDAP{}, false, "", plugins.TCP), nil
+		service := plugins.CreateServiceFrom(target, plugins.ServiceLDAP{}, false, "", plugins.TCP)
+		if target.Misconfigs {
+			service.SecurityFindings = []plugins.SecurityFinding{{
+				ID:          "ldap-cleartext",
+				Severity:    plugins.SeverityMedium,
+				Description: "LDAP transmits data including credentials in cleartext",
+			}}
+			if checkAnonymousBind(conn, timeout) {
+				service.SecurityFindings = append(service.SecurityFindings, plugins.SecurityFinding{
+					ID:          "ldap-anonymous-bind",
+					Severity:    plugins.SeverityHigh,
+					Description: "LDAP anonymous bind succeeded (empty DN and password accepted)",
+					Evidence:    "LDAP anonymous bind succeeded (empty DN and password accepted)",
+				})
+			}
+		}
+		return service, nil
 	}
 	return nil, nil
 }

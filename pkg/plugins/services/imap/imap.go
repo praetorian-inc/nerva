@@ -149,7 +149,16 @@ func (p *IMAPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 	payload := plugins.ServiceIMAPS{
 		Banner: result,
 	}
-	return plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP), nil
+	service := plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP)
+	if target.Misconfigs {
+		service.SecurityFindings = []plugins.SecurityFinding{{
+			ID:          "imap-cleartext",
+			Severity:    plugins.SeverityMedium,
+			Description: "IMAP transmits data including credentials in cleartext",
+			Evidence:    result,
+		}}
+	}
+	return service, nil
 }
 
 func (p *IMAPPlugin) PortPriority(i uint16) bool {

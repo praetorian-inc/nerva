@@ -93,7 +93,16 @@ func (p *POP3Plugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 	payload := plugins.ServicePOP3{
 		Banner: result,
 	}
-	return plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP), nil
+	service := plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP)
+	if target.Misconfigs {
+		service.SecurityFindings = []plugins.SecurityFinding{{
+			ID:          "pop3-cleartext",
+			Severity:    plugins.SeverityMedium,
+			Description: "POP3 transmits data including credentials in cleartext",
+			Evidence:    result,
+		}}
+	}
+	return service, nil
 }
 
 func (p *TLSPlugin) PortPriority(port uint16) bool {

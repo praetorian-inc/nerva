@@ -156,7 +156,33 @@ func (p *SMTPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 			Banner:      data.Banner,
 			AuthMethods: data.AuthMethods,
 		}
-		return plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP), nil
+		service := plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP)
+		if target.Misconfigs {
+			service.SecurityFindings = []plugins.SecurityFinding{{
+				ID:          "smtp-cleartext",
+				Severity:    plugins.SeverityLow,
+				Description: "SMTP transmits data including credentials in cleartext",
+				Evidence:    data.Banner,
+			}}
+			if len(data.AuthMethods) > 0 {
+				hasAuth := false
+				for _, method := range data.AuthMethods {
+					if strings.Contains(strings.ToUpper(method), "AUTH") {
+						hasAuth = true
+						break
+					}
+				}
+				if !hasAuth {
+					service.SecurityFindings = append(service.SecurityFindings, plugins.SecurityFinding{
+						ID:          "smtp-open-relay",
+						Severity:    plugins.SeverityHigh,
+						Description: "SMTP server does not advertise authentication, potential open relay",
+						Evidence:    "EHLO response lacks AUTH capability",
+					})
+				}
+			}
+		}
+		return service, nil
 	} else if err != nil && check {
 		return nil, nil
 	}
