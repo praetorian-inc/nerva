@@ -13,25 +13,17 @@
 // limitations under the License.
 
 // Package fingerprinters provides HTTP fingerprinting for Citrix NetScaler ADC
-// and Citrix Gateway (formerly NetScaler Gateway). Passive-only: Citrix has
-// stripped all unauthenticated version markers (Server header anonymized,
-// /vpn/heartbeat.html removed).
-//
-// Gate logic (asymmetric by design):
-//   - NSC_ cookie prefix alone → DETECTED (iron-clad; only real NetScalers set these)
-//   - Title match alone → REJECTED (phishing sites can copy titles)
+// and Citrix Gateway. Gate logic (asymmetric by design):
+//   - NSC_ cookie prefix alone → DETECTED (iron-clad)
+//   - Title alone → REJECTED (require Class B/C corroborator)
 //   - Title + (Class B header OR Class C asset) → DETECTED
-//
-// This allows detection of 302 redirect responses that have no body but do carry
-// NSC_* cookies (NSC_AAAC, NSC_EPAC, etc.) set by the NetScaler load balancer.
-// CPE always wildcard (Phase 1). No version extraction, no ProbeEndpoint, no raw
-// cookie/header in metadata.
 package fingerprinters
 
 import (
 	"bytes"
 	"fmt"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 )
@@ -46,7 +38,7 @@ var (
 		`(?i)<title[^>]{0,200}>\s*(Citrix Gateway|NetScaler Gateway|NetScaler AAA)\s*</title>`,
 	)
 	// Class B — Citrix-specific CSP report-uri directive.
-	citrixNscspReportURIPattern = regexp.MustCompile(`(?i)report-uri\s+/nscsp_violation/report_uri`)
+	citrixNscspReportURIPattern = regexp.MustCompile(`(?i)report-uri\s{1,10}/nscsp_violation/report_uri`)
 	// Phase 2 prep: version sanitizer patterns (tested, never called from Fingerprint in Phase 1).
 	citrixSemverPattern      = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
 	citrixVersionCharPattern = regexp.MustCompile(`^[0-9.]{1,16}$`)
@@ -106,13 +98,17 @@ func (f *CitrixNetScalerFingerprinter) Fingerprint(resp *http.Response, body []b
 		}
 	}
 
-	// Class A (NSC_ cookie): any Set-Cookie with name starting "NSC_" is iron-clad.
-	// NSC_ prefix is uniquely assigned by NetScaler's load balancing engine.
-	// C3: cookie name checked only; .Value is never read.
-	var nscCookieMatched bool
+	// Class A (NSC_ cookie): iron-clad; C3: name-only, .Value never read.
+	// Single pass also collects "pwcount" Class B cookie.
+	var nscCookieMatched, pwcountCookieFound bool
 	for _, c := range resp.Cookies() {
 		if strings.HasPrefix(c.Name, "NSC_") {
 			nscCookieMatched = true
+		}
+		if c.Name == "pwcount" {
+			pwcountCookieFound = true
+		}
+		if nscCookieMatched && pwcountCookieFound {
 			break
 		}
 	}
@@ -122,20 +118,18 @@ func (f *CitrixNetScalerFingerprinter) Fingerprint(resp *http.Response, body []b
 		return nil, nil
 	}
 
-	// Class B: headers (C3: cookie name-only, never .Value).
-	cspBytes := []byte(resp.Header.Get("Content-Security-Policy"))
-	classBMatched := bytes.Contains(cspBytes, citrixngURIScheme) ||
-		bytes.Contains(cspBytes, nsgcepaURIScheme) ||
-		citrixNscspReportURIPattern.Match(cspBytes) ||
-		strings.Contains(resp.Header.Get("Via"), "NS-CACHE-")
-	if !classBMatched {
-		for _, c := range resp.Cookies() {
-			if c.Name == "pwcount" {
-				classBMatched = true
-				break
-			}
+	// Class B: headers; iterate all CSP values (RFC-valid servers may send multiple).
+	cspMatched := false
+	for _, csp := range resp.Header.Values("Content-Security-Policy") {
+		cspBytes := []byte(csp)
+		if bytes.Contains(cspBytes, citrixngURIScheme) || bytes.Contains(cspBytes, nsgcepaURIScheme) || citrixNscspReportURIPattern.Match(cspBytes) {
+			cspMatched = true
+			break
 		}
 	}
+	classBMatched := cspMatched ||
+		strings.Contains(resp.Header.Get("Via"), "NS-CACHE-") ||
+		pwcountCookieFound
 
 	// Class C: body asset paths.
 	classCMatched := bytes.Contains(body, citrixVPNLoginJSAsset) ||
@@ -147,13 +141,15 @@ func (f *CitrixNetScalerFingerprinter) Fingerprint(resp *http.Response, body []b
 		return nil, nil
 	}
 
-	// Derive product from Location header when no title (header-only / 302 case).
+	// Normalize Location header (extract path from absolute URLs; reject unsafe schemes).
+	locPath := normalizeLocationPath(resp.Header.Get("Location"))
+
+	// Derive product from Location when no title (header-only / 302 case).
 	if !titleMatched {
-		loc := resp.Header.Get("Location")
 		switch {
-		case strings.HasPrefix(loc, "/vpn/"):
+		case strings.HasPrefix(locPath, "/vpn/"):
 			product = "Gateway"
-		case strings.HasPrefix(loc, "/logon/LogonPoint/"):
+		case strings.HasPrefix(locPath, "/logon/LogonPoint/"):
 			product = "AAA"
 		default:
 			product = "unknown"
@@ -170,14 +166,15 @@ func (f *CitrixNetScalerFingerprinter) Fingerprint(resp *http.Response, body []b
 	case bytes.Contains(body, []byte("/vpn/index.html")):
 		loginPath = "/vpn/index.html"
 	default:
-		// No body marker: fall back to Location header (redirect target IS the login path).
-		loc := resp.Header.Get("Location")
-		if loc != "" {
-			loginPath = loc
-		} else if product == "AAA" {
-			loginPath = "/logon/LogonPoint/tmindex.html"
-		} else if product == "Gateway" {
-			loginPath = "/vpn/index.html"
+		// Only store locPath when it maps to a known Citrix product prefix.
+		if product == "AAA" || product == "Gateway" {
+			if locPath != "" {
+				loginPath = locPath
+			} else if product == "AAA" {
+				loginPath = "/logon/LogonPoint/tmindex.html"
+			} else {
+				loginPath = "/vpn/index.html"
+			}
 		}
 	}
 
@@ -198,6 +195,39 @@ func buildCitrixNetScalerCPE(version string) string {
 		version = "*"
 	}
 	return fmt.Sprintf("cpe:2.3:a:citrix:netscaler_application_delivery_controller:%s:*:*:*:*:*:*:*", version)
+}
+
+// normalizeLocationPath extracts and validates the path from a Location header.
+// Absolute URLs have scheme+host stripped; non-http/https schemes (javascript:,
+// data:, ftp:) are rejected. Path must start with "/", be ≤200 chars, and
+// contain only letters, digits, and safe punctuation (/_-.?=&).
+func normalizeLocationPath(loc string) string {
+	if loc == "" {
+		return ""
+	}
+	u, err := url.Parse(loc)
+	if err != nil {
+		return ""
+	}
+	if u.Scheme != "" && u.Scheme != "http" && u.Scheme != "https" {
+		return ""
+	}
+	p := u.Path
+	if p == "" || !strings.HasPrefix(p, "/") || len(p) > 200 {
+		return ""
+	}
+	for _, r := range p {
+		if !isLocationPathRune(r) {
+			return ""
+		}
+	}
+	return p
+}
+
+// isLocationPathRune reports whether r is a permitted path character.
+func isLocationPathRune(r rune) bool {
+	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') ||
+		r == '/' || r == '_' || r == '-' || r == '.' || r == '?' || r == '=' || r == '&'
 }
 
 // sanitizeCitrixNetScalerVersion enforces charset + semver (C1, Phase 2 prep).

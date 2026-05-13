@@ -25,6 +25,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// newCitrixRespMultiCSP builds a 200 response with multiple Content-Security-Policy
+// header values (used to test Fix 5: iterating all CSP values).
+func newCitrixRespMultiCSP(body string, cspValues []string) *http.Response {
+	h := make(http.Header)
+	h.Set("Content-Type", "text/html; charset=utf-8")
+	for _, csp := range cspValues {
+		h.Add("Content-Security-Policy", csp)
+	}
+	return &http.Response{StatusCode: 200, Header: h}
+}
+
 const citrixGatewayBody = `<!DOCTYPE html PUBLIC "-//W3C//DTD XDEV_HTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
 <html><head>
 <title class="_ctxstxt_NetscalerGateway">Citrix Gateway</title>
@@ -193,6 +204,39 @@ func TestCitrixNetScalerFingerprinter_Fingerprint(t *testing.T) {
 				map[string]string{"Content-Security-Policy": "default-src citrixng://"},
 				nil),
 			true, "", ""},
+		// --- Fix 1+2: absolute Location URL normalization and validation ---
+		// --- Additional coverage cases ---
+		// Body contains /logon/LogonPoint/tmindex.html directly (line 175 body marker branch).
+		{"AAA body with tmindex.html marker", `<title class="_ctxstxt_NetscalerAAA">NetScaler AAA</title><a href="/logon/LogonPoint/tmindex.html">login</a>`,
+			newCitrixResp("", viahdr), false, "AAA", "/logon/LogonPoint/tmindex.html"},
+		// Both NSC_ and pwcount cookies in same response (triggers early-exit break in cookie loop).
+		{"NSC_ and pwcount both present hits loop break",
+			"",
+			func() *http.Response {
+				r := &http.Response{StatusCode: 302, Header: make(http.Header)}
+				r.Header.Set("Content-Type", "text/html")
+				r.Header.Add("Set-Cookie", "NSC_AAAC=xyz; Path=/")
+				r.Header.Add("Set-Cookie", "pwcount=0; Path=/")
+				r.Header.Set("Location", "/vpn/index.html")
+				return r
+			}(),
+			false, "Gateway", "/vpn/index.html"},
+		// --- Fix 1+2: absolute Location URL normalization and validation ---
+		{"302 with absolute Location URL",
+			"",
+			newCitrix302Resp("https://example.com/vpn/index.html", nil,
+				[]string{"NSC_AAAC=xyz; Path=/; Secure"}),
+			false, "Gateway", "/vpn/index.html"},
+		{"302 with malicious javascript: Location",
+			"",
+			newCitrix302Resp("javascript:alert(1)", nil,
+				[]string{"NSC_AAAC=xyz; Path=/; Secure"}),
+			false, "unknown", ""},
+		{"302 with external-host absolute Location",
+			"",
+			newCitrix302Resp("https://attacker.example/exfil", nil,
+				[]string{"NSC_AAAC=xyz; Path=/; Secure"}),
+			false, "unknown", ""},
 	}
 
 	fp := &CitrixNetScalerFingerprinter{}
@@ -272,4 +316,38 @@ func TestSanitizeCitrixNetScalerVersion(t *testing.T) {
 func TestBuildCitrixNetScalerCPE(t *testing.T) {
 	assert.Equal(t, "cpe:2.3:a:citrix:netscaler_application_delivery_controller:*:*:*:*:*:*:*:*", buildCitrixNetScalerCPE(""))
 	assert.Equal(t, "cpe:2.3:a:citrix:netscaler_application_delivery_controller:13.1.49:*:*:*:*:*:*:*", buildCitrixNetScalerCPE("13.1.49"))
+}
+
+// --- TestCitrixNetScalerFingerprinter_MultiCSP (Fix 5) ---
+func TestCitrixNetScalerFingerprinter_MultiCSP(t *testing.T) {
+	// Citrix title in body; citrixng:// scheme only in the SECOND CSP header value.
+	gTitle := `<title class="_ctxstxt_NetscalerGateway">Citrix Gateway</title>`
+	resp := newCitrixRespMultiCSP(gTitle, []string{"default-src 'self'", "default-src citrixng://"})
+	fp := &CitrixNetScalerFingerprinter{}
+	result, err := fp.Fingerprint(resp, []byte(gTitle))
+	require.NoError(t, err)
+	require.NotNil(t, result, "second CSP header carrying citrixng:// must be detected")
+	assert.Equal(t, "citrix-netscaler", result.Technology)
+	assert.Equal(t, "Gateway", result.Metadata["product"])
+}
+
+// --- TestNormalizeLocationPath ---
+func TestNormalizeLocationPath(t *testing.T) {
+	tests := []struct{ name, in, want string }{
+		{"empty", "", ""},
+		{"relative path", "/vpn/index.html", "/vpn/index.html"},
+		{"absolute URL → path only", "https://example.com/vpn/index.html", "/vpn/index.html"},
+		{"absolute URL logon path", "https://ns.example.org/logon/LogonPoint/tmindex.html", "/logon/LogonPoint/tmindex.html"},
+		{"javascript scheme", "javascript:alert(1)", ""},
+		{"data scheme", "data:text/html,<h1>hi</h1>", ""},
+		{"ftp scheme", "ftp://files.example.com/path", ""},
+		{"query string stripped", "/vpn/index.html?foo=bar&baz=1", "/vpn/index.html"},
+		{"path too long", "/" + string(bytes.Repeat([]byte("a"), 201)), ""},
+		{"unsafe char space", "/vpn/index path", ""},
+		{"invalid URL", "://bad", ""},
+		{"no path", "https://example.com", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) { assert.Equal(t, tt.want, normalizeLocationPath(tt.in)) })
+	}
 }
