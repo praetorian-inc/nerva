@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/praetorian-inc/nerva/pkg/plugins"
+	"github.com/praetorian-inc/nerva/pkg/plugins/fingerprinters"
 	utils "github.com/praetorian-inc/nerva/pkg/plugins/pluginutils"
 	"github.com/praetorian-inc/nerva/third_party/cryptolib/ssh"
 )
@@ -60,7 +61,14 @@ var weakMACs = map[string]bool{
 
 // makeSSHService creates a Service with the given SSH payload and attaches any
 // security findings derived from the algorithm negotiation and auth state.
+//
+// Banner-derived product fingerprinting (e.g., MOVEit Transfer SFTP) is applied
+// here so every Run() return path gets it without per-site bookkeeping. When
+// algo is nil and passwordAuth is false (e.g., the checkAlgo failure path),
+// buildSSHFindings returns no findings, making this helper safe to use for
+// partial-state early returns as well.
 func makeSSHService(target plugins.Target, payload plugins.ServiceSSH, algo map[string]string, passwordAuth bool) *plugins.Service {
+	applySSHBannerFingerprinting(&payload, payload.Banner)
 	service := plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP)
 	service.SecurityFindings = buildSSHFindings(algo, passwordAuth)
 	return service
@@ -344,7 +352,7 @@ func (p *SSHPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 		payload := plugins.ServiceSSH{
 			Banner: banner,
 		}
-		return plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP), nil
+		return makeSSHService(target, payload, nil, false), nil
 	}
 
 	// Check auth methods by attempting Password and KeyboardInteractive.
@@ -526,4 +534,19 @@ func (p *SSHPlugin) Type() plugins.Protocol {
 
 func (p *SSHPlugin) Priority() int {
 	return 2
+}
+
+// applySSHBannerFingerprinting enriches the payload with product-level
+// fingerprinting derived from the SSH version-exchange banner (e.g., MOVEit
+// Transfer SFTP). Mutates payload in place. No-op when the banner doesn't
+// match any known product.
+func applySSHBannerFingerprinting(payload *plugins.ServiceSSH, banner string) {
+	if r := fingerprinters.FingerprintMOVEitSSHBanner(banner); r != nil {
+		payload.Technologies = append(payload.Technologies, r.Technology)
+		payload.CPEs = append(payload.CPEs, r.CPEs...)
+		if payload.FingerprintMetadata == nil {
+			payload.FingerprintMetadata = map[string]map[string]any{}
+		}
+		payload.FingerprintMetadata[r.Technology] = r.Metadata
+	}
 }

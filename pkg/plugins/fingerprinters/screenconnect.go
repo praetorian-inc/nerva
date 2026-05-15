@@ -257,7 +257,7 @@ func (f *ScreenConnectFingerprinter) Fingerprint(resp *http.Response, body []byt
 	}
 	serverHeader := resp.Header.Get("Server")
 	if serverHeader != "" {
-		metadata["server_header"] = sanitizeScreenConnectHeaderValue(serverHeader)
+		metadata["server_header"] = sanitizeHTTPHeaderValue(serverHeader)
 	}
 
 	return &FingerprintResult{
@@ -311,22 +311,6 @@ func extractScreenConnectInstanceID(body []byte) string {
 		return ""
 	}
 	return id
-}
-
-// sanitizeScreenConnectHeaderValue strips control characters and limits length to
-// prevent log injection or oversized metadata values from attacker-controlled headers.
-func sanitizeScreenConnectHeaderValue(s string) string {
-	var b strings.Builder
-	for _, r := range s {
-		if r >= 0x20 && r != 0x7F {
-			b.WriteRune(r)
-		}
-	}
-	result := b.String()
-	if len(result) > 256 {
-		result = result[:256]
-	}
-	return result
 }
 
 // buildScreenConnectCPE constructs a CPE 2.3 string for ConnectWise ScreenConnect.

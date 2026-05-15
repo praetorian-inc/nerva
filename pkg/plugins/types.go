@@ -1311,12 +1311,15 @@ type ServiceStun struct {
 func (e ServiceStun) Type() string { return ProtoStun }
 
 type ServiceSSH struct {
-	Banner              string `json:"banner"`
-	PasswordAuthEnabled bool   `json:"password_auth_enabled"`
-	Algo                string `json:"algo"`
-	HostKey             string `json:"host_key,omitempty"`
-	HostKeyType         string `json:"host_key_type,omitempty"`
-	HostKeyFingerprint  string `json:"host_key_fingerprint,omitempty"`
+	Banner              string                    `json:"banner"`
+	PasswordAuthEnabled bool                      `json:"password_auth_enabled"`
+	Algo                string                    `json:"algo"`
+	HostKey             string                    `json:"host_key,omitempty"`
+	HostKeyType         string                    `json:"host_key_type,omitempty"`
+	HostKeyFingerprint  string                    `json:"host_key_fingerprint,omitempty"`
+	Technologies        []string                  `json:"technologies,omitempty"`
+	CPEs                []string                  `json:"cpes,omitempty"`
+	FingerprintMetadata map[string]map[string]any `json:"fingerprint_metadata,omitempty"`
 }
 
 func (e ServiceSSH) Type() string { return ProtoSSH }
