@@ -65,7 +65,7 @@ func TestIISFingerprinter_Match(t *testing.T) {
 			name:        "Content-Type: text/html on 200",
 			statusCode:  200,
 			contentType: "text/html; charset=utf-8",
-			want:        true,
+			want:        false,
 		},
 		{
 			name:       "No IIS headers on 200",
@@ -194,7 +194,7 @@ func TestIISFingerprinter_Fingerprint_Valid(t *testing.T) {
 			body:                "<html><head><title>IIS Windows Server</title></head><body>Welcome</body></html>",
 			wantVersion:         "10.0",
 			wantWindowsVersion:  "Windows Server 2016/2019/2022",
-			wantDetectionMethod: "body",
+			wantDetectionMethod: "server_header",
 			wantDefaultPage:     true,
 		},
 		{
@@ -204,6 +204,26 @@ func TestIISFingerprinter_Fingerprint_Valid(t *testing.T) {
 			poweredBy:         "ASP.NET (.NET CLR 4.0.30319)",
 			wantVersion:       "10.0",
 			wantDotNetVersion: "4.0.30319",
+			wantDetectionMethod: "server_header",
+		},
+		{
+			name:                "Body with :*: does not block server header detection",
+			statusCode:          200,
+			server:              "Microsoft-IIS/10.0",
+			body:                "some content :*: injection",
+			wantVersion:         "10.0",
+			wantWindowsVersion:  "Windows Server 2016/2019/2022",
+			wantDetectionMethod: "server_header",
+		},
+		{
+			name:                "Body with :*: in content does not block IIS detection",
+			statusCode:          200,
+			server:              "Microsoft-IIS/8.5",
+			poweredBy:           "ASP.NET",
+			body:                `<html><body>SELECT * FROM users WHERE role=:*:admin</body></html>`,
+			wantVersion:         "8.5",
+			wantWindowsVersion:  "Windows Server 2012 R2",
+			wantCPE:             "cpe:2.3:a:microsoft:internet_information_services:8.5:*:*:*:*:*:*:*",
 			wantDetectionMethod: "server_header",
 		},
 	}
@@ -280,12 +300,6 @@ func TestIISFingerprinter_Fingerprint_Invalid(t *testing.T) {
 			statusCode: 200,
 			server:     "Microsoft-IIS/10.0",
 			body:       strings.Repeat("x", 2*1024*1024+1),
-		},
-		{
-			name:       "Body containing :*: returns nil (CPE injection defense)",
-			statusCode: 200,
-			server:     "Microsoft-IIS/10.0",
-			body:       "some content :*: injection",
 		},
 		{
 			name:       "No IIS headers and no body brand returns nil",

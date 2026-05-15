@@ -128,7 +128,6 @@ func (f *IISFingerprinter) Name() string {
 //   - Status in 200–499 AND Server header contains "microsoft-iis" (definitive).
 //   - Status in 200–499 AND X-Powered-By header contains "asp.net" (strong).
 //   - Status in 200–499 AND X-AspNet-Version header is non-empty (definitive).
-//   - Status in 200–499 AND Content-Type contains "text/html" (for body detection).
 func (f *IISFingerprinter) Match(resp *http.Response) bool {
 	if resp.StatusCode < 200 || resp.StatusCode >= 500 {
 		return false
@@ -148,11 +147,6 @@ func (f *IISFingerprinter) Match(resp *http.Response) bool {
 		return true
 	}
 
-	contentTypeLower := strings.ToLower(resp.Header.Get("Content-Type"))
-	if strings.Contains(contentTypeLower, "text/html") {
-		return true
-	}
-
 	return false
 }
 
@@ -161,7 +155,6 @@ func (f *IISFingerprinter) Match(resp *http.Response) bool {
 // Gates applied before analysis:
 //  1. Status filter: 200–499 (mirrors boa.go / checkpoint.go pattern).
 //  2. Body cap: 2 MiB — legitimate IIS pages are far smaller.
-//  3. CPE-injection defense: reject bodies containing ":*:".
 //
 // At least one definitive signal must be present:
 //   - Server header contains "microsoft-iis" (case-insensitive).
@@ -179,11 +172,6 @@ func (f *IISFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Finge
 
 	// Gate 2: 2 MiB body cap.
 	if len(body) > 2*1024*1024 {
-		return nil, nil
-	}
-
-	// Gate 3: CPE-injection defense.
-	if strings.Contains(string(body), ":*:") {
 		return nil, nil
 	}
 
@@ -209,22 +197,18 @@ func (f *IISFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Finge
 	var detectionMethod string
 	switch {
 	case hasServerSignal:
-		if hasDefaultPage {
-			detectionMethod = "body"
-		} else {
-			detectionMethod = "server_header"
-		}
-	default:
-		// Powered-by or X-AspNet-Version header only.
-		if hasDefaultPage {
-			detectionMethod = "body"
-		} else {
-			detectionMethod = "header"
-		}
+		detectionMethod = "server_header"
+	case hasPoweredBySignal || hasAspNetVersionSignal:
+		detectionMethod = "header"
 	}
 
 	// Extract IIS version from Server header (primary source).
 	version := extractIISVersion(serverHeader)
+	// Defense-in-depth: discard version if it somehow contains CPE metacharacters.
+	// The extraction regex only captures digits and dots, so this should never trigger.
+	if strings.ContainsAny(version, ":*") {
+		version = ""
+	}
 
 	// Extract ASP.NET version from X-AspNet-Version header.
 	aspNetVersion := extractASPNetVersion(aspNetVersionHeader)
