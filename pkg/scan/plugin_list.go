@@ -50,6 +50,7 @@ import (
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/git"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/gtpc"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/gtpprime"
+	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/grpc"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/gtpu"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/h323"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/hartip"

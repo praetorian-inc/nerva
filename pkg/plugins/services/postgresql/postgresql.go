@@ -226,7 +226,17 @@ func (p *POSTGRESPlugin) Run(conn net.Conn, timeout time.Duration, target plugin
 		AuthRequired: !successfulAuth(response),
 		CPEs:         []string{cpe},
 	}
-	return plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP), nil
+	service := plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP)
+	if target.Misconfigs && !payload.AuthRequired {
+		service.AnonymousAccess = true
+		service.SecurityFindings = []plugins.SecurityFinding{{
+			ID:          "postgresql-no-auth",
+			Severity:    plugins.SeverityCritical,
+			Description: "PostgreSQL accessible without authentication",
+			Evidence:    "Connection succeeded without credentials",
+		}}
+	}
+	return service, nil
 }
 
 func (p *POSTGRESPlugin) Name() string {

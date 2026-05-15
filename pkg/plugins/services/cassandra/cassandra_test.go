@@ -16,7 +16,16 @@ package cassandra
 
 import (
 	"encoding/binary"
+	"fmt"
+	"net"
+	"net/netip"
 	"testing"
+	"time"
+
+	"github.com/ory/dockertest/v3"
+	"github.com/stretchr/testify/assert"
+
+	"github.com/praetorian-inc/nerva/pkg/plugins"
 )
 
 // TestBuildOPTIONSFrame tests OPTIONS frame construction
@@ -798,4 +807,425 @@ func TestBuildCassandraCPE(t *testing.T) {
 			}
 		})
 	}
+}
+
+// buildSTARTUPAuthResponse builds a STARTUP response with the given opcode.
+// opcode 0x02 = READY (no auth), 0x03 = AUTHENTICATE (auth required)
+func buildSTARTUPAuthResponse(stream uint16, opcode byte) []byte {
+	// Build a minimal READY or AUTHENTICATE response frame
+	// Header: version(1) + flags(1) + stream(2) + opcode(1) + length(4) = 9 bytes
+	resp := make([]byte, 0, 9)
+	resp = append(resp, PROTOCOL_V4_RESPONSE) // version
+	resp = append(resp, 0x00)                 // flags
+	// stream (big-endian)
+	resp = append(resp, byte(stream>>8), byte(stream))
+	resp = append(resp, opcode) // opcode
+	// Body length: 0 for READY, minimal for AUTHENTICATE
+	if opcode == 0x03 {
+		// AUTHENTICATE has a string body (authenticator class name)
+		authClass := "org.apache.cassandra.auth.PasswordAuthenticator"
+		classLen := uint16(len(authClass))
+		bodyLen := uint32(2 + int(classLen)) // 2-byte length + string
+		resp = append(resp, byte(bodyLen>>24), byte(bodyLen>>16), byte(bodyLen>>8), byte(bodyLen))
+		resp = append(resp, byte(classLen>>8), byte(classLen))
+		resp = append(resp, []byte(authClass)...)
+	} else {
+		resp = append(resp, 0x00, 0x00, 0x00, 0x00) // length 0
+	}
+	return resp
+}
+
+// TestCheckCassandraAuth_ShortResponse verifies that checkCassandraAuth returns false when the
+// server sends fewer than 9 bytes (header cannot be parsed).
+func TestCheckCassandraAuth_ShortResponse(t *testing.T) {
+	serverConn, clientConn := net.Pipe()
+
+	go func() {
+		defer serverConn.Close()
+		buf := make([]byte, 4096)
+		_, _ = serverConn.Read(buf)
+		// Send only 5 bytes — not enough for a full CQL response header (9 bytes)
+		_, _ = serverConn.Write([]byte{0x84, 0x00, 0x00, 0x00, 0x02})
+	}()
+
+	got := checkCassandraAuth(clientConn, 5*time.Second, "3.0.0")
+	clientConn.Close()
+	assert.False(t, got, "expected false for short response")
+}
+
+// TestCheckCassandraAuth_ConnectionError verifies that checkCassandraAuth returns false when
+// the server closes the connection immediately.
+func TestCheckCassandraAuth_ConnectionError(t *testing.T) {
+	serverConn, clientConn := net.Pipe()
+
+	go func() {
+		serverConn.Close() // close immediately without sending anything
+	}()
+
+	got := checkCassandraAuth(clientConn, 5*time.Second, "3.0.0")
+	clientConn.Close()
+	assert.False(t, got, "expected false when connection is immediately closed")
+}
+
+// TestCheckCassandraAuth_UnexpectedOpcode verifies that checkCassandraAuth returns false when
+// the server sends an ERROR frame (opcode 0x00).
+func TestCheckCassandraAuth_UnexpectedOpcode(t *testing.T) {
+	serverConn, clientConn := net.Pipe()
+
+	go func() {
+		defer serverConn.Close()
+		buf := make([]byte, 4096)
+		_, _ = serverConn.Read(buf)
+		// Send an ERROR response (opcode 0x00) with no body
+		resp := []byte{
+			PROTOCOL_V4_RESPONSE, // version
+			0x00,                 // flags
+			0x00, 0x01,           // stream: 1
+			0x00,                 // opcode: ERROR
+			0x00, 0x00, 0x00, 0x00, // body length: 0
+		}
+		_, _ = serverConn.Write(resp)
+	}()
+
+	got := checkCassandraAuth(clientConn, 5*time.Second, "3.0.0")
+	clientConn.Close()
+	assert.False(t, got, "expected false for ERROR opcode response")
+}
+
+// TestCheckCassandraAuth_VersionPassthrough verifies that the CQL_VERSION sent in the STARTUP
+// frame matches the version passed into checkCassandraAuth.
+func TestCheckCassandraAuth_VersionPassthrough(t *testing.T) {
+	serverConn, clientConn := net.Pipe()
+
+	const expectedVersion = "3.4.5"
+	startupReceived := make(chan []byte, 1)
+
+	go func() {
+		defer serverConn.Close()
+		buf := make([]byte, 4096)
+		n, err := serverConn.Read(buf)
+		if err != nil {
+			close(startupReceived)
+			return
+		}
+		startupReceived <- buf[:n]
+		// Respond with READY so checkCassandraAuth returns true
+		resp := buildSTARTUPAuthResponse(1, 0x02)
+		_, _ = serverConn.Write(resp)
+	}()
+
+	_ = checkCassandraAuth(clientConn, 5*time.Second, expectedVersion)
+	clientConn.Close()
+
+	data, ok := <-startupReceived
+	if !ok {
+		t.Fatal("server did not receive any data")
+	}
+	// The STARTUP frame body is a CQL string map — verify expectedVersion appears in it
+	assert.Contains(t, string(data), expectedVersion,
+		"STARTUP frame should contain the requested CQL_VERSION")
+}
+
+// TestCassandraSecurityFindingFields validates all SecurityFinding fields are populated correctly.
+func TestCassandraSecurityFindingFields(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to start mock server: %v", err)
+	}
+	defer listener.Close()
+
+	serverPort := listener.Addr().(*net.TCPAddr).Port
+
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				buf := make([]byte, 4096)
+				reqCount := 0
+				for {
+					_, err := c.Read(buf)
+					if err != nil {
+						return
+					}
+					reqCount++
+					if reqCount == 1 {
+						_, _ = c.Write(buildCassandraSUPPORTEDResponse())
+					} else {
+						_, _ = c.Write(buildSTARTUPAuthResponse(1, 0x02))
+					}
+				}
+			}(conn)
+		}
+	}()
+
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", serverPort), 5*time.Second)
+	if err != nil {
+		t.Fatalf("failed to connect to mock server: %v", err)
+	}
+	defer conn.Close()
+
+	addrStr := fmt.Sprintf("127.0.0.1:%d", serverPort)
+	addrPort := netip.MustParseAddrPort(addrStr)
+	target := plugins.Target{
+		Host:       "127.0.0.1",
+		Address:    addrPort,
+		Misconfigs: true,
+	}
+
+	plugin := &CassandraPlugin{}
+	service, err := plugin.Run(conn, 5*time.Second, target)
+	if err != nil {
+		t.Fatalf("Run() returned unexpected error: %v", err)
+	}
+	if service == nil {
+		t.Fatal("Run() returned nil, want non-nil service")
+	}
+
+	assert.Len(t, service.SecurityFindings, 1, "expected 1 security finding")
+	if len(service.SecurityFindings) == 0 {
+		return
+	}
+	f := service.SecurityFindings[0]
+	assert.Equal(t, "cassandra-no-auth", f.ID, "finding ID mismatch")
+	assert.Equal(t, plugins.SeverityHigh, f.Severity, "finding severity mismatch")
+	assert.NotEmpty(t, f.Description, "Description must be non-empty")
+	assert.NotEmpty(t, f.Evidence, "Evidence must be non-empty")
+}
+
+// TestCassandraDockerNoAuth is a Docker integration test that verifies anonymous access
+// detection against a real Cassandra 4.1 container with default AllowAllAuthenticator.
+func TestCassandraDockerNoAuth(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping docker test in short mode")
+	}
+
+	pool, err := dockertest.NewPool("")
+	if err != nil {
+		t.Fatalf("could not connect to docker: %s", err)
+	}
+
+	resource, err := pool.RunWithOptions(&dockertest.RunOptions{
+		Repository: "cassandra",
+		Tag:        "4.1",
+	})
+	if err != nil {
+		t.Fatalf("could not start cassandra container: %s", err)
+	}
+	defer pool.Purge(resource) //nolint:errcheck
+
+	port := resource.GetPort("9042/tcp")
+	addr := fmt.Sprintf("127.0.0.1:%s", port)
+
+	// Cassandra takes ~30-60 seconds to start
+	time.Sleep(30 * time.Second)
+
+	var service *plugins.Service
+	retryErr := pool.Retry(func() error {
+		conn, dialErr := net.DialTimeout("tcp", addr, 5*time.Second)
+		if dialErr != nil {
+			return dialErr
+		}
+		defer conn.Close()
+
+		addrPort := netip.MustParseAddrPort(addr)
+		target := plugins.Target{
+			Host:       "127.0.0.1",
+			Address:    addrPort,
+			Misconfigs: true,
+		}
+
+		svc, runErr := (&CassandraPlugin{}).Run(conn, 10*time.Second, target)
+		if runErr != nil {
+			return runErr
+		}
+		if svc == nil {
+			return fmt.Errorf("cassandra not yet ready")
+		}
+		service = svc
+		return nil
+	})
+	if retryErr != nil {
+		t.Fatalf("cassandra plugin never connected: %s", retryErr)
+	}
+
+	assert.True(t, service.AnonymousAccess, "expected AnonymousAccess=true for default Cassandra")
+	assert.NotEmpty(t, service.SecurityFindings, "expected SecurityFindings for default Cassandra")
+	if len(service.SecurityFindings) > 0 {
+		assert.Equal(t, "cassandra-no-auth", service.SecurityFindings[0].ID)
+	}
+}
+
+// TestCheckCassandraAuth_Ready tests that checkCassandraAuth returns true when server sends READY.
+func TestCheckCassandraAuth_Ready(t *testing.T) {
+	serverConn, clientConn := net.Pipe()
+	defer clientConn.Close()
+
+	go func() {
+		defer serverConn.Close()
+		// Read the STARTUP frame
+		buf := make([]byte, 4096)
+		_, _ = serverConn.Read(buf)
+		// Send back READY (opcode 0x02)
+		resp := buildSTARTUPAuthResponse(1, 0x02)
+		_, _ = serverConn.Write(resp)
+	}()
+
+	got := checkCassandraAuth(clientConn, 5*time.Second, "3.0.0")
+	assert.True(t, got, "expected checkCassandraAuth to return true for READY response")
+}
+
+// TestCheckCassandraAuth_Authenticate tests that checkCassandraAuth returns false when server sends AUTHENTICATE.
+func TestCheckCassandraAuth_Authenticate(t *testing.T) {
+	serverConn, clientConn := net.Pipe()
+	defer clientConn.Close()
+
+	go func() {
+		defer serverConn.Close()
+		buf := make([]byte, 4096)
+		_, _ = serverConn.Read(buf)
+		// Send back AUTHENTICATE (opcode 0x03)
+		resp := buildSTARTUPAuthResponse(1, 0x03)
+		_, _ = serverConn.Write(resp)
+	}()
+
+	got := checkCassandraAuth(clientConn, 5*time.Second, "3.0.0")
+	assert.False(t, got, "expected checkCassandraAuth to return false for AUTHENTICATE response")
+}
+
+// buildCassandraSUPPORTEDResponse builds a valid SUPPORTED frame for DetectCassandra.
+func buildCassandraSUPPORTEDResponse() []byte {
+	multimap := map[string][]string{
+		"CQL_VERSION": {"3.4.5"},
+		"COMPRESSION": {"lz4", "snappy"},
+	}
+	return buildValidSUPPORTEDFrame(multimap)
+}
+
+// TestCassandraRun_MisconfigsEnabled tests the full Run() flow with misconfigs=true.
+// When the server responds SUPPORTED then READY, the service has AnonymousAccess=true.
+func TestCassandraRun_MisconfigsEnabled(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to start mock server: %v", err)
+	}
+	defer listener.Close()
+
+	serverPort := listener.Addr().(*net.TCPAddr).Port
+
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				buf := make([]byte, 4096)
+				reqCount := 0
+				for {
+					_, err := c.Read(buf)
+					if err != nil {
+						return
+					}
+					reqCount++
+					if reqCount == 1 {
+						// First request: OPTIONS → respond with SUPPORTED
+						_, _ = c.Write(buildCassandraSUPPORTEDResponse())
+					} else {
+						// Second request: STARTUP → respond with READY (no auth)
+						_, _ = c.Write(buildSTARTUPAuthResponse(1, 0x02))
+					}
+				}
+			}(conn)
+		}
+	}()
+
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", serverPort), 5*time.Second)
+	if err != nil {
+		t.Fatalf("failed to connect to mock server: %v", err)
+	}
+	defer conn.Close()
+
+	addrStr := fmt.Sprintf("127.0.0.1:%d", serverPort)
+	addrPort := netip.MustParseAddrPort(addrStr)
+	target := plugins.Target{
+		Host:       "127.0.0.1",
+		Address:    addrPort,
+		Misconfigs: true,
+	}
+
+	plugin := &CassandraPlugin{}
+	service, err := plugin.Run(conn, 5*time.Second, target)
+	if err != nil {
+		t.Fatalf("Run() returned unexpected error: %v", err)
+	}
+	if service == nil {
+		t.Fatal("Run() returned nil, want non-nil service")
+	}
+
+	assert.True(t, service.AnonymousAccess, "expected AnonymousAccess=true when READY")
+	assert.Len(t, service.SecurityFindings, 1, "expected 1 security finding")
+	if len(service.SecurityFindings) == 1 {
+		assert.Equal(t, "cassandra-no-auth", service.SecurityFindings[0].ID)
+		assert.Equal(t, plugins.SeverityHigh, service.SecurityFindings[0].Severity)
+	}
+}
+
+// TestCassandraRun_MisconfigsDisabled tests that no auth check runs when Misconfigs=false.
+func TestCassandraRun_MisconfigsDisabled(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to start mock server: %v", err)
+	}
+	defer listener.Close()
+
+	serverPort := listener.Addr().(*net.TCPAddr).Port
+
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				buf := make([]byte, 4096)
+				_, _ = c.Read(buf)
+				// OPTIONS → SUPPORTED only. No STARTUP expected when Misconfigs=false.
+				_, _ = c.Write(buildCassandraSUPPORTEDResponse())
+				// Drain any extra reads without blocking forever
+				_, _ = c.Read(buf)
+			}(conn)
+		}
+	}()
+
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", serverPort), 5*time.Second)
+	if err != nil {
+		t.Fatalf("failed to connect to mock server: %v", err)
+	}
+	defer conn.Close()
+
+	addrStr := fmt.Sprintf("127.0.0.1:%d", serverPort)
+	addrPort := netip.MustParseAddrPort(addrStr)
+	target := plugins.Target{
+		Host:       "127.0.0.1",
+		Address:    addrPort,
+		Misconfigs: false,
+	}
+
+	plugin := &CassandraPlugin{}
+	service, err := plugin.Run(conn, 5*time.Second, target)
+	if err != nil {
+		t.Fatalf("Run() returned unexpected error: %v", err)
+	}
+	if service == nil {
+		t.Fatal("Run() returned nil, want non-nil service")
+	}
+
+	assert.False(t, service.AnonymousAccess, "expected AnonymousAccess=false when Misconfigs=false")
+	assert.Empty(t, service.SecurityFindings, "expected no SecurityFindings when Misconfigs=false")
 }

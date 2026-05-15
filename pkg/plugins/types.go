@@ -101,6 +101,7 @@ const (
 	ProtoGit              = "git"
 	ProtoGTPC             = "gtpc"
 	ProtoGTPPrime         = "gtpprime"
+	ProtoGRPC             = "grpc"
 	ProtoGTPU             = "gtpu"
 	ProtoH323             = "h323"
 	ProtoHARTIP           = "hartip"
@@ -321,6 +322,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoGTPPrime:
 		var p ServiceGTPPrime
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoGRPC:
+		var p ServiceGRPC
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoGTPU:
@@ -1230,6 +1235,14 @@ type ServiceGTPU struct{}
 
 func (e ServiceGTPU) Type() string { return ProtoGTPU }
 
+type ServiceGRPC struct {
+	ReflectionEnabled bool     `json:"reflection_enabled"`
+	Services          []string `json:"services,omitempty"`
+	HealthStatus      string   `json:"health_status,omitempty"`
+}
+
+func (e ServiceGRPC) Type() string { return ProtoGRPC }
+
 type ServicePFCP struct {
 	RecoveryTimestamp uint32 `json:"recovery_timestamp,omitempty"`
 	NodeID            string `json:"node_id,omitempty"`
@@ -1311,12 +1324,15 @@ type ServiceStun struct {
 func (e ServiceStun) Type() string { return ProtoStun }
 
 type ServiceSSH struct {
-	Banner              string `json:"banner"`
-	PasswordAuthEnabled bool   `json:"password_auth_enabled"`
-	Algo                string `json:"algo"`
-	HostKey             string `json:"host_key,omitempty"`
-	HostKeyType         string `json:"host_key_type,omitempty"`
-	HostKeyFingerprint  string `json:"host_key_fingerprint,omitempty"`
+	Banner              string                    `json:"banner"`
+	PasswordAuthEnabled bool                      `json:"password_auth_enabled"`
+	Algo                string                    `json:"algo"`
+	HostKey             string                    `json:"host_key,omitempty"`
+	HostKeyType         string                    `json:"host_key_type,omitempty"`
+	HostKeyFingerprint  string                    `json:"host_key_fingerprint,omitempty"`
+	Technologies        []string                  `json:"technologies,omitempty"`
+	CPEs                []string                  `json:"cpes,omitempty"`
+	FingerprintMetadata map[string]map[string]any `json:"fingerprint_metadata,omitempty"`
 }
 
 func (e ServiceSSH) Type() string { return ProtoSSH }

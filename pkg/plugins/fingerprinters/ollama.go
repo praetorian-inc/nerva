@@ -143,16 +143,45 @@ func (f *OllamaFingerprinter) ProbeEndpoint() string {
 }
 
 func (f *OllamaFingerprinter) Match(resp *http.Response) bool {
-	// Check for Content-Type: application/json header
-	// Ollama API returns JSON responses
 	contentType := resp.Header.Get("Content-Type")
-	return strings.Contains(contentType, "application/json")
+	// Passive path: Ollama returns "Ollama is running" as text/plain at /
+	// Active path: probe endpoints return application/json
+	return strings.Contains(contentType, "text/plain") ||
+		strings.Contains(contentType, "application/json")
 }
 
 func (f *OllamaFingerprinter) Fingerprint(resp *http.Response, body []byte) (*FingerprintResult, error) {
+	contentType := resp.Header.Get("Content-Type")
+
+	// Passive path: Ollama returns exactly "Ollama is running" as text/plain at /
+	if strings.Contains(contentType, "text/plain") {
+		trimmed := strings.TrimSpace(string(body))
+		if trimmed == "Ollama is running" {
+			return &FingerprintResult{
+				Technology: "ollama",
+				Version:    "",
+				CPEs:       []string{buildOllamaCPE("")},
+				Metadata:   map[string]any{},
+			}, nil
+		}
+		return nil, nil
+	}
+
+	// Active path: JSON responses from /api/version or /api/tags
 	// Try to parse as version response first (primary endpoint)
 	var versionResp ollamaVersionResponse
 	if err := json.Unmarshal(body, &versionResp); err == nil && versionResp.Version != "" {
+		// Ollama's /api/version returns exactly {"version":"X.Y.Z"} with no other fields.
+		// Reject JSON objects with additional fields to prevent false positives
+		// from generic APIs that happen to include a "version" field.
+		var raw map[string]interface{}
+		if err := json.Unmarshal(body, &raw); err != nil || len(raw) != 1 {
+			return nil, nil
+		}
+		if _, ok := raw["version"]; !ok {
+			return nil, nil
+		}
+
 		// Validate version format to prevent CPE injection
 		if !ollamaVersionRegex.MatchString(versionResp.Version) {
 			return nil, nil

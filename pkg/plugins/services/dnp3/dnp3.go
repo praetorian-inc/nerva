@@ -124,7 +124,22 @@ func (p *DNP3Plugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 		CPEs:               []string{}, // DNP3 is a protocol, not a specific product
 	}
 
-	return plugins.CreateServiceFrom(target, service, false, "", plugins.TCP), nil
+	result := plugins.CreateServiceFrom(target, service, false, "", plugins.TCP)
+	if target.Misconfigs {
+		result.AnonymousAccess = true
+		result.SecurityFindings = []plugins.SecurityFinding{dnp3NoAuthFinding()}
+	}
+	return result, nil
+}
+
+// dnp3NoAuthFinding returns a SecurityFinding for an unauthenticated DNP3 server.
+func dnp3NoAuthFinding() plugins.SecurityFinding {
+	return plugins.SecurityFinding{
+		ID:          "dnp3-no-auth",
+		Severity:    plugins.SeverityHigh,
+		Description: "DNP3 accessible without authentication",
+		Evidence:    "Responded to unauthenticated DNP3 link status request",
+	}
 }
 
 func (p *DNP3Plugin) Name() string {

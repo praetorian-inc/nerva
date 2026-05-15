@@ -16,6 +16,7 @@ package modbus
 
 import (
 	"net"
+	"net/netip"
 	"testing"
 	"time"
 
@@ -272,6 +273,196 @@ func TestGenerateCPE(t *testing.T) {
 			result := generateCPE(tt.vendor, tt.product, tt.version)
 			assert.Equal(t, tt.expected, result)
 		})
+	}
+}
+
+// TestModbusSecurityFinding verifies that security findings are set when Misconfigs is true.
+func TestModbusSecurityFinding(t *testing.T) {
+	// Mock returns a valid Modbus success response (function code 0x02, byte count 1, data 0x00)
+	// Transaction ID bytes [0,1] are overwritten by mockModbusConn.Read with the echoed txID
+	mockConn := &mockModbusConn{
+		responseData: []byte{
+			0xFF, 0xFF, // placeholder transaction ID (overwritten by mock)
+			0x00, 0x00, // protocol ID
+			0x00, 0x03, // length: 3 bytes follow
+			0x01,       // unit ID
+			0x02,       // function code (Read Discrete Input success)
+			0x01,       // byte count: 1
+			0x00,       // data: bit value 0 (high bits zero, passes (>>1)==0x00 check)
+		},
+	}
+
+	plugin := &MODBUSPlugin{}
+	target := plugins.Target{Host: "127.0.0.1", Misconfigs: true}
+
+	service, err := plugin.Run(mockConn, 5*time.Second, target)
+	if err != nil {
+		t.Fatalf("Run() returned unexpected error: %v", err)
+	}
+	if service == nil {
+		t.Fatal("Run() returned nil, want non-nil service")
+	}
+	if !service.AnonymousAccess {
+		t.Error("expected AnonymousAccess to be true")
+	}
+	if len(service.SecurityFindings) != 1 {
+		t.Fatalf("expected 1 finding, got %d", len(service.SecurityFindings))
+	}
+	if service.SecurityFindings[0].ID != "modbus-no-auth" {
+		t.Errorf("expected finding ID 'modbus-no-auth', got %q", service.SecurityFindings[0].ID)
+	}
+	if service.SecurityFindings[0].Severity != plugins.SeverityHigh {
+		t.Errorf("expected severity high, got %s", service.SecurityFindings[0].Severity)
+	}
+}
+
+// TestModbusNoSecurityFinding verifies that no findings are set when Misconfigs is false.
+func TestModbusNoSecurityFinding(t *testing.T) {
+	mockConn := &mockModbusConn{
+		responseData: []byte{
+			0xFF, 0xFF, // placeholder transaction ID (overwritten by mock)
+			0x00, 0x00, // protocol ID
+			0x00, 0x03, // length: 3 bytes follow
+			0x01,       // unit ID
+			0x02,       // function code (Read Discrete Input success)
+			0x01,       // byte count: 1
+			0x00,       // data
+		},
+	}
+
+	plugin := &MODBUSPlugin{}
+	target := plugins.Target{Host: "127.0.0.1", Misconfigs: false}
+
+	service, err := plugin.Run(mockConn, 5*time.Second, target)
+	if err != nil {
+		t.Fatalf("Run() returned unexpected error: %v", err)
+	}
+	if service == nil {
+		t.Fatal("Run() returned nil, want non-nil service")
+	}
+	if service.AnonymousAccess {
+		t.Error("expected AnonymousAccess to be false when Misconfigs is false")
+	}
+	if len(service.SecurityFindings) != 0 {
+		t.Errorf("expected 0 findings, got %d", len(service.SecurityFindings))
+	}
+}
+
+// TestModbusSecurityFindingErrorPath verifies findings on Modbus error response (function code 0x82).
+// The error path (0x02 + 0x80 = 0x82) is a distinct code path from the success response (0x02).
+func TestModbusSecurityFindingErrorPath(t *testing.T) {
+	// Build a 10-byte response where response[ModbusHeaderLength] == 0x82 (error response)
+	mockConn := &mockModbusConn{
+		responseData: []byte{
+			0xFF, 0xFF, // placeholder transaction ID (overwritten by mock)
+			0x00, 0x00, // protocol ID
+			0x00, 0x03, // length: 3 bytes follow
+			0x01,       // unit ID
+			0x82,       // function code: 0x02 + 0x80 = error response for Read Discrete Input
+			0x02,       // exception code (ILLEGAL DATA ADDRESS)
+			0x00,       // padding to reach 10 bytes
+		},
+	}
+
+	plugin := &MODBUSPlugin{}
+	target := plugins.Target{Host: "127.0.0.1", Misconfigs: true}
+
+	service, err := plugin.Run(mockConn, 5*time.Second, target)
+	if err != nil {
+		t.Fatalf("Run() returned unexpected error: %v", err)
+	}
+	if service == nil {
+		t.Fatal("Run() returned nil on error response path, want non-nil service")
+	}
+	if !service.AnonymousAccess {
+		t.Error("expected AnonymousAccess to be true on error response path")
+	}
+	if len(service.SecurityFindings) != 1 {
+		t.Fatalf("expected 1 finding on error response path, got %d", len(service.SecurityFindings))
+	}
+	if service.SecurityFindings[0].ID != "modbus-no-auth" {
+		t.Errorf("expected finding ID 'modbus-no-auth', got %q", service.SecurityFindings[0].ID)
+	}
+	if service.SecurityFindings[0].Severity != plugins.SeverityHigh {
+		t.Errorf("expected severity high, got %s", service.SecurityFindings[0].Severity)
+	}
+}
+
+// TestModbusSecurityFindingLive spins up a real Modbus container and verifies misconfig detection.
+func TestModbusSecurityFindingLive(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping docker test in short mode")
+	}
+
+	pool, err := dockertest.NewPool("")
+	if err != nil {
+		t.Fatalf("could not connect to docker: %s", err)
+	}
+
+	resource, err := pool.RunWithOptions(&dockertest.RunOptions{
+		Repository: "oitc/modbus-server",
+	})
+	if err != nil {
+		t.Fatalf("could not start modbus container: %s", err)
+	}
+	defer pool.Purge(resource) //nolint:errcheck
+
+	rawAddr := resource.GetHostPort("5020/tcp")
+
+	host, port, err := net.SplitHostPort(rawAddr)
+	if err != nil {
+		t.Fatalf("could not split host:port %q: %v", rawAddr, err)
+	}
+	if host == "localhost" || host == "0.0.0.0" || host == "::" {
+		host = "127.0.0.1"
+	}
+	targetAddr := net.JoinHostPort(host, port)
+
+	err = pool.Retry(func() error {
+		conn, dialErr := net.DialTimeout("tcp", targetAddr, 5*time.Second)
+		if dialErr != nil {
+			return dialErr
+		}
+		conn.Close()
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("failed to connect to modbus container: %s", err)
+	}
+
+	conn, err := net.DialTimeout("tcp", targetAddr, 5*time.Second)
+	if err != nil {
+		t.Fatalf("failed to open connection to modbus container: %s", err)
+	}
+	defer conn.Close()
+
+	addrPort := netip.MustParseAddrPort(targetAddr)
+	target := plugins.Target{
+		Host:       addrPort.Addr().String(),
+		Address:    addrPort,
+		Misconfigs: true,
+	}
+
+	plugin := &MODBUSPlugin{}
+	service, err := plugin.Run(conn, 5*time.Second, target)
+	if err != nil {
+		t.Fatalf("Run() returned unexpected error: %v", err)
+	}
+	if service == nil {
+		t.Fatal("Run() returned nil, want non-nil service")
+	}
+
+	if !service.AnonymousAccess {
+		t.Error("expected AnonymousAccess to be true")
+	}
+	if len(service.SecurityFindings) != 1 {
+		t.Fatalf("expected 1 finding, got %d", len(service.SecurityFindings))
+	}
+	if service.SecurityFindings[0].ID != "modbus-no-auth" {
+		t.Errorf("expected finding ID 'modbus-no-auth', got %q", service.SecurityFindings[0].ID)
+	}
+	if service.SecurityFindings[0].Severity != plugins.SeverityHigh {
+		t.Errorf("expected severity high, got %s", service.SecurityFindings[0].Severity)
 	}
 }
 

@@ -59,6 +59,16 @@ func TestOllamaFingerprinter_Match(t *testing.T) {
 			contentType: "",
 			want:        false,
 		},
+		{
+			name:        "Content-Type: text/plain returns true",
+			contentType: "text/plain",
+			want:        true,
+		},
+		{
+			name:        "Content-Type: text/plain; charset=utf-8 returns true",
+			contentType: "text/plain; charset=utf-8",
+			want:        true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -285,6 +295,22 @@ func TestOllamaFingerprinter_Fingerprint_Invalid(t *testing.T) {
 			name: "Malformed models array",
 			body: `{"models": "not-an-array"}`,
 		},
+		{
+			name: "Explicit null models field",
+			body: `{"models":null}`,
+		},
+		{
+			name: "Generic API JSON with extra fields (false positive prevention)",
+			body: `{"message":"Welcome to Stewart Production Assistant","version":"1.0.0","docs":"/docs"}`,
+		},
+		{
+			name: "JSON with version and additional fields",
+			body: `{"version":"0.5.1","status":"ok"}`,
+		},
+		{
+			name: "JSON with uppercase Version key rejected",
+			body: `{"Version":"1.0.0"}`,
+		},
 	}
 
 	for _, tt := range tests {
@@ -332,6 +358,128 @@ func TestBuildOllamaCPE(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := buildOllamaCPE(tt.version); got != tt.want {
 				t.Errorf("buildOllamaCPE() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestOllamaFingerprinter_Fingerprint_PassivePlainText(t *testing.T) {
+	tests := []struct {
+		name        string
+		body        string
+		contentType string
+		wantResult  bool
+	}{
+		{
+			name:        "exact 'Ollama is running' matches",
+			body:        "Ollama is running",
+			contentType: "text/plain",
+			wantResult:  true,
+		},
+		{
+			name:        "with leading/trailing whitespace matches",
+			body:        "  Ollama is running\n",
+			contentType: "text/plain",
+			wantResult:  true,
+		},
+		{
+			name:        "text/plain with unrelated content does not match",
+			body:        "Hello World",
+			contentType: "text/plain",
+			wantResult:  false,
+		},
+		{
+			name:        "text/plain with Ollama substring in larger text does not match",
+			body:        "The service Ollama is running on port 11434 and serving requests",
+			contentType: "text/plain",
+			wantResult:  false,
+		},
+		{
+			name:        "text/html with 'Ollama is running' does not trigger text/plain path",
+			body:        "<html><body>Ollama is running</body></html>",
+			contentType: "text/html",
+			wantResult:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fp := &OllamaFingerprinter{}
+			resp := &http.Response{
+				Header: make(http.Header),
+			}
+			resp.Header.Set("Content-Type", tt.contentType)
+
+			result, err := fp.Fingerprint(resp, []byte(tt.body))
+			if err != nil {
+				t.Fatalf("Fingerprint() error = %v", err)
+			}
+
+			if tt.wantResult {
+				if result == nil {
+					t.Fatal("Fingerprint() returned nil, want result")
+				}
+				if result.Technology != "ollama" {
+					t.Errorf("Technology = %q, want %q", result.Technology, "ollama")
+				}
+				if result.Version != "" {
+					t.Errorf("Version = %q, want empty (passive path has no version)", result.Version)
+				}
+			} else {
+				if result != nil {
+					t.Errorf("Fingerprint() = %+v, want nil", result)
+				}
+			}
+		})
+	}
+}
+
+func TestOllamaFingerprinter_Fingerprint_FalsePositiveRegression(t *testing.T) {
+	// Regression test: a text/plain response that is NOT "Ollama is running"
+	// must not trigger detection. This prevents false positives from the
+	// passive path where RunFingerprinters runs against the root / response.
+	fp := &OllamaFingerprinter{}
+
+	tests := []struct {
+		name        string
+		body        string
+		contentType string
+	}{
+		{
+			name:        "generic text/plain response",
+			body:        "OK",
+			contentType: "text/plain",
+		},
+		{
+			name:        "version-like text/plain response",
+			body:        "1.0.0",
+			contentType: "text/plain",
+		},
+		{
+			name:        "empty text/plain response",
+			body:        "",
+			contentType: "text/plain",
+		},
+		{
+			name:        "generic JSON API with extra fields",
+			body:        `{"message":"Welcome","version":"1.0.0","docs":"/docs"}`,
+			contentType: "application/json",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := &http.Response{
+				Header: make(http.Header),
+			}
+			resp.Header.Set("Content-Type", tt.contentType)
+
+			result, err := fp.Fingerprint(resp, []byte(tt.body))
+			if err != nil {
+				t.Fatalf("Fingerprint() error = %v", err)
+			}
+			if result != nil {
+				t.Errorf("Fingerprint() = %+v, want nil for non-Ollama text/plain", result)
 			}
 		})
 	}
@@ -397,5 +545,28 @@ func TestOllamaFingerprinter_Integration(t *testing.T) {
 
 	if !found {
 		t.Error("OllamaFingerprinter not found in results for tags response")
+	}
+
+	// Test with passive text/plain response (Ollama root page)
+	plainBody := []byte("Ollama is running")
+	plainResp := &http.Response{
+		Header: make(http.Header),
+	}
+	plainResp.Header.Set("Content-Type", "text/plain")
+
+	results = RunFingerprinters(plainResp, plainBody)
+
+	found = false
+	for _, result := range results {
+		if result.Technology == "ollama" {
+			found = true
+			if result.Version != "" {
+				t.Errorf("Version = %q, want empty for passive detection", result.Version)
+			}
+		}
+	}
+
+	if !found {
+		t.Error("OllamaFingerprinter not found in results for text/plain passive response")
 	}
 }
