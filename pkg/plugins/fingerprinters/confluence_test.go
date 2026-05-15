@@ -228,6 +228,35 @@ func TestConfluenceFingerprinter_Fingerprint_Valid(t *testing.T) {
 			wantAsen:        true,
 			wantRequestTime: true,
 		},
+		{
+			name:       "body with :*: CPE injection attempt — brand detected, version empty (regex won't match)",
+			statusCode: 200,
+			headers:    map[string]string{"Content-Type": "text/html"},
+			body: `<html><head>
+<meta name="ajs-version-number" content="8.5.4:*:malicious">
+<title>Atlassian Confluence</title>
+</head></html>`,
+			wantVersion:    "",
+			wantDeployment: "server",
+			wantDetection:  "body",
+		},
+		{
+			name:       "body with :*: in wiki content does not block detection",
+			statusCode: 200,
+			headers:    map[string]string{"Content-Type": "text/html"},
+			body: `<html><head>
+<meta name="ajs-version-number" content="8.5.4">
+<meta name="ajs-build-number" content="9802">
+<title>Log In - Confluence</title>
+</head><body>
+<div>Atlassian Confluence</div>
+<p>Example: SELECT * FROM users WHERE id=:*:placeholder</p>
+</body></html>`,
+			wantVersion:     "8.5.4",
+			wantBuildNumber: "9802",
+			wantDeployment:  "server",
+			wantDetection:   "body",
+		},
 	}
 
 	for _, tt := range tests {
@@ -308,15 +337,6 @@ func TestConfluenceFingerprinter_Fingerprint_Invalid(t *testing.T) {
 			statusCode: 200,
 			headers:    map[string]string{"Content-Type": "text/html"},
 			body:       "atlassian confluence" + string(make([]byte, 2*1024*1024+1)),
-		},
-		{
-			name:       "body with :*: CPE injection attempt",
-			statusCode: 200,
-			headers:    map[string]string{"Content-Type": "text/html"},
-			body: `<html><head>
-<meta name="ajs-version-number" content="8.5.4:*:malicious">
-<title>Atlassian Confluence</title>
-</head></html>`,
 		},
 		{
 			name:       "status 500 rejected",

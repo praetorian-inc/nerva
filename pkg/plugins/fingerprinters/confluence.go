@@ -148,13 +148,8 @@ func (f *ConfluenceFingerprinter) Fingerprint(resp *http.Response, body []byte) 
 		return nil, nil
 	}
 
-	// Gate 3: CPE-injection defense. Reject bodies containing `:*:` to prevent
-	// attacker-controlled content from injecting CPE metacharacters via version strings.
-	if strings.Contains(string(body), ":*:") {
-		return nil, nil
-	}
-
-	bodyLower := strings.ToLower(string(body))
+	bodyStr := string(body)
+	bodyLower := strings.ToLower(bodyStr)
 	hasRequestTimeHeader := resp.Header.Get("X-Confluence-Request-Time") != ""
 	hasBrandInBody := strings.Contains(bodyLower, "atlassian confluence")
 	hasVersionMeta := confluenceVersionMetaRegex.Match(body) || confluenceVersionMetaRegexAlt.Match(body)
@@ -179,6 +174,11 @@ func (f *ConfluenceFingerprinter) Fingerprint(resp *http.Response, body []byte) 
 	}
 
 	version := extractConfluenceVersion(body)
+	// Defense-in-depth: discard version if it somehow contains CPE metacharacters.
+	// The extraction regex only captures digits and dots, so this should never trigger.
+	if strings.ContainsAny(version, ":*") {
+		version = ""
+	}
 	buildNumber := extractConfluenceBuildNumber(body)
 	deploymentType := detectConfluenceDeploymentType(body)
 
