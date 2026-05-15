@@ -143,6 +143,9 @@ func (f *GiteaFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fin
 	if err := json.Unmarshal(body, &raw); err != nil || len(raw) != 1 {
 		return nil, nil
 	}
+	if _, ok := raw["version"]; !ok {
+		return nil, nil
+	}
 
 	if !giteaSafeVersionRegex.MatchString(data.Version) {
 		return nil, nil

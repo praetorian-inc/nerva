@@ -178,6 +178,9 @@ func (f *OllamaFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fi
 		if err := json.Unmarshal(body, &raw); err != nil || len(raw) != 1 {
 			return nil, nil
 		}
+		if _, ok := raw["version"]; !ok {
+			return nil, nil
+		}
 
 		// Validate version format to prevent CPE injection
 		if !ollamaVersionRegex.MatchString(versionResp.Version) {

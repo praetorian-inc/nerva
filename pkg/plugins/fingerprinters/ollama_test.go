@@ -307,6 +307,10 @@ func TestOllamaFingerprinter_Fingerprint_Invalid(t *testing.T) {
 			name: "JSON with version and additional fields",
 			body: `{"version":"0.5.1","status":"ok"}`,
 		},
+		{
+			name: "JSON with uppercase Version key rejected",
+			body: `{"Version":"1.0.0"}`,
+		},
 	}
 
 	for _, tt := range tests {

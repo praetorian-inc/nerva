@@ -250,6 +250,10 @@ func TestGiteaFingerprinter_Fingerprint_MissingFields(t *testing.T) {
 			name: "JSON with version but extra fields",
 			body: `{"version":"1.0.0","message":"Welcome"}`,
 		},
+		{
+			name: "JSON with uppercase Version key rejected",
+			body: `{"Version":"1.0.0"}`,
+		},
 	}
 
 	for _, tt := range tests {
