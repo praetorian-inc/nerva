@@ -180,13 +180,13 @@ func TestSupersetFingerprinter_Fingerprint_ActiveProbe(t *testing.T) {
 	}{
 		{
 			name:        "valid version 4.0.1 from /api/v1/info",
-			body:        `{"status_code": 200, "result": {"version": "4.0.1"}}`,
+			body:        `{"status_code": 200, "result": {"version": "4.0.1", "permissions": ["can_read"]}}`,
 			wantVersion: "4.0.1",
 			wantCPE:     "cpe:2.3:a:apache:superset:4.0.1:*:*:*:*:*:*:*",
 		},
 		{
 			name:        "valid version 3.1.0 from /api/v1/info",
-			body:        `{"status_code": 200, "result": {"version": "3.1.0"}}`,
+			body:        `{"status_code": 200, "result": {"version": "3.1.0", "permissions": ["can_read"]}}`,
 			wantVersion: "3.1.0",
 			wantCPE:     "cpe:2.3:a:apache:superset:3.1.0:*:*:*:*:*:*:*",
 		},
@@ -202,21 +202,31 @@ func TestSupersetFingerprinter_Fingerprint_ActiveProbe(t *testing.T) {
 		},
 		{
 			name:        "version too long (>16 chars) sanitized to empty -> result with wildcard CPE",
-			body:        `{"status_code": 200, "result": {"version": "1.2.3.4.5.6.7.8.9"}}`,
+			body:        `{"status_code": 200, "result": {"version": "1.2.3.4.5.6.7.8.9", "permissions": ["can_read"]}}`,
 			wantVersion: "",
 			wantCPE:     "cpe:2.3:a:apache:superset:*:*:*:*:*:*:*:*",
 		},
 		{
 			name:        "version with special characters sanitized to empty -> result with wildcard CPE",
-			body:        `{"status_code": 200, "result": {"version": "4.0.1; rm -rf /"}}`,
+			body:        `{"status_code": 200, "result": {"version": "4.0.1; rm -rf /", "permissions": ["can_read"]}}`,
 			wantVersion: "",
 			wantCPE:     "cpe:2.3:a:apache:superset:*:*:*:*:*:*:*:*",
 		},
 		{
 			name:        "non-semver version sanitized to empty -> result with wildcard CPE",
-			body:        `{"status_code": 200, "result": {"version": "4.0"}}`,
+			body:        `{"status_code": 200, "result": {"version": "4.0", "permissions": ["can_read"]}}`,
 			wantVersion: "",
 			wantCPE:     "cpe:2.3:a:apache:superset:*:*:*:*:*:*:*:*",
+		},
+		{
+			name:    "missing permissions returns nil (generic FAB false positive prevention)",
+			body:    `{"status_code": 200, "result": {"version": "4.0.1"}}`,
+			wantNil: true,
+		},
+		{
+			name:    "empty permissions array returns nil",
+			body:    `{"status_code": 200, "result": {"version": "4.0.1", "permissions": []}}`,
+			wantNil: true,
 		},
 	}
 

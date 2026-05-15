@@ -73,11 +73,17 @@ func init() {
 	Register(&SupersetFingerprinter{})
 }
 
-// supersetInfoResponse represents the JSON response from /api/v1/info
+// supersetInfoResponse represents the JSON response from /api/v1/info.
+// Superset wraps FAB's info response in a {"status_code", "result"} envelope.
+// We require "permissions" inside "result" as an identity gate because
+// /api/v1/info is a Flask-AppBuilder built-in endpoint that other FAB apps
+// could expose with a similar shape. The "permissions" list is always present
+// in Superset's response but absent from generic FAB apps.
 type supersetInfoResponse struct {
 	StatusCode int `json:"status_code"`
 	Result     struct {
-		Version string `json:"version"`
+		Version     string        `json:"version"`
+		Permissions []interface{} `json:"permissions"`
 	} `json:"result"`
 }
 
@@ -114,7 +120,7 @@ func (f *SupersetFingerprinter) Fingerprint(resp *http.Response, body []byte) (*
 	ct := strings.ToLower(resp.Header.Get("Content-Type"))
 	if strings.Contains(ct, "application/json") {
 		var info supersetInfoResponse
-		if err := json.Unmarshal(body, &info); err == nil && info.StatusCode == 200 && info.Result.Version != "" {
+		if err := json.Unmarshal(body, &info); err == nil && info.StatusCode == 200 && info.Result.Version != "" && len(info.Result.Permissions) > 0 {
 			version := sanitizeSupersetVersion(info.Result.Version)
 			return &FingerprintResult{
 				Technology: "superset",
