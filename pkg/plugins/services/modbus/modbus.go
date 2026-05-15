@@ -121,15 +121,35 @@ func (p *MODBUSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.
 			if response[ModbusHeaderLength+1] == 1 && (response[ModbusHeaderLength+2]>>1) == 0x00 {
 				// Detection succeeded - attempt enrichment with device identification
 				serviceData := p.enrichDeviceIdentification(conn, timeout)
-				return plugins.CreateServiceFrom(target, serviceData, false, "", plugins.TCP), nil
+				service := plugins.CreateServiceFrom(target, serviceData, false, "", plugins.TCP)
+				if target.Misconfigs {
+					service.AnonymousAccess = true
+					service.SecurityFindings = []plugins.SecurityFinding{modbusNoAuthFinding()}
+				}
+				return service, nil
 			}
 		} else if response[ModbusHeaderLength] == ModbusDiscreteInputCode+ModbusErrorAddend {
 			// Detection succeeded (error response is valid) - attempt enrichment
 			serviceData := p.enrichDeviceIdentification(conn, timeout)
-			return plugins.CreateServiceFrom(target, serviceData, false, "", plugins.TCP), nil
+			service := plugins.CreateServiceFrom(target, serviceData, false, "", plugins.TCP)
+			if target.Misconfigs {
+				service.AnonymousAccess = true
+				service.SecurityFindings = []plugins.SecurityFinding{modbusNoAuthFinding()}
+			}
+			return service, nil
 		}
 	}
 	return nil, nil
+}
+
+// modbusNoAuthFinding returns a SecurityFinding for an unauthenticated Modbus server.
+func modbusNoAuthFinding() plugins.SecurityFinding {
+	return plugins.SecurityFinding{
+		ID:          "modbus-no-auth",
+		Severity:    plugins.SeverityHigh,
+		Description: "Modbus accessible without authentication",
+		Evidence:    "Responded to unauthenticated Modbus function code request",
+	}
 }
 
 func (p *MODBUSPlugin) Name() string {
