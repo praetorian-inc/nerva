@@ -69,10 +69,10 @@ const (
 var telerikReportServerVersionRegex = regexp.MustCompile(`^\d+\.\d+\.\d+(\.\d+)?$`)
 
 // telerikReportServerStackVersionRegex extracts build numbers from ASP.NET stack traces.
+// Anchored to "Version=" prefix to prevent false matches on asset URLs or timestamps.
 // Two alternating schemes: modern YYYY.Q.DDD[.N] and legacy MAJOR.MINOR.YY.MMDD.
-// Longest alternative first to prevent short-circuit on overlapping inputs.
 var telerikReportServerStackVersionRegex = regexp.MustCompile(
-	`(\d{4}\.\d+\.\d{3,4}(?:\.\d+)?|\d+\.\d+\.\d{2}\.\d{3,4})`,
+	`Version=(\d{4}\.\d+\.\d{3,4}(?:\.\d+)?|\d+\.\d+\.\d{2}\.\d{3,4})`,
 )
 
 // TelerikReportServerFingerprinter detects Progress Telerik Report Server instances.

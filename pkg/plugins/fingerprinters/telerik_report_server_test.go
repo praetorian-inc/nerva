@@ -491,12 +491,19 @@ func TestExtractTelerikReportServerVersion(t *testing.T) {
 			want: "",
 		},
 		{
-			// Input "12345.6.789": the first alternation requires exactly 4 leading digits;
-			// the regex engine matches the trailing 4 digits "2345.6.789" as a valid capture.
-			// This documents the actual production behavior — the test asserts what the code does.
-			name: "12345.6.789 — regex matches trailing 4-digit prefix 2345.6.789",
+			// Input "Version=12345.6.789": with the Version= anchor, the regex matches starting
+			// at "1" but \d{4} captures "1234" leaving ".6.789" which has only 3 segments and
+			// the second alternative also fails (needs 4 dot-separated components). No match.
+			name: "Version=12345.6.789 — no match (5-digit prefix fails both alternatives)",
 			body: "Version=12345.6.789",
-			want: "2345.6.789",
+			want: "",
+		},
+		{
+			// A versioned asset URL without "Version=" prefix must not be extracted.
+			// Fixes: unanchored regex would falsely match "2024.1.305" from CSS link href.
+			name: "version-like number in asset URL without Version= prefix — empty",
+			body: `<link href="/Content/2024.1.305/site.min.css">`,
+			want: "",
 		},
 		{
 			// Guards the 256-byte field-length cap (maxTelerikVersionFieldLen = 256).
