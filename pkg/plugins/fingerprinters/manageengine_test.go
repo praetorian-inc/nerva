@@ -36,21 +36,21 @@ func TestManageEngineFingerprinter_Match(t *testing.T) {
 		want       bool
 	}{
 		{
-			name:       "matches X-ManageEngine custom header",
+			name:       "200 OK passes",
 			statusCode: 200,
-			headers:    http.Header{"X-Manageengine-Productcode": []string{"SDP"}},
+			headers:    http.Header{},
 			want:       true,
 		},
 		{
-			name:       "matches Server header containing ManageEngine",
-			statusCode: 200,
-			headers:    http.Header{"Server": []string{"ManageEngine ServiceDesk Plus"}},
+			name:       "302 redirect passes",
+			statusCode: 302,
+			headers:    http.Header{},
 			want:       true,
 		},
 		{
-			name:       "matches text/html content type",
-			statusCode: 200,
-			headers:    http.Header{"Content-Type": []string{"text/html; charset=utf-8"}},
+			name:       "404 passes",
+			statusCode: 404,
+			headers:    http.Header{},
 			want:       true,
 		},
 		{
@@ -63,12 +63,6 @@ func TestManageEngineFingerprinter_Match(t *testing.T) {
 			name:       "rejects status below 200",
 			statusCode: 199,
 			headers:    http.Header{"Server": []string{"ManageEngine"}},
-			want:       false,
-		},
-		{
-			name:       "rejects non-html content type with no headers",
-			statusCode: 200,
-			headers:    http.Header{"Content-Type": []string{"application/octet-stream"}},
 			want:       false,
 		},
 	}
@@ -233,7 +227,7 @@ func TestManageEngineFingerprinter_Fingerprint(t *testing.T) {
 			body:          ``,
 			wantResult:    true,
 			wantTech:      "manageengine",
-			wantCPEPrefix: "cpe:2.3:a:zohocorp:manageengine_manageengine:",
+			wantCPEPrefix: "cpe:2.3:a:zohocorp:manageengine:",
 		},
 		{
 			name:       "detects via X-ManageEngine custom header",
@@ -254,12 +248,11 @@ func TestManageEngineFingerprinter_Fingerprint(t *testing.T) {
 			wantTech:   "manageengine",
 		},
 		{
-			name:       "detects via Zoho Corp copyright",
+			name:       "Zoho Corp alone is insufficient without ManageEngine branding",
 			statusCode: 200,
 			headers:    http.Header{"Content-Type": []string{"text/html"}},
 			body:       `<footer>Copyright (c) 2024 Zoho Corp. All rights reserved.</footer>`,
-			wantResult: true,
-			wantTech:   "manageengine",
+			wantResult: false,
 		},
 
 		// --- Version extraction ---
@@ -327,6 +320,20 @@ func TestManageEngineFingerprinter_Fingerprint(t *testing.T) {
 			statusCode: 200,
 			headers:    http.Header{"Content-Type": []string{"text/html"}},
 			body:       `<html><body><a href="/login">Sign in</a></body></html>`,
+			wantResult: false,
+		},
+		{
+			name:       "CPE-injection attempt rejected",
+			statusCode: 200,
+			headers:    http.Header{"Content-Type": []string{"text/html"}},
+			body:       `<title>ManageEngine ServiceDesk Plus</title><body>version:*:malicious</body>`,
+			wantResult: false,
+		},
+		{
+			name:       "Body length > 2 MiB rejected",
+			statusCode: 200,
+			headers:    http.Header{"Content-Type": []string{"text/html"}},
+			body:       `<title>ManageEngine ServiceDesk Plus</title>` + string(make([]byte, 2*1024*1024+1)),
 			wantResult: false,
 		},
 	}
@@ -399,29 +406,39 @@ func TestManageEngineFingerprinter_Fingerprint(t *testing.T) {
 
 func TestBuildManageEngineCPE(t *testing.T) {
 	tests := []struct {
-		product string
+		name    string
+		product *manageEngineProduct
 		version string
 		want    string
 	}{
 		{
-			product: "servicedesk_plus",
+			name:    "servicedesk_plus with version",
+			product: &manageEngineProduct{cpeName: "servicedesk_plus"},
 			version: "14.0",
 			want:    "cpe:2.3:a:zohocorp:manageengine_servicedesk_plus:14.0:*:*:*:*:*:*:*",
 		},
 		{
-			product: "adselfservice_plus",
+			name:    "adselfservice_plus with version",
+			product: &manageEngineProduct{cpeName: "adselfservice_plus"},
 			version: "6.2",
 			want:    "cpe:2.3:a:zohocorp:manageengine_adselfservice_plus:6.2:*:*:*:*:*:*:*",
 		},
 		{
-			product: "endpoint_central",
+			name:    "endpoint_central no version",
+			product: &manageEngineProduct{cpeName: "endpoint_central"},
 			version: "",
 			want:    "cpe:2.3:a:zohocorp:manageengine_endpoint_central:*:*:*:*:*:*:*:*",
+		},
+		{
+			name:    "generic nil product no version",
+			product: nil,
+			version: "",
+			want:    "cpe:2.3:a:zohocorp:manageengine:*:*:*:*:*:*:*:*",
 		},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.product+"_"+tt.version, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			if got := buildManageEngineCPE(tt.product, tt.version); got != tt.want {
 				t.Errorf("buildManageEngineCPE() = %q, want %q", got, tt.want)
 			}
@@ -483,7 +500,7 @@ func TestManageEngineSafeVersionRegex(t *testing.T) {
 	}{
 		{"14.0", true},
 		{"6.2.1.3", true},
-		{"12", true},
+		{"12", false},
 		{"abc", false},
 		{"14.0;DROP", false},
 		{"", false},

@@ -12,23 +12,68 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// ManageEngineFingerprinter detects Zoho ManageEngine product family web UIs.
-//
-// Detection Strategy:
-//
-//  1. TITLE/BODY: "ManageEngine" branding + product-specific names
-//     (ServiceDesk Plus, ADSelfService Plus, Endpoint/Desktop Central,
-//     PAM360, Password Manager Pro, OpManager, Applications Manager, ADAudit Plus)
-//  2. URLS:    Product-specific paths (/showLogin.cc, /STATE_ID=, /servlet/)
-//  3. HEADERS: Server/X-Frame-Options patterns, custom X-ManageEngine headers
-//  4. PROBE:   "/" home page typically redirects to a product login containing branding
-//
-// Security Relevance:
-//   - CVE-2022-47966 (CVSS 9.8) — SAML-based unauth RCE across 24+ products (Five Eyes Top 15)
-//   - CVE-2021-40539 (CVSS 9.8) — ADSelfService Plus auth-bypass RCE (CISA AA21-259A)
-//   - CVE-2021-44077 (CVSS 9.8) — ServiceDesk Plus unauth RCE (CISA AA21-336A)
-//   - CVE-2022-35405 (CVSS 9.8) — PAM360 / Password Manager Pro RCE
-//   - CISA AA23-250A — nation-state exploitation in US aeronautical sector
+/*
+Package fingerprinters provides HTTP fingerprinting for the Zoho ManageEngine
+product family.
+
+# What We Detect
+
+ManageEngine is a suite of IT management products sold by Zoho Corporation.
+This fingerprinter covers:
+
+  - ServiceDesk Plus (ITSM / help-desk)
+  - ADSelfService Plus (self-service password reset / MFA)
+  - ADAudit Plus (Active Directory change auditing)
+  - ADManager Plus (AD delegation / provisioning)
+  - Endpoint Central / Desktop Central (endpoint management)
+  - PAM360 (privileged-access management)
+  - Password Manager Pro (enterprise vault)
+  - OpManager (network performance monitoring)
+  - Applications Manager (application performance monitoring)
+  - EventLog Analyzer (SIEM / log management)
+  - Log360 (cloud SIEM)
+
+# Detection Strategy
+
+Detection proceeds through three signal tiers in priority order:
+
+ 1. Header -- X-ManageEngine-* custom response headers (unambiguous)
+ 2. Header -- Server header containing "manageengine" (case-insensitive)
+ 3. Body   -- "manageengine" branding text or the /showLogin.cc ServiceDesk
+    Plus login URL embedded in the page
+
+# Active Probe
+
+The fingerprinter probes "/" (site root). Most products redirect to their
+login page at that path, which carries all the branding signals.
+
+# Version Extraction
+
+Version is extracted from inline branding text such as:
+
+	ManageEngine ServiceDesk Plus 14.0 Build 14000
+
+A bounded safe-version regex (`^[0-9]+(?:\.[0-9]+){1,3}$`) validates the
+extracted string before use in a CPE to prevent injection.
+
+# CPE
+
+Product-specific CPE format:
+
+	cpe:2.3:a:zohocorp:manageengine_<product>:<version>:*:*:*:*:*:*:*
+
+Generic fallback when the product cannot be identified:
+
+	cpe:2.3:a:zohocorp:manageengine:<version>:*:*:*:*:*:*:*
+
+# Security Relevance
+
+  - CVE-2022-47966 (CVSS 9.8) -- SAML-based unauth RCE across 24+ products (Five Eyes Top 15)
+  - CVE-2021-40539 (CVSS 9.8) -- ADSelfService Plus auth-bypass RCE (CISA AA21-259A)
+  - CVE-2021-44077 (CVSS 9.8) -- ServiceDesk Plus unauth RCE (CISA AA21-336A)
+  - CVE-2022-35405 (CVSS 9.8) -- PAM360 / Password Manager Pro RCE
+  - CISA AA23-250A -- nation-state exploitation in US aeronautical sector
+*/
 package fingerprinters
 
 import (
@@ -46,7 +91,9 @@ var manageEngineVersionRegex = regexp.MustCompile(`(?i)manageengine\s+[a-z0-9 +/
 var manageEngineBuildRegex = regexp.MustCompile(`(?i)build\s+(\d{3,6})`)
 
 // manageEngineSafeVersionRegex validates version format for CPE safety.
-var manageEngineSafeVersionRegex = regexp.MustCompile(`^\d+[\d.]*$`)
+// Requires at least one dot segment and bounds the number of segments to 4,
+// matching the pattern used by Cleo, CrushFTP, and MOVEit fingerprinters.
+var manageEngineSafeVersionRegex = regexp.MustCompile(`^[0-9]+(?:\.[0-9]+){1,3}$`)
 
 // manageEngineProduct describes one ManageEngine product variant: how to detect
 // it from response strings, the canonical name to record in metadata, and the
@@ -164,35 +211,29 @@ func (f *ManageEngineFingerprinter) Name() string {
 	return "manageengine"
 }
 
+func (f *ManageEngineFingerprinter) ProbeEndpoint() string {
+	return "/"
+}
+
 func (f *ManageEngineFingerprinter) Match(resp *http.Response) bool {
 	if resp.StatusCode < 200 || resp.StatusCode >= 500 {
 		return false
 	}
-
-	// Custom ManageEngine headers seen in the wild.
-	for h := range resp.Header {
-		if strings.HasPrefix(strings.ToLower(h), "x-manageengine") {
-			return true
-		}
-	}
-
-	// Server header sometimes leaks ManageEngine identity.
-	if strings.Contains(strings.ToLower(resp.Header.Get("Server")), "manageengine") {
-		return true
-	}
-
-	// Some products set a JSESSIONIDSSO cookie; alone it's not specific enough,
-	// so fall through to body inspection on HTML responses.
-	ct := resp.Header.Get("Content-Type")
-	if strings.Contains(ct, "text/html") || strings.Contains(ct, "application/xhtml") {
-		return true
-	}
-
-	return false
+	return true
 }
 
 func (f *ManageEngineFingerprinter) Fingerprint(resp *http.Response, body []byte) (*FingerprintResult, error) {
 	if resp.StatusCode < 200 || resp.StatusCode >= 500 {
+		return nil, nil
+	}
+
+	// Reject oversized bodies to prevent resource exhaustion.
+	if len(body) > 2*1024*1024 {
+		return nil, nil
+	}
+
+	// Reject bodies containing CPE-like injection patterns.
+	if strings.Contains(string(body), ":*:") {
 		return nil, nil
 	}
 
@@ -211,8 +252,9 @@ func (f *ManageEngineFingerprinter) Fingerprint(resp *http.Response, body []byte
 	hasMEServer := strings.Contains(serverLower, "manageengine")
 
 	// Body signal: ManageEngine branding (title, copyright, scripts, links).
-	hasMEBranding := strings.Contains(bodyLower, "manageengine") ||
-		strings.Contains(bodyLower, "zoho corp")
+	// "Zoho Corp" alone is not used as a signal because it appears on many
+	// non-ManageEngine Zoho products and causes false positives.
+	hasMEBranding := strings.Contains(bodyLower, "manageengine")
 
 	// Body signal: ServiceDesk Plus login URL is unique enough to act on alone.
 	hasSDPMarker := strings.Contains(bodyLower, "/showlogin.cc")
@@ -221,8 +263,26 @@ func (f *ManageEngineFingerprinter) Fingerprint(resp *http.Response, body []byte
 		return nil, nil
 	}
 
+	// Determine detection method in priority order.
+	var detectionMethod string
+	switch {
+	case hasMEHeader:
+		detectionMethod = "x_manageengine_header"
+	case hasMEServer:
+		detectionMethod = "server_header"
+	case hasSDPMarker && !hasMEBranding:
+		detectionMethod = "sdp_login_url"
+	default:
+		detectionMethod = "body"
+	}
+
 	metadata := map[string]any{
-		"vendor": "Zoho",
+		"vendor":           "Zoho",
+		"detection_method": detectionMethod,
+	}
+
+	if server != "" {
+		metadata["server_header"] = sanitizeManageEngineHeaderValue(server)
 	}
 
 	// Identify product variant.
@@ -243,15 +303,10 @@ func (f *ManageEngineFingerprinter) Fingerprint(resp *http.Response, body []byte
 		metadata["build"] = build[1]
 	}
 
-	cpeName := "manageengine"
-	if product != nil {
-		cpeName = product.cpeName
-	}
-
 	return &FingerprintResult{
 		Technology: "manageengine",
 		Version:    version,
-		CPEs:       []string{buildManageEngineCPE(cpeName, version)},
+		CPEs:       []string{buildManageEngineCPE(product, version)},
 		Metadata:   metadata,
 	}, nil
 }
@@ -280,9 +335,28 @@ func extractManageEngineVersion(body string) string {
 	return v
 }
 
-func buildManageEngineCPE(product, version string) string {
+func buildManageEngineCPE(product *manageEngineProduct, version string) string {
 	if version == "" {
 		version = "*"
 	}
-	return fmt.Sprintf("cpe:2.3:a:zohocorp:manageengine_%s:%s:*:*:*:*:*:*:*", product, version)
+	if product != nil {
+		return fmt.Sprintf("cpe:2.3:a:zohocorp:manageengine_%s:%s:*:*:*:*:*:*:*", product.cpeName, version)
+	}
+	return fmt.Sprintf("cpe:2.3:a:zohocorp:manageengine:%s:*:*:*:*:*:*:*", version)
+}
+
+// sanitizeManageEngineHeaderValue strips control characters and limits length to
+// prevent log injection or oversized metadata values from attacker-controlled headers.
+func sanitizeManageEngineHeaderValue(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if r >= 0x20 && r != 0x7F {
+			b.WriteRune(r)
+		}
+	}
+	result := b.String()
+	if len(result) > 256 {
+		result = result[:256]
+	}
+	return result
 }
