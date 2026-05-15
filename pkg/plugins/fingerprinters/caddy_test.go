@@ -179,6 +179,30 @@ func TestCaddyFingerprinter_Fingerprint_Valid(t *testing.T) {
 			wantSeverityHigh:  true,
 			wantAutoHTTPS:     true,
 		},
+		{
+			name:                "Body with :*: in server header still produces detection — gate removed",
+			statusCode:          200,
+			server:              "Caddy",
+			body:                `{"apps":{"caddy:*:malicious":{}}}`,
+			wantDetection:       "admin_api",
+			wantAdminAPIKey:     true,
+			wantAdminAPIValue:   true,
+			wantSeverityHigh:    true,
+			wantServerHeaderKey: true,
+		},
+		{
+			name:                "Admin API body with :*: in route config does not block detection",
+			statusCode:          200,
+			server:              "Caddy/2.7.6",
+			body:                `{"apps":{"http":{"servers":{"srv0":{"routes":[{"match":[{"path":[":*:"]}]}]}}}}}`,
+			wantVersion:         "2.7.6",
+			wantCPE:             "cpe:2.3:a:caddyserver:caddy:2.7.6:*:*:*:*:*:*:*",
+			wantDetection:       "admin_api",
+			wantAdminAPIKey:     true,
+			wantAdminAPIValue:   true,
+			wantSeverityHigh:    true,
+			wantServerHeaderKey: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -263,12 +287,6 @@ func TestCaddyFingerprinter_Fingerprint_Invalid(t *testing.T) {
 			body:       "caddy" + strings.Repeat("A", 2*1024*1024+1),
 		},
 		{
-			name:       "Body with :*: (CPE injection attempt) rejected",
-			statusCode: 200,
-			server:     "Caddy",
-			body:       `{"apps":{"caddy:*:malicious":{}}}`,
-		},
-		{
 			name:       "Body contains 'caddy' but no definitive signal (no server header, no admin API)",
 			statusCode: 200,
 			server:     "",
@@ -285,6 +303,18 @@ func TestCaddyFingerprinter_Fingerprint_Invalid(t *testing.T) {
 			statusCode: 200,
 			server:     "",
 			body:       "",
+		},
+		{
+			name:       "Body brand 'Powered by Caddy' alone without server header rejected",
+			statusCode: 200,
+			server:     "",
+			body:       `<html><body><p>Powered by Caddy</p></body></html>`,
+		},
+		{
+			name:       "Body brand 'caddyserver' alone without server header rejected",
+			statusCode: 200,
+			server:     "",
+			body:       `<html><body>caddyserver was here</body></html>`,
 		},
 	}
 

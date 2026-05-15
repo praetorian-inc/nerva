@@ -168,16 +168,10 @@ func (f *CaddyFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fin
 		return nil, nil
 	}
 
-	// Gate 3: CPE-injection defense — reject bodies containing ":*:".
-	// Attacker-controlled bodies could attempt to inject CPE metacharacters
-	// via the version string.
-	if strings.Contains(string(body), ":*:") {
-		return nil, nil
-	}
-
 	serverHeader := resp.Header.Get("Server")
 	serverLower := strings.ToLower(serverHeader)
-	bodyLower := strings.ToLower(string(body))
+	bodyStr := string(body)
+	bodyLower := strings.ToLower(bodyStr)
 
 	// --- Signal detection ---
 
@@ -220,6 +214,12 @@ func (f *CaddyFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fin
 	}
 
 	version := extractCaddyVersion(resp, body)
+
+	// Defense-in-depth: discard version if it somehow contains CPE metacharacters.
+	// The extraction regex only captures digits and dots, so this should never trigger.
+	if strings.ContainsAny(version, ":*") {
+		version = ""
+	}
 
 	// Build metadata — only include keys with non-empty / non-false values (YAGNI).
 	metadata := map[string]any{
