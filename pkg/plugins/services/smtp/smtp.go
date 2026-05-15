@@ -149,6 +149,30 @@ func DetectSMTP(conn net.Conn, tls bool, timeout time.Duration) (Data, bool, err
 	return Data{}, true, &utils.InvalidResponseError{Service: protocol}
 }
 
+// checkOpenRelay sends MAIL FROM and RCPT TO with non-local addresses to test
+// whether the server will relay mail. Returns true if the server accepts relay.
+func checkOpenRelay(conn net.Conn, timeout time.Duration) bool {
+	// Send MAIL FROM with external address
+	resp, err := utils.SendRecv(conn, []byte("MAIL FROM:<test@example.com>\r\n"), timeout)
+	if err != nil || len(resp) < 3 || !bytes.Equal(resp[0:3], []byte("250")) {
+		// MAIL FROM rejected or error — no transaction to reset
+		return false
+	}
+
+	// Send RCPT TO with a different external domain
+	resp, err = utils.SendRecv(conn, []byte("RCPT TO:<test@example.org>\r\n"), timeout)
+
+	// Always clean up
+	_, _ = utils.SendRecv(conn, []byte("RSET\r\n"), timeout)
+
+	if err != nil || len(resp) < 3 {
+		return false
+	}
+	// 250 = accepted relay → open relay confirmed
+	// 251 = "User not local; will forward" (RFC 5321 §3.3) → also confirms open relay
+	return bytes.Equal(resp[0:3], []byte("250")) || bytes.Equal(resp[0:3], []byte("251"))
+}
+
 func (p *SMTPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
 	data, check, err := DetectSMTP(conn, false, timeout)
 	if err == nil && check {
@@ -156,7 +180,41 @@ func (p *SMTPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 			Banner:      data.Banner,
 			AuthMethods: data.AuthMethods,
 		}
-		return plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP), nil
+		service := plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP)
+		if target.Misconfigs {
+			service.SecurityFindings = []plugins.SecurityFinding{{
+				ID:          "smtp-cleartext",
+				Severity:    plugins.SeverityLow,
+				Description: "SMTP transmits data including credentials in cleartext",
+				Evidence:    data.Banner,
+			}}
+			if len(data.AuthMethods) > 0 {
+				hasAuth := false
+				for _, method := range data.AuthMethods {
+					if strings.EqualFold(strings.TrimRight(method, "\r\n"), "AUTH") {
+						hasAuth = true
+						break
+					}
+				}
+				if !hasAuth {
+					service.SecurityFindings = append(service.SecurityFindings, plugins.SecurityFinding{
+						ID:          "smtp-no-auth",
+						Severity:    plugins.SeverityLow,
+						Description: "SMTP server does not advertise AUTH capability in EHLO response",
+						Evidence:    "EHLO response lacks AUTH capability",
+					})
+				}
+				if checkOpenRelay(conn, timeout) {
+					service.SecurityFindings = append(service.SecurityFindings, plugins.SecurityFinding{
+						ID:          "smtp-open-relay",
+						Severity:    plugins.SeverityHigh,
+						Description: "SMTP server accepts mail relay between non-local addresses",
+						Evidence:    "Server accepted RCPT TO:<test@example.org> after MAIL FROM:<test@example.com>",
+					})
+				}
+			}
+		}
+		return service, nil
 	} else if err != nil && check {
 		return nil, nil
 	}
