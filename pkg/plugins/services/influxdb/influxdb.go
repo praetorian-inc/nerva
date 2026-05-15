@@ -104,7 +104,6 @@ func buildInfluxDBHTTPRequest(path, host string) string {
 		"GET %s HTTP/1.1\r\n"+
 			"Host: %s\r\n"+
 			"User-Agent: nerva/1.0\r\n"+
-			"Connection: close\r\n"+
 			"\r\n",
 		path, host)
 }
@@ -235,6 +234,24 @@ func buildInfluxDBCPE(version string) string {
 	return fmt.Sprintf("cpe:2.3:a:influxdata:influxdb:%s:*:*:*:*:*:*:*", version)
 }
 
+// checkInfluxDBAuth checks if InfluxDB allows unauthenticated queries.
+// Returns true if authentication is NOT required.
+func checkInfluxDBAuth(conn net.Conn, target plugins.Target, timeout time.Duration) bool {
+	host := fmt.Sprintf("%s:%d", target.Host, target.Address.Port())
+	request := buildInfluxDBHTTPRequest("/query?q=SHOW+DATABASES", host)
+
+	response, err := utils.SendRecv(conn, []byte(request), timeout)
+	if err != nil || len(response) == 0 {
+		return false
+	}
+
+	responseStr := string(response)
+
+	// 200 OK with results = no auth required
+	// 401 Unauthorized = auth required
+	return strings.HasPrefix(responseStr, "HTTP/1.1 200") || strings.HasPrefix(responseStr, "HTTP/1.0 200")
+}
+
 func (p *InfluxDBPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
 	// Phase 1: Detection via /ping (works for all versions 1.x, 2.x, 3.x)
 	version, detected, err := detectInfluxDBViaPing(conn, target, timeout)
@@ -247,7 +264,17 @@ func (p *InfluxDBPlugin) Run(conn net.Conn, timeout time.Duration, target plugin
 		payload := plugins.ServiceInfluxDB{
 			CPEs: []string{cpe},
 		}
-		return plugins.CreateServiceFrom(target, payload, false, version, plugins.TCP), nil
+		service := plugins.CreateServiceFrom(target, payload, false, version, plugins.TCP)
+		if target.Misconfigs && checkInfluxDBAuth(conn, target, timeout) {
+			service.AnonymousAccess = true
+			service.SecurityFindings = []plugins.SecurityFinding{{
+				ID:          "influxdb-no-auth",
+				Severity:    plugins.SeverityHigh,
+				Description: "InfluxDB accessible without authentication",
+				Evidence:    "SHOW DATABASES query succeeded without credentials",
+			}}
+		}
+		return service, nil
 	}
 
 	// Phase 2: Fallback to /health detection (2.x+ only, useful if headers stripped)

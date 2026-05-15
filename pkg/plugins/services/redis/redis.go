@@ -218,10 +218,22 @@ func DetectRedis(conn net.Conn, target plugins.Target, timeout time.Duration, tl
 		AuthRequired: result.AuthRequired,
 		CPEs:         []string{cpe},
 	}
+	var service *plugins.Service
 	if tls {
-		return plugins.CreateServiceFrom(target, payload, true, version, plugins.TCPTLS), nil
+		service = plugins.CreateServiceFrom(target, payload, true, version, plugins.TCPTLS)
+	} else {
+		service = plugins.CreateServiceFrom(target, payload, false, version, plugins.TCP)
 	}
-	return plugins.CreateServiceFrom(target, payload, false, version, plugins.TCP), nil
+	if target.Misconfigs && !result.AuthRequired {
+		service.AnonymousAccess = true
+		service.SecurityFindings = []plugins.SecurityFinding{{
+			ID:          "redis-no-auth",
+			Severity:    plugins.SeverityHigh,
+			Description: "Redis accessible without authentication",
+			Evidence:    "PING command succeeded without AUTH",
+		}}
+	}
+	return service, nil
 }
 
 func (p *REDISPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
