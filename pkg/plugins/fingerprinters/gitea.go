@@ -50,6 +50,10 @@ var forkGiteaVersionRegex = regexp.MustCompile(`\+gitea-v?(\d+\.\d+\.\d+)`)
 // Prevents: CPE injection characters like colons, semicolons, parentheses, etc.
 var giteaSafeVersionRegex = regexp.MustCompile(`^[0-9a-zA-Z.\-+]+$`)
 
+// cssGiteaVersionRegex extracts Gitea version from CSS query params in HTML responses.
+// Fork CSS paths contain patterns like "~gitea-1.22.0" or "gitea-1.21.0"
+var cssGiteaVersionRegex = regexp.MustCompile(`gitea-v?(\d+\.\d+\.\d+)`)
+
 func (f *GiteaFingerprinter) Name() string {
 	return "gitea"
 }
@@ -62,51 +66,105 @@ func (f *GiteaFingerprinter) ProbeEndpoint() string {
 
 // Match returns true if the response might be from Gitea (JSON content type).
 func (f *GiteaFingerprinter) Match(resp *http.Response) bool {
+	// Check for Gitea-specific headers (passive path against / HTML response)
+	if hasGiteaCookie(resp) || resp.Header.Get("X-Gitea-Version") != "" {
+		return true
+	}
+	// Active path: probe endpoint /api/v1/version returns JSON
 	contentType := resp.Header.Get("Content-Type")
 	return strings.Contains(contentType, "application/json")
 }
 
 // Fingerprint performs Gitea detection by parsing the /api/v1/version JSON response.
 func (f *GiteaFingerprinter) Fingerprint(resp *http.Response, body []byte) (*FingerprintResult, error) {
-	// Parse JSON response
-	var data giteaVersionResponse
-	if err := json.Unmarshal(body, &data); err != nil {
-		return nil, nil // Not valid JSON
+	// Check for X-Gitea-Version header (definitive, works on any response type)
+	if headerVersion := resp.Header.Get("X-Gitea-Version"); headerVersion != "" {
+		if !giteaSafeVersionRegex.MatchString(headerVersion) {
+			return nil, nil
+		}
+		matches := giteaVersionRegex.FindStringSubmatch(headerVersion)
+		if len(matches) < 2 {
+			return nil, nil
+		}
+		return &FingerprintResult{
+			Technology: "gitea",
+			Version:    matches[1],
+			CPEs:       []string{buildGiteaCPE(matches[1])},
+			Metadata: map[string]any{
+				"raw_version":    headerVersion,
+				"detection_path": "header",
+			},
+		}, nil
 	}
 
-	// Gitea detection: version field must be non-empty
+	// Check for i_like_gitea cookie (passive path, HTML response)
+	if hasGiteaCookie(resp) {
+		metadata := map[string]any{
+			"detection_path": "cookie",
+		}
+		version := ""
+
+		// Try to extract version from CSS paths in HTML body
+		bodyStr := string(body)
+		if cssMatches := cssGiteaVersionRegex.FindStringSubmatch(bodyStr); len(cssMatches) >= 2 {
+			if giteaSafeVersionRegex.MatchString(cssMatches[1]) {
+				version = cssMatches[1]
+				metadata["raw_version"] = cssMatches[0]
+			}
+		}
+
+		return &FingerprintResult{
+			Technology: "gitea",
+			Version:    version,
+			CPEs:       []string{buildGiteaCPE(version)},
+			Metadata:   metadata,
+		}, nil
+	}
+
+	// Active path: JSON response from /api/v1/version
+	contentType := resp.Header.Get("Content-Type")
+	if !strings.Contains(contentType, "application/json") {
+		return nil, nil
+	}
+
+	var data giteaVersionResponse
+	if err := json.Unmarshal(body, &data); err != nil {
+		return nil, nil
+	}
+
 	if data.Version == "" {
 		return nil, nil
 	}
 
-	// Validate that version string only contains safe characters (prevents injection)
+	// Gitea's /api/v1/version returns exactly {"version":"X.Y.Z"} with no other fields.
+	// Reject JSON objects with additional fields to prevent false positives
+	// from generic APIs that happen to include a "version" field.
+	var raw map[string]interface{}
+	if err := json.Unmarshal(body, &raw); err != nil || len(raw) != 1 {
+		return nil, nil
+	}
+
 	if !giteaSafeVersionRegex.MatchString(data.Version) {
 		return nil, nil
 	}
 
-	// Extract and validate version format (X.Y.Z)
 	matches := giteaVersionRegex.FindStringSubmatch(data.Version)
 	if len(matches) < 2 {
-		return nil, nil // Version doesn't match expected format
+		return nil, nil
 	}
 
-	// Extract semver (first capture group)
 	version := matches[1]
 
-	// Build metadata with raw version string
 	metadata := map[string]any{
 		"raw_version": data.Version,
 	}
 
-	// Check if this is a fork (Codeberg, Forgejo, etc.) with "+gitea-X.Y.Z" pattern
-	// For forks, we want the actual Gitea version for CPE matching, not the fork version
 	forkMatches := forkGiteaVersionRegex.FindStringSubmatch(data.Version)
 	if len(forkMatches) >= 2 {
-		// This is a fork - extract the actual Gitea version
 		giteaVersion := forkMatches[1]
 		metadata["is_fork"] = true
-		metadata["fork_version"] = version // Store the fork's version (e.g., "14.0.0")
-		version = giteaVersion             // Use Gitea version for CPE (e.g., "1.22.0")
+		metadata["fork_version"] = version
+		version = giteaVersion
 	}
 
 	return &FingerprintResult{
@@ -115,6 +173,16 @@ func (f *GiteaFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fin
 		CPEs:       []string{buildGiteaCPE(version)},
 		Metadata:   metadata,
 	}, nil
+}
+
+// hasGiteaCookie checks if the response contains the i_like_gitea cookie.
+func hasGiteaCookie(resp *http.Response) bool {
+	for _, cookie := range resp.Header["Set-Cookie"] {
+		if strings.Contains(cookie, "i_like_gitea") {
+			return true
+		}
+	}
+	return false
 }
 
 // buildGiteaCPE generates CPE string for Gitea.
