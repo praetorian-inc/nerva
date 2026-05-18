@@ -75,8 +75,6 @@ func TestRDPMisconfigs(t *testing.T) {
 	}
 	defer pool.Purge(resource) //nolint:errcheck
 
-	time.Sleep(10 * time.Second)
-
 	rawAddr := resource.GetHostPort("3389/tcp")
 	t.Logf("RDP container at: %s", rawAddr)
 
@@ -92,7 +90,6 @@ func TestRDPMisconfigs(t *testing.T) {
 	targetAddr := net.JoinHostPort(host, port)
 
 	err = pool.Retry(func() error {
-		time.Sleep(3 * time.Second)
 		conn, dialErr := net.DialTimeout("tcp", targetAddr, 2*time.Second)
 		if dialErr != nil {
 			return dialErr
@@ -122,17 +119,23 @@ func TestRDPMisconfigs(t *testing.T) {
 		t.Fatal("RDPPlugin.Run() returned nil service")
 	}
 
-	t.Logf("Service detected")
 	t.Logf("Security findings (%d):", len(service.SecurityFindings))
 	for i, f := range service.SecurityFindings {
 		t.Logf("  [%d] ID=%s Severity=%s Evidence=%s", i, f.ID, f.Severity, f.Evidence)
 	}
 
-	// xrdp in this container typically negotiates SSL without NLA
-	// Log findings for observation — the container's NLA state determines the finding
-	// At minimum we should get a valid service detection
-	if service.Protocol != RDP {
-		t.Logf("unexpected protocol: %v", service.Protocol)
+	// xrdp in this container negotiates SSL without NLA
+	found := false
+	for _, f := range service.SecurityFindings {
+		if f.ID == "rdp-nla-disabled" {
+			found = true
+			if f.Severity != plugins.SeverityMedium {
+				t.Errorf("rdp-nla-disabled Severity = %q, want medium", f.Severity)
+			}
+		}
+	}
+	if !found {
+		t.Error("expected rdp-nla-disabled finding from xrdp container")
 	}
 }
 
@@ -489,8 +492,8 @@ func TestCheckNLADisabled(t *testing.T) {
 		name             string
 	}{
 		{0x02, true, "HYBRID — NLA enabled"},
-		{0x08, true, "RDSTLS — NLA enabled"},
-		{0x0A, true, "HYBRID|RDSTLS — NLA enabled"},
+		{0x08, true, "HYBRID_EX — NLA enabled"},
+		{0x0A, true, "HYBRID|HYBRID_EX — NLA enabled"},
 		{0x00, false, "RDP only — NLA disabled"},
 		{0x01, false, "SSL only — NLA disabled"},
 		{-1, true, "no response — no NLA finding (pre-NLA host)"},
@@ -541,9 +544,13 @@ func TestParseSelectedProtocol(t *testing.T) {
 		want     int
 	}{
 		{"Windows Server 2008 — HYBRID", windowsServer2008Response, 0x02},
-		{"Windows Server 2016/2019 — RDSTLS", windowsServer2016Response, 0x08},
+		{"Windows Server 2016/2019 — HYBRID_EX", windowsServer2016Response, 0x08},
 		{"Windows Server 2003 — NEG_FAILURE", windowsServer2003Response, -1},
 		{"short response (11 bytes)", windowsServer2003Response[:11], -1},
+		{"invalid NEG_RSP length (0x0006)", []byte{
+			0x03, 0x00, 0x00, 0x13, 0x0e, 0xd0, 0x00, 0x00, 0x12, 0x34, 0x00, 0x02,
+			0x00, 0x06, 0x00, 0x02, 0x00, 0x00, 0x00,
+		}, -1},
 	}
 	for _, tt := range tests {
 		tt := tt

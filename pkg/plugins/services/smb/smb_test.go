@@ -541,8 +541,6 @@ func TestSMBMisconfigs(t *testing.T) {
 	}
 	defer pool.Purge(resource) //nolint:errcheck
 
-	time.Sleep(10 * time.Second)
-
 	rawAddr := resource.GetHostPort("445/tcp")
 	t.Logf("Samba container at: %s", rawAddr)
 
@@ -559,7 +557,6 @@ func TestSMBMisconfigs(t *testing.T) {
 
 	// Wait for the service to be ready
 	err = pool.Retry(func() error {
-		time.Sleep(3 * time.Second)
 		conn, dialErr := net.DialTimeout("tcp", targetAddr, 2*time.Second)
 		if dialErr != nil {
 			return dialErr
@@ -665,5 +662,238 @@ func TestSMBPlugin_Findings(t *testing.T) {
 	}
 	if signingFinding.Severity != plugins.SeverityMedium {
 		t.Errorf("Severity = %q, want medium", signingFinding.Severity)
+	}
+}
+
+func TestSMBPlugin_SMBv1OnlyHost(t *testing.T) {
+	// Build a valid SMBv1 negotiate response for the TCP listener (checkSMBv1's connection).
+	smbv1Resp := make([]byte, 40)
+	smbv1Resp[0] = 0x00
+	smbv1Resp[3] = byte(len(smbv1Resp) - 4)
+	copy(smbv1Resp[4:8], smbv1ProtocolID) // \xFFSMB
+	smbv1Resp[8] = 0x72                   // SMB_COM_NEGOTIATE
+	binary.LittleEndian.PutUint32(smbv1Resp[9:13], 0x00000000) // STATUS_SUCCESS
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+	defer listener.Close()
+
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		buf := make([]byte, 256)
+		_, _ = conn.Read(buf)
+		_, _ = conn.Write(smbv1Resp)
+	}()
+
+	// For Run()'s conn: return a response shorter than 132 bytes so DetectSMBv2 returns nil.
+	shortResp := make([]byte, 10)
+	runConn := &multiReadConn{responses: [][]byte{shortResp}}
+
+	addr := netip.MustParseAddrPort(listener.Addr().String())
+	target := plugins.Target{
+		Address:    addr,
+		Misconfigs: true,
+	}
+	p := &SMBPlugin{}
+	service, err := p.Run(runConn, time.Second, target)
+	if err != nil {
+		t.Fatalf("SMBPlugin.Run() unexpected error: %v", err)
+	}
+	if service == nil {
+		t.Fatal("SMBPlugin.Run() returned nil service, want non-nil for SMBv1-only host")
+	}
+
+	var v1Finding *plugins.SecurityFinding
+	for i := range service.SecurityFindings {
+		if service.SecurityFindings[i].ID == "smb-v1-enabled" {
+			v1Finding = &service.SecurityFindings[i]
+		}
+	}
+	if v1Finding == nil {
+		t.Fatal("expected smb-v1-enabled finding, got none")
+	}
+	if v1Finding.Severity != plugins.SeverityMedium {
+		t.Errorf("smb-v1-enabled Severity = %q, want medium", v1Finding.Severity)
+	}
+	for _, f := range service.SecurityFindings {
+		if f.ID == "smb-signing-not-required" {
+			t.Errorf("unexpected smb-signing-not-required finding on SMBv1-only host")
+		}
+	}
+}
+
+func TestSMBPlugin_NullSessionViaRun(t *testing.T) {
+	// Response 1: valid SMBv2 negotiate — signing enabled but NOT required (SecurityMode=0x01).
+	negoResp := make([]byte, 4+64+64)
+	negoResp[0] = 0x00
+	negoResp[2] = byte((64 + 64) >> 8)
+	negoResp[3] = byte(64 + 64)
+	copy(negoResp[4:], []byte{0xFE, 'S', 'M', 'B'})
+	binary.LittleEndian.PutUint16(negoResp[8:], 0x40)  // StructureSize
+	binary.LittleEndian.PutUint16(negoResp[16:], 0x00) // Command: NEGOTIATE
+	binary.LittleEndian.PutUint16(negoResp[68:], 0x41) // Negotiate StructureSize
+	binary.LittleEndian.PutUint16(negoResp[70:], 0x01) // SecurityMode: signing enabled, NOT required
+
+	// Response 2: session setup with NTLM challenge and non-zero SessionID.
+	// The NTLM challenge must satisfy the full validation in DetectSMBv2.
+	const sessionID = uint64(0xDEADBEEF12345678)
+
+	var sessionResp []byte
+	// 4-byte NetBIOS + 64-byte SMB2 header
+	header := make([]byte, 4+64)
+	copy(header[4:], []byte{0xFE, 'S', 'M', 'B'})
+	binary.LittleEndian.PutUint16(header[8:], 0x40)    // StructureSize
+	binary.LittleEndian.PutUint16(header[16:], 0x0001) // Command: SESSION_SETUP
+	// Set non-zero SessionID at offset 44 (sessionIDOffset) within the full packet.
+	binary.LittleEndian.PutUint64(header[44:], sessionID)
+	sessionResp = append(sessionResp, header...)
+
+	// NTLMChallenge struct: 56 bytes.
+	// Must pass: MessageType==2, Reserved==0, Version[4:]==[0,0,0,0x0F]
+	ntlm := make([]byte, 56)
+	copy(ntlm[0:8], []byte("NTLMSSP\x00"))
+	binary.LittleEndian.PutUint32(ntlm[8:], 0x00000002) // MessageType=2
+	// TargetInfoLen=0 (no AVPairs to parse, skips the loop entirely)
+	binary.LittleEndian.PutUint16(ntlm[40:], 0)  // TargetInfoLen=0
+	binary.LittleEndian.PutUint16(ntlm[42:], 0)  // TargetInfoMaxLen=0
+	binary.LittleEndian.PutUint32(ntlm[44:], 56) // TargetInfoBufferOffset
+	ntlm[52] = 0x00
+	ntlm[53] = 0x00
+	ntlm[54] = 0x00
+	ntlm[55] = 0x0F // Version[7] must be 0x0F
+
+	sessionResp = append(sessionResp, ntlm...)
+	smbLen := len(sessionResp) - 4
+	sessionResp[1] = byte(smbLen >> 16)
+	sessionResp[2] = byte(smbLen >> 8)
+	sessionResp[3] = byte(smbLen)
+
+	// Response 3: auth (STATUS_SUCCESS, same sessionID).
+	authResp := buildSMBv2SessionSetupResponse(0x00000000, sessionID)
+	// Response 4: tree connect (STATUS_SUCCESS).
+	treeResp := buildSMBv2TreeConnectResponse(0x00000000)
+
+	runConn := &multiReadConn{responses: [][]byte{negoResp, sessionResp, authResp, treeResp}}
+
+	// checkSMBv1 dials a fresh TCP connection; respond with an invalid SMBv1 response
+	// (wrong magic) so checkSMBv1 returns false.
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+	defer listener.Close()
+
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				buf := make([]byte, 256)
+				_, _ = c.Read(buf)
+				// Respond with SMBv2 magic so checkSMBv1 returns false.
+				resp := make([]byte, 20)
+				copy(resp[4:8], []byte{0xFE, 'S', 'M', 'B'})
+				_, _ = c.Write(resp)
+			}(conn)
+		}
+	}()
+
+	addr := netip.MustParseAddrPort(listener.Addr().String())
+	target := plugins.Target{
+		Address:    addr,
+		Misconfigs: true,
+	}
+	p := &SMBPlugin{}
+	service, err := p.Run(runConn, time.Second, target)
+	if err != nil {
+		t.Fatalf("SMBPlugin.Run() unexpected error: %v", err)
+	}
+	if service == nil {
+		t.Fatal("SMBPlugin.Run() returned nil service")
+	}
+
+	var nullFinding, signingFinding *plugins.SecurityFinding
+	for i := range service.SecurityFindings {
+		switch service.SecurityFindings[i].ID {
+		case "smb-null-session":
+			nullFinding = &service.SecurityFindings[i]
+		case "smb-signing-not-required":
+			signingFinding = &service.SecurityFindings[i]
+		}
+	}
+	if nullFinding == nil {
+		t.Fatal("expected smb-null-session finding, got none")
+	}
+	if nullFinding.Severity != plugins.SeverityHigh {
+		t.Errorf("smb-null-session Severity = %q, want high", nullFinding.Severity)
+	}
+	if signingFinding == nil {
+		t.Fatal("expected smb-signing-not-required finding, got none")
+	}
+}
+
+func TestDetectSMBv2_AVPairInitialBoundsCheck(t *testing.T) {
+	// Verify that DetectSMBv2 handles targetInfoLen < avPairLen (4) without panic.
+	// If targetInfoLen=2 the initial slice response[startIdx:startIdx+4] would
+	// read past available data without the bounds guard.
+
+	negoResp := make([]byte, 4+64+64)
+	negoResp[0] = 0x00
+	negoResp[2] = byte((64 + 64) >> 8)
+	negoResp[3] = byte(64 + 64)
+	copy(negoResp[4:], []byte{0xFE, 'S', 'M', 'B'})
+	binary.LittleEndian.PutUint16(negoResp[8:], 0x40)
+	binary.LittleEndian.PutUint16(negoResp[16:], 0x00)
+	binary.LittleEndian.PutUint16(negoResp[68:], 0x41)
+	binary.LittleEndian.PutUint16(negoResp[70:], 0x01)
+
+	var sessionResp []byte
+	header := make([]byte, 4+64)
+	copy(header[4:], []byte{0xFE, 'S', 'M', 'B'})
+	binary.LittleEndian.PutUint16(header[8:], 0x40)
+	binary.LittleEndian.PutUint16(header[16:], 0x0001)
+	sessionResp = append(sessionResp, header...)
+
+	ntlm := make([]byte, 56)
+	copy(ntlm[0:8], []byte("NTLMSSP\x00"))
+	binary.LittleEndian.PutUint32(ntlm[8:], 0x00000002)
+	// targetInfoLen=2 (less than avPairLen=4), offset=56
+	binary.LittleEndian.PutUint16(ntlm[40:], 2)
+	binary.LittleEndian.PutUint16(ntlm[42:], 2)
+	binary.LittleEndian.PutUint32(ntlm[44:], 56)
+	ntlm[52] = 0x00
+	ntlm[53] = 0x00
+	ntlm[54] = 0x00
+	ntlm[55] = 0x0F
+
+	sessionResp = append(sessionResp, ntlm...)
+	// Only 2 bytes of data at offset 56 (not enough for a 4-byte AVPair header)
+	sessionResp = append(sessionResp, 0x01, 0x00)
+
+	smbLen := len(sessionResp) - 4
+	sessionResp[1] = byte(smbLen >> 16)
+	sessionResp[2] = byte(smbLen >> 8)
+	sessionResp[3] = byte(smbLen)
+
+	conn := &multiReadConn{responses: [][]byte{negoResp, sessionResp}}
+	info, _, err := DetectSMBv2(conn, time.Second)
+	if err != nil {
+		t.Fatalf("DetectSMBv2() unexpected error: %v", err)
+	}
+	if info == nil {
+		t.Fatal("DetectSMBv2() returned nil info")
+	}
+	// The bounds check should prevent reading AVPair data
+	if info.NetBIOSComputerName != "" {
+		t.Errorf("NetBIOSComputerName = %q, want empty (blocked by initial bounds check)", info.NetBIOSComputerName)
 	}
 }

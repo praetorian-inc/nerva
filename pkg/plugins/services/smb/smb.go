@@ -346,7 +346,7 @@ func DetectSMBv2(conn net.Conn, timeout time.Duration) (*plugins.ServiceSMB, uin
 	targetInfoLen := int(sessionResponseData.TargetInfoLen)
 	if targetInfoLen > 0 {
 		startIdx := int(sessionResponseData.TargetInfoBufferOffset)
-		if startIdx+targetInfoLen > len(response) {
+		if startIdx < 0 || startIdx+targetInfoLen > len(response) || len(response)-startIdx < avPairLen {
 			return &info, sessionID, nil
 		}
 		var avPair AVPair
@@ -510,7 +510,7 @@ func buildNullAuthPacket(sessionID uint64) []byte {
 	off += 4
 	binary.LittleEndian.PutUint32(pkt[off:], 0x00) // Channel
 	off += 4
-	// SecurityBufferOffset = 4 (NetBIOS) + 64 (SMB2 header) + 24 (body so far before security) = 88 = 0x58
+	// SecurityBufferOffset from SMB2 header start: 64 (header) + 24 (body) = 88 = 0x58
 	binary.LittleEndian.PutUint16(pkt[off:], 0x58) // SecurityBufferOffset
 	off += 2
 	binary.LittleEndian.PutUint16(pkt[off:], uint16(spnegoLen)) // #nosec G115 -- safe: spnego ≤ 128 bytes (SecurityBufferLength)
@@ -525,6 +525,10 @@ func buildNullAuthPacket(sessionID uint64) []byte {
 
 // buildTreeConnectPacket builds an SMBv2 TREE_CONNECT request to \\host\IPC$.
 func buildTreeConnectPacket(sessionID uint64, host string) []byte {
+	// Bracket IPv6 addresses — colons are invalid in UNC paths
+	if strings.ContainsRune(host, ':') {
+		host = "[" + host + "]"
+	}
 	path := "\\\\" + host + "\\IPC$"
 	pathUTF16 := toUTF16LE(path)
 	pathLen := len(pathUTF16)
@@ -653,6 +657,18 @@ func (p *SMBPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 		return nil, err
 	}
 	if info == nil {
+		// SMBv2 not detected; check for SMBv1-only hosts when misconfig scanning is enabled
+		if target.Misconfigs && checkSMBv1(target, timeout) {
+			smbInfo := &plugins.ServiceSMB{}
+			service := plugins.CreateServiceFrom(target, smbInfo, false, "", plugins.TCP)
+			service.SecurityFindings = append(service.SecurityFindings, plugins.SecurityFinding{
+				ID:          "smb-v1-enabled",
+				Severity:    plugins.SeverityMedium,
+				Description: "SMBv1 is enabled, exposing the system to EternalBlue and other vulnerabilities",
+				Evidence:    "SMBv1 negotiate response received",
+			})
+			return service, nil
+		}
 		return nil, nil
 	}
 

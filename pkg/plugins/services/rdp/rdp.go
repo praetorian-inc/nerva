@@ -57,9 +57,9 @@ var eolVersionMap = map[string]eolEntry{
 const RDP = "rdp"
 
 const (
-	protocolHybrid = 0x02
-	protocolRDSTLS = 0x08
-	typeNegRSP     = 0x02
+	protocolHybrid   = 0x02
+	protocolHybridEx = 0x08
+	typeNegRSP       = 0x02
 )
 
 func init() {
@@ -196,12 +196,16 @@ func parseSelectedProtocol(response []byte) int {
 	if negType != typeNegRSP {
 		return -1
 	}
+	// Validate NEG_RSP length field (must be 8 per MS-RDPBCGR 2.2.1.2.1)
+	if binary.LittleEndian.Uint16(response[13:15]) != 0x0008 {
+		return -1
+	}
 	return int(binary.LittleEndian.Uint32(response[15:19]))
 }
 
 // checkNLADisabled returns a SecurityFinding when RDP Network Level
 // Authentication (NLA) is not required. NLA is considered enabled when
-// selectedProtocol has the PROTOCOL_HYBRID (0x02) or PROTOCOL_RDSTLS (0x08)
+// selectedProtocol has the PROTOCOL_HYBRID (0x02) or PROTOCOL_HYBRID_EX (0x08)
 // bit set. A negative selectedProtocol value indicates no negotiation response
 // was received.
 func checkNLADisabled(selectedProtocol int) *plugins.SecurityFinding {
@@ -211,7 +215,7 @@ func checkNLADisabled(selectedProtocol int) *plugins.SecurityFinding {
 	if selectedProtocol < 0 {
 		return nil
 	}
-	if selectedProtocol&protocolHybrid != 0 || selectedProtocol&protocolRDSTLS != 0 {
+	if selectedProtocol&protocolHybrid != 0 || selectedProtocol&protocolHybridEx != 0 {
 		return nil
 	}
 	return &plugins.SecurityFinding{
