@@ -380,6 +380,239 @@ func TestCheckSMBv1_InvalidProtocol(t *testing.T) {
 	}
 }
 
+func TestCheckSMBv1_ShortResponse(t *testing.T) {
+	// Response too short (< 13 bytes)
+	resp := make([]byte, 8)
+	copy(resp[4:8], smbv1ProtocolID)
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+	defer listener.Close()
+
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		buf := make([]byte, 256)
+		_, _ = conn.Read(buf)
+		_, _ = conn.Write(resp)
+	}()
+
+	addr := netip.MustParseAddrPort(listener.Addr().String())
+	target := plugins.Target{Address: addr}
+	if checkSMBv1(target, time.Second) {
+		t.Error("checkSMBv1() = true, want false for short response")
+	}
+}
+
+func TestCheckSMBv1_WrongCommand(t *testing.T) {
+	resp := make([]byte, 40)
+	resp[0] = 0x00
+	resp[3] = byte(len(resp) - 4)
+	copy(resp[4:8], smbv1ProtocolID) // Valid SMBv1
+	resp[8] = 0x25                   // SMB_COM_TRANSACTION (not NEGOTIATE)
+	binary.LittleEndian.PutUint32(resp[9:13], 0x00000000) // STATUS_SUCCESS
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+	defer listener.Close()
+
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		buf := make([]byte, 256)
+		_, _ = conn.Read(buf)
+		_, _ = conn.Write(resp)
+	}()
+
+	addr := netip.MustParseAddrPort(listener.Addr().String())
+	target := plugins.Target{Address: addr}
+	if checkSMBv1(target, time.Second) {
+		t.Error("checkSMBv1() = true, want false for wrong command")
+	}
+}
+
+func TestCheckSMBv1_NonZeroStatus(t *testing.T) {
+	resp := make([]byte, 40)
+	resp[0] = 0x00
+	resp[3] = byte(len(resp) - 4)
+	copy(resp[4:8], smbv1ProtocolID)
+	resp[8] = 0x72 // SMB_COM_NEGOTIATE
+	binary.LittleEndian.PutUint32(resp[9:13], 0xC0000022) // STATUS_ACCESS_DENIED
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+	defer listener.Close()
+
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		buf := make([]byte, 256)
+		_, _ = conn.Read(buf)
+		_, _ = conn.Write(resp)
+	}()
+
+	addr := netip.MustParseAddrPort(listener.Addr().String())
+	target := plugins.Target{Address: addr}
+	if checkSMBv1(target, time.Second) {
+		t.Error("checkSMBv1() = true, want false for non-zero status")
+	}
+}
+
+func TestCheckNullSession_ShortAuthResponse(t *testing.T) {
+	sessionID := uint64(0xABCD1234)
+	// Auth response: STATUS_SUCCESS but only 20 bytes (too short for sessionIDOffset+8=52)
+	shortAuth := make([]byte, 20)
+	// Bytes 12:16 = STATUS_SUCCESS
+	binary.LittleEndian.PutUint32(shortAuth[12:16], 0x00000000)
+
+	// Tree connect response: STATUS_SUCCESS
+	treeResp := buildSMBv2TreeConnectResponse(0x00000000)
+
+	conn := &multiReadConn{responses: [][]byte{shortAuth, treeResp}}
+	result := checkNullSession(conn, sessionID, time.Second, "192.0.2.1")
+	// Should succeed — falls back to using the original sessionID for tree connect
+	if !result {
+		t.Error("checkNullSession() = false, want true when auth response is short but STATUS_SUCCESS")
+	}
+}
+
+func TestSMBPlugin_MisconfigsFalse(t *testing.T) {
+	// Same negotiate response as TestSMBPlugin_Findings but with Misconfigs=false
+	negoResp := make([]byte, 4+64+64)
+	negoResp[0] = 0x00
+	negoResp[2] = byte((64 + 64) >> 8)
+	negoResp[3] = byte(64 + 64)
+	copy(negoResp[4:], []byte{0xFE, 'S', 'M', 'B'})
+	binary.LittleEndian.PutUint16(negoResp[8:], 0x40)
+	binary.LittleEndian.PutUint16(negoResp[16:], 0x00) // NEGOTIATE
+	binary.LittleEndian.PutUint16(negoResp[68:], 0x41)
+	binary.LittleEndian.PutUint16(negoResp[70:], 0x01) // Signing enabled, NOT required
+
+	conn := &multiReadConn{responses: [][]byte{negoResp, {}}}
+	target := plugins.Target{
+		Address:    netip.MustParseAddrPort("127.0.0.1:445"),
+		Misconfigs: false,
+	}
+	p := &SMBPlugin{}
+	service, err := p.Run(conn, time.Second, target)
+	if err != nil {
+		t.Fatalf("SMBPlugin.Run() error: %v", err)
+	}
+	if service == nil {
+		t.Fatal("SMBPlugin.Run() returned nil service")
+	}
+	if len(service.SecurityFindings) != 0 {
+		t.Errorf("expected 0 findings with Misconfigs=false, got %d: %+v",
+			len(service.SecurityFindings), service.SecurityFindings)
+	}
+}
+
+func TestSMBMisconfigs(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping docker test in short mode")
+	}
+
+	pool, err := dockertest.NewPool("")
+	if err != nil {
+		t.Fatalf("could not connect to docker: %v", err)
+	}
+
+	resource, err := pool.RunWithOptions(&dockertest.RunOptions{
+		Repository: "dperson/samba",
+		Cmd:        []string{"-S"},
+	})
+	if err != nil {
+		t.Fatalf("could not start samba container: %v", err)
+	}
+	defer pool.Purge(resource) //nolint:errcheck
+
+	time.Sleep(10 * time.Second)
+
+	rawAddr := resource.GetHostPort("445/tcp")
+	t.Logf("Samba container at: %s", rawAddr)
+
+	// GetHostPort may return "localhost:PORT"; normalise to 127.0.0.1 so
+	// netip.ParseAddrPort succeeds.
+	host, port, err := net.SplitHostPort(rawAddr)
+	if err != nil {
+		t.Fatalf("could not split host:port %q: %v", rawAddr, err)
+	}
+	if host == "localhost" || host == "0.0.0.0" || host == "::" {
+		host = "127.0.0.1"
+	}
+	targetAddr := net.JoinHostPort(host, port)
+
+	// Wait for the service to be ready
+	err = pool.Retry(func() error {
+		time.Sleep(3 * time.Second)
+		conn, dialErr := net.DialTimeout("tcp", targetAddr, 2*time.Second)
+		if dialErr != nil {
+			return dialErr
+		}
+		conn.Close()
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("samba container not ready: %v", err)
+	}
+
+	// Connect and run with Misconfigs=true
+	conn, err := net.DialTimeout("tcp", targetAddr, 2*time.Second)
+	if err != nil {
+		t.Fatalf("failed to connect: %v", err)
+	}
+
+	addrPort, err := netip.ParseAddrPort(targetAddr)
+	if err != nil {
+		t.Fatalf("could not parse addr:port %q: %v", targetAddr, err)
+	}
+	target := plugins.Target{
+		Address:    addrPort,
+		Misconfigs: true,
+	}
+
+	p := &SMBPlugin{}
+	service, err := p.Run(conn, 5*time.Second, target)
+	if err != nil {
+		t.Fatalf("SMBPlugin.Run() error: %v", err)
+	}
+	if service == nil {
+		t.Fatal("SMBPlugin.Run() returned nil service")
+	}
+
+	t.Logf("Service detected: %+v", service)
+	t.Logf("Security findings (%d):", len(service.SecurityFindings))
+	for i, f := range service.SecurityFindings {
+		t.Logf("  [%d] ID=%s Severity=%s Evidence=%s", i, f.ID, f.Severity, f.Evidence)
+	}
+
+	// dperson/samba with -S should have signing-not-required at minimum
+	var hasSigningFinding bool
+	for _, f := range service.SecurityFindings {
+		if f.ID == "smb-signing-not-required" {
+			hasSigningFinding = true
+		}
+	}
+	if !hasSigningFinding {
+		t.Error("expected smb-signing-not-required finding from dperson/samba container")
+	}
+}
+
 func TestSMBPlugin_Findings(t *testing.T) {
 	// Build a minimal SMBv2 negotiate response with signing NOT required,
 	// followed by a session setup NTLM challenge response.

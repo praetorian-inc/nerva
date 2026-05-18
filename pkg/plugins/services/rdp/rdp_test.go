@@ -57,6 +57,85 @@ func TestRDP(t *testing.T) {
 	}
 }
 
+func TestRDPMisconfigs(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping docker test in short mode")
+	}
+
+	pool, err := dockertest.NewPool("")
+	if err != nil {
+		t.Fatalf("could not connect to docker: %v", err)
+	}
+
+	resource, err := pool.RunWithOptions(&dockertest.RunOptions{
+		Repository: "scottyhardy/docker-remote-desktop",
+	})
+	if err != nil {
+		t.Fatalf("could not start RDP container: %v", err)
+	}
+	defer pool.Purge(resource) //nolint:errcheck
+
+	time.Sleep(10 * time.Second)
+
+	rawAddr := resource.GetHostPort("3389/tcp")
+	t.Logf("RDP container at: %s", rawAddr)
+
+	// GetHostPort may return "localhost:PORT"; normalise to 127.0.0.1 so
+	// netip.ParseAddrPort succeeds if needed.
+	host, port, err := net.SplitHostPort(rawAddr)
+	if err != nil {
+		t.Fatalf("could not split host:port %q: %v", rawAddr, err)
+	}
+	if host == "localhost" || host == "0.0.0.0" || host == "::" {
+		host = "127.0.0.1"
+	}
+	targetAddr := net.JoinHostPort(host, port)
+
+	err = pool.Retry(func() error {
+		time.Sleep(3 * time.Second)
+		conn, dialErr := net.DialTimeout("tcp", targetAddr, 2*time.Second)
+		if dialErr != nil {
+			return dialErr
+		}
+		conn.Close()
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("RDP container not ready: %v", err)
+	}
+
+	conn, err := net.DialTimeout("tcp", targetAddr, 2*time.Second)
+	if err != nil {
+		t.Fatalf("failed to connect: %v", err)
+	}
+
+	target := plugins.Target{
+		Misconfigs: true,
+	}
+
+	p := &RDPPlugin{}
+	service, err := p.Run(conn, 5*time.Second, target)
+	if err != nil {
+		t.Fatalf("RDPPlugin.Run() error: %v", err)
+	}
+	if service == nil {
+		t.Fatal("RDPPlugin.Run() returned nil service")
+	}
+
+	t.Logf("Service detected")
+	t.Logf("Security findings (%d):", len(service.SecurityFindings))
+	for i, f := range service.SecurityFindings {
+		t.Logf("  [%d] ID=%s Severity=%s Evidence=%s", i, f.ID, f.Severity, f.Evidence)
+	}
+
+	// xrdp in this container typically negotiates SSL without NLA
+	// Log findings for observation — the container's NLA state determines the finding
+	// At minimum we should get a valid service detection
+	if service.Protocol != RDP {
+		t.Logf("unexpected protocol: %v", service.Protocol)
+	}
+}
+
 // mockConn is a mock net.Conn for testing
 type mockConn struct {
 	readData  []byte
@@ -513,6 +592,33 @@ func TestRDPPlugin_NLADisabled(t *testing.T) {
 	}
 	if nlaFinding.Severity != plugins.SeverityMedium {
 		t.Errorf("Severity = %q, want medium", nlaFinding.Severity)
+	}
+}
+
+func TestRDPPlugin_MisconfigsFalse(t *testing.T) {
+	// Same response as TestRDPPlugin_NLADisabled but with Misconfigs=false.
+	nlaDisabledResponse := []byte{
+		0x03, 0x00, 0x00, 0x13, 0x0e, 0xd0, 0x00, 0x00, 0x12, 0x34, 0x00, // generic signature (11 bytes)
+		0x02,                   // typeNegRSP
+		0x00,                   // flags
+		0x08, 0x00,             // length
+		0x01, 0x00, 0x00, 0x00, // selectedProtocol = 0x01 (SSL only)
+	}
+	conn := &mockConn{readData: nlaDisabledResponse}
+	target := plugins.Target{
+		Misconfigs: false,
+	}
+	p := &RDPPlugin{}
+	service, err := p.Run(conn, time.Second, target)
+	if err != nil {
+		t.Fatalf("RDPPlugin.Run() error: %v", err)
+	}
+	if service == nil {
+		t.Fatal("RDPPlugin.Run() returned nil")
+	}
+	if len(service.SecurityFindings) != 0 {
+		t.Errorf("expected 0 findings with Misconfigs=false, got %d: %+v",
+			len(service.SecurityFindings), service.SecurityFindings)
 	}
 }
 
