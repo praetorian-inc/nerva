@@ -226,22 +226,22 @@ func TestCheckMonlistEdgeCases(t *testing.T) {
 		},
 		{
 			// A single-byte response where byte 0 = 0x97 (response=1, mode=7).
-			// checkMonlist only inspects byte 0, so the finding must still fire.
-			name: "single_byte_response_valid_bits",
+			// checkMonlist requires at least 4 bytes, so a 1-byte response must
+			// not fire the finding.
+			name: "single_byte_response_too_short",
 			buildConn: func() net.Conn {
 				return &sequentialMockConn{
 					responses: [][]byte{validNTPResponse(), {0x97}},
 				}
 			},
 			wantService:  true,
-			wantFindings: 1,
+			wantFindings: 0,
 		},
 		{
 			// byte 0 = 0xD7: response=1, error=1, mode=7.
-			// The current code does not inspect the error bit (bit 6 / 0x40).
-			// The finding must fire because 0xD7 & 0x80 != 0 and 0xD7 & 0x07 == 7.
-			// This is documented expected behavior: the error bit is not checked.
-			name: "error_bit_set_finding_fires",
+			// The error bit (0x40) is set, which means monlist was refused.
+			// checkMonlist must not fire the finding when the error bit is set.
+			name: "error_bit_set_no_finding",
 			buildConn: func() net.Conn {
 				resp := make([]byte, 48)
 				resp[0] = 0xD7 // response=1, error=1, mode=7
@@ -250,7 +250,7 @@ func TestCheckMonlistEdgeCases(t *testing.T) {
 				}
 			},
 			wantService:  true,
-			wantFindings: 1,
+			wantFindings: 0,
 		},
 		{
 			// First response is not a valid NTP reply (wrong mode bits).

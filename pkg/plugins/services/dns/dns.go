@@ -135,7 +135,7 @@ func checkZoneTransfer(conn net.Conn, timeout time.Duration) (int, error) {
 	}
 
 	// DNS over TCP requires a 2-byte big-endian length prefix.
-	msgLen := uint16(len(query))
+	msgLen := uint16(len(query)) // #nosec G115 -- query is a fixed 17-byte literal; cannot overflow uint16
 	packet := make([]byte, 2+len(query))
 	binary.BigEndian.PutUint16(packet[0:2], msgLen)
 	copy(packet[2:], query)
@@ -145,14 +145,25 @@ func checkZoneTransfer(conn net.Conn, timeout time.Duration) (int, error) {
 		return 0, err
 	}
 
-	// Minimum response: 2-byte length prefix + 12-byte DNS header = 14 bytes.
+	// Minimum response: 2-byte TCP length prefix + 12-byte DNS header.
 	if len(response) < 14 {
 		return 0, nil
 	}
 
-	// DNS message starts after the 2-byte TCP length prefix.
-	msg := response[2:]
-	if len(msg) < 12 {
+	// Use the declared TCP length to bound the DNS message.
+	declaredLen := int(binary.BigEndian.Uint16(response[0:2]))
+	if declaredLen < 12 || len(response) < 2+declaredLen {
+		return 0, nil
+	}
+	msg := response[2 : 2+declaredLen]
+
+	// Transaction ID must match the query we sent.
+	if !bytes.Equal(msg[0:2], transactionID) {
+		return 0, nil
+	}
+
+	// Must be a response (QR bit set in first flags byte).
+	if msg[2]&0x80 == 0 {
 		return 0, nil
 	}
 

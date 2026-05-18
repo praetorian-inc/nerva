@@ -345,17 +345,29 @@ func (m *udpMockConn) SetWriteDeadline(time.Time) error   { return nil }
 // staticResponseConn is a minimal net.Conn that returns a fixed byte slice on
 // every Read call. It is used to test checkZoneTransfer in isolation, without
 // going through the CheckDNS handshake that dnsMockConn requires.
+//
+// If responseBuilder is set, it is called with the bytes written by the caller
+// (the AXFR query packet), allowing the response to echo the transaction ID.
+// Otherwise the fixed response field is used.
 type staticResponseConn struct {
-	response []byte
-	pos      int
+	response        []byte
+	responseBuilder func(query []byte) []byte
+	pos             int
+	writtenBytes    []byte
 }
 
 func (s *staticResponseConn) Read(b []byte) (int, error) {
+	if s.responseBuilder != nil && s.pos == 0 {
+		s.response = s.responseBuilder(s.writtenBytes)
+	}
 	n := copy(b, s.response[s.pos:])
 	s.pos += n
 	return n, nil
 }
-func (s *staticResponseConn) Write(b []byte) (int, error)       { return len(b), nil }
+func (s *staticResponseConn) Write(b []byte) (int, error) {
+	s.writtenBytes = append(s.writtenBytes, b...)
+	return len(b), nil
+}
 func (s *staticResponseConn) Close() error                      { return nil }
 func (s *staticResponseConn) LocalAddr() net.Addr               { return tcpAddr{} }
 func (s *staticResponseConn) RemoteAddr() net.Addr              { return tcpAddr{} }
@@ -364,11 +376,10 @@ func (s *staticResponseConn) SetReadDeadline(time.Time) error   { return nil }
 func (s *staticResponseConn) SetWriteDeadline(time.Time) error  { return nil }
 
 // buildAXFRResponse constructs a TCP-length-prefixed DNS response with the
-// given RCODE and ANCOUNT. The transaction ID bytes are arbitrary (checkZoneTransfer
-// does not validate the transaction ID in the response).
-func buildAXFRResponse(rcode byte, ancount uint16) []byte {
+// given transaction ID, RCODE and ANCOUNT.
+func buildAXFRResponse(txID []byte, rcode byte, ancount uint16) []byte {
 	msg := []byte{
-		0x00, 0x00, // Transaction ID (arbitrary)
+		txID[0], txID[1], // Transaction ID
 		0x84, rcode, // Flags: QR=1, AA=1; RCODE in low nibble of byte 3
 		0x00, 0x00, // QDCOUNT: 0
 		byte(ancount >> 8), byte(ancount), // ANCOUNT
@@ -381,6 +392,18 @@ func buildAXFRResponse(rcode byte, ancount uint16) []byte {
 	return out
 }
 
+// axfrResponseForQuery builds an AXFR response that echoes the transaction ID
+// from the written TCP-prefixed query packet (bytes 2-3 of the query).
+func axfrResponseForQuery(query []byte, rcode byte, ancount uint16) []byte {
+	var txID []byte
+	if len(query) >= 4 {
+		txID = query[2:4] // skip 2-byte TCP length prefix, then 2-byte txID
+	} else {
+		txID = []byte{0x00, 0x00}
+	}
+	return buildAXFRResponse(txID, rcode, ancount)
+}
+
 // TestCheckZoneTransferEdgeCases tests boundary and error conditions in the
 // checkZoneTransfer response parser to ensure it handles malformed or unusual
 // server responses without panicking.
@@ -388,9 +411,10 @@ func TestCheckZoneTransferEdgeCases(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name      string
-		response  []byte
-		wantCount int
+		name            string
+		response        []byte
+		responseBuilder func(query []byte) []byte
+		wantCount       int
 	}{
 		{
 			name:      "empty response returns 0",
@@ -404,43 +428,65 @@ func TestCheckZoneTransferEdgeCases(t *testing.T) {
 		},
 		{
 			name: "exactly 14 bytes with RCODE 0 and ANCOUNT 0 returns 0",
-			// 2-byte length prefix + 12-byte DNS header = 14 bytes
-			response:  buildAXFRResponse(0x00, 0),
-			wantCount: 0,
+			// 2-byte length prefix + 12-byte DNS header = 14 bytes; ANCOUNT 0 → 0
+			responseBuilder: func(q []byte) []byte { return axfrResponseForQuery(q, 0x00, 0) },
+			wantCount:       0,
 		},
 		{
-			name:      "RCODE NXDOMAIN (3) returns 0",
-			response:  buildAXFRResponse(0x03, 10),
-			wantCount: 0,
+			name:            "RCODE NXDOMAIN (3) returns 0",
+			responseBuilder: func(q []byte) []byte { return axfrResponseForQuery(q, 0x03, 10) },
+			wantCount:       0,
 		},
 		{
-			name:      "RCODE SERVFAIL (2) returns 0",
-			response:  buildAXFRResponse(0x02, 5),
-			wantCount: 0,
+			name:            "RCODE SERVFAIL (2) returns 0",
+			responseBuilder: func(q []byte) []byte { return axfrResponseForQuery(q, 0x02, 5) },
+			wantCount:       0,
 		},
 		{
-			name:      "RCODE REFUSED (5) returns 0",
-			response:  buildAXFRResponse(0x05, 100),
-			wantCount: 0,
+			name:            "RCODE REFUSED (5) returns 0",
+			responseBuilder: func(q []byte) []byte { return axfrResponseForQuery(q, 0x05, 100) },
+			wantCount:       0,
 		},
 		{
-			name:      "RCODE 0 with ANCOUNT 65535 returns 65535",
-			response:  buildAXFRResponse(0x00, 65535),
-			wantCount: 65535,
+			name:            "RCODE 0 with ANCOUNT 65535 returns 65535",
+			responseBuilder: func(q []byte) []byte { return axfrResponseForQuery(q, 0x00, 65535) },
+			wantCount:       65535,
 		},
 		{
-			name: "TCP length prefix claims more data than available but header is readable",
-			// Build a 14-byte valid response, then overwrite the length prefix to
-			// claim 100 bytes. checkZoneTransfer only reads what the socket provides,
-			// so it must parse the 12-byte DNS header from response[2:14] and return
-			// the ANCOUNT without accessing out-of-bounds memory.
-			response: func() []byte {
-				resp := buildAXFRResponse(0x00, 7)
-				// Overwrite length prefix to claim 100 bytes (actual payload is 12).
+			name: "TCP length prefix claims more data than available returns 0",
+			// Build a valid response, then overwrite the length prefix to claim
+			// 100 bytes. The declared-length check rejects it because actual
+			// payload is only 12 bytes.
+			responseBuilder: func(q []byte) []byte {
+				resp := axfrResponseForQuery(q, 0x00, 7)
 				binary.BigEndian.PutUint16(resp[0:2], 100)
 				return resp
-			}(),
-			wantCount: 7,
+			},
+			wantCount: 0,
+		},
+		{
+			name: "mismatched transaction ID returns 0",
+			responseBuilder: func(q []byte) []byte {
+				// Return a valid AXFR response but with an inverted transaction ID.
+				var txID []byte
+				if len(q) >= 4 {
+					txID = []byte{^q[2], ^q[3]}
+				} else {
+					txID = []byte{0xFF, 0xFF}
+				}
+				return buildAXFRResponse(txID, 0x00, 10)
+			},
+			wantCount: 0,
+		},
+		{
+			name: "QR bit not set returns 0",
+			responseBuilder: func(q []byte) []byte {
+				resp := axfrResponseForQuery(q, 0x00, 10)
+				// Clear the QR bit (byte 4 after TCP length prefix = msg[2]).
+				resp[4] &^= 0x80
+				return resp
+			},
+			wantCount: 0,
 		},
 	}
 
@@ -448,7 +494,10 @@ func TestCheckZoneTransferEdgeCases(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			conn := &staticResponseConn{response: tc.response}
+			conn := &staticResponseConn{
+				response:        tc.response,
+				responseBuilder: tc.responseBuilder,
+			}
 			got, err := checkZoneTransfer(conn, 5*time.Second)
 			if err != nil {
 				t.Fatalf("checkZoneTransfer() error = %v, want nil", err)
@@ -519,8 +568,16 @@ func TestDNSZoneTransferDocker(t *testing.T) {
 
 	addrPort, err := netip.ParseAddrPort(targetAddr)
 	if err != nil {
-		// Fallback: build addrPort from resolved host and port.
-		addrPort = netip.MustParseAddrPort(net.JoinHostPort(host, port))
+		// Fallback: resolve hostname to a numeric IP so ParseAddrPort succeeds.
+		ips, resolveErr := net.LookupIP(host)
+		if resolveErr != nil || len(ips) == 0 {
+			t.Fatalf("could not resolve host %q to IP: %v", host, resolveErr)
+		}
+		resolved := net.JoinHostPort(ips[0].String(), port)
+		addrPort, err = netip.ParseAddrPort(resolved)
+		if err != nil {
+			t.Fatalf("could not parse resolved address %q: %v", resolved, err)
+		}
 	}
 	target := plugins.Target{
 		Address:    addrPort,

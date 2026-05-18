@@ -95,12 +95,13 @@ func checkMonlist(conn net.Conn, timeout time.Duration) (*plugins.SecurityFindin
 	if err != nil {
 		return nil, err
 	}
-	if len(response) == 0 {
+	if len(response) < 4 {
 		return nil, nil
 	}
 
-	// Response bit (0x80) must be set and mode must be 7 (0x07).
-	if response[0]&0x80 == 0 || response[0]&0x07 != 7 {
+	// Response bit (0x80) must be set, mode must be 7 (0x07), and error bit
+	// (0x40) must NOT be set — an error reply means monlist was refused.
+	if response[0]&0x80 == 0 || response[0]&0x07 != 7 || response[0]&0x40 != 0 {
 		return nil, nil
 	}
 

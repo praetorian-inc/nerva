@@ -943,6 +943,36 @@ func TestPPTPInsecureEdgeCases(t *testing.T) {
 	})
 }
 
+// TestSanitizePrintable verifies that sanitizePrintable strips non-printable
+// characters and returns only printable ASCII (0x20–0x7E).
+func TestSanitizePrintable(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"empty string", "", ""},
+		{"printable ASCII unchanged", "hello world", "hello world"},
+		{"strips null bytes", "hello\x00world", "helloworld"},
+		{"strips ESC byte only", "host\x1b[31mname", "host[31mname"},
+		{"strips all control chars", "\x01\x02\x03test\x07\x08", "test"},
+		{"strips DEL (0x7F)", "host\x7Fname", "hostname"},
+		{"strips high bytes", "host\x80\xFF name", "host name"},
+		{"all non-printable returns empty", "\x00\x01\x7F\x80\xFF", ""},
+		{"mixed printable and control", "MikroTik\x00\x1b[0m router", "MikroTik[0m router"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := sanitizePrintable(tc.input)
+			if got != tc.want {
+				t.Errorf("sanitizePrintable(%q) = %q, want %q", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestPluginMetadata verifies the Name, Type, and Priority methods.
 func TestPluginMetadata(t *testing.T) {
 	plugin := &Plugin{}
