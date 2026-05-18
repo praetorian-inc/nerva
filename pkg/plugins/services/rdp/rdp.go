@@ -56,6 +56,12 @@ var eolVersionMap = map[string]eolEntry{
 
 const RDP = "rdp"
 
+const (
+	protocolHybrid = 0x02
+	protocolRDSTLS = 0x08
+	typeNegRSP     = 0x02
+)
+
 func init() {
 	plugins.RegisterPlugin(&RDPPlugin{})
 	plugins.RegisterPlugin(&TLSPlugin{})
@@ -179,7 +185,44 @@ func guessOS(response []byte) (bool, string) {
 	return false, ""
 }
 
-func DetectRDP(conn net.Conn, timeout time.Duration) (string, bool, error) {
+// parseSelectedProtocol parses the selectedProtocol field from an RDP
+// Negotiation Response. Returns the selectedProtocol value or -1 if the
+// response is too short or does not contain a TYPE_RDP_NEG_RSP.
+func parseSelectedProtocol(response []byte) int {
+	if len(response) < 19 {
+		return -1
+	}
+	negType := response[11]
+	if negType != typeNegRSP {
+		return -1
+	}
+	return int(binary.LittleEndian.Uint32(response[15:19]))
+}
+
+// checkNLADisabled returns a SecurityFinding when RDP Network Level
+// Authentication (NLA) is not required. NLA is considered enabled when
+// selectedProtocol has the PROTOCOL_HYBRID (0x02) or PROTOCOL_RDSTLS (0x08)
+// bit set. A negative selectedProtocol value indicates no negotiation response
+// was received.
+func checkNLADisabled(selectedProtocol int) *plugins.SecurityFinding {
+	// Only evaluate NLA when a NEG_RSP was present (selectedProtocol >= 0).
+	// A value of -1 means no negotiation response, which occurs on hosts that
+	// predate NLA (Windows 2000, Server 2003). Those are handled by EOL findings.
+	if selectedProtocol < 0 {
+		return nil
+	}
+	if selectedProtocol&protocolHybrid != 0 || selectedProtocol&protocolRDSTLS != 0 {
+		return nil
+	}
+	return &plugins.SecurityFinding{
+		ID:          "rdp-nla-disabled",
+		Severity:    plugins.SeverityMedium,
+		Description: "RDP Network Level Authentication (NLA) is not required",
+		Evidence:    fmt.Sprintf("selectedProtocol=0x%02x", selectedProtocol),
+	}
+}
+
+func DetectRDP(conn net.Conn, timeout time.Duration) (string, int, bool, error) {
 	InitialConnectionPacket := []byte{
 		0x03, 0x00, 0x00, 0x13, 0x0e, 0xe0, 0x00, 0x00,
 		0x00, 0x00, 0x00, 0x01, 0x00, 0x08, 0x00, 0x0b,
@@ -188,10 +231,10 @@ func DetectRDP(conn net.Conn, timeout time.Duration) (string, bool, error) {
 
 	response, err := utils.SendRecv(conn, InitialConnectionPacket, timeout)
 	if err != nil {
-		return "", false, err
+		return "", -1, false, err
 	}
 	if len(response) == 0 {
-		return "", true, &utils.ServerNotEnable{}
+		return "", -1, true, &utils.ServerNotEnable{}
 	}
 
 	isRDP := checkRDP(response)
@@ -202,9 +245,9 @@ func DetectRDP(conn net.Conn, timeout time.Duration) (string, bool, error) {
 			fingerprint = osFingerprint
 		}
 
-		return fingerprint, true, nil
+		return fingerprint, parseSelectedProtocol(response), true, nil
 	}
-	return "", true, &utils.InvalidResponseError{Service: RDP}
+	return "", -1, true, &utils.InvalidResponseError{Service: RDP}
 }
 
 func DetectRDPAuth(conn net.Conn, timeout time.Duration) (*plugins.ServiceRDP, bool, error) {
@@ -415,7 +458,7 @@ func checkEOLOSVersion(osVersion string) *plugins.SecurityFinding {
 }
 
 func (p *RDPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
-	fingerprint, check, err := DetectRDP(conn, timeout)
+	fingerprint, selectedProtocol, check, err := DetectRDP(conn, timeout)
 	if check && err != nil {
 		return nil, nil
 	} else if check && err == nil {
@@ -423,8 +466,13 @@ func (p *RDPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 			OSFingerprint: fingerprint,
 		}
 		service := plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP)
-		if target.Misconfigs && fingerprint != "" {
-			if finding := checkEOLOS(fingerprint); finding != nil {
+		if target.Misconfigs {
+			if fingerprint != "" {
+				if finding := checkEOLOS(fingerprint); finding != nil {
+					service.SecurityFindings = append(service.SecurityFindings, *finding)
+				}
+			}
+			if finding := checkNLADisabled(selectedProtocol); finding != nil {
 				service.SecurityFindings = append(service.SecurityFindings, *finding)
 			}
 		}

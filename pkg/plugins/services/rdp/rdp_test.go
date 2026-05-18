@@ -403,6 +403,146 @@ func createNTLMChallengeResponseWithVersion(major, minor, build uint16) []byte {
 	return buf.Bytes()
 }
 
+func TestCheckNLADisabled(t *testing.T) {
+	tests := []struct {
+		selectedProtocol int
+		expectedNil      bool
+		name             string
+	}{
+		{0x02, true, "HYBRID — NLA enabled"},
+		{0x08, true, "RDSTLS — NLA enabled"},
+		{0x0A, true, "HYBRID|RDSTLS — NLA enabled"},
+		{0x00, false, "RDP only — NLA disabled"},
+		{0x01, false, "SSL only — NLA disabled"},
+		{-1, true, "no response — no NLA finding (pre-NLA host)"},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			finding := checkNLADisabled(tt.selectedProtocol)
+			if tt.expectedNil {
+				if finding != nil {
+					t.Errorf("checkNLADisabled(%d) = %+v, want nil", tt.selectedProtocol, finding)
+				}
+				return
+			}
+			if finding == nil {
+				t.Fatalf("checkNLADisabled(%d) = nil, want non-nil finding", tt.selectedProtocol)
+			}
+			if finding.ID != "rdp-nla-disabled" {
+				t.Errorf("finding.ID = %q, want %q", finding.ID, "rdp-nla-disabled")
+			}
+			if finding.Severity != plugins.SeverityMedium {
+				t.Errorf("finding.Severity = %q, want medium", finding.Severity)
+			}
+		})
+	}
+}
+
+func TestParseSelectedProtocol(t *testing.T) {
+	// Windows Server 2008: byte 11 = 0x02 (NEG_RSP), selectedProtocol at bytes 15-18 = 0x02
+	windowsServer2008Response := []byte{
+		0x03, 0x00, 0x00, 0x13, 0x0e, 0xd0, 0x00, 0x00, 0x12, 0x34, 0x00, 0x02,
+		0x00, 0x08, 0x00, 0x02, 0x00, 0x00, 0x00,
+	}
+	// Windows Server 2016/2019: byte 11 = 0x02 (NEG_RSP), selectedProtocol at bytes 15-18 = 0x08
+	windowsServer2016Response := []byte{
+		0x03, 0x00, 0x00, 0x13, 0x0e, 0xd0, 0x00, 0x00, 0x12, 0x34, 0x00, 0x02,
+		0x1f, 0x08, 0x00, 0x08, 0x00, 0x00, 0x00,
+	}
+	// Windows Server 2003: byte 11 = 0x03 (NEG_FAILURE) — returns -1
+	windowsServer2003Response := []byte{
+		0x03, 0x00, 0x00, 0x13, 0x0e, 0xd0, 0x00, 0x00, 0x12, 0x34, 0x00,
+		0x03, 0x00, 0x08, 0x00, 0x02, 0x00, 0x00, 0x00,
+	}
+
+	tests := []struct {
+		name     string
+		response []byte
+		want     int
+	}{
+		{"Windows Server 2008 — HYBRID", windowsServer2008Response, 0x02},
+		{"Windows Server 2016/2019 — RDSTLS", windowsServer2016Response, 0x08},
+		{"Windows Server 2003 — NEG_FAILURE", windowsServer2003Response, -1},
+		{"short response (11 bytes)", windowsServer2003Response[:11], -1},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseSelectedProtocol(tt.response)
+			if got != tt.want {
+				t.Errorf("parseSelectedProtocol() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRDPPlugin_NLADisabled(t *testing.T) {
+	// Construct a response with selectedProtocol=0x01 (SSL only, NLA disabled).
+	// Use the generic RDP signature prefix (11 bytes), then NEG_RSP type (0x02),
+	// flags (0x00), length (0x08, 0x00), then selectedProtocol = 0x01 0x00 0x00 0x00.
+	nlaDisabledResponse := []byte{
+		0x03, 0x00, 0x00, 0x13, 0x0e, 0xd0, 0x00, 0x00, 0x12, 0x34, 0x00, // generic signature (11 bytes)
+		0x02,                   // typeNegRSP
+		0x00,                   // flags
+		0x08, 0x00,             // length
+		0x01, 0x00, 0x00, 0x00, // selectedProtocol = 0x01 (SSL only)
+	}
+	conn := &mockConn{readData: nlaDisabledResponse}
+	target := plugins.Target{
+		Address:    netip.MustParseAddrPort("127.0.0.1:3389"),
+		Misconfigs: true,
+	}
+	p := &RDPPlugin{}
+	service, err := p.Run(conn, time.Second, target)
+	if err != nil {
+		t.Fatalf("RDPPlugin.Run() unexpected error: %v", err)
+	}
+	if service == nil {
+		t.Fatal("RDPPlugin.Run() returned nil service")
+	}
+	var nlaFinding *plugins.SecurityFinding
+	for i := range service.SecurityFindings {
+		if service.SecurityFindings[i].ID == "rdp-nla-disabled" {
+			nlaFinding = &service.SecurityFindings[i]
+			break
+		}
+	}
+	if nlaFinding == nil {
+		t.Fatal("expected rdp-nla-disabled finding, got none")
+	}
+	if nlaFinding.Severity != plugins.SeverityMedium {
+		t.Errorf("Severity = %q, want medium", nlaFinding.Severity)
+	}
+}
+
+func TestRDPPlugin_NLAEnabled(t *testing.T) {
+	// Windows 10 response: selectedProtocol at bytes 15-18 = 0x02 (HYBRID — NLA enabled).
+	// Byte 11 must be 0x02 (NEG_RSP). Windows 10 signature uses bytes 15-18 = 0x02.
+	win10Response := []byte{
+		0x03, 0x00, 0x00, 0x13, 0x0e, 0xd0, 0x00, 0x00, 0x12, 0x34, 0x00, 0x02,
+		0x1f, 0x08, 0x00, 0x02, 0x00, 0x00, 0x00,
+	}
+	conn := &mockConn{readData: win10Response}
+	target := plugins.Target{
+		Address:    netip.MustParseAddrPort("127.0.0.1:3389"),
+		Misconfigs: true,
+	}
+	p := &RDPPlugin{}
+	service, err := p.Run(conn, time.Second, target)
+	if err != nil {
+		t.Fatalf("RDPPlugin.Run() unexpected error: %v", err)
+	}
+	if service == nil {
+		t.Fatal("RDPPlugin.Run() returned nil service")
+	}
+	for _, f := range service.SecurityFindings {
+		if f.ID == "rdp-nla-disabled" {
+			t.Errorf("got unexpected rdp-nla-disabled finding for NLA-enabled response")
+		}
+	}
+}
+
 func TestRDPPlugin_EOL(t *testing.T) {
 	// Windows Server 2003 signature — passes the generic checkRDP and guesses EOL OS.
 	// The generic signature matches the first 11 bytes; Server 2003 is 18 bytes total.
@@ -431,6 +571,11 @@ func TestRDPPlugin_EOL(t *testing.T) {
 	}
 	if service.SecurityFindings[0].Severity != plugins.SeverityCritical {
 		t.Errorf("SecurityFindings[0].Severity = %q, want critical", service.SecurityFindings[0].Severity)
+	}
+	for _, f := range service.SecurityFindings {
+		if f.ID == "rdp-nla-disabled" {
+			t.Errorf("got unexpected rdp-nla-disabled finding for pre-NLA host (selectedProtocol=-1)")
+		}
 	}
 }
 
