@@ -76,14 +76,30 @@ var nginxServerVersionRegex = regexp.MustCompile(
 // version extraction. Rejects values like "1.25.3-beta", "1.25.3:*:", ".1", "..".
 var nginxVersionValidateRegex = regexp.MustCompile(`^[0-9]+(?:\.[0-9]+){1,3}$`)
 
-// nginxUIRegex detects Nginx UI markers in the response body. The Nginx UI
-// login page, API responses, and asset references all contain these tokens.
-var nginxUIRegex = regexp.MustCompile(`(?i)nginx[\s_-]*ui`)
+// nginxUITitleRegex matches Nginx UI in the HTML title tag. The page title is
+// a definitive signal that distinguishes the actual Nginx UI login page from
+// documentation or blog posts that merely mention "Nginx UI" in prose.
+var nginxUITitleRegex = regexp.MustCompile(`(?i)<title[^>]*>[^<]*nginx[\s_-]*ui[^<]*</title>`)
+
+// nginxUIStructuralRegex matches Nginx UI in structural markers: HTML element
+// attributes (class, id, src, href) or JSON object keys. These identify the
+// Nginx UI application itself, not incidental prose mentions.
+var nginxUIStructuralRegex = regexp.MustCompile(
+	`(?i)(?:(?:class|id|src|href)=["'][^"']*nginx[-_]?ui|"nginx[-_]?ui")`,
+)
 
 // nginxErrorPageRegex detects the default Nginx error page. The error page
 // contains a centered footer with the server name, optionally including the
 // version: <center>nginx</center> or <center>nginx/1.25.3</center>.
 var nginxErrorPageRegex = regexp.MustCompile(`(?i)<center>\s*nginx(?:/[0-9.]+)?\s*</center>`)
+
+// nginxErrorPageVersionRegex extracts the version specifically from the Nginx
+// error page footer: <center>nginx/X.Y.Z</center>. More restrictive than
+// nginxServerVersionRegex to avoid latching onto incidental version mentions
+// in body text like "please upgrade to nginx/1.18.0".
+var nginxErrorPageVersionRegex = regexp.MustCompile(
+	`(?i)<center>\s*(?:nginx|openresty)/([0-9]+(?:\.[0-9]+){1,3})\s*</center>`,
+)
 
 func init() {
 	Register(&NginxFingerprinter{})
@@ -127,8 +143,9 @@ func (f *NginxFingerprinter) Match(resp *http.Response) bool {
 	// Header-based fast-path — exclude Tengine to avoid conflicts.
 	serverLower := strings.ToLower(resp.Header.Get("Server"))
 	if strings.Contains(serverLower, "tengine") {
-		// Handled by TengineFingerprinter — do not match.
-	} else if strings.HasPrefix(serverLower, "nginx") || strings.HasPrefix(serverLower, "openresty") {
+		return false
+	}
+	if strings.HasPrefix(serverLower, "nginx") || strings.HasPrefix(serverLower, "openresty") {
 		return true
 	}
 
@@ -170,6 +187,12 @@ func (f *NginxFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fin
 
 	serverHeader := resp.Header.Get("Server")
 	serverLower := strings.ToLower(serverHeader)
+
+	// Tengine guard: Tengine is a Nginx fork that inherits error page patterns
+	// and may trigger body-based signals. Short-circuit completely.
+	if strings.Contains(serverLower, "tengine") {
+		return nil, nil
+	}
 
 	// --- Signal detection ---
 
@@ -279,8 +302,9 @@ func extractNginxVersion(serverHeader string, body []byte) string {
 		}
 	}
 
-	// Priority 2: Error page body — <center>nginx/X.Y.Z</center> pattern.
-	if m := nginxServerVersionRegex.FindSubmatch(body); len(m) >= 2 {
+	// Priority 2: Error page footer only — <center>nginx/X.Y.Z</center>.
+	// Uses a dedicated regex to avoid latching onto incidental body text.
+	if m := nginxErrorPageVersionRegex.FindSubmatch(body); len(m) >= 2 {
 		if v := string(m[1]); nginxVersionValidateRegex.MatchString(v) {
 			return v
 		}
@@ -294,10 +318,13 @@ func isOpenResty(serverHeader string) bool {
 	return strings.HasPrefix(strings.ToLower(serverHeader), "openresty")
 }
 
-// isNginxUI reports whether the body contains Nginx UI management interface markers.
-// These markers appear in the Nginx UI login page, API responses, and asset references.
+// isNginxUI reports whether the body contains structural markers of the Nginx UI
+// management interface: title tag, HTML element attributes (class/id/src/href),
+// or JSON keys. Prose mentions of "Nginx UI" in body text are intentionally
+// excluded to prevent false-positive SeverityHigh findings on documentation or
+// blog pages.
 func isNginxUI(body []byte) bool {
-	return nginxUIRegex.Match(body)
+	return nginxUITitleRegex.Match(body) || nginxUIStructuralRegex.Match(body)
 }
 
 // isNginxErrorPage reports whether the body matches the default Nginx error page

@@ -100,6 +100,20 @@ func TestNginxFingerprinter_Match(t *testing.T) {
 			server:     "NGINX/1.24.0",
 			want:       true,
 		},
+		{
+			name:        "Tengine with text/html → false (must not fall through to Content-Type)",
+			statusCode:  200,
+			server:      "Tengine/2.3.3",
+			contentType: "text/html; charset=utf-8",
+			want:        false,
+		},
+		{
+			name:        "Tengine with application/json → false (must not fall through to Content-Type)",
+			statusCode:  200,
+			server:      "Tengine/2.3.3",
+			contentType: "application/json",
+			want:        false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -214,6 +228,17 @@ func TestNginxFingerprinter_Fingerprint_Valid(t *testing.T) {
 			wantDetectionContains: "server_header",
 			wantServerHeaderKey:   true,
 		},
+		{
+			name:                  "Prose mention of Nginx UI in body → no nginx_ui_exposed",
+			statusCode:            200,
+			server:                "nginx/1.25.3",
+			body:                  `<html><body><p>Nginx UI is a great management tool for nginx servers.</p></body></html>`,
+			wantVersion:           "1.25.3",
+			wantCPE:               "cpe:2.3:a:f5:nginx:1.25.3:*:*:*:*:*:*:*",
+			wantVariant:           "nginx",
+			wantDetectionContains: "server_header",
+			wantServerHeaderKey:   true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -259,6 +284,10 @@ func TestNginxFingerprinter_Fingerprint_Valid(t *testing.T) {
 				exposed, ok := result.Metadata["nginx_ui_exposed"].(bool)
 				assert.True(t, ok, "nginx_ui_exposed should be bool")
 				assert.True(t, exposed, "nginx_ui_exposed should be true")
+			}
+			if !tt.wantNginxUIExposed {
+				_, hasUIExposed := result.Metadata["nginx_ui_exposed"]
+				assert.False(t, hasUIExposed, "nginx_ui_exposed should be absent when not expected")
 			}
 			if tt.wantSeverityHigh {
 				assert.NotEmpty(t, result.Severity, "expected severity to be set")
@@ -315,6 +344,18 @@ func TestNginxFingerprinter_Fingerprint_Invalid(t *testing.T) {
 			statusCode: 200,
 			server:     "Apache/2.4.57",
 			body:       "",
+		},
+		{
+			name:       "Server: Tengine with nginx error page body → nil",
+			statusCode: 200,
+			server:     "Tengine/2.3.3",
+			body:       "<html><body><center>nginx</center></body></html>",
+		},
+		{
+			name:       "Server: Tengine with Nginx UI title → nil",
+			statusCode: 200,
+			server:     "Tengine/2.3.3",
+			body:       `<html><head><title>Nginx UI</title></head><body></body></html>`,
 		},
 	}
 
@@ -389,6 +430,12 @@ func TestExtractNginxVersion(t *testing.T) {
 			body:   "",
 			want:   "",
 		},
+		{
+			name:   "Incidental body mention does NOT extract version",
+			server: "nginx",
+			body:   "<html><body><p>Please upgrade to nginx/1.18.0 for security</p></body></html>",
+			want:   "",
+		},
 	}
 
 	for _, tt := range tests {
@@ -450,24 +497,39 @@ func TestIsNginxUI(t *testing.T) {
 		want bool
 	}{
 		{
-			name: "nginx-ui in body → true",
+			name: "HTML class attribute with nginx-ui → true",
 			body: `<div class="nginx-ui-app"></div>`,
 			want: true,
 		},
 		{
-			name: "Nginx UI in body → true",
+			name: "Title tag with Nginx UI → true",
 			body: `<title>Nginx UI</title>`,
 			want: true,
 		},
 		{
-			name: "nginxui in body → true",
-			body: `<meta name="application" content="nginxui">`,
+			name: "Script src with nginxui → true",
+			body: `<script src="/assets/nginxui.js"></script>`,
 			want: true,
 		},
 		{
-			name: "NGINX UI uppercase → true",
-			body: `<h1>NGINX UI Login</h1>`,
+			name: "JSON key nginx_ui → true",
+			body: `{"nginx_ui":"enabled","version":"2.0"}`,
 			want: true,
+		},
+		{
+			name: "HTML id attribute with nginx-ui → true",
+			body: `<div id="nginx-ui-root"></div>`,
+			want: true,
+		},
+		{
+			name: "Prose mention in paragraph → false (not a structural marker)",
+			body: `<p>Nginx UI is a great management tool for nginx servers.</p>`,
+			want: false,
+		},
+		{
+			name: "Prose mention in heading → false (not a structural marker)",
+			body: `<h1>NGINX UI Login</h1>`,
+			want: false,
 		},
 		{
 			name: "plain nginx without UI marker → false",
