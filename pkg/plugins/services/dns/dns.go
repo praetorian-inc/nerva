@@ -17,6 +17,8 @@ package dns
 import (
 	"bytes"
 	"crypto/rand"
+	"encoding/binary"
+	"fmt"
 	"net"
 	"time"
 
@@ -108,6 +110,63 @@ func (p *UDPPlugin) Type() plugins.Protocol {
 	return plugins.UDP
 }
 
+// checkZoneTransfer sends an AXFR query for the root zone and returns the
+// number of answer records if the transfer succeeds (RCODE 0, ANCOUNT > 0).
+// Returns 0 if the server refuses or returns an error response.
+func checkZoneTransfer(conn net.Conn, timeout time.Duration) (int, error) {
+	// Build an AXFR query for the root zone ".".
+	// DNS header: TxID(2) + Flags(2) + QDCOUNT(2) + ANCOUNT(2) + NSCOUNT(2) + ARCOUNT(2) = 12 bytes
+	// Question: QNAME=0x00 (root), QTYPE=252 (AXFR), QCLASS=1 (IN)
+	transactionID := make([]byte, 2)
+	if _, err := rand.Read(transactionID); err != nil {
+		return 0, fmt.Errorf("failed to generate transaction ID: %w", err)
+	}
+
+	query := []byte{
+		transactionID[0], transactionID[1], // Transaction ID
+		0x00, 0x00, // Flags: standard query
+		0x00, 0x01, // QDCOUNT: 1 question
+		0x00, 0x00, // ANCOUNT: 0
+		0x00, 0x00, // NSCOUNT: 0
+		0x00, 0x00, // ARCOUNT: 0
+		0x00,       // QNAME: root zone (single empty label)
+		0x00, 0xfc, // QTYPE: 252 (AXFR)
+		0x00, 0x01, // QCLASS: 1 (IN)
+	}
+
+	// DNS over TCP requires a 2-byte big-endian length prefix.
+	msgLen := uint16(len(query))
+	packet := make([]byte, 2+len(query))
+	binary.BigEndian.PutUint16(packet[0:2], msgLen)
+	copy(packet[2:], query)
+
+	response, err := utils.SendRecv(conn, packet, timeout)
+	if err != nil {
+		return 0, err
+	}
+
+	// Minimum response: 2-byte length prefix + 12-byte DNS header = 14 bytes.
+	if len(response) < 14 {
+		return 0, nil
+	}
+
+	// DNS message starts after the 2-byte TCP length prefix.
+	msg := response[2:]
+	if len(msg) < 12 {
+		return 0, nil
+	}
+
+	// RCODE is the lower 4 bits of the second flags byte (msg[3]).
+	rcode := msg[3] & 0x0f
+	if rcode != 0 {
+		return 0, nil
+	}
+
+	// ANCOUNT is at bytes 6-7 of the DNS message.
+	ancount := int(binary.BigEndian.Uint16(msg[6:8]))
+	return ancount, nil
+}
+
 func (p TCPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
 	isDNS, err := CheckDNS(conn, timeout)
 	if err != nil {
@@ -116,8 +175,21 @@ func (p TCPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Targ
 
 	if isDNS {
 		payload := plugins.ServiceDNS{}
+		service := plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP)
 
-		return plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP), nil
+		if target.Misconfigs {
+			ancount, err := checkZoneTransfer(conn, timeout)
+			if err == nil && ancount > 0 {
+				service.SecurityFindings = []plugins.SecurityFinding{{
+					ID:          "dns-zone-transfer",
+					Severity:    plugins.SeverityHigh,
+					Description: "DNS zone transfer (AXFR) enabled; exposes all DNS records including internal hostnames and network topology",
+					Evidence:    fmt.Sprintf("AXFR returned %d records", ancount),
+				}}
+			}
+		}
+
+		return service, nil
 	}
 
 	return nil, nil

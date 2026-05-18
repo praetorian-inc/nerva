@@ -183,7 +183,23 @@ func (p *Plugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target
 		ResultCode:          resultCode,
 	}
 
-	return plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP), nil
+	service := plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP)
+	if target.Misconfigs {
+		evidence := "PPTP server detected"
+		if hostname != "" {
+			evidence += ": hostname=" + hostname
+		}
+		if vendorString != "" {
+			evidence += ", vendor=" + vendorString
+		}
+		service.SecurityFindings = []plugins.SecurityFinding{{
+			ID:          "pptp-insecure",
+			Severity:    plugins.SeverityMedium,
+			Description: "PPTP uses MS-CHAPv2 authentication which is cryptographically broken and crackable within 24 hours",
+			Evidence:    evidence,
+		}}
+	}
+	return service, nil
 }
 
 // extractNullTerminated returns the string before the first null byte,
