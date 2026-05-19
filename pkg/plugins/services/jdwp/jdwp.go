@@ -87,7 +87,7 @@ func DetectJDWPVersion(conn net.Conn, timeout time.Duration) (*plugins.ServiceJD
 		return nil, err
 	}
 
-	if versionResponse.Length != (uint32(len((response)))) { // #nosec G115 -- response bounded by 4096-byte Recv
+	if int(versionResponse.Length) != len(response) {
 		return nil, nil
 	}
 
@@ -96,7 +96,7 @@ func DetectJDWPVersion(conn net.Conn, timeout time.Duration) (*plugins.ServiceJD
 	if err != nil {
 		return nil, err
 	}
-	if descriptionLength > uint32(responseBuf.Len()) { // #nosec G115 -- responseBuf bounded by 4096-byte Recv
+	if int(descriptionLength) > responseBuf.Len() {
 		return nil, nil
 	}
 	description := make([]byte, descriptionLength)
@@ -121,7 +121,7 @@ func DetectJDWPVersion(conn net.Conn, timeout time.Duration) (*plugins.ServiceJD
 	if err != nil {
 		return nil, err
 	}
-	if vmVersionLength > uint32(responseBuf.Len()) { // #nosec G115 -- responseBuf bounded by 4096-byte Recv
+	if int(vmVersionLength) > responseBuf.Len() {
 		return nil, nil
 	}
 	vmVersion := make([]byte, vmVersionLength)
@@ -135,7 +135,7 @@ func DetectJDWPVersion(conn net.Conn, timeout time.Duration) (*plugins.ServiceJD
 	if err != nil {
 		return nil, err
 	}
-	if vmNameLength > uint32(responseBuf.Len()) { // #nosec G115 -- responseBuf bounded by 4096-byte Recv
+	if int(vmNameLength) > responseBuf.Len() {
 		return nil, nil
 	}
 	vmName := make([]byte, vmNameLength)
