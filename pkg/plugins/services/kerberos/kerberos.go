@@ -50,6 +50,7 @@ package kerberos
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"net"
 	"time"
 
@@ -62,9 +63,35 @@ type KerberosPlugin struct{}
 const KERBEROS = "kerberos"
 
 const (
-	tagKRBError = 0x7E // APPLICATION 30, constructed
-	tagASREP    = 0x6B // APPLICATION 11, constructed
+	tagKRBError        = 0x7E // APPLICATION 30, constructed
+	tagASREP           = 0x6B // APPLICATION 11, constructed
+	kdcErrEtypeNosupp  = 14   // KDC_ERR_ETYPE_NOSUPP
 )
+
+// rc4OnlyProbe is a 92-byte AS-REQ that requests only etype 23 (RC4-HMAC).
+// Used to probe whether a KDC accepts RC4-HMAC when other etypes are not offered.
+// If the KDC responds without KDC_ERR_ETYPE_NOSUPP (error 14), RC4-HMAC is supported.
+var rc4OnlyProbe = []byte{
+	0x6a, 0x5a,                                           // APPLICATION 10, length 90
+	0x30, 0x58,                                           // SEQUENCE, length 88
+	0xa1, 0x03, 0x02, 0x01, 0x05,                         // pvno = 5
+	0xa2, 0x03, 0x02, 0x01, 0x0a,                         // msg-type = 10 (AS-REQ)
+	0xa4, 0x4c,                                           // context [4], length 76
+	0x30, 0x4a,                                           // SEQUENCE, length 74
+	0xa0, 0x07, 0x03, 0x05, 0x00, 0x50, 0x80, 0x00, 0x10, // kdc-options
+	0xa2, 0x04, 0x1b, 0x02, 0x4e, 0x4d,                  // realm "NM"
+	0xa3, 0x17, 0x30, 0x15,                               // sname
+	0xa0, 0x03, 0x02, 0x01, 0x00,
+	0xa1, 0x0e, 0x30, 0x0c,
+	0x1b, 0x06, 0x6b, 0x72, 0x62, 0x74, 0x67, 0x74, // "krbtgt"
+	0x1b, 0x02, 0x4e, 0x4d,                           // "NM"
+	0xa5, 0x11, 0x18, 0x0f,                           // till (GeneralizedTime)
+	0x31, 0x39, 0x37, 0x30, 0x30, 0x31, 0x30, 0x31,
+	0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x5a,
+	0xa7, 0x06, 0x02, 0x04, 0x1f, 0x1e, 0xb9, 0xd9, // nonce
+	0xa8, 0x05, 0x30, 0x03,                           // etype SEQUENCE, length 3
+	0x02, 0x01, 0x17,                                 // INTEGER 23 (rc4-hmac)
+}
 
 // The raw AS-REQ bytes (113 bytes) - proven by Nmap
 var asReqProbe = []byte{
@@ -233,6 +260,71 @@ func parseKerberosError(response []byte) (string, int, string) {
 	return realm, errorCode, errorText
 }
 
+// probeRC4Support sends the rc4OnlyProbe on an existing connection and returns
+// true if the KDC accepts RC4-HMAC (etype 23).
+func probeRC4Support(conn net.Conn, timeout time.Duration) bool {
+	tcpProbe := make([]byte, 4+len(rc4OnlyProbe))
+	binary.BigEndian.PutUint32(tcpProbe[0:4], uint32(len(rc4OnlyProbe))) // #nosec G115 -- rc4OnlyProbe is a fixed 92-byte literal; cannot overflow uint32
+	copy(tcpProbe[4:], rc4OnlyProbe)
+
+	response, err := utils.SendRecv(conn, tcpProbe, timeout)
+	if err != nil {
+		return false
+	}
+
+	// Response must be at least 10 bytes (4-byte TCP length + 6 bytes Kerberos minimum)
+	if len(response) < 10 {
+		return false
+	}
+
+	// Skip 4-byte TCP prefix and verify Kerberos message type
+	kerberosData := response[4:]
+	if kerberosData[0] != tagKRBError && kerberosData[0] != tagASREP {
+		return false
+	}
+
+	// AS-REP means the KDC authenticated the request using RC4-HMAC — even more concerning
+	if kerberosData[0] == tagASREP {
+		return true
+	}
+
+	// For KRB-ERROR responses, extract the error code
+	_, errorCode, _ := parseKerberosError(response)
+
+	// errorCode 0 from a KRB-ERROR means the parser failed to extract the code.
+	// Our probe uses an invalid principal, so a real KDC always returns a non-zero
+	// error code. Default to "not vulnerable" on parse failure rather than false positive.
+	if errorCode == 0 {
+		return false
+	}
+
+	return errorCode != kdcErrEtypeNosupp
+}
+
+// checkWeakEtypes opens a new TCP connection to the target and probes for RC4-HMAC support.
+func checkWeakEtypes(target plugins.Target, timeout time.Duration) bool {
+	conn, err := net.DialTimeout("tcp", target.Address.String(), timeout)
+	if err != nil {
+		return false
+	}
+	defer conn.Close()
+	return probeRC4Support(conn, timeout)
+}
+
+// kerberosWeakEtypesFinding returns a SecurityFinding for a KDC that accepts RC4-HMAC.
+func kerberosWeakEtypesFinding(realm string) plugins.SecurityFinding {
+	evidence := "RC4-HMAC (etype 23) accepted by KDC"
+	if realm != "" {
+		evidence = fmt.Sprintf("RC4-HMAC (etype 23) accepted by KDC in realm %s", realm)
+	}
+	return plugins.SecurityFinding{
+		ID:          "kerberos-weak-etypes",
+		Severity:    plugins.SeverityMedium,
+		Description: "Kerberos KDC supports RC4-HMAC (etype 23) — enables Kerberoasting attacks",
+		Evidence:    evidence,
+	}
+}
+
 func (p *KerberosPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
 	detected, response, err := detectKerberos(conn, timeout)
 	if err != nil {
@@ -253,7 +345,15 @@ func (p *KerberosPlugin) Run(conn net.Conn, timeout time.Duration, target plugin
 	}
 
 	// Kerberos version is always "5" for Kerberos v5
-	return plugins.CreateServiceFrom(target, payload, false, "5", plugins.TCP), nil
+	service := plugins.CreateServiceFrom(target, payload, false, "5", plugins.TCP)
+
+	if target.Misconfigs {
+		if checkWeakEtypes(target, timeout) {
+			service.SecurityFindings = []plugins.SecurityFinding{kerberosWeakEtypesFinding(realm)}
+		}
+	}
+
+	return service, nil
 }
 
 func (p *KerberosPlugin) PortPriority(port uint16) bool {

@@ -17,13 +17,48 @@ package kerberos
 import (
 	"bytes"
 	"encoding/binary"
+	"net"
+	"net/netip"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/ory/dockertest/v3"
 
 	"github.com/praetorian-inc/nerva/pkg/plugins"
 	"github.com/praetorian-inc/nerva/pkg/test"
 )
+
+// mockKerberosConn is a net.Conn that replays a fixed response then times out.
+type mockKerberosConn struct {
+	responseData []byte
+	readOffset   int
+}
+
+type timeoutError struct{}
+
+func (e *timeoutError) Error() string   { return "timeout" }
+func (e *timeoutError) Timeout() bool   { return true }
+func (e *timeoutError) Temporary() bool { return true }
+
+func (m *mockKerberosConn) Read(b []byte) (int, error) {
+	if m.readOffset >= len(m.responseData) {
+		return 0, &net.OpError{Op: "read", Err: &timeoutError{}}
+	}
+	n := copy(b, m.responseData[m.readOffset:])
+	m.readOffset += n
+	return n, nil
+}
+
+func (m *mockKerberosConn) Write(b []byte) (int, error)  { return len(b), nil }
+func (m *mockKerberosConn) Close() error                  { return nil }
+func (m *mockKerberosConn) SetDeadline(t time.Time) error { return nil }
+func (m *mockKerberosConn) SetReadDeadline(t time.Time) error {
+	return nil
+}
+func (m *mockKerberosConn) SetWriteDeadline(t time.Time) error { return nil }
+func (m *mockKerberosConn) LocalAddr() net.Addr                { return nil }
+func (m *mockKerberosConn) RemoteAddr() net.Addr               { return nil }
 
 func TestParseDERLength(t *testing.T) {
 	tests := []struct {
@@ -254,6 +289,181 @@ func buildTestKRBError(errorCode int, realm string, etext string) []byte {
 	tcpLen := make([]byte, 4)
 	binary.BigEndian.PutUint32(tcpLen, uint32(len(app)))
 	return append(tcpLen, app...)
+}
+
+func TestKerberosWeakEtypesFindingHelper(t *testing.T) {
+	t.Run("returns correct fields for non-empty realm", func(t *testing.T) {
+		f := kerberosWeakEtypesFinding("EXAMPLE.COM")
+		if f.ID != "kerberos-weak-etypes" {
+			t.Errorf("ID: got %q, want %q", f.ID, "kerberos-weak-etypes")
+		}
+		if f.Severity != plugins.SeverityMedium {
+			t.Errorf("Severity: got %q, want %q", f.Severity, plugins.SeverityMedium)
+		}
+		if !strings.Contains(f.Description, "RC4-HMAC") {
+			t.Errorf("Description missing RC4-HMAC: %q", f.Description)
+		}
+		if !strings.Contains(f.Evidence, "RC4-HMAC") {
+			t.Errorf("Evidence missing RC4-HMAC: %q", f.Evidence)
+		}
+		if !strings.Contains(f.Evidence, "EXAMPLE.COM") {
+			t.Errorf("Evidence missing realm EXAMPLE.COM: %q", f.Evidence)
+		}
+	})
+
+	t.Run("empty realm omits realm from evidence", func(t *testing.T) {
+		f := kerberosWeakEtypesFinding("")
+		if !strings.Contains(f.Evidence, "RC4-HMAC") {
+			t.Errorf("Evidence missing RC4-HMAC: %q", f.Evidence)
+		}
+		if strings.Contains(f.Evidence, "realm") {
+			t.Errorf("Evidence should not mention realm for empty realm: %q", f.Evidence)
+		}
+	})
+}
+
+func TestKerberosNoFindingWhenMisconfigsDisabled(t *testing.T) {
+	response := buildTestKRBError(6, "EXAMPLE.COM", "")
+	conn := &mockKerberosConn{responseData: response}
+
+	target := plugins.Target{
+		Address:    netip.MustParseAddrPort("127.0.0.1:88"),
+		Host:       "127.0.0.1",
+		Misconfigs: false,
+	}
+
+	p := &KerberosPlugin{}
+	service, err := p.Run(conn, 2*time.Second, target)
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if service == nil {
+		t.Fatal("expected a detected service, got nil")
+	}
+	if len(service.SecurityFindings) != 0 {
+		t.Errorf("expected no SecurityFindings when Misconfigs=false, got %d", len(service.SecurityFindings))
+	}
+}
+
+func TestRC4OnlyProbeStructure(t *testing.T) {
+	if len(rc4OnlyProbe) != 92 {
+		t.Errorf("rc4OnlyProbe length: got %d, want 92", len(rc4OnlyProbe))
+	}
+	// APPLICATION 10 tag and length
+	if rc4OnlyProbe[0] != 0x6a {
+		t.Errorf("APPLICATION tag: got 0x%02x, want 0x6a", rc4OnlyProbe[0])
+	}
+	if rc4OnlyProbe[1] != 0x5a {
+		t.Errorf("APPLICATION length: got 0x%02x, want 0x5a (90)", rc4OnlyProbe[1])
+	}
+	// SEQUENCE tag and length
+	if rc4OnlyProbe[2] != 0x30 {
+		t.Errorf("SEQUENCE tag: got 0x%02x, want 0x30", rc4OnlyProbe[2])
+	}
+	if rc4OnlyProbe[3] != 0x58 {
+		t.Errorf("SEQUENCE length: got 0x%02x, want 0x58 (88)", rc4OnlyProbe[3])
+	}
+	// pvno pattern: [1] context tag with INTEGER value 5
+	pvno := []byte{0xa1, 0x03, 0x02, 0x01, 0x05}
+	if !bytes.Contains(rc4OnlyProbe, pvno) {
+		t.Errorf("pvno pattern not found in rc4OnlyProbe")
+	}
+	// msg-type = 10 (AS-REQ)
+	msgType := []byte{0xa2, 0x03, 0x02, 0x01, 0x0a}
+	if !bytes.Contains(rc4OnlyProbe, msgType) {
+		t.Errorf("msg-type=10 pattern not found in rc4OnlyProbe")
+	}
+	// etype section ends with etype 23 only
+	etypePattern := []byte{0xa8, 0x05, 0x30, 0x03, 0x02, 0x01, 0x17}
+	if !bytes.Contains(rc4OnlyProbe, etypePattern) {
+		t.Errorf("etype-23-only pattern not found in rc4OnlyProbe")
+	}
+	// realm "NM" bytes
+	nmRealm := []byte{0x4e, 0x4d}
+	if !bytes.Contains(rc4OnlyProbe, nmRealm) {
+		t.Errorf("realm NM bytes not found in rc4OnlyProbe")
+	}
+}
+
+func TestKerberosWithMisconfigsEnabled(t *testing.T) {
+	response := buildTestKRBError(6, "EXAMPLE.COM", "")
+	conn := &mockKerberosConn{responseData: response}
+
+	// TEST-NET address (RFC 5737) — guaranteed not to route/connect.
+	target := plugins.Target{
+		Address:    netip.MustParseAddrPort("192.0.2.1:88"),
+		Host:       "192.0.2.1",
+		Misconfigs: true,
+	}
+
+	p := &KerberosPlugin{}
+	// Short timeout so checkWeakEtypes fails quickly on the unreachable address.
+	service, err := p.Run(conn, 100*time.Millisecond, target)
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if service == nil {
+		t.Fatal("expected a detected service, got nil")
+	}
+	// checkWeakEtypes dials 192.0.2.1:88 which fails, so returns false → no finding.
+	if len(service.SecurityFindings) != 0 {
+		t.Errorf("expected no SecurityFindings when checkWeakEtypes cannot connect, got %d", len(service.SecurityFindings))
+	}
+}
+
+func TestProbeRC4SupportAccepted(t *testing.T) {
+	// KRB-ERROR with error code 6 (C_PRINCIPAL_UNKNOWN) — RC4 was accepted but
+	// the invalid principal doesn't exist. probeRC4Support should return true.
+	response := buildTestKRBError(6, "EXAMPLE.COM", "")
+	conn := &mockKerberosConn{responseData: response}
+	if !probeRC4Support(conn, 2*time.Second) {
+		t.Error("expected probeRC4Support to return true for error code 6")
+	}
+}
+
+func TestProbeRC4SupportRejected(t *testing.T) {
+	// KRB-ERROR with error code 14 (KDC_ERR_ETYPE_NOSUPP) — RC4 rejected.
+	// probeRC4Support should return false.
+	response := buildTestKRBError(14, "EXAMPLE.COM", "")
+	conn := &mockKerberosConn{responseData: response}
+	if probeRC4Support(conn, 2*time.Second) {
+		t.Error("expected probeRC4Support to return false for error code 14")
+	}
+}
+
+func TestProbeRC4SupportParseFailure(t *testing.T) {
+	// KRB-ERROR tag (0x7E) followed by garbage — parseKerberosError returns errorCode=0.
+	// probeRC4Support must return false (no false positive).
+	garbage := make([]byte, 20)
+	garbage[0] = 0x7E // KRB-ERROR tag
+	// Fill rest with non-parseable bytes
+	for i := 1; i < len(garbage); i++ {
+		garbage[i] = 0xFF
+	}
+	tcpLen := make([]byte, 4)
+	binary.BigEndian.PutUint32(tcpLen, uint32(len(garbage)))
+	response := append(tcpLen, garbage...)
+
+	conn := &mockKerberosConn{responseData: response}
+	if probeRC4Support(conn, 2*time.Second) {
+		t.Error("expected probeRC4Support to return false when parse fails (errorCode=0)")
+	}
+}
+
+func TestProbeRC4SupportASREP(t *testing.T) {
+	// AS-REP response (tag 0x6B) — KDC granted the request with RC4-HMAC.
+	// probeRC4Support should return true.
+	asrep := make([]byte, 10)
+	asrep[0] = tagASREP // 0x6B
+	copy(asrep[1:], pvnoPattern)
+	tcpLen := make([]byte, 4)
+	binary.BigEndian.PutUint32(tcpLen, uint32(len(asrep)))
+	response := append(tcpLen, asrep...)
+
+	conn := &mockKerberosConn{responseData: response}
+	if !probeRC4Support(conn, 2*time.Second) {
+		t.Error("expected probeRC4Support to return true for AS-REP response")
+	}
 }
 
 func TestKerberos(t *testing.T) {

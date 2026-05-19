@@ -126,7 +126,21 @@ func (p *IPMIPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 	}
 	payload := plugins.ServiceIPMI{}
 
-	return plugins.CreateServiceFrom(target, payload, false, "", plugins.UDP), nil
+	service := plugins.CreateServiceFrom(target, payload, false, "", plugins.UDP)
+	if target.Misconfigs {
+		service.SecurityFindings = []plugins.SecurityFinding{ipmiExposedFinding()}
+	}
+	return service, nil
+}
+
+// ipmiExposedFinding returns a SecurityFinding for an exposed IPMI service.
+func ipmiExposedFinding() plugins.SecurityFinding {
+	return plugins.SecurityFinding{
+		ID:          "ipmi-exposed",
+		Severity:    plugins.SeverityHigh,
+		Description: "IPMI service exposed — evaluate for cipher zero authentication bypass (CVE-2013-4786)",
+		Evidence:    "IPMI Get Channel Authentication Capabilities response received",
+	}
 }
 
 func (p *IPMIPlugin) Name() string {

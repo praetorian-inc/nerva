@@ -17,6 +17,7 @@ package jdwp
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"net"
 	"time"
 
@@ -166,11 +167,29 @@ func (p *JDWPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 		return nil, err
 	}
 
+	var service *plugins.Service
 	if info == nil {
-		return plugins.CreateServiceFrom(target, plugins.ServiceJDWP{}, false, "", plugins.TCP), nil
+		service = plugins.CreateServiceFrom(target, plugins.ServiceJDWP{}, false, "", plugins.TCP)
+		if target.Misconfigs {
+			service.SecurityFindings = []plugins.SecurityFinding{jdwpExposedFinding("JDWP handshake succeeded")}
+		}
+	} else {
+		service = plugins.CreateServiceFrom(target, info, false, info.VMVersion, plugins.TCP)
+		if target.Misconfigs {
+			service.SecurityFindings = []plugins.SecurityFinding{jdwpExposedFinding(fmt.Sprintf("JDWP handshake succeeded, VM: %s %s", info.VMName, info.VMVersion))}
+		}
 	}
+	return service, nil
+}
 
-	return plugins.CreateServiceFrom(target, info, false, info.VMVersion, plugins.TCP), nil
+// jdwpExposedFinding returns a SecurityFinding for an exposed JDWP debug interface.
+func jdwpExposedFinding(evidence string) plugins.SecurityFinding {
+	return plugins.SecurityFinding{
+		ID:          "jdwp-exposed",
+		Severity:    plugins.SeverityCritical,
+		Description: "JDWP debug interface exposed — allows remote code execution without authentication",
+		Evidence:    evidence,
+	}
 }
 
 func (p *JDWPPlugin) PortPriority(port uint16) bool {

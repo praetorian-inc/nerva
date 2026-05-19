@@ -25,14 +25,16 @@ import (
 )
 
 const (
-	AMQP             = "amqp"
-	AMQPS            = "amqps"
-	FrameTypeMethod  = 0x01
-	ConnectionClass  = 10
-	ConnectionStart  = 10
-	FrameEnd         = 0xCE
-	MinFrameSize     = 8
-	RabbitMQCPEMatch = "cpe:2.3:a:pivotal_software:rabbitmq"
+	AMQP              = "amqp"
+	AMQPS             = "amqps"
+	FrameTypeMethod   = 0x01
+	ConnectionClass   = 10
+	ConnectionStart   = 10
+	ConnectionStartOk = 11
+	ConnectionTune    = 30
+	FrameEnd          = 0xCE
+	MinFrameSize      = 8
+	RabbitMQCPEMatch  = "cpe:2.3:a:pivotal_software:rabbitmq"
 )
 
 type AMQPPlugin struct{}
@@ -213,6 +215,76 @@ func parseServerProperties(data []byte) (product, version, platform string) {
 	return product, version, platform
 }
 
+// checkDefaultCredentials sends an AMQP Connection.StartOk frame with SASL PLAIN
+// guest/guest credentials on the already-open conn (after DetectAMQP consumed the
+// Connection.Start frame). It returns true if the server responds with
+// Connection.Tune (class 10, method 30), indicating the credentials were accepted.
+func checkDefaultCredentials(conn net.Conn, timeout time.Duration) bool {
+	// SASL PLAIN response: NUL + username + NUL + password
+	saslResponse := []byte("\x00guest\x00guest") // 12 bytes
+
+	// Build Connection.StartOk payload:
+	//   class-id (2)       = 0x000A (10)
+	//   method-id (2)      = 0x000B (11)
+	//   client-properties (4) = 0x00000000 (empty table)
+	//   mechanism: short string "PLAIN" (1-byte length + 5 bytes)
+	//   response: long string (4-byte length + 12 bytes)
+	//   locale: short string "en_US" (1-byte length + 5 bytes)
+	payload := []byte{
+		0x00, 0x0A, // class-id: 10 (Connection)
+		0x00, 0x0B, // method-id: 11 (StartOk)
+		0x00, 0x00, 0x00, 0x00, // client-properties: empty table
+		0x05, 'P', 'L', 'A', 'I', 'N', // mechanism: "PLAIN" (short string)
+		0x00, 0x00, 0x00, 0x0C, // response length: 12
+	}
+	payload = append(payload, saslResponse...)
+	payload = append(payload, 0x05, 'e', 'n', '_', 'U', 'S') // locale: "en_US"
+
+	// Build the full Method frame:
+	//   frame-type (1) = 0x01
+	//   channel (2)    = 0x0000
+	//   payload-size (4)
+	//   payload
+	//   frame-end (1)  = 0xCE
+	frame := make([]byte, 7+len(payload)+1)
+	frame[0] = FrameTypeMethod
+	frame[1] = 0x00
+	frame[2] = 0x00
+	binary.BigEndian.PutUint32(frame[3:7], uint32(len(payload))) // #nosec G115 -- payload is locally constructed (~36 bytes); cannot overflow uint32
+	copy(frame[7:], payload)
+	frame[7+len(payload)] = FrameEnd
+
+	response, err := utils.SendRecv(conn, frame, timeout)
+	if err != nil || len(response) < 12 {
+		return false
+	}
+
+	// Validate Connection.Tune response:
+	//   frame-type must be 0x01 (Method)
+	//   class-id at bytes 7-8 must be 0x000A (10 = Connection)
+	//   method-id at bytes 9-10 must be 0x001E (30 = Tune)
+	if response[0] != FrameTypeMethod {
+		return false
+	}
+	classID := binary.BigEndian.Uint16(response[7:9])
+	methodID := binary.BigEndian.Uint16(response[9:11])
+	return classID == ConnectionClass && methodID == ConnectionTune
+}
+
+// amqpDefaultCredsFinding returns a SecurityFinding for AMQP default guest/guest credentials.
+func amqpDefaultCredsFinding(product string) plugins.SecurityFinding {
+	evidence := "SASL PLAIN authentication succeeded with guest/guest"
+	if product != "" {
+		evidence = fmt.Sprintf("SASL PLAIN authentication succeeded with guest/guest on %s", product)
+	}
+	return plugins.SecurityFinding{
+		ID:          "amqp-default-creds",
+		Severity:    plugins.SeverityHigh,
+		Description: "AMQP service accepts default guest/guest credentials",
+		Evidence:    evidence,
+	}
+}
+
 // DetectAMQP performs AMQP protocol detection
 func DetectAMQP(conn net.Conn, timeout time.Duration) (product, version, platform string, detected bool, err error) {
 	// Send AMQP 0-9-1 protocol header
@@ -283,7 +355,13 @@ func (p *AMQPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 		CPEs:     generateCPE(product, version),
 	}
 
-	return plugins.CreateServiceFrom(target, payload, false, version, plugins.TCP), nil
+	service := plugins.CreateServiceFrom(target, payload, false, version, plugins.TCP)
+	if target.Misconfigs {
+		if checkDefaultCredentials(conn, timeout) {
+			service.SecurityFindings = []plugins.SecurityFinding{amqpDefaultCredsFinding(product)}
+		}
+	}
+	return service, nil
 }
 
 func (p *AMQPPlugin) PortPriority(port uint16) bool {
@@ -326,7 +404,13 @@ func (p *TLSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 		CPEs:     generateCPE(product, version),
 	}
 
-	return plugins.CreateServiceFrom(target, payload, true, version, plugins.TCP), nil
+	service := plugins.CreateServiceFrom(target, payload, true, version, plugins.TCP)
+	if target.Misconfigs {
+		if checkDefaultCredentials(conn, timeout) {
+			service.SecurityFindings = []plugins.SecurityFinding{amqpDefaultCredsFinding(product)}
+		}
+	}
+	return service, nil
 }
 
 func (p *TLSPlugin) PortPriority(port uint16) bool {
