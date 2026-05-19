@@ -87,7 +87,7 @@ func DetectJDWPVersion(conn net.Conn, timeout time.Duration) (*plugins.ServiceJD
 		return nil, err
 	}
 
-	if versionResponse.Length != (uint32(len((response)))) {
+	if versionResponse.Length != (uint32(len((response)))) { // #nosec G115 -- response bounded by 4096-byte Recv
 		return nil, nil
 	}
 
@@ -95,6 +95,9 @@ func DetectJDWPVersion(conn net.Conn, timeout time.Duration) (*plugins.ServiceJD
 	err = binary.Read(responseBuf, binary.BigEndian, &descriptionLength)
 	if err != nil {
 		return nil, err
+	}
+	if descriptionLength > uint32(responseBuf.Len()) { // #nosec G115 -- responseBuf bounded by 4096-byte Recv
+		return nil, nil
 	}
 	description := make([]byte, descriptionLength)
 	err = binary.Read(responseBuf, binary.BigEndian, &description)
@@ -118,6 +121,9 @@ func DetectJDWPVersion(conn net.Conn, timeout time.Duration) (*plugins.ServiceJD
 	if err != nil {
 		return nil, err
 	}
+	if vmVersionLength > uint32(responseBuf.Len()) { // #nosec G115 -- responseBuf bounded by 4096-byte Recv
+		return nil, nil
+	}
 	vmVersion := make([]byte, vmVersionLength)
 	err = binary.Read(responseBuf, binary.BigEndian, &vmVersion)
 	if err != nil {
@@ -128,6 +134,9 @@ func DetectJDWPVersion(conn net.Conn, timeout time.Duration) (*plugins.ServiceJD
 	err = binary.Read(responseBuf, binary.BigEndian, &vmNameLength)
 	if err != nil {
 		return nil, err
+	}
+	if vmNameLength > uint32(responseBuf.Len()) { // #nosec G115 -- responseBuf bounded by 4096-byte Recv
+		return nil, nil
 	}
 	vmName := make([]byte, vmNameLength)
 	err = binary.Read(responseBuf, binary.BigEndian, &vmName)

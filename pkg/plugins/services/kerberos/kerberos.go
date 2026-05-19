@@ -68,15 +68,14 @@ const (
 	kdcErrEtypeNosupp = 14   // KDC_ERR_ETYPE_NOSUPP
 )
 
-// ambiguousErrorCodes lists KRB-ERROR codes that a KDC may return before
-// checking the etype list. If the KDC validates the principal name before
-// evaluating encryption types, it returns one of these codes regardless of
-// whether RC4-HMAC is enabled. Treating them as "RC4 accepted" would be a
-// false positive.
+// ambiguousErrorCodes lists KRB-ERROR codes where the KDC response does not
+// reliably indicate whether the requested etype was evaluated. With the
+// detected realm from phase 1, WRONG_REALM is the only remaining ambiguous
+// case (it shouldn't occur but we handle it defensively). Other error codes
+// like C_PRINCIPAL_UNKNOWN (6) indicate the KDC processed past etype
+// validation — most implementations (MIT, Heimdal, AD 2012+) check etype
+// before principal lookup.
 var ambiguousErrorCodes = map[int]bool{
-	6:  true, // KDC_ERR_C_PRINCIPAL_UNKNOWN
-	7:  true, // KDC_ERR_S_PRINCIPAL_UNKNOWN
-	25: true, // KDC_ERR_PREAUTH_REQUIRED
 	68: true, // KDC_ERR_WRONG_REALM
 }
 
@@ -136,7 +135,7 @@ func init() {
 func detectKerberos(conn net.Conn, timeout time.Duration) (bool, []byte, error) {
 	// For TCP, prepend 4-byte big-endian length
 	tcpProbe := make([]byte, 4+len(asReqProbe))
-	binary.BigEndian.PutUint32(tcpProbe[0:4], uint32(len(asReqProbe)))
+	binary.BigEndian.PutUint32(tcpProbe[0:4], uint32(len(asReqProbe))) // #nosec G115 -- asReqProbe is a fixed 113-byte literal; cannot overflow uint32
 	copy(tcpProbe[4:], asReqProbe)
 
 	response, err := utils.SendRecv(conn, tcpProbe, timeout)
@@ -272,12 +271,72 @@ func parseKerberosError(response []byte) (string, int, string) {
 	return realm, errorCode, errorText
 }
 
-// probeRC4Support sends the rc4OnlyProbe on an existing connection and returns
-// true if the KDC accepts RC4-HMAC (etype 23).
-func probeRC4Support(conn net.Conn, timeout time.Duration) bool {
-	tcpProbe := make([]byte, 4+len(rc4OnlyProbe))
-	binary.BigEndian.PutUint32(tcpProbe[0:4], uint32(len(rc4OnlyProbe))) // #nosec G115 -- rc4OnlyProbe is a fixed 92-byte literal; cannot overflow uint32
-	copy(tcpProbe[4:], rc4OnlyProbe)
+// buildRC4Probe builds an AS-REQ with only etype 23 (RC4-HMAC) for the given realm.
+// It falls back to the static rc4OnlyProbe when realm is empty or too long (>100 bytes),
+// which avoids long-form DER encoding.
+func buildRC4Probe(realm string) []byte {
+	r := []byte(realm)
+	// Cap realm length to avoid long-form DER encoding
+	if len(r) == 0 || len(r) > 100 {
+		return rc4OnlyProbe // fall back to static probe
+	}
+
+	var body []byte
+	// [0] kdc-options
+	body = append(body, 0xa0, 0x07, 0x03, 0x05, 0x00, 0x50, 0x80, 0x00, 0x10)
+	// [2] realm = GeneralString(realm)
+	body = append(body, 0xa2, byte(2+len(r)), 0x1b, byte(len(r))) // #nosec G115 -- realm capped at 100 bytes
+	body = append(body, r...)
+	// [3] sname = PrincipalName { name-type=0, name-string=["krbtgt", realm] }
+	krbtgt := []byte("krbtgt")
+	nameStrSeqLen := 2 + len(krbtgt) + 2 + len(r)
+	snameInnerLen := 5 + 2 + 2 + nameStrSeqLen // name-type(5) + a1 wrapper(2) + 30 wrapper(2) + contents
+	body = append(body, 0xa3, byte(2+snameInnerLen), 0x30, byte(snameInnerLen)) // #nosec G115 -- realm capped at 100 bytes
+	body = append(body, 0xa0, 0x03, 0x02, 0x01, 0x00) // name-type = 0
+	body = append(body, 0xa1, byte(2+nameStrSeqLen), 0x30, byte(nameStrSeqLen)) // #nosec G115 -- realm capped at 100 bytes
+	body = append(body, 0x1b, byte(len(krbtgt))) // #nosec G115 -- realm capped at 100 bytes
+	body = append(body, krbtgt...)
+	body = append(body, 0x1b, byte(len(r))) // #nosec G115 -- realm capped at 100 bytes
+	body = append(body, r...)
+	// [5] till = GeneralizedTime "19700101000000Z"
+	body = append(body, 0xa5, 0x11, 0x18, 0x0f)
+	body = append(body, []byte("19700101000000Z")...)
+	// [7] nonce
+	body = append(body, 0xa7, 0x06, 0x02, 0x04, 0x1f, 0x1e, 0xb9, 0xd9)
+	// [8] etype = SEQUENCE { INTEGER 23 (rc4-hmac) }
+	body = append(body, 0xa8, 0x05, 0x30, 0x03, 0x02, 0x01, 0x17)
+
+	// Wrap body in [4] SEQUENCE
+	var reqBody []byte
+	reqBody = append(reqBody, 0xa4, byte(2+len(body)), 0x30, byte(len(body))) // #nosec G115 -- realm capped at 100 bytes
+	reqBody = append(reqBody, body...)
+
+	// Outer SEQUENCE: pvno + msg-type + req-body
+	var seq []byte
+	seq = append(seq, 0xa1, 0x03, 0x02, 0x01, 0x05) // pvno = 5
+	seq = append(seq, 0xa2, 0x03, 0x02, 0x01, 0x0a) // msg-type = 10 (AS-REQ)
+	seq = append(seq, reqBody...)
+
+	// Wrap in SEQUENCE
+	var outer []byte
+	outer = append(outer, 0x30, byte(len(seq))) // #nosec G115 -- realm capped at 100 bytes
+	outer = append(outer, seq...)
+
+	// Wrap in APPLICATION 10
+	var app []byte
+	app = append(app, 0x6a, byte(len(outer))) // #nosec G115 -- realm capped at 100 bytes
+	app = append(app, outer...)
+
+	return app
+}
+
+// probeRC4Support sends an AS-REQ with only etype 23 (RC4-HMAC) for the given realm
+// and returns true if the KDC accepts RC4-HMAC.
+func probeRC4Support(conn net.Conn, timeout time.Duration, realm string) bool {
+	probe := buildRC4Probe(realm)
+	tcpProbe := make([]byte, 4+len(probe))
+	binary.BigEndian.PutUint32(tcpProbe[0:4], uint32(len(probe))) // #nosec G115 -- probe is at most ~200 bytes; cannot overflow uint32
+	copy(tcpProbe[4:], probe)
 
 	response, err := utils.SendRecv(conn, tcpProbe, timeout)
 	if err != nil {
@@ -327,13 +386,13 @@ func probeRC4Support(conn net.Conn, timeout time.Duration) bool {
 }
 
 // checkWeakEtypes opens a new TCP connection to the target and probes for RC4-HMAC support.
-func checkWeakEtypes(target plugins.Target, timeout time.Duration) bool {
+func checkWeakEtypes(target plugins.Target, timeout time.Duration, realm string) bool {
 	conn, err := net.DialTimeout("tcp", target.Address.String(), timeout)
 	if err != nil {
 		return false
 	}
 	defer conn.Close()
-	return probeRC4Support(conn, timeout)
+	return probeRC4Support(conn, timeout, realm)
 }
 
 // kerberosWeakEtypesFinding returns a SecurityFinding for a KDC that accepts RC4-HMAC.
@@ -373,7 +432,7 @@ func (p *KerberosPlugin) Run(conn net.Conn, timeout time.Duration, target plugin
 	service := plugins.CreateServiceFrom(target, payload, false, "5", plugins.TCP)
 
 	if target.Misconfigs {
-		if checkWeakEtypes(target, timeout) {
+		if checkWeakEtypes(target, timeout, realm) {
 			service.SecurityFindings = []plugins.SecurityFinding{kerberosWeakEtypesFinding(realm)}
 		}
 	}

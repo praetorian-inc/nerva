@@ -214,7 +214,7 @@ func TestIPMIIntegrationMisconfigs(t *testing.T) {
 
 	resource, err := pool.RunWithOptions(&dockertest.RunOptions{
 		Repository:   "vaporio/ipmi-simulator",
-		Tag:          "latest",
+		Tag:          "latest", // vaporio/ipmi-simulator has no versioned tags
 		ExposedPorts: []string{"623/udp"},
 	})
 	if err != nil {

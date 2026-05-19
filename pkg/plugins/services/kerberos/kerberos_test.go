@@ -346,43 +346,47 @@ func TestKerberosNoFindingWhenMisconfigsDisabled(t *testing.T) {
 	}
 }
 
-func TestRC4OnlyProbeStructure(t *testing.T) {
-	if len(rc4OnlyProbe) != 92 {
-		t.Errorf("rc4OnlyProbe length: got %d, want 92", len(rc4OnlyProbe))
+func TestBuildRC4Probe(t *testing.T) {
+	// Test with "NM" realm — should match the static probe exactly
+	probe := buildRC4Probe("NM")
+	if !bytes.Equal(probe, rc4OnlyProbe) {
+		t.Errorf("buildRC4Probe(\"NM\") differs from static rc4OnlyProbe\nGot:  %x\nWant: %x", probe, rc4OnlyProbe)
 	}
-	// APPLICATION 10 tag and length
-	if rc4OnlyProbe[0] != 0x6a {
-		t.Errorf("APPLICATION tag: got 0x%02x, want 0x6a", rc4OnlyProbe[0])
+
+	// Test with longer realm
+	probe = buildRC4Probe("EXAMPLE.COM")
+	if len(probe) == 0 {
+		t.Fatal("buildRC4Probe(\"EXAMPLE.COM\") returned empty")
 	}
-	if rc4OnlyProbe[1] != 0x5a {
-		t.Errorf("APPLICATION length: got 0x%02x, want 0x5a (90)", rc4OnlyProbe[1])
+	// Verify APPLICATION 10 tag
+	if probe[0] != 0x6a {
+		t.Errorf("APPLICATION tag: got 0x%02x, want 0x6a", probe[0])
 	}
-	// SEQUENCE tag and length
-	if rc4OnlyProbe[2] != 0x30 {
-		t.Errorf("SEQUENCE tag: got 0x%02x, want 0x30", rc4OnlyProbe[2])
+	// Verify pvno=5 pattern present (context tag [1] = 0xa1 in AS-REQ encoding)
+	asReqPvnoPattern := []byte{0xa1, 0x03, 0x02, 0x01, 0x05}
+	if !bytes.Contains(probe, asReqPvnoPattern) {
+		t.Error("pvno pattern not found in probe")
 	}
-	if rc4OnlyProbe[3] != 0x58 {
-		t.Errorf("SEQUENCE length: got 0x%02x, want 0x58 (88)", rc4OnlyProbe[3])
+	// Verify realm bytes present
+	if !bytes.Contains(probe, []byte("EXAMPLE.COM")) {
+		t.Error("realm bytes not found in probe")
 	}
-	// pvno pattern: [1] context tag with INTEGER value 5
-	pvno := []byte{0xa1, 0x03, 0x02, 0x01, 0x05}
-	if !bytes.Contains(rc4OnlyProbe, pvno) {
-		t.Errorf("pvno pattern not found in rc4OnlyProbe")
-	}
-	// msg-type = 10 (AS-REQ)
-	msgType := []byte{0xa2, 0x03, 0x02, 0x01, 0x0a}
-	if !bytes.Contains(rc4OnlyProbe, msgType) {
-		t.Errorf("msg-type=10 pattern not found in rc4OnlyProbe")
-	}
-	// etype section ends with etype 23 only
+	// Verify etype 23 present
 	etypePattern := []byte{0xa8, 0x05, 0x30, 0x03, 0x02, 0x01, 0x17}
-	if !bytes.Contains(rc4OnlyProbe, etypePattern) {
-		t.Errorf("etype-23-only pattern not found in rc4OnlyProbe")
+	if !bytes.Contains(probe, etypePattern) {
+		t.Error("etype-23-only pattern not found in probe")
 	}
-	// realm "NM" bytes
-	nmRealm := []byte{0x4e, 0x4d}
-	if !bytes.Contains(rc4OnlyProbe, nmRealm) {
-		t.Errorf("realm NM bytes not found in rc4OnlyProbe")
+
+	// Empty realm falls back to static probe
+	probe = buildRC4Probe("")
+	if !bytes.Equal(probe, rc4OnlyProbe) {
+		t.Error("buildRC4Probe(\"\") should return rc4OnlyProbe")
+	}
+
+	// Too-long realm falls back to static probe
+	probe = buildRC4Probe(strings.Repeat("A", 101))
+	if !bytes.Equal(probe, rc4OnlyProbe) {
+		t.Error("buildRC4Probe with 101-char realm should return rc4OnlyProbe")
 	}
 }
 
@@ -413,13 +417,24 @@ func TestKerberosWithMisconfigsEnabled(t *testing.T) {
 }
 
 func TestProbeRC4SupportAmbiguousErrorCode(t *testing.T) {
-	// KRB-ERROR with error code 6 (KDC_ERR_C_PRINCIPAL_UNKNOWN) — this code is
-	// ambiguous: some KDCs return it before checking the etype list, so it does
-	// not confirm RC4-HMAC is supported. probeRC4Support should return false.
+	// KRB-ERROR with error code 68 (KDC_ERR_WRONG_REALM) — the only remaining
+	// ambiguous code. The KDC rejected the realm before evaluating the etype
+	// list. probeRC4Support should return false.
+	response := buildTestKRBError(68, "EXAMPLE.COM", "")
+	conn := &mockKerberosConn{responseData: response}
+	if probeRC4Support(conn, 2*time.Second, "EXAMPLE.COM") {
+		t.Error("expected probeRC4Support to return false for ambiguous error code 68 (WRONG_REALM)")
+	}
+}
+
+func TestProbeRC4SupportPrincipalUnknown(t *testing.T) {
+	// KRB-ERROR with error code 6 (KDC_ERR_C_PRINCIPAL_UNKNOWN) — with the
+	// correct realm, this means the KDC processed past etype validation and
+	// then failed on principal lookup. RC4-HMAC is supported.
 	response := buildTestKRBError(6, "EXAMPLE.COM", "")
 	conn := &mockKerberosConn{responseData: response}
-	if probeRC4Support(conn, 2*time.Second) {
-		t.Error("expected probeRC4Support to return false for ambiguous error code 6")
+	if !probeRC4Support(conn, 2*time.Second, "EXAMPLE.COM") {
+		t.Error("expected probeRC4Support to return true for error code 6 with correct realm")
 	}
 }
 
@@ -429,7 +444,7 @@ func TestProbeRC4SupportAccepted(t *testing.T) {
 	// so RC4-HMAC is supported. probeRC4Support should return true.
 	response := buildTestKRBError(12, "EXAMPLE.COM", "")
 	conn := &mockKerberosConn{responseData: response}
-	if !probeRC4Support(conn, 2*time.Second) {
+	if !probeRC4Support(conn, 2*time.Second, "EXAMPLE.COM") {
 		t.Error("expected probeRC4Support to return true for error code 12 (KDC_ERR_POLICY)")
 	}
 }
@@ -439,7 +454,7 @@ func TestProbeRC4SupportRejected(t *testing.T) {
 	// probeRC4Support should return false.
 	response := buildTestKRBError(14, "EXAMPLE.COM", "")
 	conn := &mockKerberosConn{responseData: response}
-	if probeRC4Support(conn, 2*time.Second) {
+	if probeRC4Support(conn, 2*time.Second, "EXAMPLE.COM") {
 		t.Error("expected probeRC4Support to return false for error code 14")
 	}
 }
@@ -458,7 +473,7 @@ func TestProbeRC4SupportParseFailure(t *testing.T) {
 	response := append(tcpLen, garbage...)
 
 	conn := &mockKerberosConn{responseData: response}
-	if probeRC4Support(conn, 2*time.Second) {
+	if probeRC4Support(conn, 2*time.Second, "EXAMPLE.COM") {
 		t.Error("expected probeRC4Support to return false when parse fails (errorCode=0)")
 	}
 }
@@ -474,7 +489,7 @@ func TestProbeRC4SupportASREP(t *testing.T) {
 	response := append(tcpLen, asrep...)
 
 	conn := &mockKerberosConn{responseData: response}
-	if !probeRC4Support(conn, 2*time.Second) {
+	if !probeRC4Support(conn, 2*time.Second, "EXAMPLE.COM") {
 		t.Error("expected probeRC4Support to return true for AS-REP response")
 	}
 }
@@ -610,19 +625,17 @@ func TestKerberosIntegrationMisconfigs(t *testing.T) {
 		t.Errorf("expected version %q, got %q", "5", service.Version)
 	}
 
-	t.Logf("SecurityFindings count: %d", len(service.SecurityFindings))
-	if len(service.SecurityFindings) > 0 {
-		f := service.SecurityFindings[0]
-		if f.ID != "kerberos-weak-etypes" {
-			t.Errorf("expected finding ID %q, got %q", "kerberos-weak-etypes", f.ID)
-		}
-		if f.Severity != plugins.SeverityMedium {
-			t.Errorf("expected severity %q, got %q", plugins.SeverityMedium, f.Severity)
-		}
-		t.Logf("SecurityFinding: id=%s severity=%s", f.ID, f.Severity)
-	} else {
-		t.Log("KDC did not accept RC4-HMAC (no kerberos-weak-etypes finding); this is acceptable")
+	if len(service.SecurityFindings) != 1 {
+		t.Fatalf("Expected 1 SecurityFinding with Misconfigs=true, got %d", len(service.SecurityFindings))
 	}
+	f := service.SecurityFindings[0]
+	if f.ID != "kerberos-weak-etypes" {
+		t.Errorf("expected finding ID %q, got %q", "kerberos-weak-etypes", f.ID)
+	}
+	if f.Severity != plugins.SeverityMedium {
+		t.Errorf("expected severity %q, got %q", plugins.SeverityMedium, f.Severity)
+	}
+	t.Logf("SecurityFinding: id=%s severity=%s", f.ID, f.Severity)
 }
 
 func TestKerberosIntegrationDetectionNoMisconfigs(t *testing.T) {
@@ -680,7 +693,7 @@ func TestProbeRC4SupportShortResponse(t *testing.T) {
 	response := append(tcpLen, payload...)
 
 	conn := &mockKerberosConn{responseData: response}
-	if probeRC4Support(conn, 2*time.Second) {
+	if probeRC4Support(conn, 2*time.Second, "EXAMPLE.COM") {
 		t.Error("expected probeRC4Support to return false for response shorter than 10 bytes")
 	}
 }
@@ -695,7 +708,7 @@ func TestProbeRC4SupportWrongTag(t *testing.T) {
 	response := append(tcpLen, payload...)
 
 	conn := &mockKerberosConn{responseData: response}
-	if probeRC4Support(conn, 2*time.Second) {
+	if probeRC4Support(conn, 2*time.Second, "EXAMPLE.COM") {
 		t.Error("expected probeRC4Support to return false for non-Kerberos tag 0x60")
 	}
 }
@@ -706,7 +719,7 @@ func TestProbeRC4SupportErrorCode0FromValidKRBError(t *testing.T) {
 	// probeRC4Support treats as a parse failure and returns false (no false positive).
 	response := buildTestKRBError(0, "EXAMPLE.COM", "")
 	conn := &mockKerberosConn{responseData: response}
-	if probeRC4Support(conn, 2*time.Second) {
+	if probeRC4Support(conn, 2*time.Second, "EXAMPLE.COM") {
 		t.Error("expected probeRC4Support to return false when errorCode==0 (treated as parse failure)")
 	}
 }
