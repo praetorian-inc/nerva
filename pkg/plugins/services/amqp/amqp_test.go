@@ -458,8 +458,8 @@ func TestAMQPDefaultCredsFinding(t *testing.T) {
 	if finding.Severity != plugins.SeverityHigh {
 		t.Errorf("Expected severity High, got '%s'", finding.Severity)
 	}
-	if !strings.Contains(finding.Evidence, "guest/guest") {
-		t.Errorf("Expected evidence to contain 'guest/guest', got '%s'", finding.Evidence)
+	if !strings.Contains(finding.Evidence, "default credentials") {
+		t.Errorf("Expected evidence to contain 'default credentials', got '%s'", finding.Evidence)
 	}
 }
 
@@ -527,18 +527,18 @@ func TestAmqpDefaultCredsFindingHelper(t *testing.T) {
 		if !strings.Contains(finding.Evidence, "RabbitMQ") {
 			t.Errorf("Expected evidence to contain 'RabbitMQ', got '%s'", finding.Evidence)
 		}
-		if !strings.Contains(finding.Evidence, "guest/guest") {
-			t.Errorf("Expected evidence to contain 'guest/guest', got '%s'", finding.Evidence)
+		if !strings.Contains(finding.Evidence, "default credentials") {
+			t.Errorf("Expected evidence to contain 'default credentials', got '%s'", finding.Evidence)
 		}
 	})
 
 	t.Run("without product name", func(t *testing.T) {
 		finding := amqpDefaultCredsFinding("")
-		if !strings.Contains(finding.Evidence, "guest/guest") {
-			t.Errorf("Expected evidence to contain 'guest/guest', got '%s'", finding.Evidence)
+		if !strings.Contains(finding.Evidence, "default credentials") {
+			t.Errorf("Expected evidence to contain 'default credentials', got '%s'", finding.Evidence)
 		}
 		// When product is empty, evidence should not append a product identifier
-		expectedNoProduct := "SASL PLAIN authentication succeeded with guest/guest"
+		expectedNoProduct := "SASL PLAIN authentication succeeded with default credentials"
 		if finding.Evidence != expectedNoProduct {
 			t.Errorf("Expected evidence '%s', got '%s'", expectedNoProduct, finding.Evidence)
 		}
@@ -578,4 +578,83 @@ func TestCheckDefaultCredentials(t *testing.T) {
 			t.Error("Expected checkDefaultCredentials to return false for short response")
 		}
 	})
+}
+
+// TestCheckDefaultCredentialsWrongFrameType verifies that checkDefaultCredentials returns false
+// when the response has frame type 0x02 instead of the expected 0x01 (Method).
+func TestCheckDefaultCredentialsWrongFrameType(t *testing.T) {
+	// Build a 12-byte response with frame type 0x02 (Header) instead of 0x01 (Method).
+	// checkDefaultCredentials requires response[0] == FrameTypeMethod (0x01).
+	wrongFrameType := []byte{
+		0x02,       // Frame type: Header (not Method)
+		0x00, 0x00, // Channel 0
+		0x00, 0x00, 0x00, 0x0C, // Payload size
+		0x00, 0x0A, // Class ID (10 - Connection)
+		0x00, 0x1E, // Method ID (30 - Tune)
+		0xCE,       // Frame end
+	}
+
+	conn := &mockAMQPConn{
+		responses: [][]byte{wrongFrameType},
+	}
+
+	result := checkDefaultCredentials(conn, 5*time.Second)
+	if result {
+		t.Error("Expected checkDefaultCredentials to return false when frame type is 0x02")
+	}
+}
+
+// TestCheckDefaultCredentialsWrongMethodID verifies that checkDefaultCredentials returns false
+// when the response has the correct frame type and class ID but method ID 0x0032 (Close)
+// instead of 0x001E (Tune).
+func TestCheckDefaultCredentialsWrongMethodID(t *testing.T) {
+	// connectionCloseBytes has frame type 0x01, class ID 10, method ID 50 (Close).
+	conn := &mockAMQPConn{
+		responses: [][]byte{connectionCloseBytes},
+	}
+
+	result := checkDefaultCredentials(conn, 5*time.Second)
+	if result {
+		t.Error("Expected checkDefaultCredentials to return false when method ID is Connection.Close (50)")
+	}
+}
+
+// TestAMQPTLSPluginMisconfigs verifies that TLSPlugin.Run with Misconfigs=true also checks
+// default credentials and produces the amqp-default-creds finding when the server accepts them.
+func TestAMQPTLSPluginMisconfigs(t *testing.T) {
+	plugin := &TLSPlugin{}
+	target := plugins.Target{
+		Address:    netip.MustParseAddrPort("127.0.0.1:5671"),
+		Host:       "127.0.0.1",
+		Misconfigs: true,
+	}
+
+	// First response: Connection.Start (protocol detection)
+	// Second response: Connection.Tune (creds accepted)
+	conn := &mockAMQPConn{
+		responses: [][]byte{connectionStartBytes, connectionTuneBytes},
+	}
+
+	service, err := plugin.Run(conn, 5*time.Second, target)
+	if err != nil {
+		t.Fatalf("TLSPlugin.Run() returned unexpected error: %v", err)
+	}
+	if service == nil {
+		t.Fatal("TLSPlugin.Run() returned nil service, expected detected service")
+	}
+
+	if len(service.SecurityFindings) != 1 {
+		t.Fatalf("Expected 1 SecurityFinding, got %d", len(service.SecurityFindings))
+	}
+
+	finding := service.SecurityFindings[0]
+	if finding.ID != "amqp-default-creds" {
+		t.Errorf("Expected finding ID 'amqp-default-creds', got '%s'", finding.ID)
+	}
+	if finding.Severity != plugins.SeverityHigh {
+		t.Errorf("Expected severity High, got '%s'", finding.Severity)
+	}
+	if !strings.Contains(finding.Evidence, "default credentials") {
+		t.Errorf("Expected evidence to contain 'default credentials', got '%s'", finding.Evidence)
+	}
 }

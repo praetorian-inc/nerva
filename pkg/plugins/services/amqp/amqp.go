@@ -273,9 +273,9 @@ func checkDefaultCredentials(conn net.Conn, timeout time.Duration) bool {
 
 // amqpDefaultCredsFinding returns a SecurityFinding for AMQP default guest/guest credentials.
 func amqpDefaultCredsFinding(product string) plugins.SecurityFinding {
-	evidence := "SASL PLAIN authentication succeeded with guest/guest"
+	evidence := "SASL PLAIN authentication succeeded with default credentials"
 	if product != "" {
-		evidence = fmt.Sprintf("SASL PLAIN authentication succeeded with guest/guest on %s", product)
+		evidence = fmt.Sprintf("SASL PLAIN authentication succeeded with default credentials on %s", product)
 	}
 	return plugins.SecurityFinding{
 		ID:          "amqp-default-creds",

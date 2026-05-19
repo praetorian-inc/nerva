@@ -221,6 +221,74 @@ func TestJDWPExposedFindingNoVersion(t *testing.T) {
 	}
 }
 
+// TestJDWPNonMatchingHandshake verifies that when the server returns bytes that
+// are not the JDWP handshake, Run returns a nil service (not detected).
+func TestJDWPNonMatchingHandshake(t *testing.T) {
+	mockConn := &mockJDWPConn{
+		responses: [][]byte{
+			[]byte("HTTP/1.1 200 OK"),
+		},
+	}
+
+	plugin := &JDWPPlugin{}
+	target := plugins.Target{
+		Address:    netip.MustParseAddrPort("127.0.0.1:5005"),
+		Host:       "127.0.0.1",
+		Misconfigs: false,
+	}
+
+	service, err := plugin.Run(mockConn, 5*time.Second, target)
+	if err != nil {
+		t.Fatalf("Run() returned unexpected error: %v", err)
+	}
+	if service != nil {
+		t.Errorf("Run() returned non-nil service, want nil (non-matching response should not be detected)")
+	}
+}
+
+// TestJDWPEmptyResponse verifies that when the server returns an empty response,
+// Run returns a nil service (not detected).
+func TestJDWPEmptyResponse(t *testing.T) {
+	mockConn := &mockJDWPConn{
+		responses: [][]byte{{}},
+	}
+
+	plugin := &JDWPPlugin{}
+	target := plugins.Target{
+		Address:    netip.MustParseAddrPort("127.0.0.1:5005"),
+		Host:       "127.0.0.1",
+		Misconfigs: false,
+	}
+
+	service, err := plugin.Run(mockConn, 5*time.Second, target)
+	if err != nil {
+		t.Fatalf("Run() returned unexpected error: %v", err)
+	}
+	if service != nil {
+		t.Errorf("Run() returned non-nil service, want nil (empty response should not be detected)")
+	}
+}
+
+// TestJDWPPortPriority verifies that PortPriority returns true for common JDWP
+// ports and false for non-JDWP ports.
+func TestJDWPPortPriority(t *testing.T) {
+	plugin := &JDWPPlugin{}
+
+	jdwpPorts := []uint16{5005, 8000, 8787, 9001}
+	for _, port := range jdwpPorts {
+		if !plugin.PortPriority(port) {
+			t.Errorf("PortPriority(%d) = false, want true", port)
+		}
+	}
+
+	nonJDWPPorts := []uint16{80, 443, 22}
+	for _, port := range nonJDWPPorts {
+		if plugin.PortPriority(port) {
+			t.Errorf("PortPriority(%d) = true, want false", port)
+		}
+	}
+}
+
 // TestJdwpExposedFindingHelper unit-tests the jdwpExposedFinding helper directly.
 func TestJdwpExposedFindingHelper(t *testing.T) {
 	evidence := "test evidence"

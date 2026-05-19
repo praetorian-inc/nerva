@@ -17,6 +17,7 @@ package kerberos
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"net"
 	"net/netip"
 	"strings"
@@ -411,13 +412,25 @@ func TestKerberosWithMisconfigsEnabled(t *testing.T) {
 	}
 }
 
-func TestProbeRC4SupportAccepted(t *testing.T) {
-	// KRB-ERROR with error code 6 (C_PRINCIPAL_UNKNOWN) — RC4 was accepted but
-	// the invalid principal doesn't exist. probeRC4Support should return true.
+func TestProbeRC4SupportAmbiguousErrorCode(t *testing.T) {
+	// KRB-ERROR with error code 6 (KDC_ERR_C_PRINCIPAL_UNKNOWN) — this code is
+	// ambiguous: some KDCs return it before checking the etype list, so it does
+	// not confirm RC4-HMAC is supported. probeRC4Support should return false.
 	response := buildTestKRBError(6, "EXAMPLE.COM", "")
 	conn := &mockKerberosConn{responseData: response}
+	if probeRC4Support(conn, 2*time.Second) {
+		t.Error("expected probeRC4Support to return false for ambiguous error code 6")
+	}
+}
+
+func TestProbeRC4SupportAccepted(t *testing.T) {
+	// KRB-ERROR with error code 12 (KDC_ERR_POLICY) — this is not ambiguous.
+	// A KDC that reaches policy evaluation has already accepted the etype list,
+	// so RC4-HMAC is supported. probeRC4Support should return true.
+	response := buildTestKRBError(12, "EXAMPLE.COM", "")
+	conn := &mockKerberosConn{responseData: response}
 	if !probeRC4Support(conn, 2*time.Second) {
-		t.Error("expected probeRC4Support to return true for error code 6")
+		t.Error("expected probeRC4Support to return true for error code 12 (KDC_ERR_POLICY)")
 	}
 }
 
@@ -498,5 +511,202 @@ func TestKerberos(t *testing.T) {
 				t.Errorf("%v", err)
 			}
 		})
+	}
+}
+
+// resolveAddrPort converts a host:port string (which may contain "localhost") to
+// a numeric netip.AddrPort suitable for plugins.Target.
+func resolveAddrPort(t *testing.T, hostPort string) netip.AddrPort {
+	t.Helper()
+	host, port, err := net.SplitHostPort(hostPort)
+	if err != nil {
+		t.Fatalf("SplitHostPort(%q): %v", hostPort, err)
+	}
+	if host == "localhost" {
+		host = "127.0.0.1"
+	}
+	ap, err := netip.ParseAddrPort(fmt.Sprintf("%s:%s", host, port))
+	if err != nil {
+		t.Fatalf("ParseAddrPort: %v", err)
+	}
+	return ap
+}
+
+// startKerberosContainer starts the gcavalcante8808/krb5-server container and waits
+// for it to accept TCP connections on port 88.
+func startKerberosContainer(t *testing.T, pool *dockertest.Pool) (*dockertest.Resource, string) {
+	t.Helper()
+
+	resource, err := pool.RunWithOptions(&dockertest.RunOptions{
+		Repository:   "gcavalcante8808/krb5-server",
+		Tag:          "latest",
+		Env:          []string{"KRB5_REALM=EXAMPLE.COM", "KRB5_KDC=localhost", "KRB5_PASS=admin"},
+		ExposedPorts: []string{"88/tcp"},
+	})
+	if err != nil {
+		t.Fatalf("Could not start Kerberos container: %v", err)
+	}
+
+	addr := resource.GetHostPort("88/tcp")
+	t.Logf("Kerberos container running at %s", addr)
+
+	// Give the KDC time to initialize before polling.
+	time.Sleep(10 * time.Second)
+
+	err = pool.Retry(func() error {
+		conn, dialErr := net.DialTimeout("tcp", addr, 3*time.Second)
+		if dialErr != nil {
+			return dialErr
+		}
+		conn.Close()
+		return nil
+	})
+	if err != nil {
+		pool.Purge(resource) //nolint:errcheck
+		t.Fatalf("Kerberos container never became ready: %v", err)
+	}
+
+	return resource, addr
+}
+
+func TestKerberosIntegrationMisconfigs(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping Docker integration test in short mode")
+	}
+
+	pool, err := dockertest.NewPool("")
+	if err != nil {
+		t.Fatalf("Could not connect to Docker: %v", err)
+	}
+
+	resource, addr := startKerberosContainer(t, pool)
+	defer pool.Purge(resource) //nolint:errcheck
+
+	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	if err != nil {
+		t.Fatalf("Failed to connect to Kerberos server: %v", err)
+	}
+	defer conn.Close()
+
+	target := plugins.Target{
+		Address:    resolveAddrPort(t, addr),
+		Host:       "127.0.0.1",
+		Misconfigs: true,
+	}
+
+	p := &KerberosPlugin{}
+	service, err := p.Run(conn, 5*time.Second, target)
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if service == nil {
+		t.Fatal("expected a detected service, got nil")
+	}
+
+	if service.Protocol != "kerberos" {
+		t.Errorf("expected protocol %q, got %q", "kerberos", service.Protocol)
+	}
+	if service.Version != "5" {
+		t.Errorf("expected version %q, got %q", "5", service.Version)
+	}
+
+	t.Logf("SecurityFindings count: %d", len(service.SecurityFindings))
+	if len(service.SecurityFindings) > 0 {
+		f := service.SecurityFindings[0]
+		if f.ID != "kerberos-weak-etypes" {
+			t.Errorf("expected finding ID %q, got %q", "kerberos-weak-etypes", f.ID)
+		}
+		if f.Severity != plugins.SeverityMedium {
+			t.Errorf("expected severity %q, got %q", plugins.SeverityMedium, f.Severity)
+		}
+		t.Logf("SecurityFinding: id=%s severity=%s", f.ID, f.Severity)
+	} else {
+		t.Log("KDC did not accept RC4-HMAC (no kerberos-weak-etypes finding); this is acceptable")
+	}
+}
+
+func TestKerberosIntegrationDetectionNoMisconfigs(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping Docker integration test in short mode")
+	}
+
+	pool, err := dockertest.NewPool("")
+	if err != nil {
+		t.Fatalf("Could not connect to Docker: %v", err)
+	}
+
+	resource, addr := startKerberosContainer(t, pool)
+	defer pool.Purge(resource) //nolint:errcheck
+
+	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	if err != nil {
+		t.Fatalf("Failed to connect to Kerberos server: %v", err)
+	}
+	defer conn.Close()
+
+	target := plugins.Target{
+		Address:    resolveAddrPort(t, addr),
+		Host:       "127.0.0.1",
+		Misconfigs: false,
+	}
+
+	p := &KerberosPlugin{}
+	service, err := p.Run(conn, 5*time.Second, target)
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if service == nil {
+		t.Fatal("expected a detected service, got nil")
+	}
+
+	if service.Protocol != "kerberos" {
+		t.Errorf("expected protocol %q, got %q", "kerberos", service.Protocol)
+	}
+	if service.Version != "5" {
+		t.Errorf("expected version %q, got %q", "5", service.Version)
+	}
+
+	if len(service.SecurityFindings) != 0 {
+		t.Errorf("expected no SecurityFindings when Misconfigs=false, got %d", len(service.SecurityFindings))
+	}
+}
+
+func TestProbeRC4SupportShortResponse(t *testing.T) {
+	// 4-byte TCP length prefix + 2 bytes = 6 total, which is below the 10-byte minimum.
+	// probeRC4Support should return false without panic.
+	payload := []byte{0x7E, 0x00}
+	tcpLen := make([]byte, 4)
+	binary.BigEndian.PutUint32(tcpLen, uint32(len(payload)))
+	response := append(tcpLen, payload...)
+
+	conn := &mockKerberosConn{responseData: response}
+	if probeRC4Support(conn, 2*time.Second) {
+		t.Error("expected probeRC4Support to return false for response shorter than 10 bytes")
+	}
+}
+
+func TestProbeRC4SupportWrongTag(t *testing.T) {
+	// First Kerberos byte is 0x60 (not tagKRBError 0x7E or tagASREP 0x6B).
+	// probeRC4Support should return false.
+	payload := make([]byte, 14)
+	payload[0] = 0x60
+	tcpLen := make([]byte, 4)
+	binary.BigEndian.PutUint32(tcpLen, uint32(len(payload)))
+	response := append(tcpLen, payload...)
+
+	conn := &mockKerberosConn{responseData: response}
+	if probeRC4Support(conn, 2*time.Second) {
+		t.Error("expected probeRC4Support to return false for non-Kerberos tag 0x60")
+	}
+}
+
+func TestProbeRC4SupportErrorCode0FromValidKRBError(t *testing.T) {
+	// buildTestKRBError(0, ...) produces a well-formed KRB-ERROR whose error-code
+	// field encodes the integer 0. parseKerberosError returns errorCode=0, which
+	// probeRC4Support treats as a parse failure and returns false (no false positive).
+	response := buildTestKRBError(0, "EXAMPLE.COM", "")
+	conn := &mockKerberosConn{responseData: response}
+	if probeRC4Support(conn, 2*time.Second) {
+		t.Error("expected probeRC4Support to return false when errorCode==0 (treated as parse failure)")
 	}
 }

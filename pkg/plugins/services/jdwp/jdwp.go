@@ -88,7 +88,7 @@ func DetectJDWPVersion(conn net.Conn, timeout time.Duration) (*plugins.ServiceJD
 	}
 
 	if versionResponse.Length != (uint32(len((response)))) {
-		return nil, err
+		return nil, nil
 	}
 
 	var descriptionLength uint32

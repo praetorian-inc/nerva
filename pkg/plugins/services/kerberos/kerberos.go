@@ -63,10 +63,22 @@ type KerberosPlugin struct{}
 const KERBEROS = "kerberos"
 
 const (
-	tagKRBError        = 0x7E // APPLICATION 30, constructed
-	tagASREP           = 0x6B // APPLICATION 11, constructed
-	kdcErrEtypeNosupp  = 14   // KDC_ERR_ETYPE_NOSUPP
+	tagKRBError       = 0x7E // APPLICATION 30, constructed
+	tagASREP          = 0x6B // APPLICATION 11, constructed
+	kdcErrEtypeNosupp = 14   // KDC_ERR_ETYPE_NOSUPP
 )
+
+// ambiguousErrorCodes lists KRB-ERROR codes that a KDC may return before
+// checking the etype list. If the KDC validates the principal name before
+// evaluating encryption types, it returns one of these codes regardless of
+// whether RC4-HMAC is enabled. Treating them as "RC4 accepted" would be a
+// false positive.
+var ambiguousErrorCodes = map[int]bool{
+	6:  true, // KDC_ERR_C_PRINCIPAL_UNKNOWN
+	7:  true, // KDC_ERR_S_PRINCIPAL_UNKNOWN
+	25: true, // KDC_ERR_PREAUTH_REQUIRED
+	68: true, // KDC_ERR_WRONG_REALM
+}
 
 // rc4OnlyProbe is a 92-byte AS-REQ that requests only etype 23 (RC4-HMAC).
 // Used to probe whether a KDC accepts RC4-HMAC when other etypes are not offered.
@@ -298,7 +310,20 @@ func probeRC4Support(conn net.Conn, timeout time.Duration) bool {
 		return false
 	}
 
-	return errorCode != kdcErrEtypeNosupp
+	// KDC_ERR_ETYPE_NOSUPP means the KDC explicitly rejected RC4-HMAC.
+	if errorCode == kdcErrEtypeNosupp {
+		return false
+	}
+
+	// Some KDCs validate the principal name before checking the etype list.
+	// These error codes don't tell us whether RC4-HMAC is accepted or not.
+	if ambiguousErrorCodes[errorCode] {
+		return false
+	}
+
+	// Any other error code means the KDC processed the request past etype
+	// validation, indicating RC4-HMAC is supported.
+	return true
 }
 
 // checkWeakEtypes opens a new TCP connection to the target and probes for RC4-HMAC support.
