@@ -219,6 +219,11 @@ func parseServerProperties(data []byte) (product, version, platform string) {
 // guest/guest credentials on the already-open conn (after DetectAMQP consumed the
 // Connection.Start frame). It returns true if the server responds with
 // Connection.Tune (class 10, method 30), indicating the credentials were accepted.
+//
+// Limitation: SASL PLAIN is a single-step mechanism (RFC 4616), so Connection.Secure
+// (class 10, method 20) is not expected and not handled. A broker that uses multi-step
+// SASL for PLAIN authentication would be reported as "not vulnerable" (false negative).
+// No known AMQP 0-9-1 broker exhibits this behavior.
 func checkDefaultCredentials(conn net.Conn, timeout time.Duration) bool {
 	// SASL PLAIN response: NUL + username + NUL + password
 	saslResponse := []byte("\x00guest\x00guest") // 12 bytes

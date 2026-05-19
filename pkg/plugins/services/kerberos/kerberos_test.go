@@ -383,6 +383,12 @@ func TestBuildRC4Probe(t *testing.T) {
 		t.Error("buildRC4Probe(\"\") should return rc4OnlyProbe")
 	}
 
+	// Realm exceeding DER short-form limit falls back to static probe
+	probe = buildRC4Probe(strings.Repeat("A", 25))
+	if !bytes.Equal(probe, rc4OnlyProbe) {
+		t.Error("buildRC4Probe with 25-char realm should return rc4OnlyProbe")
+	}
+
 	// Too-long realm falls back to static probe
 	probe = buildRC4Probe(strings.Repeat("A", 101))
 	if !bytes.Equal(probe, rc4OnlyProbe) {
@@ -402,7 +408,8 @@ func TestKerberosWithMisconfigsEnabled(t *testing.T) {
 	}
 
 	p := &KerberosPlugin{}
-	// Short timeout so checkWeakEtypes fails quickly on the unreachable address.
+	// The mock conn's response data is already consumed by detectKerberos,
+	// so the RC4 probe gets an empty response and probeRC4Support returns false.
 	service, err := p.Run(conn, 100*time.Millisecond, target)
 	if err != nil {
 		t.Fatalf("Run returned error: %v", err)
@@ -410,7 +417,7 @@ func TestKerberosWithMisconfigsEnabled(t *testing.T) {
 	if service == nil {
 		t.Fatal("expected a detected service, got nil")
 	}
-	// checkWeakEtypes dials 192.0.2.1:88 which fails, so returns false → no finding.
+	// The mock conn has no more data, so probeRC4Support returns false → no finding.
 	if len(service.SecurityFindings) != 0 {
 		t.Errorf("expected no SecurityFindings when checkWeakEtypes cannot connect, got %d", len(service.SecurityFindings))
 	}

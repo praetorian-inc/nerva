@@ -17,6 +17,7 @@ package jdwp
 import (
 	"bytes"
 	"encoding/binary"
+	"io"
 	"net"
 	"net/netip"
 	"testing"
@@ -39,7 +40,7 @@ type mockJDWPConn struct {
 
 func (m *mockJDWPConn) Read(b []byte) (int, error) {
 	if m.callIndex >= len(m.responses) {
-		return 0, nil
+		return 0, io.EOF
 	}
 	n := copy(b, m.responses[m.callIndex])
 	m.callIndex++
@@ -147,6 +148,12 @@ func TestJDWPExposedFinding(t *testing.T) {
 	evidence := service.SecurityFindings[0].Evidence
 	if !bytes.Contains([]byte(evidence), []byte("JDWP handshake succeeded")) {
 		t.Errorf("expected evidence to contain %q, got %q", "JDWP handshake succeeded", evidence)
+	}
+	if !bytes.Contains([]byte(evidence), []byte("OpenJDK 64-Bit")) {
+		t.Errorf("expected evidence to contain VM name, got %q", evidence)
+	}
+	if !bytes.Contains([]byte(evidence), []byte("11.0.2")) {
+		t.Errorf("expected evidence to contain VM version, got %q", evidence)
 	}
 }
 

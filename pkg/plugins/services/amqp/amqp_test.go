@@ -530,6 +530,9 @@ func TestAmqpDefaultCredsFindingHelper(t *testing.T) {
 		if !strings.Contains(finding.Evidence, "default credentials") {
 			t.Errorf("Expected evidence to contain 'default credentials', got '%s'", finding.Evidence)
 		}
+		if strings.Contains(finding.Evidence, "guest/guest") || strings.Contains(finding.Evidence, "\x00guest\x00guest") {
+			t.Errorf("Evidence should not expose credential literals, got '%s'", finding.Evidence)
+		}
 	})
 
 	t.Run("without product name", func(t *testing.T) {
@@ -541,6 +544,9 @@ func TestAmqpDefaultCredsFindingHelper(t *testing.T) {
 		expectedNoProduct := "SASL PLAIN authentication succeeded with default credentials"
 		if finding.Evidence != expectedNoProduct {
 			t.Errorf("Expected evidence '%s', got '%s'", expectedNoProduct, finding.Evidence)
+		}
+		if strings.Contains(finding.Evidence, "guest/guest") || strings.Contains(finding.Evidence, "\x00guest\x00guest") {
+			t.Errorf("Evidence should not expose credential literals, got '%s'", finding.Evidence)
 		}
 	})
 }

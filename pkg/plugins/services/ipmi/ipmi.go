@@ -138,8 +138,8 @@ func ipmiExposedFinding() plugins.SecurityFinding {
 	return plugins.SecurityFinding{
 		ID:          "ipmi-exposed",
 		Severity:    plugins.SeverityHigh,
-		Description: "IPMI service exposed — evaluate for cipher zero authentication bypass (CVE-2013-4786)",
-		Evidence:    "IPMI Get Channel Authentication Capabilities response received",
+		Description: "IPMI BMC interface exposed to network — lacks authentication by design",
+		Evidence:    "IPMI Get Channel Authentication Capabilities response received; evaluate for cipher zero bypass (CVE-2013-4786)",
 	}
 }
 
