@@ -164,8 +164,8 @@ func (p *Plugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target
 	hostnameRaw := response[offsetHostname : offsetHostname+sizeHostname]
 	vendorRaw := response[offsetVendorString : offsetVendorString+sizeVendorString]
 
-	hostname := extractNullTerminated(hostnameRaw)
-	vendorString := extractNullTerminated(vendorRaw)
+	hostname := sanitizePrintable(extractNullTerminated(hostnameRaw))
+	vendorString := sanitizePrintable(extractNullTerminated(vendorRaw))
 
 	// Format protocol version as "major.minor".
 	major := protocolVersionRaw >> 8
@@ -183,7 +183,23 @@ func (p *Plugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target
 		ResultCode:          resultCode,
 	}
 
-	return plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP), nil
+	service := plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP)
+	if target.Misconfigs {
+		evidence := "PPTP server detected"
+		if hostname != "" {
+			evidence += ": hostname=" + hostname
+		}
+		if vendorString != "" {
+			evidence += ", vendor=" + vendorString
+		}
+		service.SecurityFindings = []plugins.SecurityFinding{{
+			ID:          "pptp-insecure",
+			Severity:    plugins.SeverityMedium,
+			Description: "PPTP uses MS-CHAPv2 authentication which is cryptographically broken and crackable within 24 hours",
+			Evidence:    evidence,
+		}}
+	}
+	return service, nil
 }
 
 // extractNullTerminated returns the string before the first null byte,
@@ -194,6 +210,19 @@ func extractNullTerminated(data []byte) string {
 		return string(data[:idx])
 	}
 	return strings.TrimRight(string(data), "\x00")
+}
+
+// sanitizePrintable strips non-printable characters (below 0x20 or 0x7F)
+// from a string, keeping only printable ASCII. Protocol metadata fields like
+// hostname and vendor are expected to be human-readable ASCII.
+func sanitizePrintable(s string) string {
+	b := make([]byte, 0, len(s))
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 0x20 && s[i] < 0x7F {
+			b = append(b, s[i])
+		}
+	}
+	return string(b)
 }
 
 // formatVersion converts a major/minor byte pair into a "major.minor" string,

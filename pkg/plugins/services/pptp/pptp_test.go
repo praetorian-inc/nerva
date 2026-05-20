@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"net"
 	"net/netip"
+	"strings"
 	"testing"
 	"time"
 
@@ -690,6 +691,285 @@ func TestPortPriority(t *testing.T) {
 		if got != tt.expected {
 			t.Errorf("PortPriority(%d) = %v, want %v", tt.port, got, tt.expected)
 		}
+	}
+}
+
+// misconfigTarget is a convenience target for misconfig tests.
+var misconfigTarget = plugins.Target{
+	Address:    netip.MustParseAddrPort("127.0.0.1:1723"),
+	Misconfigs: true,
+}
+
+// TestPPTPInsecureFinding verifies that a misconfig finding is appended when
+// Misconfigs is true and the SCCRP response is valid.
+func TestPPTPInsecureFinding(t *testing.T) {
+	plugin := &Plugin{}
+	pkt := buildMockSCCRP("MikroTik", "MikroTik", 1, 0x0100, 3, 3, 200, 1)
+	conn := &mockConn{readData: pkt}
+
+	svc, err := plugin.Run(conn, 5*time.Second, misconfigTarget)
+	if err != nil {
+		t.Fatalf("Run() error = %v, want nil", err)
+	}
+	if svc == nil {
+		t.Fatal("Run() returned nil service, want non-nil")
+	}
+
+	if len(svc.SecurityFindings) != 1 {
+		t.Fatalf("SecurityFindings length = %d, want 1", len(svc.SecurityFindings))
+	}
+
+	finding := svc.SecurityFindings[0]
+	if finding.ID != "pptp-insecure" {
+		t.Errorf("finding.ID = %q, want %q", finding.ID, "pptp-insecure")
+	}
+	if finding.Severity != plugins.SeverityMedium {
+		t.Errorf("finding.Severity = %v, want SeverityMedium", finding.Severity)
+	}
+	if finding.Evidence == "" {
+		t.Error("finding.Evidence is empty, want non-empty")
+	}
+}
+
+// TestPPTPInsecureFindingDisabled verifies that no security finding is appended
+// when Misconfigs is false.
+func TestPPTPInsecureFindingDisabled(t *testing.T) {
+	plugin := &Plugin{}
+	pkt := buildMockSCCRP("MikroTik", "MikroTik", 1, 0x0100, 3, 3, 200, 1)
+	conn := &mockConn{readData: pkt}
+
+	svc, err := plugin.Run(conn, 5*time.Second, defaultTarget)
+	if err != nil {
+		t.Fatalf("Run() error = %v, want nil", err)
+	}
+	if svc == nil {
+		t.Fatal("Run() returned nil service, want non-nil")
+	}
+
+	if len(svc.SecurityFindings) != 0 {
+		t.Errorf("SecurityFindings length = %d, want 0", len(svc.SecurityFindings))
+	}
+}
+
+// TestPPTPInsecureFindingEvidence verifies the evidence string formatting for
+// different combinations of hostname and vendor presence.
+func TestPPTPInsecureFindingEvidence(t *testing.T) {
+	plugin := &Plugin{}
+
+	tests := []struct {
+		name             string
+		hostname         string
+		vendor           string
+		wantEvidenceHas  []string
+		wantEvidenceMiss []string
+	}{
+		{
+			name:            "both hostname and vendor set",
+			hostname:        "MikroTik",
+			vendor:          "MikroTik",
+			wantEvidenceHas: []string{"hostname=MikroTik", "vendor=MikroTik"},
+		},
+		{
+			name:             "only hostname set",
+			hostname:         "router",
+			vendor:           "",
+			wantEvidenceHas:  []string{"hostname=router"},
+			wantEvidenceMiss: []string{"vendor="},
+		},
+		{
+			name:            "neither hostname nor vendor set",
+			hostname:        "",
+			vendor:          "",
+			wantEvidenceHas: []string{"PPTP server detected"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pkt := buildMockSCCRP(tt.hostname, tt.vendor, 1, 0x0100, 1, 1, 1, 1)
+			conn := &mockConn{readData: pkt}
+
+			svc, err := plugin.Run(conn, 5*time.Second, misconfigTarget)
+			if err != nil {
+				t.Fatalf("Run() error = %v, want nil", err)
+			}
+			if svc == nil {
+				t.Fatal("Run() returned nil service, want non-nil")
+			}
+			if len(svc.SecurityFindings) != 1 {
+				t.Fatalf("SecurityFindings length = %d, want 1", len(svc.SecurityFindings))
+			}
+
+			evidence := svc.SecurityFindings[0].Evidence
+			for _, want := range tt.wantEvidenceHas {
+				if !strings.Contains(evidence, want) {
+					t.Errorf("evidence %q does not contain %q", evidence, want)
+				}
+			}
+			for _, miss := range tt.wantEvidenceMiss {
+				if strings.Contains(evidence, miss) {
+					t.Errorf("evidence %q should not contain %q", evidence, miss)
+				}
+			}
+		})
+	}
+}
+
+// TestPPTPInsecureEdgeCases verifies edge-case behaviour for the pptp-insecure
+// misconfig finding: false-negative prevention (unusual but valid SCCRP
+// responses still get the finding) and false-positive prevention (non-PPTP
+// responses never produce a finding even when Misconfigs is true).
+func TestPPTPInsecureEdgeCases(t *testing.T) {
+	plugin := &Plugin{}
+
+	t.Run("non-1 result code still produces finding", func(t *testing.T) {
+		// A server that responds with result code 3 (general error) is still
+		// a PPTP server. The protocol is insecure regardless of result code.
+		pkt := buildMockSCCRP("router", "vendor", 1, 0x0100, 1, 1, 1, 3)
+		conn := &mockConn{readData: pkt}
+
+		svc, err := plugin.Run(conn, 5*time.Second, misconfigTarget)
+		if err != nil {
+			t.Fatalf("Run() error = %v, want nil", err)
+		}
+		if svc == nil {
+			t.Fatal("Run() returned nil service for result code 3; PPTP is still detected")
+		}
+		if len(svc.SecurityFindings) != 1 {
+			t.Fatalf("SecurityFindings length = %d, want 1", len(svc.SecurityFindings))
+		}
+		if svc.SecurityFindings[0].ID != "pptp-insecure" {
+			t.Errorf("finding.ID = %q, want %q", svc.SecurityFindings[0].ID, "pptp-insecure")
+		}
+	})
+
+	t.Run("maximum length hostname and vendor", func(t *testing.T) {
+		// The SCCRP wire format allocates exactly 64 bytes for each of hostname
+		// and vendor. Fill both fields completely (no null terminator) and verify
+		// the evidence string is well-formed.
+		hostname := strings.Repeat("H", 64)
+		vendor := strings.Repeat("V", 64)
+		pkt := buildMockSCCRP(hostname, vendor, 1, 0x0100, 1, 1, 1, 1)
+		conn := &mockConn{readData: pkt}
+
+		svc, err := plugin.Run(conn, 5*time.Second, misconfigTarget)
+		if err != nil {
+			t.Fatalf("Run() error = %v, want nil", err)
+		}
+		if svc == nil {
+			t.Fatal("Run() returned nil service, want non-nil")
+		}
+		if len(svc.SecurityFindings) != 1 {
+			t.Fatalf("SecurityFindings length = %d, want 1", len(svc.SecurityFindings))
+		}
+		evidence := svc.SecurityFindings[0].Evidence
+		if !strings.Contains(evidence, "hostname="+hostname) {
+			t.Errorf("evidence %q does not contain full 64-byte hostname", evidence)
+		}
+		if !strings.Contains(evidence, "vendor="+vendor) {
+			t.Errorf("evidence %q does not contain full 64-byte vendor", evidence)
+		}
+	})
+
+	t.Run("hostname with special characters in evidence string", func(t *testing.T) {
+		// Hostnames containing '=' and ',' appear in the evidence as key=value
+		// pairs. Document the resulting format so that consumers know what to
+		// expect when field values contain these delimiters.
+		hostname := "host=name,test"
+		pkt := buildMockSCCRP(hostname, "vendor", 1, 0x0100, 1, 1, 1, 1)
+		conn := &mockConn{readData: pkt}
+
+		svc, err := plugin.Run(conn, 5*time.Second, misconfigTarget)
+		if err != nil {
+			t.Fatalf("Run() error = %v, want nil", err)
+		}
+		if svc == nil {
+			t.Fatal("Run() returned nil service, want non-nil")
+		}
+		if len(svc.SecurityFindings) != 1 {
+			t.Fatalf("SecurityFindings length = %d, want 1", len(svc.SecurityFindings))
+		}
+		evidence := svc.SecurityFindings[0].Evidence
+		// The hostname is embedded verbatim; the key=value format is broken by
+		// the embedded '=' character. This is documented, not a bug — callers
+		// should expect raw field values and parse accordingly.
+		if !strings.Contains(evidence, hostname) {
+			t.Errorf("evidence %q does not contain hostname %q", evidence, hostname)
+		}
+	})
+
+	t.Run("empty response returns nil service with Misconfigs true", func(t *testing.T) {
+		// No PPTP response → no detection → no finding, even when Misconfigs is
+		// enabled. This guards against false positives on silent ports.
+		conn := &mockConn{readData: []byte{}}
+
+		svc, err := plugin.Run(conn, 5*time.Second, misconfigTarget)
+		if err != nil {
+			t.Errorf("Run() error = %v, want nil", err)
+		}
+		if svc != nil {
+			t.Errorf("Run() returned non-nil service on empty response, want nil")
+		}
+	})
+
+	t.Run("short response returns nil service with Misconfigs true", func(t *testing.T) {
+		// A 100-byte response is shorter than the minimum 156-byte SCCRP. The
+		// plugin must reject it and produce no finding.
+		conn := &mockConn{readData: make([]byte, 100)}
+
+		svc, err := plugin.Run(conn, 5*time.Second, misconfigTarget)
+		if err != nil {
+			t.Errorf("Run() error = %v, want nil", err)
+		}
+		if svc != nil {
+			t.Errorf("Run() returned non-nil service on short response, want nil")
+		}
+	})
+
+	t.Run("wrong magic cookie returns nil service with Misconfigs true", func(t *testing.T) {
+		// A valid-length packet with the wrong magic cookie is not PPTP. No
+		// finding should be emitted.
+		pkt := buildMockSCCRP("host", "vendor", 1, 0x0100, 1, 1, 1, 1)
+		binary.BigEndian.PutUint32(pkt[4:8], 0xDEADBEEF)
+		conn := &mockConn{readData: pkt}
+
+		svc, err := plugin.Run(conn, 5*time.Second, misconfigTarget)
+		if err != nil {
+			t.Errorf("Run() error = %v, want nil", err)
+		}
+		if svc != nil {
+			t.Errorf("Run() returned non-nil service on wrong magic cookie, want nil")
+		}
+	})
+}
+
+// TestSanitizePrintable verifies that sanitizePrintable strips non-printable
+// characters and returns only printable ASCII (0x20–0x7E).
+func TestSanitizePrintable(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"empty string", "", ""},
+		{"printable ASCII unchanged", "hello world", "hello world"},
+		{"strips null bytes", "hello\x00world", "helloworld"},
+		{"strips ESC byte only", "host\x1b[31mname", "host[31mname"},
+		{"strips all control chars", "\x01\x02\x03test\x07\x08", "test"},
+		{"strips DEL (0x7F)", "host\x7Fname", "hostname"},
+		{"strips high bytes", "host\x80\xFF name", "host name"},
+		{"all non-printable returns empty", "\x00\x01\x7F\x80\xFF", ""},
+		{"mixed printable and control", "MikroTik\x00\x1b[0m router", "MikroTik[0m router"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := sanitizePrintable(tc.input)
+			if got != tc.want {
+				t.Errorf("sanitizePrintable(%q) = %q, want %q", tc.input, got, tc.want)
+			}
+		})
 	}
 }
 
