@@ -16,7 +16,11 @@ package amqp
 
 import (
 	"bytes"
+	"net"
+	"net/netip"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/praetorian-inc/nerva/pkg/plugins"
 )
@@ -328,5 +332,335 @@ func TestGenerateCPEWithoutVersion(t *testing.T) {
 	expected := "cpe:2.3:a:pivotal_software:rabbitmq:*:*:*:*:*:*:*:*"
 	if cpes[0] != expected {
 		t.Errorf("Expected CPE '%s', got '%s'", expected, cpes[0])
+	}
+}
+
+// mockAMQPConn is a net.Conn implementation for testing sequential AMQP exchanges.
+// Each call to Write advances to the next response, and the following Read returns
+// that response's bytes. This matches the SendRecv pattern: Write → SetReadDeadline → Read.
+type mockAMQPConn struct {
+	responses   [][]byte
+	responseIdx int
+	readOffset  int
+}
+
+type timeoutError struct{}
+
+func (e *timeoutError) Error() string   { return "timeout" }
+func (e *timeoutError) Timeout() bool   { return true }
+func (e *timeoutError) Temporary() bool { return true }
+
+func (m *mockAMQPConn) Read(b []byte) (int, error) {
+	if m.responseIdx >= len(m.responses) {
+		return 0, &net.OpError{Op: "read", Err: &timeoutError{}}
+	}
+	resp := m.responses[m.responseIdx]
+	if m.readOffset >= len(resp) {
+		m.responseIdx++
+		m.readOffset = 0
+		return 0, &net.OpError{Op: "read", Err: &timeoutError{}}
+	}
+	n := copy(b, resp[m.readOffset:])
+	m.readOffset += n
+	return n, nil
+}
+
+func (m *mockAMQPConn) Write(b []byte) (int, error) {
+	// Advance to the next response slot after each write (each SendRecv call writes once)
+	if m.readOffset == 0 && m.responseIdx < len(m.responses) {
+		// First write in this slot: don't advance yet — Read will consume this response
+	} else {
+		// Subsequent writes advance to next response
+		m.responseIdx++
+		m.readOffset = 0
+	}
+	return len(b), nil
+}
+
+func (m *mockAMQPConn) Close() error                       { return nil }
+func (m *mockAMQPConn) LocalAddr() net.Addr                { return &net.TCPAddr{} }
+func (m *mockAMQPConn) RemoteAddr() net.Addr               { return &net.TCPAddr{} }
+func (m *mockAMQPConn) SetDeadline(t time.Time) error      { return nil }
+func (m *mockAMQPConn) SetReadDeadline(t time.Time) error  { return nil }
+func (m *mockAMQPConn) SetWriteDeadline(t time.Time) error { return nil }
+
+// connectionStartBytes is the valid Connection.Start frame used across multiple tests.
+var connectionStartBytes = []byte{
+	0x01,       // Frame type (Method)
+	0x00, 0x00, // Channel 0
+	0x00, 0x00, 0x00, 0x1C, // Payload size (28 bytes)
+	0x00, 0x0A, // Class ID (10 - Connection)
+	0x00, 0x0A, // Method ID (10 - Start)
+	0x00, 0x09, // Version major(0) minor(9)
+	0x00, 0x00, 0x00, 0x00, // Empty server properties table
+	0x00, 0x00, 0x00, 0x05, 'P', 'L', 'A', 'I', 'N', // Mechanisms
+	0x00, 0x00, 0x00, 0x05, 'e', 'n', '_', 'U', 'S', // Locales
+	0xCE, // Frame end
+}
+
+// connectionTuneBytes is a valid Connection.Tune frame (credentials accepted).
+var connectionTuneBytes = []byte{
+	0x01,       // Frame type (Method)
+	0x00, 0x00, // Channel 0
+	0x00, 0x00, 0x00, 0x0C, // Payload size (12 bytes)
+	0x00, 0x0A, // Class ID (10 - Connection)
+	0x00, 0x1E, // Method ID (30 - Tune)
+	0x00, 0x00, // channel-max
+	0x00, 0x02, 0x00, 0x00, // frame-max (131072)
+	0x00, 0x3C, // heartbeat (60)
+	0xCE,       // Frame end
+}
+
+// connectionCloseBytes is a Connection.Close frame (credentials rejected, 403 ACCESS_REFUSED).
+var connectionCloseBytes = []byte{
+	0x01,       // Frame type (Method)
+	0x00, 0x00, // Channel 0
+	0x00, 0x00, 0x00, 0x08, // Payload size
+	0x00, 0x0A, // Class ID (10 - Connection)
+	0x00, 0x32, // Method ID (50 - Close)
+	0x01, 0x3E, // reply-code: 403 (ACCESS_REFUSED)
+	0x00, 0x00, // reply-text length: 0
+	0xCE,       // Frame end
+}
+
+// TestAMQPDefaultCredsFinding verifies that a finding is generated when Misconfigs is true
+// and the server accepts guest/guest credentials with Connection.Tune.
+func TestAMQPDefaultCredsFinding(t *testing.T) {
+	plugin := &AMQPPlugin{}
+	target := plugins.Target{
+		Address:    netip.MustParseAddrPort("127.0.0.1:5672"),
+		Host:       "127.0.0.1",
+		Misconfigs: true,
+	}
+
+	// First response: Connection.Start (protocol detection)
+	// Second response: Connection.Tune (creds accepted)
+	conn := &mockAMQPConn{
+		responses: [][]byte{connectionStartBytes, connectionTuneBytes},
+	}
+
+	service, err := plugin.Run(conn, 5*time.Second, target)
+	if err != nil {
+		t.Fatalf("Run() returned unexpected error: %v", err)
+	}
+	if service == nil {
+		t.Fatal("Run() returned nil service, expected detected service")
+	}
+
+	if len(service.SecurityFindings) != 1 {
+		t.Fatalf("Expected 1 SecurityFinding, got %d", len(service.SecurityFindings))
+	}
+
+	finding := service.SecurityFindings[0]
+	if finding.ID != "amqp-default-creds" {
+		t.Errorf("Expected finding ID 'amqp-default-creds', got '%s'", finding.ID)
+	}
+	if finding.Severity != plugins.SeverityHigh {
+		t.Errorf("Expected severity High, got '%s'", finding.Severity)
+	}
+	if !strings.Contains(finding.Evidence, "default credentials") {
+		t.Errorf("Expected evidence to contain 'default credentials', got '%s'", finding.Evidence)
+	}
+}
+
+// TestAMQPDefaultCredsRejected verifies that no finding is generated when the server
+// responds with Connection.Close (credentials rejected).
+func TestAMQPDefaultCredsRejected(t *testing.T) {
+	plugin := &AMQPPlugin{}
+	target := plugins.Target{
+		Address:    netip.MustParseAddrPort("127.0.0.1:5672"),
+		Host:       "127.0.0.1",
+		Misconfigs: true,
+	}
+
+	// First response: Connection.Start (protocol detection)
+	// Second response: Connection.Close (creds rejected)
+	conn := &mockAMQPConn{
+		responses: [][]byte{connectionStartBytes, connectionCloseBytes},
+	}
+
+	service, err := plugin.Run(conn, 5*time.Second, target)
+	if err != nil {
+		t.Fatalf("Run() returned unexpected error: %v", err)
+	}
+	if service == nil {
+		t.Fatal("Run() returned nil service, expected detected service")
+	}
+
+	if len(service.SecurityFindings) != 0 {
+		t.Errorf("Expected 0 SecurityFindings when creds rejected, got %d", len(service.SecurityFindings))
+	}
+}
+
+// TestAMQPNoFindingWhenMisconfigsDisabled verifies no security finding is generated
+// when Misconfigs is false, even when the service is detected.
+func TestAMQPNoFindingWhenMisconfigsDisabled(t *testing.T) {
+	plugin := &AMQPPlugin{}
+	target := plugins.Target{
+		Address:    netip.MustParseAddrPort("127.0.0.1:5672"),
+		Host:       "127.0.0.1",
+		Misconfigs: false,
+	}
+
+	conn := &mockAMQPConn{
+		responses: [][]byte{connectionStartBytes},
+	}
+
+	service, err := plugin.Run(conn, 5*time.Second, target)
+	if err != nil {
+		t.Fatalf("Run() returned unexpected error: %v", err)
+	}
+	if service == nil {
+		t.Fatal("Run() returned nil service, expected detected service")
+	}
+
+	if len(service.SecurityFindings) != 0 {
+		t.Errorf("Expected 0 SecurityFindings when Misconfigs=false, got %d", len(service.SecurityFindings))
+	}
+}
+
+// TestAmqpDefaultCredsFindingHelper verifies the amqpDefaultCredsFinding helper
+// produces correct evidence strings with and without a product name.
+func TestAmqpDefaultCredsFindingHelper(t *testing.T) {
+	t.Run("with product name", func(t *testing.T) {
+		finding := amqpDefaultCredsFinding("RabbitMQ")
+		if !strings.Contains(finding.Evidence, "RabbitMQ") {
+			t.Errorf("Expected evidence to contain 'RabbitMQ', got '%s'", finding.Evidence)
+		}
+		if !strings.Contains(finding.Evidence, "default credentials") {
+			t.Errorf("Expected evidence to contain 'default credentials', got '%s'", finding.Evidence)
+		}
+		if strings.Contains(finding.Evidence, "guest/guest") || strings.Contains(finding.Evidence, "\x00guest\x00guest") {
+			t.Errorf("Evidence should not expose credential literals, got '%s'", finding.Evidence)
+		}
+	})
+
+	t.Run("without product name", func(t *testing.T) {
+		finding := amqpDefaultCredsFinding("")
+		if !strings.Contains(finding.Evidence, "default credentials") {
+			t.Errorf("Expected evidence to contain 'default credentials', got '%s'", finding.Evidence)
+		}
+		// When product is empty, evidence should not append a product identifier
+		expectedNoProduct := "SASL PLAIN authentication succeeded with default credentials"
+		if finding.Evidence != expectedNoProduct {
+			t.Errorf("Expected evidence '%s', got '%s'", expectedNoProduct, finding.Evidence)
+		}
+		if strings.Contains(finding.Evidence, "guest/guest") || strings.Contains(finding.Evidence, "\x00guest\x00guest") {
+			t.Errorf("Evidence should not expose credential literals, got '%s'", finding.Evidence)
+		}
+	})
+}
+
+// TestCheckDefaultCredentials tests the checkDefaultCredentials function directly
+// against different server responses.
+func TestCheckDefaultCredentials(t *testing.T) {
+	t.Run("Connection.Tune response returns true", func(t *testing.T) {
+		conn := &mockAMQPConn{
+			responses: [][]byte{connectionTuneBytes},
+		}
+		result := checkDefaultCredentials(conn, 5*time.Second)
+		if !result {
+			t.Error("Expected checkDefaultCredentials to return true for Connection.Tune response")
+		}
+	})
+
+	t.Run("Connection.Close response returns false", func(t *testing.T) {
+		conn := &mockAMQPConn{
+			responses: [][]byte{connectionCloseBytes},
+		}
+		result := checkDefaultCredentials(conn, 5*time.Second)
+		if result {
+			t.Error("Expected checkDefaultCredentials to return false for Connection.Close response")
+		}
+	})
+
+	t.Run("short response returns false", func(t *testing.T) {
+		shortResponse := []byte{0x01, 0x00, 0x00, 0x00, 0x00}
+		conn := &mockAMQPConn{
+			responses: [][]byte{shortResponse},
+		}
+		result := checkDefaultCredentials(conn, 5*time.Second)
+		if result {
+			t.Error("Expected checkDefaultCredentials to return false for short response")
+		}
+	})
+}
+
+// TestCheckDefaultCredentialsWrongFrameType verifies that checkDefaultCredentials returns false
+// when the response has frame type 0x02 instead of the expected 0x01 (Method).
+func TestCheckDefaultCredentialsWrongFrameType(t *testing.T) {
+	// Build a 12-byte response with frame type 0x02 (Header) instead of 0x01 (Method).
+	// checkDefaultCredentials requires response[0] == FrameTypeMethod (0x01).
+	wrongFrameType := []byte{
+		0x02,       // Frame type: Header (not Method)
+		0x00, 0x00, // Channel 0
+		0x00, 0x00, 0x00, 0x0C, // Payload size
+		0x00, 0x0A, // Class ID (10 - Connection)
+		0x00, 0x1E, // Method ID (30 - Tune)
+		0xCE,       // Frame end
+	}
+
+	conn := &mockAMQPConn{
+		responses: [][]byte{wrongFrameType},
+	}
+
+	result := checkDefaultCredentials(conn, 5*time.Second)
+	if result {
+		t.Error("Expected checkDefaultCredentials to return false when frame type is 0x02")
+	}
+}
+
+// TestCheckDefaultCredentialsWrongMethodID verifies that checkDefaultCredentials returns false
+// when the response has the correct frame type and class ID but method ID 0x0032 (Close)
+// instead of 0x001E (Tune).
+func TestCheckDefaultCredentialsWrongMethodID(t *testing.T) {
+	// connectionCloseBytes has frame type 0x01, class ID 10, method ID 50 (Close).
+	conn := &mockAMQPConn{
+		responses: [][]byte{connectionCloseBytes},
+	}
+
+	result := checkDefaultCredentials(conn, 5*time.Second)
+	if result {
+		t.Error("Expected checkDefaultCredentials to return false when method ID is Connection.Close (50)")
+	}
+}
+
+// TestAMQPTLSPluginMisconfigs verifies that TLSPlugin.Run with Misconfigs=true also checks
+// default credentials and produces the amqp-default-creds finding when the server accepts them.
+func TestAMQPTLSPluginMisconfigs(t *testing.T) {
+	plugin := &TLSPlugin{}
+	target := plugins.Target{
+		Address:    netip.MustParseAddrPort("127.0.0.1:5671"),
+		Host:       "127.0.0.1",
+		Misconfigs: true,
+	}
+
+	// First response: Connection.Start (protocol detection)
+	// Second response: Connection.Tune (creds accepted)
+	conn := &mockAMQPConn{
+		responses: [][]byte{connectionStartBytes, connectionTuneBytes},
+	}
+
+	service, err := plugin.Run(conn, 5*time.Second, target)
+	if err != nil {
+		t.Fatalf("TLSPlugin.Run() returned unexpected error: %v", err)
+	}
+	if service == nil {
+		t.Fatal("TLSPlugin.Run() returned nil service, expected detected service")
+	}
+
+	if len(service.SecurityFindings) != 1 {
+		t.Fatalf("Expected 1 SecurityFinding, got %d", len(service.SecurityFindings))
+	}
+
+	finding := service.SecurityFindings[0]
+	if finding.ID != "amqp-default-creds" {
+		t.Errorf("Expected finding ID 'amqp-default-creds', got '%s'", finding.ID)
+	}
+	if finding.Severity != plugins.SeverityHigh {
+		t.Errorf("Expected severity High, got '%s'", finding.Severity)
+	}
+	if !strings.Contains(finding.Evidence, "default credentials") {
+		t.Errorf("Expected evidence to contain 'default credentials', got '%s'", finding.Evidence)
 	}
 }

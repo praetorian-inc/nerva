@@ -17,6 +17,7 @@ package jdwp
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"net"
 	"time"
 
@@ -86,14 +87,17 @@ func DetectJDWPVersion(conn net.Conn, timeout time.Duration) (*plugins.ServiceJD
 		return nil, err
 	}
 
-	if versionResponse.Length != (uint32(len((response)))) {
-		return nil, err
+	if int(versionResponse.Length) != len(response) {
+		return nil, nil
 	}
 
 	var descriptionLength uint32
 	err = binary.Read(responseBuf, binary.BigEndian, &descriptionLength)
 	if err != nil {
 		return nil, err
+	}
+	if int(descriptionLength) > responseBuf.Len() {
+		return nil, nil
 	}
 	description := make([]byte, descriptionLength)
 	err = binary.Read(responseBuf, binary.BigEndian, &description)
@@ -117,6 +121,9 @@ func DetectJDWPVersion(conn net.Conn, timeout time.Duration) (*plugins.ServiceJD
 	if err != nil {
 		return nil, err
 	}
+	if int(vmVersionLength) > responseBuf.Len() {
+		return nil, nil
+	}
 	vmVersion := make([]byte, vmVersionLength)
 	err = binary.Read(responseBuf, binary.BigEndian, &vmVersion)
 	if err != nil {
@@ -127,6 +134,9 @@ func DetectJDWPVersion(conn net.Conn, timeout time.Duration) (*plugins.ServiceJD
 	err = binary.Read(responseBuf, binary.BigEndian, &vmNameLength)
 	if err != nil {
 		return nil, err
+	}
+	if int(vmNameLength) > responseBuf.Len() {
+		return nil, nil
 	}
 	vmName := make([]byte, vmNameLength)
 	err = binary.Read(responseBuf, binary.BigEndian, &vmName)
@@ -166,11 +176,29 @@ func (p *JDWPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 		return nil, err
 	}
 
+	var service *plugins.Service
 	if info == nil {
-		return plugins.CreateServiceFrom(target, plugins.ServiceJDWP{}, false, "", plugins.TCP), nil
+		service = plugins.CreateServiceFrom(target, plugins.ServiceJDWP{}, false, "", plugins.TCP)
+		if target.Misconfigs {
+			service.SecurityFindings = []plugins.SecurityFinding{jdwpExposedFinding("JDWP handshake succeeded")}
+		}
+	} else {
+		service = plugins.CreateServiceFrom(target, info, false, info.VMVersion, plugins.TCP)
+		if target.Misconfigs {
+			service.SecurityFindings = []plugins.SecurityFinding{jdwpExposedFinding(fmt.Sprintf("JDWP handshake succeeded, VM: %s %s", info.VMName, info.VMVersion))}
+		}
 	}
+	return service, nil
+}
 
-	return plugins.CreateServiceFrom(target, info, false, info.VMVersion, plugins.TCP), nil
+// jdwpExposedFinding returns a SecurityFinding for an exposed JDWP debug interface.
+func jdwpExposedFinding(evidence string) plugins.SecurityFinding {
+	return plugins.SecurityFinding{
+		ID:          "jdwp-exposed",
+		Severity:    plugins.SeverityCritical,
+		Description: "JDWP debug interface exposed — allows remote code execution without authentication",
+		Evidence:    evidence,
+	}
 }
 
 func (p *JDWPPlugin) PortPriority(port uint16) bool {
