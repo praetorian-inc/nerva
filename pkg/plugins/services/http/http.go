@@ -83,11 +83,11 @@ var (
 		9443: {},
 	}
 
-	// serverVersionRe matches a Server header value that contains a MAJOR.MINOR version number,
-	// e.g. "nginx/1.14.0" or "Apache/2.4.29 (Ubuntu)" or "Microsoft-IIS/10.0".
-	// It requires at least two numeric components (MAJOR.MINOR) to avoid flagging generic
-	// names like "nginx", "cloudflare", or "openresty".
-	serverVersionRe = regexp.MustCompile(`\d+\.\d+`)
+	// serverVersionRe matches a Server header value that contains a product/version token
+	// following the RFC 7231 format (e.g. "nginx/1.14.0", "Apache/2.4.29 (Ubuntu)").
+	// The leading name component avoids false positives from bare version-like numbers
+	// such as HTTP version fragments ("1.1 proxy").
+	serverVersionRe = regexp.MustCompile(`[A-Za-z][\w.-]*/\d+\.\d+`)
 )
 
 func (p *HTTPPlugin) PortPriority(port uint16) bool {
@@ -378,6 +378,10 @@ func checkServerVersion(headers http.Header) *plugins.SecurityFinding {
 	evidence := server
 	if len(evidence) > 256 {
 		evidence = evidence[:256]
+		// Ensure we don't split a multi-byte UTF-8 character at the boundary.
+		for i := len(evidence) - 1; i >= 253 && evidence[i]&0xC0 == 0x80; i-- {
+			evidence = evidence[:i]
+		}
 	}
 	return &plugins.SecurityFinding{
 		ID:          "http-server-version",

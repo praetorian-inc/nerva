@@ -15,6 +15,7 @@
 package http
 
 import (
+	"bytes"
 	"net"
 	"net/http"
 	"net/netip"
@@ -199,6 +200,7 @@ func TestCheckServerVersion_ApacheWithVersion(t *testing.T) {
 	assert.NotNil(t, finding)
 	assert.Equal(t, "http-server-version", finding.ID)
 	assert.Equal(t, plugins.SeverityInfo, finding.Severity)
+	assert.Equal(t, "Server: Apache/2.4.29 (Ubuntu)", finding.Evidence)
 }
 
 func TestCheckServerVersion_IISWithVersion(t *testing.T) {
@@ -210,6 +212,7 @@ func TestCheckServerVersion_IISWithVersion(t *testing.T) {
 	assert.NotNil(t, finding)
 	assert.Equal(t, "http-server-version", finding.ID)
 	assert.Equal(t, plugins.SeverityInfo, finding.Severity)
+	assert.Equal(t, "Server: Microsoft-IIS/10.0", finding.Evidence)
 }
 
 func TestCheckServerVersion_NginxNoVersion(t *testing.T) {
@@ -319,14 +322,13 @@ func TestCheckDirectoryListing_FalsePositiveRelativeLinkInPre(t *testing.T) {
 	assert.Nil(t, finding)
 }
 
-func TestCheckServerVersion_HTTPVersionInServer(t *testing.T) {
-	// "1.1 proxy" contains a version-like pattern (1.1) — this is flagged
-	// because the Server header contains version information.
+func TestCheckServerVersion_NoFalsePositive_HTTPVersionFragment(t *testing.T) {
+	// "1.1 proxy" looks version-like but lacks a product name prefix.
+	// The regex requires name/version format to avoid this class of false positive.
 	headers := http.Header{}
 	headers.Set("Server", "1.1 proxy")
 	finding := checkServerVersion(headers)
-	assert.NotNil(t, finding)
-	assert.Equal(t, "http-server-version", finding.ID)
+	assert.Nil(t, finding)
 }
 
 // ---------------------------------------------------------------------------
@@ -494,8 +496,15 @@ func startHTTPServer(t *testing.T, response string) net.Listener {
 			}
 			go func(c net.Conn) {
 				defer c.Close()
-				buf := make([]byte, 4096)
-				c.Read(buf) //nolint:errcheck // best-effort drain
+				var buf [4096]byte
+				var total int
+				for {
+					n, err := c.Read(buf[total:])
+					total += n
+					if bytes.Contains(buf[:total], []byte("\r\n\r\n")) || err != nil || total >= len(buf) {
+						break
+					}
+				}
 				c.Write([]byte(response)) //nolint:errcheck
 			}(conn)
 		}
@@ -697,7 +706,7 @@ func TestHTTPPlugin_NoCORSNoVersion_Live(t *testing.T) {
 // Docker-based live test for directory listing
 // ---------------------------------------------------------------------------
 
-// TestHTTPPlugin_DirectoryListing_Docker spins up an alpine:3.21 container
+// TestHTTPPlugin_DirectoryListing_Docker spins up a python:3.13-alpine container
 // running Python's built-in HTTP server, which generates real directory
 // listings, and verifies that HTTPPlugin.Run() detects the http-directory-listing
 // finding while not producing false-positive CORS findings.
@@ -712,12 +721,9 @@ func TestHTTPPlugin_DirectoryListing_Docker(t *testing.T) {
 	}
 
 	resource, err := pool.RunWithOptions(&dockertest.RunOptions{
-		Repository: "alpine",
-		Tag:        "3.21",
-		Cmd: []string{
-			"sh", "-c",
-			"apk add --no-cache python3 >/dev/null 2>&1 && python3 -m http.server 8080",
-		},
+		Repository:   "python",
+		Tag:          "3.13-alpine",
+		Cmd:          []string{"python3", "-m", "http.server", "8080"},
 		ExposedPorts: []string{"8080/tcp"},
 	})
 	if err != nil {
@@ -736,7 +742,7 @@ func TestHTTPPlugin_DirectoryListing_Docker(t *testing.T) {
 	targetAddr := net.JoinHostPort(host, port)
 
 	// Wait for the Python HTTP server to be ready by probing for a valid HTTP
-	// response, not just TCP connectivity (apk install adds startup latency).
+	// response, not just TCP connectivity.
 	retryErr := pool.Retry(func() error {
 		resp, dialErr := http.Get("http://" + targetAddr + "/") //nolint:noctx
 		if dialErr != nil {
