@@ -15,6 +15,7 @@
 package http
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -22,6 +23,8 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"regexp"
+	"strings"
 	"syscall"
 	"time"
 
@@ -79,6 +82,12 @@ var (
 		8443: {},
 		9443: {},
 	}
+
+	// serverVersionRe matches a Server header value that contains a MAJOR.MINOR version number,
+	// e.g. "nginx/1.14.0" or "Apache/2.4.29 (Ubuntu)" or "Microsoft-IIS/10.0".
+	// It requires at least two numeric components (MAJOR.MINOR) to avoid flagging generic
+	// names like "nginx", "cloudflare", or "openresty".
+	serverVersionRe = regexp.MustCompile(`\d+\.\d+`)
 )
 
 func (p *HTTPPlugin) PortPriority(port uint16) bool {
@@ -120,7 +129,7 @@ func (p *HTTPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 	defer resp.Body.Close()
 
 	baseURL := fmt.Sprintf("http://%s", conn.RemoteAddr().String())
-	technologies, cpes, fingerprintMetadata, fingerprintedTechs, _ := p.FingerprintResponse(resp, &client, baseURL, target.Host)
+	technologies, cpes, fingerprintMetadata, fingerprintedTechs, body, _ := p.FingerprintResponse(resp, &client, baseURL, target.Host)
 
 	payload := plugins.ServiceHTTP{
 		Status:          resp.Status,
@@ -151,6 +160,15 @@ func (p *HTTPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 	}
 	if target.Misconfigs && resp.StatusCode/100 != 3 {
 		service.SecurityFindings = append(service.SecurityFindings, checkMissingSecurityHeaders(resp.Header, false)...)
+		if finding := checkCORSWildcard(resp.Header); finding != nil {
+			service.SecurityFindings = append(service.SecurityFindings, *finding)
+		}
+		if finding := checkServerVersion(resp.Header); finding != nil {
+			service.SecurityFindings = append(service.SecurityFindings, *finding)
+		}
+		if finding := checkDirectoryListing(body); finding != nil {
+			service.SecurityFindings = append(service.SecurityFindings, *finding)
+		}
 	}
 	return service, nil
 }
@@ -198,7 +216,7 @@ func (p *HTTPSPlugin) Run(
 	defer resp.Body.Close()
 
 	baseURL := fmt.Sprintf("https://%s", conn.RemoteAddr().String())
-	technologies, cpes, fingerprintMetadata, fingerprintedTechs, _ := p.FingerprintResponse(resp, &client, baseURL, target.Host)
+	technologies, cpes, fingerprintMetadata, fingerprintedTechs, body, _ := p.FingerprintResponse(resp, &client, baseURL, target.Host)
 
 	payload := plugins.ServiceHTTPS{
 		Status:          resp.Status,
@@ -233,6 +251,15 @@ func (p *HTTPSPlugin) Run(
 		}
 		if resp.StatusCode/100 != 3 {
 			service.SecurityFindings = append(service.SecurityFindings, checkMissingSecurityHeaders(resp.Header, true)...)
+			if finding := checkCORSWildcard(resp.Header); finding != nil {
+				service.SecurityFindings = append(service.SecurityFindings, *finding)
+			}
+			if finding := checkServerVersion(resp.Header); finding != nil {
+				service.SecurityFindings = append(service.SecurityFindings, *finding)
+			}
+			if finding := checkDirectoryListing(body); finding != nil {
+				service.SecurityFindings = append(service.SecurityFindings, *finding)
+			}
 		}
 	}
 	return service, nil
@@ -260,11 +287,11 @@ func (p *HTTPPlugin) Name() string {
 func (p *HTTPSPlugin) Name() string {
 	return HTTPS
 }
-func (p *HTTPPlugin) FingerprintResponse(resp *http.Response, client *http.Client, baseURL string, host string) ([]string, []string, map[string]map[string]any, []fingerprintedTech, error) {
+func (p *HTTPPlugin) FingerprintResponse(resp *http.Response, client *http.Client, baseURL string, host string) ([]string, []string, map[string]map[string]any, []fingerprintedTech, []byte, error) {
 	return fingerprint(resp, p.analyzer, client, baseURL, host)
 }
 
-func (p *HTTPSPlugin) FingerprintResponse(resp *http.Response, client *http.Client, baseURL string, host string) ([]string, []string, map[string]map[string]any, []fingerprintedTech, error) {
+func (p *HTTPSPlugin) FingerprintResponse(resp *http.Response, client *http.Client, baseURL string, host string) ([]string, []string, map[string]map[string]any, []fingerprintedTech, []byte, error) {
 	return fingerprint(resp, p.analyzer, client, baseURL, host)
 }
 
@@ -312,6 +339,90 @@ func checkMissingSecurityHeaders(headers http.Header, checkHSTS bool) []plugins.
 	}
 
 	return findings
+}
+
+// checkCORSWildcard returns a SecurityFinding when Access-Control-Allow-Origin is set to "*".
+// Severity is elevated to Critical when Access-Control-Allow-Credentials is also "true".
+func checkCORSWildcard(headers http.Header) *plugins.SecurityFinding {
+	origin := headers.Get("Access-Control-Allow-Origin")
+	if origin != "*" {
+		return nil
+	}
+	if strings.EqualFold(headers.Get("Access-Control-Allow-Credentials"), "true") {
+		return &plugins.SecurityFinding{
+			ID:          "http-cors-wildcard-credentials",
+			Severity:    plugins.SeverityCritical,
+			Description: "Server sends CORS wildcard with Access-Control-Allow-Credentials: true, signaling intent to allow credentialed cross-origin access",
+			Evidence:    "Access-Control-Allow-Origin: * | Access-Control-Allow-Credentials: true",
+		}
+	}
+	return &plugins.SecurityFinding{
+		ID:          "http-cors-wildcard",
+		Severity:    plugins.SeverityMedium,
+		Description: "CORS wildcard origin allows any site to read cross-origin responses",
+		Evidence:    "Access-Control-Allow-Origin: *",
+	}
+}
+
+// checkServerVersion returns a SecurityFinding when the Server header contains a version number
+// matching MAJOR.MINOR format (e.g. "nginx/1.14.0", "Apache/2.4.29").
+// Generic server names without version numbers (e.g. "nginx", "cloudflare") are not flagged.
+func checkServerVersion(headers http.Header) *plugins.SecurityFinding {
+	server := headers.Get("Server")
+	if server == "" {
+		return nil
+	}
+	if !serverVersionRe.MatchString(server) {
+		return nil
+	}
+	evidence := server
+	if len(evidence) > 256 {
+		evidence = evidence[:256]
+	}
+	return &plugins.SecurityFinding{
+		ID:          "http-server-version",
+		Severity:    plugins.SeverityInfo,
+		Description: "Server header discloses software version information",
+		Evidence:    "Server: " + evidence,
+	}
+}
+
+// checkDirectoryListing returns a SecurityFinding when the response body contains patterns
+// associated with automatically generated directory listings.
+func checkDirectoryListing(body []byte) *plugins.SecurityFinding {
+	if len(body) == 0 {
+		return nil
+	}
+	// Directory listing signatures appear near the document start; limit scope to avoid
+	// allocating a full copy of potentially large response bodies.
+	limit := len(body)
+	if limit > 8192 {
+		limit = 8192
+	}
+	lower := bytes.ToLower(body[:limit])
+	patterns := [][]byte{
+		[]byte("<title>index of /"),
+		[]byte("<h1>directory listing for /"),
+	}
+	for _, p := range patterns {
+		if bytes.Contains(lower, p) {
+			return &plugins.SecurityFinding{
+				ID:          "http-directory-listing",
+				Severity:    plugins.SeverityLow,
+				Description: "Server returns an auto-generated directory listing",
+				Evidence:    string(p),
+			}
+		}
+	}
+	if bytes.Contains(lower, []byte(`<pre><a href="../`)) {
+		return &plugins.SecurityFinding{
+			ID:          "http-directory-listing",
+			Severity:    plugins.SeverityLow,
+			Description: "Server returns an auto-generated directory listing",
+			Evidence:    `<pre><a href="../`,
+		}
+	}
+	return nil
 }
 
 // tlsVersionName returns a human-readable name for a TLS version constant.
@@ -367,14 +478,14 @@ func processFingerprintResult(result *fingerprinters.FingerprintResult) (string,
 	return tech, result.CPEs, result.Metadata, result.Severity
 }
 
-func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *http.Client, baseURL string, host string) ([]string, []string, map[string]map[string]any, []fingerprintedTech, error) {
+func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *http.Client, baseURL string, host string) ([]string, []string, map[string]map[string]any, []fingerprintedTech, []byte, error) {
 	var technologies, cpes []string
 	var fingerprintedTechs []fingerprintedTech
 	fingerprintMetadata := make(map[string]map[string]any)
 	maxResponseSize := int64(10 * 1024 * 1024) // 10MB limit
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
 	// Close body to release connection for reuse by active fingerprinters.
 	// Without this, the transport may not return the connection to the idle pool,
@@ -462,5 +573,5 @@ func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *ht
 		}
 	}
 
-	return technologies, cpes, fingerprintMetadata, fingerprintedTechs, nil
+	return technologies, cpes, fingerprintMetadata, fingerprintedTechs, data, nil
 }

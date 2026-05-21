@@ -117,6 +117,242 @@ func TestCheckMissingSecurityHeaders_HTTPNoHSTS(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// checkCORSWildcard tests
+// ---------------------------------------------------------------------------
+
+func TestCheckCORSWildcard_WildcardOnly(t *testing.T) {
+	headers := http.Header{}
+	headers.Set("Access-Control-Allow-Origin", "*")
+
+	finding := checkCORSWildcard(headers)
+
+	assert.NotNil(t, finding)
+	assert.Equal(t, "http-cors-wildcard", finding.ID)
+	assert.Equal(t, plugins.SeverityMedium, finding.Severity)
+	assert.Equal(t, "Access-Control-Allow-Origin: *", finding.Evidence)
+}
+
+func TestCheckCORSWildcard_WildcardWithCredentials(t *testing.T) {
+	headers := http.Header{}
+	headers.Set("Access-Control-Allow-Origin", "*")
+	headers.Set("Access-Control-Allow-Credentials", "true")
+
+	finding := checkCORSWildcard(headers)
+
+	assert.NotNil(t, finding)
+	assert.Equal(t, "http-cors-wildcard-credentials", finding.ID)
+	assert.Equal(t, plugins.SeverityCritical, finding.Severity)
+}
+
+func TestCheckCORSWildcard_WildcardWithCredentialsFalse(t *testing.T) {
+	headers := http.Header{}
+	headers.Set("Access-Control-Allow-Origin", "*")
+	headers.Set("Access-Control-Allow-Credentials", "false")
+
+	finding := checkCORSWildcard(headers)
+
+	assert.NotNil(t, finding)
+	assert.Equal(t, "http-cors-wildcard", finding.ID)
+	assert.Equal(t, plugins.SeverityMedium, finding.Severity)
+}
+
+func TestCheckCORSWildcard_SpecificOrigin(t *testing.T) {
+	headers := http.Header{}
+	headers.Set("Access-Control-Allow-Origin", "https://example.com")
+
+	finding := checkCORSWildcard(headers)
+
+	assert.Nil(t, finding)
+}
+
+func TestCheckCORSWildcard_NoHeader(t *testing.T) {
+	headers := http.Header{}
+
+	finding := checkCORSWildcard(headers)
+
+	assert.Nil(t, finding)
+}
+
+// ---------------------------------------------------------------------------
+// checkServerVersion tests
+// ---------------------------------------------------------------------------
+
+func TestCheckServerVersion_NginxWithVersion(t *testing.T) {
+	headers := http.Header{}
+	headers.Set("Server", "nginx/1.14.0")
+
+	finding := checkServerVersion(headers)
+
+	assert.NotNil(t, finding)
+	assert.Equal(t, "http-server-version", finding.ID)
+	assert.Equal(t, plugins.SeverityInfo, finding.Severity)
+	assert.Equal(t, "Server: nginx/1.14.0", finding.Evidence)
+}
+
+func TestCheckServerVersion_ApacheWithVersion(t *testing.T) {
+	headers := http.Header{}
+	headers.Set("Server", "Apache/2.4.29 (Ubuntu)")
+
+	finding := checkServerVersion(headers)
+
+	assert.NotNil(t, finding)
+	assert.Equal(t, "http-server-version", finding.ID)
+	assert.Equal(t, plugins.SeverityInfo, finding.Severity)
+}
+
+func TestCheckServerVersion_IISWithVersion(t *testing.T) {
+	headers := http.Header{}
+	headers.Set("Server", "Microsoft-IIS/10.0")
+
+	finding := checkServerVersion(headers)
+
+	assert.NotNil(t, finding)
+	assert.Equal(t, "http-server-version", finding.ID)
+	assert.Equal(t, plugins.SeverityInfo, finding.Severity)
+}
+
+func TestCheckServerVersion_NginxNoVersion(t *testing.T) {
+	headers := http.Header{}
+	headers.Set("Server", "nginx")
+
+	finding := checkServerVersion(headers)
+
+	assert.Nil(t, finding)
+}
+
+func TestCheckServerVersion_Cloudflare(t *testing.T) {
+	headers := http.Header{}
+	headers.Set("Server", "cloudflare")
+
+	finding := checkServerVersion(headers)
+
+	assert.Nil(t, finding)
+}
+
+func TestCheckServerVersion_Openresty(t *testing.T) {
+	headers := http.Header{}
+	headers.Set("Server", "openresty")
+
+	finding := checkServerVersion(headers)
+
+	assert.Nil(t, finding)
+}
+
+func TestCheckServerVersion_NoHeader(t *testing.T) {
+	headers := http.Header{}
+
+	finding := checkServerVersion(headers)
+
+	assert.Nil(t, finding)
+}
+
+// ---------------------------------------------------------------------------
+// checkDirectoryListing tests
+// ---------------------------------------------------------------------------
+
+func TestCheckDirectoryListing_ApacheTitle(t *testing.T) {
+	body := []byte("<html><head><title>Index of /var/www</title></head></html>")
+
+	finding := checkDirectoryListing(body)
+
+	assert.NotNil(t, finding)
+	assert.Equal(t, "http-directory-listing", finding.ID)
+	assert.Equal(t, plugins.SeverityLow, finding.Severity)
+}
+
+func TestCheckDirectoryListing_PythonH1(t *testing.T) {
+	body := []byte("<html><body><h1>Directory listing for /tmp</h1></body></html>")
+
+	finding := checkDirectoryListing(body)
+
+	assert.NotNil(t, finding)
+	assert.Equal(t, "http-directory-listing", finding.ID)
+	assert.Equal(t, plugins.SeverityLow, finding.Severity)
+}
+
+func TestCheckDirectoryListing_NginxAutoindex(t *testing.T) {
+	body := []byte("<html><head><title>/ </title></head><body><h1>/ </h1><hr><pre><a href=\"../\">../</a>\n<a href=\"file.txt\">file.txt</a></pre></body></html>")
+
+	finding := checkDirectoryListing(body)
+
+	assert.NotNil(t, finding)
+	assert.Equal(t, "http-directory-listing", finding.ID)
+	assert.Equal(t, plugins.SeverityLow, finding.Severity)
+}
+
+func TestCheckDirectoryListing_NormalHTML(t *testing.T) {
+	body := []byte("<html><head><title>Welcome</title></head><body><h1>Hello World</h1></body></html>")
+
+	finding := checkDirectoryListing(body)
+
+	assert.Nil(t, finding)
+}
+
+func TestCheckDirectoryListing_EmptyBody(t *testing.T) {
+	finding := checkDirectoryListing([]byte{})
+
+	assert.Nil(t, finding)
+}
+
+func TestCheckDirectoryListing_MentionsIndexInText(t *testing.T) {
+	// A page that discusses "Index of" in prose but is NOT a directory listing.
+	// The <title>index of / pattern requires the title tag, so this should NOT match.
+	body := []byte("<html><body><p>The Apache directive generates a page titled Index of /path when autoindex is enabled.</p></body></html>")
+	finding := checkDirectoryListing(body)
+	assert.Nil(t, finding)
+}
+
+func TestCheckDirectoryListing_FalsePositiveSeparatedPatterns(t *testing.T) {
+	// A page with <pre><a href="..."> and ../ in separate locations — should NOT trigger
+	// after the fix to use compound pattern.
+	body := []byte(`<html><body><pre><a href="https://example.com">link</a></pre><p>See <a href="../overview">overview</a></p></body></html>`)
+	finding := checkDirectoryListing(body)
+	assert.Nil(t, finding)
+}
+
+// ---------------------------------------------------------------------------
+// checkCORSWildcard additional tests
+// ---------------------------------------------------------------------------
+
+func TestCheckCORSWildcard_WildcardWithCredentialsCaseInsensitive(t *testing.T) {
+	headers := http.Header{}
+	headers.Set("Access-Control-Allow-Origin", "*")
+	headers.Set("Access-Control-Allow-Credentials", "TRUE")
+
+	finding := checkCORSWildcard(headers)
+
+	assert.NotNil(t, finding)
+	assert.Equal(t, "http-cors-wildcard-credentials", finding.ID)
+	assert.Equal(t, plugins.SeverityCritical, finding.Severity)
+}
+
+// ---------------------------------------------------------------------------
+// checkServerVersion additional tests
+// ---------------------------------------------------------------------------
+
+func TestCheckServerVersion_AmazonS3(t *testing.T) {
+	headers := http.Header{}
+	headers.Set("Server", "AmazonS3")
+	finding := checkServerVersion(headers)
+	assert.Nil(t, finding)
+}
+
+func TestCheckServerVersion_ECSCacheCode(t *testing.T) {
+	headers := http.Header{}
+	headers.Set("Server", "ECS (dcb/7F83)")
+	finding := checkServerVersion(headers)
+	assert.Nil(t, finding)
+}
+
+func TestCheckServerVersion_GunicornWithVersion(t *testing.T) {
+	headers := http.Header{}
+	headers.Set("Server", "gunicorn/21.2.0")
+	finding := checkServerVersion(headers)
+	assert.NotNil(t, finding)
+	assert.Equal(t, "http-server-version", finding.ID)
+}
+
+// ---------------------------------------------------------------------------
 // Docker-based live integration test
 // ---------------------------------------------------------------------------
 
