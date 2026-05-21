@@ -134,15 +134,21 @@ func (f *AEMFingerprinter) Match(resp *http.Response) bool {
 // Fingerprint performs full AEM detection and extracts version information.
 // Returns nil if the response does not confirm AEM presence.
 func (f *AEMFingerprinter) Fingerprint(resp *http.Response, body []byte) (*FingerprintResult, error) {
-	// Verify AEM presence via body markers
+	// Verify AEM presence via body markers.
+	// Require 2+ distinct body markers to avoid false positives from servers
+	// that echo the probe URL in error pages (the probe path contains
+	// "granite/core/content/login", a single marker).
 	bodyStr := string(body)
-	isAEM := false
+	markerCount := 0
 	for _, marker := range aemBodyMarkers {
 		if strings.Contains(bodyStr, marker) {
-			isAEM = true
-			break
+			markerCount++
+			if markerCount >= 2 {
+				break
+			}
 		}
 	}
+	isAEM := markerCount >= 2
 
 	// Fall back to header-based verification if body doesn't confirm AEM
 	if !isAEM {
