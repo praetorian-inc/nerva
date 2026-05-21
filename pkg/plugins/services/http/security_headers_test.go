@@ -18,6 +18,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"strings"
 	"testing"
 	"time"
 
@@ -450,5 +451,327 @@ func TestHTTPPlugin_MissingSecurityHeaders_Live(t *testing.T) {
 		t.Errorf("expected http-missing-x-frame-options finding, got findings: %v", service.SecurityFindings)
 	} else if xfo.Severity != plugins.SeverityLow {
 		t.Errorf("http-missing-x-frame-options severity = %q, want %q", xfo.Severity, plugins.SeverityLow)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// In-process integration tests – HTTPPlugin.Run() end-to-end
+// ---------------------------------------------------------------------------
+
+// startHTTPServer starts a plain TCP listener on a random localhost port.
+// For each accepted connection it drains the request bytes and writes the
+// provided raw HTTP response string back to the client.
+// The caller is responsible for closing the returned listener.
+func startHTTPServer(t *testing.T, response string) net.Listener {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("startHTTPServer: net.Listen: %v", err)
+	}
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return // listener closed
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				buf := make([]byte, 4096)
+				c.Read(buf) //nolint:errcheck // best-effort drain
+				c.Write([]byte(response)) //nolint:errcheck
+			}(conn)
+		}
+	}()
+	return ln
+}
+
+// runHTTPPlugin is a shared helper that starts an in-process HTTP server
+// serving response, then calls HTTPPlugin.Run() against it and returns the
+// resulting service.
+func runHTTPPlugin(t *testing.T, response string) *plugins.Service {
+	t.Helper()
+
+	ln := startHTTPServer(t, response)
+	defer ln.Close()
+
+	addrPort := netip.MustParseAddrPort(ln.Addr().String())
+	target := plugins.Target{
+		Address:    addrPort,
+		Misconfigs: true,
+	}
+
+	conn, err := net.DialTimeout("tcp", ln.Addr().String(), 5*time.Second)
+	if err != nil {
+		t.Fatalf("runHTTPPlugin: net.DialTimeout: %v", err)
+	}
+	defer conn.Close()
+
+	wappalyzerClient, err := wappalyzer.New()
+	if err != nil {
+		t.Fatalf("runHTTPPlugin: wappalyzer.New: %v", err)
+	}
+	p := &HTTPPlugin{analyzer: wappalyzerClient}
+
+	service, err := p.Run(conn, 5*time.Second, target)
+	if err != nil {
+		t.Fatalf("runHTTPPlugin: HTTPPlugin.Run(): %v", err)
+	}
+	if service == nil {
+		t.Fatal("runHTTPPlugin: HTTPPlugin.Run() returned nil service")
+	}
+	return service
+}
+
+// TestHTTPPlugin_CORSWildcard_Live verifies that a CORS wildcard header
+// (without credentials) produces an http-cors-wildcard finding with Medium
+// severity, and does not produce http-cors-wildcard-credentials.
+func TestHTTPPlugin_CORSWildcard_Live(t *testing.T) {
+	const body = "<html><body><h1>Hello</h1></body></html>"
+	response := "HTTP/1.1 200 OK\r\n" +
+		"Content-Type: text/html\r\n" +
+		"Access-Control-Allow-Origin: *\r\n" +
+		"Content-Length: 39\r\n" +
+		"Connection: close\r\n\r\n" +
+		body
+
+	service := runHTTPPlugin(t, response)
+
+	finding := findFinding(service.SecurityFindings, "http-cors-wildcard")
+	if finding == nil {
+		t.Fatalf("expected http-cors-wildcard finding, got findings: %v", service.SecurityFindings)
+	}
+	if finding.Severity != plugins.SeverityMedium {
+		t.Errorf("http-cors-wildcard severity = %q, want %q", finding.Severity, plugins.SeverityMedium)
+	}
+	if creds := findFinding(service.SecurityFindings, "http-cors-wildcard-credentials"); creds != nil {
+		t.Errorf("expected no http-cors-wildcard-credentials finding, got: %+v", *creds)
+	}
+}
+
+// TestHTTPPlugin_CORSWildcardCredentials_Live verifies that a CORS wildcard
+// header combined with Access-Control-Allow-Credentials: true produces an
+// http-cors-wildcard-credentials finding with Critical severity.
+func TestHTTPPlugin_CORSWildcardCredentials_Live(t *testing.T) {
+	const body = "<html><body><h1>Hello</h1></body></html>"
+	response := "HTTP/1.1 200 OK\r\n" +
+		"Content-Type: text/html\r\n" +
+		"Access-Control-Allow-Origin: *\r\n" +
+		"Access-Control-Allow-Credentials: true\r\n" +
+		"Content-Length: 39\r\n" +
+		"Connection: close\r\n\r\n" +
+		body
+
+	service := runHTTPPlugin(t, response)
+
+	finding := findFinding(service.SecurityFindings, "http-cors-wildcard-credentials")
+	if finding == nil {
+		t.Fatalf("expected http-cors-wildcard-credentials finding, got findings: %v", service.SecurityFindings)
+	}
+	if finding.Severity != plugins.SeverityCritical {
+		t.Errorf("http-cors-wildcard-credentials severity = %q, want %q", finding.Severity, plugins.SeverityCritical)
+	}
+}
+
+// TestHTTPPlugin_ServerVersion_Live verifies that a versioned Server header
+// produces an http-server-version finding with Info severity and that the
+// evidence string contains the version value.
+func TestHTTPPlugin_ServerVersion_Live(t *testing.T) {
+	const body = "<html><body><h1>Hello</h1></body></html>"
+	response := "HTTP/1.1 200 OK\r\n" +
+		"Content-Type: text/html\r\n" +
+		"Server: nginx/1.24.0\r\n" +
+		"Content-Length: 39\r\n" +
+		"Connection: close\r\n\r\n" +
+		body
+
+	service := runHTTPPlugin(t, response)
+
+	finding := findFinding(service.SecurityFindings, "http-server-version")
+	if finding == nil {
+		t.Fatalf("expected http-server-version finding, got findings: %v", service.SecurityFindings)
+	}
+	if finding.Severity != plugins.SeverityInfo {
+		t.Errorf("http-server-version severity = %q, want %q", finding.Severity, plugins.SeverityInfo)
+	}
+	if !strings.Contains(finding.Evidence, "nginx/1.24.0") {
+		t.Errorf("http-server-version evidence = %q, want it to contain %q", finding.Evidence, "nginx/1.24.0")
+	}
+}
+
+// TestHTTPPlugin_ServerNoVersion_Live verifies that a Server header without a
+// version number (e.g. "cloudflare") does not produce an http-server-version
+// finding.
+func TestHTTPPlugin_ServerNoVersion_Live(t *testing.T) {
+	const body = "<html><body><h1>Hello</h1></body></html>"
+	response := "HTTP/1.1 200 OK\r\n" +
+		"Content-Type: text/html\r\n" +
+		"Server: cloudflare\r\n" +
+		"Content-Length: 39\r\n" +
+		"Connection: close\r\n\r\n" +
+		body
+
+	service := runHTTPPlugin(t, response)
+
+	if finding := findFinding(service.SecurityFindings, "http-server-version"); finding != nil {
+		t.Errorf("expected no http-server-version finding for generic Server header, got: %+v", *finding)
+	}
+}
+
+// TestHTTPPlugin_DirectoryListing_Live verifies that an Apache-style directory
+// listing body produces an http-directory-listing finding with Low severity.
+func TestHTTPPlugin_DirectoryListing_Live(t *testing.T) {
+	const body = "<html><head><title>Index of /var/www</title></head><body><h1>Index of /var/www</h1><pre>...</pre></body></html>"
+	response := "HTTP/1.1 200 OK\r\n" +
+		"Content-Type: text/html\r\n" +
+		"Content-Length: 109\r\n" +
+		"Connection: close\r\n\r\n" +
+		body
+
+	service := runHTTPPlugin(t, response)
+
+	finding := findFinding(service.SecurityFindings, "http-directory-listing")
+	if finding == nil {
+		t.Fatalf("expected http-directory-listing finding, got findings: %v", service.SecurityFindings)
+	}
+	if finding.Severity != plugins.SeverityLow {
+		t.Errorf("http-directory-listing severity = %q, want %q", finding.Severity, plugins.SeverityLow)
+	}
+}
+
+// TestHTTPPlugin_NormalPage_NoDirectoryListing_Live verifies that a normal HTML
+// page does not trigger the http-directory-listing finding.
+func TestHTTPPlugin_NormalPage_NoDirectoryListing_Live(t *testing.T) {
+	const body = "<html><head><title>Welcome</title></head><body><h1>Home Page</h1><p>Nothing to see here.</p></body></html>"
+	response := "HTTP/1.1 200 OK\r\n" +
+		"Content-Type: text/html\r\n" +
+		"Content-Length: 104\r\n" +
+		"Connection: close\r\n\r\n" +
+		body
+
+	service := runHTTPPlugin(t, response)
+
+	if finding := findFinding(service.SecurityFindings, "http-directory-listing"); finding != nil {
+		t.Errorf("expected no http-directory-listing finding for normal page, got: %+v", *finding)
+	}
+}
+
+// TestHTTPPlugin_NoCORSNoVersion_Live verifies that a minimal response with no
+// CORS headers, no Server header, and no directory listing does not produce any
+// of the three new findings.
+func TestHTTPPlugin_NoCORSNoVersion_Live(t *testing.T) {
+	const body = "<html><body><h1>Hello</h1></body></html>"
+	response := "HTTP/1.1 200 OK\r\n" +
+		"Content-Type: text/html\r\n" +
+		"Content-Length: 39\r\n" +
+		"Connection: close\r\n\r\n" +
+		body
+
+	service := runHTTPPlugin(t, response)
+
+	for _, id := range []string{"http-cors-wildcard", "http-cors-wildcard-credentials", "http-server-version", "http-directory-listing"} {
+		if f := findFinding(service.SecurityFindings, id); f != nil {
+			t.Errorf("expected no %s finding for minimal response, got: %+v", id, *f)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Docker-based live test for directory listing
+// ---------------------------------------------------------------------------
+
+// TestHTTPPlugin_DirectoryListing_Docker spins up an alpine:3.21 container
+// running Python's built-in HTTP server, which generates real directory
+// listings, and verifies that HTTPPlugin.Run() detects the http-directory-listing
+// finding while not producing false-positive CORS findings.
+func TestHTTPPlugin_DirectoryListing_Docker(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping docker test in short mode")
+	}
+
+	pool, err := dockertest.NewPool("")
+	if err != nil {
+		t.Skipf("skipping docker test; could not connect to docker: %s", err)
+	}
+
+	resource, err := pool.RunWithOptions(&dockertest.RunOptions{
+		Repository: "alpine",
+		Tag:        "3.21",
+		Cmd: []string{
+			"sh", "-c",
+			"apk add --no-cache python3 >/dev/null 2>&1 && python3 -m http.server 8080",
+		},
+		ExposedPorts: []string{"8080/tcp"},
+	})
+	if err != nil {
+		t.Fatalf("could not start container: %s", err)
+	}
+	defer pool.Purge(resource) //nolint:errcheck
+
+	rawAddr := resource.GetHostPort("8080/tcp")
+	host, port, err := net.SplitHostPort(rawAddr)
+	if err != nil {
+		t.Fatalf("SplitHostPort(%q): %v", rawAddr, err)
+	}
+	if host == "localhost" || host == "0.0.0.0" || host == "::" {
+		host = "127.0.0.1"
+	}
+	targetAddr := net.JoinHostPort(host, port)
+
+	// Wait for the Python HTTP server to be ready by probing for a valid HTTP
+	// response, not just TCP connectivity (apk install adds startup latency).
+	retryErr := pool.Retry(func() error {
+		resp, dialErr := http.Get("http://" + targetAddr + "/") //nolint:noctx
+		if dialErr != nil {
+			return dialErr
+		}
+		resp.Body.Close()
+		return nil
+	})
+	if retryErr != nil {
+		t.Fatalf("server not ready: %s", retryErr)
+	}
+
+	addrPort, err := netip.ParseAddrPort(targetAddr)
+	if err != nil {
+		t.Fatalf("ParseAddrPort(%q): %v", targetAddr, err)
+	}
+	target := plugins.Target{
+		Address:    addrPort,
+		Misconfigs: true,
+	}
+
+	conn, err := net.DialTimeout("tcp", targetAddr, 5*time.Second)
+	if err != nil {
+		t.Fatalf("net.DialTimeout: %v", err)
+	}
+	defer conn.Close()
+
+	wappalyzerClient, err := wappalyzer.New()
+	if err != nil {
+		t.Fatalf("wappalyzer.New: %v", err)
+	}
+	p := &HTTPPlugin{analyzer: wappalyzerClient}
+
+	service, err := p.Run(conn, 5*time.Second, target)
+	if err != nil {
+		t.Fatalf("HTTPPlugin.Run(): %v", err)
+	}
+	if service == nil {
+		t.Fatal("HTTPPlugin.Run() returned nil service")
+	}
+
+	finding := findFinding(service.SecurityFindings, "http-directory-listing")
+	if finding == nil {
+		t.Fatalf("expected http-directory-listing finding, got findings: %v", service.SecurityFindings)
+	}
+	if finding.Severity != plugins.SeverityLow {
+		t.Errorf("http-directory-listing severity = %q, want %q", finding.Severity, plugins.SeverityLow)
+	}
+
+	// Python http.server does not set CORS headers; verify no false positive.
+	for _, id := range []string{"http-cors-wildcard", "http-cors-wildcard-credentials"} {
+		if f := findFinding(service.SecurityFindings, id); f != nil {
+			t.Errorf("expected no %s finding from Python http.server, got: %+v", id, *f)
+		}
 	}
 }
