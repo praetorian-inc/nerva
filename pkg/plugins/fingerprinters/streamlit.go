@@ -35,8 +35,9 @@ The /_stcore/health endpoint returns a plain text response:
 
 	ok
 
-Content-Type: text/html; charset=UTF-8
-Server: TornadoServer/6.x (when not behind reverse proxy)
+Content-Type: text/plain; charset=utf-8 (modern Streamlit)
+Content-Type: text/html; charset=UTF-8 (legacy Streamlit)
+Server: uvicorn (modern) or TornadoServer/6.x (legacy)
 Cache-Control: no-cache
 
 # Version Notes
@@ -84,10 +85,12 @@ func (f *StreamlitFingerprinter) ProbeEndpoint() string {
 }
 
 func (f *StreamlitFingerprinter) Match(resp *http.Response) bool {
-	// Check for text/html Content-Type header
-	// Streamlit health endpoint returns text/html, not JSON
-	// Use as pre-filter to avoid false positives on JSON APIs
-	return strings.Contains(resp.Header.Get("Content-Type"), "text/html")
+	// Check for text/html or text/plain Content-Type header.
+	// Modern Streamlit (uvicorn) returns text/plain; charset=utf-8.
+	// Legacy Streamlit (TornadoServer) returns text/html; charset=UTF-8.
+	// Either type is accepted as a pre-filter to avoid false positives on JSON APIs.
+	ct := strings.ToLower(resp.Header.Get("Content-Type"))
+	return strings.Contains(ct, "text/html") || strings.Contains(ct, "text/plain")
 }
 
 func (f *StreamlitFingerprinter) Fingerprint(resp *http.Response, body []byte) (*FingerprintResult, error) {
@@ -97,10 +100,13 @@ func (f *StreamlitFingerprinter) Fingerprint(resp *http.Response, body []byte) (
 		return nil, nil // Not Streamlit
 	}
 
-	// Extract TornadoServer version from Server header if present (metadata only)
+	// Extract server identity from Server header if present (metadata only).
+	// Modern Streamlit uses uvicorn; legacy Streamlit uses TornadoServer.
 	metadata := map[string]any{}
-	if server := resp.Header.Get("Server"); strings.HasPrefix(server, "TornadoServer/") {
-		metadata["server"] = server
+	if server := resp.Header.Get("Server"); server != "" {
+		if strings.HasPrefix(server, "TornadoServer/") || strings.EqualFold(server, "uvicorn") {
+			metadata["server"] = server
+		}
 	}
 
 	return &FingerprintResult{

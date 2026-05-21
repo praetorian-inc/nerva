@@ -59,6 +59,21 @@ func TestStreamlitFingerprinter_Match(t *testing.T) {
 			contentType: "",
 			want:        false,
 		},
+		{
+			name:        "Content-Type: text/plain returns true (real Streamlit health endpoint)",
+			contentType: "text/plain",
+			want:        true,
+		},
+		{
+			name:        "Content-Type: text/plain; charset=utf-8 returns true",
+			contentType: "text/plain; charset=utf-8",
+			want:        true,
+		},
+		{
+			name:        "Content-Type: TEXT/PLAIN returns true (case-insensitive)",
+			contentType: "TEXT/PLAIN",
+			want:        true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -114,6 +129,12 @@ func TestStreamlitFingerprinter_Fingerprint_Valid(t *testing.T) {
 			body:           "ok",
 			serverHeader:   "nginx/1.24.0",
 			wantServerMeta: "",
+		},
+		{
+			name:           "ok body with uvicorn Server header (modern Streamlit)",
+			body:           "ok",
+			serverHeader:   "uvicorn",
+			wantServerMeta: "uvicorn",
 		},
 	}
 
