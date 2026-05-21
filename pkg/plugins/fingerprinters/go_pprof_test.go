@@ -259,13 +259,7 @@ func TestBuildGoPprofCPE(t *testing.T) {
 }
 
 func TestGoPprofFingerprinter_Integration(t *testing.T) {
-	saved := httpFingerprinters
-	t.Cleanup(func() { httpFingerprinters = saved })
-	httpFingerprinters = nil
-
-	// Register explicitly for the test
 	fp := &GoPprofFingerprinter{}
-	Register(fp)
 
 	body := []byte(`<html>
 <head>
@@ -291,8 +285,9 @@ Types of profiles available:
 		Body:       io.NopCloser(bytes.NewReader(body)),
 	}
 
-	results := RunFingerprinters(resp, body)
-
-	require.Len(t, results, 1)
-	assert.Equal(t, "go_pprof", results[0].Technology)
+	require.True(t, fp.Match(resp))
+	result, err := fp.Fingerprint(resp, body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "go_pprof", result.Technology)
 }

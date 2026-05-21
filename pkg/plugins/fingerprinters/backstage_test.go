@@ -17,6 +17,9 @@ package fingerprinters
 import (
 	"net/http"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestBackstageFingerprinter_Name(t *testing.T) {
@@ -235,9 +238,7 @@ func TestBuildBackstageCPE(t *testing.T) {
 }
 
 func TestBackstageFingerprinter_Integration(t *testing.T) {
-	// Register the fingerprinter (should happen in init(), but we test it anyway)
 	fp := &BackstageFingerprinter{}
-	Register(fp)
 
 	// Create a valid Backstage readiness response
 	body := []byte(`{"status": "ok"}`)
@@ -247,20 +248,10 @@ func TestBackstageFingerprinter_Integration(t *testing.T) {
 	}
 	resp.Header.Set("Content-Type", "application/json")
 
-	results := RunFingerprinters(resp, body)
-
-	// Should find at least the Backstage fingerprinter
-	found := false
-	for _, result := range results {
-		if result.Technology == "backstage" {
-			found = true
-			if result.Version != "" {
-				t.Errorf("Version = %q, want empty string", result.Version)
-			}
-		}
-	}
-
-	if !found {
-		t.Error("BackstageFingerprinter not found in results")
-	}
+	require.True(t, fp.Match(resp))
+	result, err := fp.Fingerprint(resp, body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "backstage", result.Technology)
+	assert.Equal(t, "", result.Version)
 }

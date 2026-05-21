@@ -237,27 +237,27 @@ func TestBuildMLflowCPE(t *testing.T) {
 
 func TestMLflowFingerprinter_Integration(t *testing.T) {
 	fp := &MLflowFingerprinter{}
-	Register(fp)
 
 	body := []byte(`{"experiments": [{"experiment_id": "0", "name": "Default", "artifact_location": "mlflow-artifacts:/0", "lifecycle_stage": "active"}]}`)
 	resp := &http.Response{Header: make(http.Header)}
 	resp.Header.Set("Content-Type", "application/json")
 
-	results := RunFingerprinters(resp, body)
-
-	found := false
-	for _, result := range results {
-		if result.Technology == "mlflow" {
-			found = true
-			count, ok := result.Metadata["experiment_count"].(int)
-			if !ok || count != 1 {
-				t.Errorf("experiment_count = %v, want 1", result.Metadata["experiment_count"])
-			}
-		}
+	if got := fp.Match(resp); !got {
+		t.Fatal("Match() returned false, want true")
 	}
-
-	if !found {
-		t.Error("MLflowFingerprinter not found in results")
+	result, err := fp.Fingerprint(resp, body)
+	if err != nil {
+		t.Fatalf("Fingerprint() error = %v", err)
+	}
+	if result == nil {
+		t.Fatal("Fingerprint() returned nil")
+	}
+	if result.Technology != "mlflow" {
+		t.Errorf("Technology = %q, want mlflow", result.Technology)
+	}
+	count, ok := result.Metadata["experiment_count"].(int)
+	if !ok || count != 1 {
+		t.Errorf("experiment_count = %v, want 1", result.Metadata["experiment_count"])
 	}
 }
 

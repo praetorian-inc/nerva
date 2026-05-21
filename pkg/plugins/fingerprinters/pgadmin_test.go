@@ -209,12 +209,7 @@ func TestBuildPgAdminCPE(t *testing.T) {
 }
 
 func TestPgAdminFingerprinter_Integration(t *testing.T) {
-	saved := httpFingerprinters
-	t.Cleanup(func() { httpFingerprinters = saved })
-	httpFingerprinters = nil
-
 	fp := &PgAdminFingerprinter{}
-	Register(fp)
 
 	resp := &http.Response{
 		Header: make(http.Header),
@@ -224,20 +219,21 @@ func TestPgAdminFingerprinter_Integration(t *testing.T) {
 
 	body := []byte("PING")
 
-	results := RunFingerprinters(resp, body)
-
-	found := false
-	for _, result := range results {
-		if result.Technology == "pgadmin" {
-			found = true
-			if result.Metadata["mode"] != "server" {
-				t.Errorf("mode = %v, want %q", result.Metadata["mode"], "server")
-			}
-		}
+	if got := fp.Match(resp); !got {
+		t.Fatal("Match() returned false, want true")
 	}
-
-	if !found {
-		t.Error("PgAdminFingerprinter not found in results")
+	result, err := fp.Fingerprint(resp, body)
+	if err != nil {
+		t.Fatalf("Fingerprint() error = %v", err)
+	}
+	if result == nil {
+		t.Fatal("Fingerprint() returned nil")
+	}
+	if result.Technology != "pgadmin" {
+		t.Errorf("Technology = %q, want pgadmin", result.Technology)
+	}
+	if result.Metadata["mode"] != "server" {
+		t.Errorf("mode = %v, want %q", result.Metadata["mode"], "server")
 	}
 }
 

@@ -312,12 +312,7 @@ func TestBuildArangoDBCPE(t *testing.T) {
 }
 
 func TestArangoDBFingerprinter_Integration(t *testing.T) {
-	// Clear registry
-	httpFingerprinters = nil
-
-	// Register should work via init() but test explicitly
 	fp := &ArangoDBFingerprinter{}
-	Register(fp)
 
 	body := []byte(`{
 		"server": "arango",
@@ -333,9 +328,10 @@ func TestArangoDBFingerprinter_Integration(t *testing.T) {
 		Body: io.NopCloser(bytes.NewReader(body)),
 	}
 
-	results := RunFingerprinters(resp, body)
-
-	require.Len(t, results, 1)
-	assert.Equal(t, "arangodb", results[0].Technology)
-	assert.Equal(t, "3.11.0", results[0].Version)
+	require.True(t, fp.Match(resp))
+	result, err := fp.Fingerprint(resp, body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "arangodb", result.Technology)
+	assert.Equal(t, "3.11.0", result.Version)
 }

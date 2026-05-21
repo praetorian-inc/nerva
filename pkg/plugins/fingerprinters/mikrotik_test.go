@@ -457,12 +457,7 @@ func TestMikroTikFingerprinter_Fingerprint_WebFigExclusivePlusGeneric(t *testing
 }
 
 func TestMikroTikFingerprinter_Integration(t *testing.T) {
-	saved := httpFingerprinters
-	t.Cleanup(func() { httpFingerprinters = saved })
-	httpFingerprinters = nil
-
 	fp := &MikroTikFingerprinter{}
-	Register(fp)
 
 	body := []byte(`<html>
 <head><title>RouterOS</title></head>
@@ -481,10 +476,11 @@ var link = '/webfig/#';
 		Header:     header,
 	}
 
-	results := RunFingerprinters(resp, body)
-
-	require.Len(t, results, 1)
-	assert.Equal(t, "mikrotik-routeros", results[0].Technology)
-	assert.Equal(t, "MikroTik", results[0].Metadata["vendor"])
-	assert.Equal(t, "webfig", results[0].Metadata["management_interface"])
+	require.True(t, fp.Match(resp))
+	result, err := fp.Fingerprint(resp, body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "mikrotik-routeros", result.Technology)
+	assert.Equal(t, "MikroTik", result.Metadata["vendor"])
+	assert.Equal(t, "webfig", result.Metadata["management_interface"])
 }

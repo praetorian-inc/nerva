@@ -186,13 +186,7 @@ func TestBuildTinyMCECPE(t *testing.T) {
 }
 
 func TestTinyMCEFingerprinter_Integration(t *testing.T) {
-	// Save and restore global registry to avoid test pollution
-	original := httpFingerprinters
-	t.Cleanup(func() { httpFingerprinters = original })
-	httpFingerprinters = nil
-
 	fp := &TinyMCEFingerprinter{}
-	Register(fp)
 
 	body := []byte(`<!DOCTYPE html><html><head>
 <script src="https://cdn.tiny.cloud/1/no-api-key/tinymce/7/tinymce.min.js" referrerpolicy="origin"></script>
@@ -207,10 +201,11 @@ func TestTinyMCEFingerprinter_Integration(t *testing.T) {
 		Body:       io.NopCloser(bytes.NewReader(body)),
 	}
 
-	results := RunFingerprinters(resp, body)
-
-	require.Len(t, results, 1)
-	assert.Equal(t, "tinymce", results[0].Technology)
-	assert.Equal(t, "7", results[0].Version)
-	assert.Contains(t, results[0].CPEs, "cpe:2.3:a:tinymce:tinymce:7:*:*:*:*:*:*:*")
+	require.True(t, fp.Match(resp))
+	result, err := fp.Fingerprint(resp, body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "tinymce", result.Technology)
+	assert.Equal(t, "7", result.Version)
+	assert.Contains(t, result.CPEs, "cpe:2.3:a:tinymce:tinymce:7:*:*:*:*:*:*:*")
 }

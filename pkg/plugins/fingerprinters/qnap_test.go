@@ -256,12 +256,7 @@ func TestBuildQNAPCPE(t *testing.T) {
 }
 
 func TestQNAPFingerprinter_Integration(t *testing.T) {
-	// Clear registry
-	httpFingerprinters = nil
-
-	// Register should work via init() but test explicitly
 	fp := &QNAPFingerprinter{}
-	Register(fp)
 
 	body := []byte(`<?xml version="1.0" encoding="UTF-8" ?>
 <QDocRoot version="1.0">
@@ -279,11 +274,12 @@ func TestQNAPFingerprinter_Integration(t *testing.T) {
 		Body:       io.NopCloser(bytes.NewReader(body)),
 	}
 
-	results := RunFingerprinters(resp, body)
-
-	require.Len(t, results, 1)
-	assert.Equal(t, "qnap-qts", results[0].Technology)
-	assert.Equal(t, "4.4.1", results[0].Version)
-	assert.Equal(t, "1216", results[0].Metadata["build_number"])
-	assert.Equal(t, "TS-873U-RP", results[0].Metadata["model"])
+	require.True(t, fp.Match(resp))
+	result, err := fp.Fingerprint(resp, body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "qnap-qts", result.Technology)
+	assert.Equal(t, "4.4.1", result.Version)
+	assert.Equal(t, "1216", result.Metadata["build_number"])
+	assert.Equal(t, "TS-873U-RP", result.Metadata["model"])
 }

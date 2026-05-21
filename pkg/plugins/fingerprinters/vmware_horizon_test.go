@@ -242,9 +242,7 @@ func TestBuildVMwareHorizonCPE(t *testing.T) {
 }
 
 func TestVMwareHorizonFingerprinter_Integration(t *testing.T) {
-	// Register the fingerprinter (should happen in init(), but we test it anyway)
 	fp := &VMwareHorizonFingerprinter{}
-	Register(fp)
 
 	// Create a valid UAG response
 	body := []byte("Missing route token in request")
@@ -254,20 +252,20 @@ func TestVMwareHorizonFingerprinter_Integration(t *testing.T) {
 		Header:     make(http.Header),
 	}
 
-	results := RunFingerprinters(resp, body)
-
-	// Should find at least the VMware Horizon fingerprinter
-	found := false
-	for _, result := range results {
-		if result.Technology == "vmware-horizon" {
-			found = true
-			if component, ok := result.Metadata["component"].(string); !ok || component != "UAG" {
-				t.Errorf("component = %q, want %q", component, "UAG")
-			}
-		}
+	if !fp.Match(resp) {
+		t.Error("Match() returned false, want true")
 	}
-
-	if !found {
-		t.Error("VMwareHorizonFingerprinter not found in results")
+	result, err := fp.Fingerprint(resp, body)
+	if err != nil {
+		t.Fatalf("Fingerprint() error = %v", err)
+	}
+	if result == nil {
+		t.Fatal("Fingerprint() returned nil result")
+	}
+	if result.Technology != "vmware-horizon" {
+		t.Errorf("Technology = %q, want %q", result.Technology, "vmware-horizon")
+	}
+	if component, ok := result.Metadata["component"].(string); !ok || component != "UAG" {
+		t.Errorf("component = %q, want %q", component, "UAG")
 	}
 }

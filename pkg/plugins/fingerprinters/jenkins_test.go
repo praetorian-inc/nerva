@@ -196,12 +196,7 @@ func TestBuildJenkinsCPE(t *testing.T) {
 }
 
 func TestJenkinsFingerprinter_Integration(t *testing.T) {
-	// Clear registry
-	httpFingerprinters = nil
-
-	// Register should work via init() but test explicitly
 	fp := &JenkinsFingerprinter{}
-	Register(fp)
 
 	body := []byte("")
 
@@ -216,10 +211,11 @@ func TestJenkinsFingerprinter_Integration(t *testing.T) {
 		Body:       io.NopCloser(bytes.NewReader(body)),
 	}
 
-	results := RunFingerprinters(resp, body)
-
-	require.Len(t, results, 1)
-	assert.Equal(t, "jenkins", results[0].Technology)
-	assert.Equal(t, "2.541.1", results[0].Version)
-	assert.Equal(t, "1.395", results[0].Metadata["hudson_version"])
+	require.True(t, fp.Match(resp))
+	result, err := fp.Fingerprint(resp, body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "jenkins", result.Technology)
+	assert.Equal(t, "2.541.1", result.Version)
+	assert.Equal(t, "1.395", result.Metadata["hudson_version"])
 }

@@ -574,9 +574,7 @@ func TestBuildJaegerCPE(t *testing.T) {
 }
 
 func TestJaegerFingerprinter_Integration(t *testing.T) {
-	// Register the fingerprinter
 	fp := &JaegerFingerprinter{}
-	Register(fp)
 
 	// Create a valid Jaeger /api/services response
 	body := []byte(`{
@@ -592,20 +590,14 @@ func TestJaegerFingerprinter_Integration(t *testing.T) {
 	}
 	resp.Header.Set("Content-Type", "application/json")
 
-	results := RunFingerprinters(resp, body)
-
-	// Should find at least the Jaeger fingerprinter
-	found := false
-	for _, result := range results {
-		if result.Technology == "jaeger" {
-			found = true
-			assert.Equal(t, "", result.Version) // No version exposed via JSON endpoint
-			assert.Contains(t, result.CPEs, buildJaegerCPE(""))
-			serviceCount, exists := result.Metadata["service_count"]
-			assert.True(t, exists)
-			assert.Equal(t, 4, serviceCount)
-		}
-	}
-
-	assert.True(t, found, "JaegerFingerprinter not found in results")
+	require.True(t, fp.Match(resp))
+	result, err := fp.Fingerprint(resp, body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "jaeger", result.Technology)
+	assert.Equal(t, "", result.Version) // No version exposed via JSON endpoint
+	assert.Contains(t, result.CPEs, buildJaegerCPE(""))
+	serviceCount, exists := result.Metadata["service_count"]
+	assert.True(t, exists)
+	assert.Equal(t, 4, serviceCount)
 }

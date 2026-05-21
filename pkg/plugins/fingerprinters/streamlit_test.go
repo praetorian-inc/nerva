@@ -244,9 +244,7 @@ func TestBuildStreamlitCPE(t *testing.T) {
 }
 
 func TestStreamlitFingerprinter_Integration(t *testing.T) {
-	// Register the fingerprinter (should happen in init(), but we test it anyway)
 	fp := &StreamlitFingerprinter{}
-	Register(fp)
 
 	// Create a valid Streamlit health response
 	body := []byte("ok")
@@ -257,24 +255,24 @@ func TestStreamlitFingerprinter_Integration(t *testing.T) {
 	resp.Header.Set("Content-Type", "text/html; charset=UTF-8")
 	resp.Header.Set("Server", "TornadoServer/6.4.1")
 
-	results := RunFingerprinters(resp, body)
-
-	// Should find at least the Streamlit fingerprinter
-	found := false
-	for _, result := range results {
-		if result.Technology == "streamlit" {
-			found = true
-			if result.Version != "" {
-				t.Errorf("Version = %q, want empty string", result.Version)
-			}
-			expectedCPE := "cpe:2.3:a:streamlit:streamlit:*:*:*:*:*:*:*:*"
-			if len(result.CPEs) == 0 || result.CPEs[0] != expectedCPE {
-				t.Errorf("CPE = %v, want %q", result.CPEs, expectedCPE)
-			}
-		}
+	if !fp.Match(resp) {
+		t.Error("Match() returned false, want true")
 	}
-
-	if !found {
-		t.Error("StreamlitFingerprinter not found in results")
+	result, err := fp.Fingerprint(resp, body)
+	if err != nil {
+		t.Fatalf("Fingerprint() error = %v", err)
+	}
+	if result == nil {
+		t.Fatal("Fingerprint() returned nil result")
+	}
+	if result.Technology != "streamlit" {
+		t.Errorf("Technology = %q, want %q", result.Technology, "streamlit")
+	}
+	if result.Version != "" {
+		t.Errorf("Version = %q, want empty string", result.Version)
+	}
+	expectedCPE := "cpe:2.3:a:streamlit:streamlit:*:*:*:*:*:*:*:*"
+	if len(result.CPEs) == 0 || result.CPEs[0] != expectedCPE {
+		t.Errorf("CPE = %v, want %q", result.CPEs, expectedCPE)
 	}
 }

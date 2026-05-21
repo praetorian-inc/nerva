@@ -419,13 +419,7 @@ func TestBuildOpenWebUICPE(t *testing.T) {
 }
 
 func TestOpenWebUIFingerprinter_Integration(t *testing.T) {
-	// Save and restore global state to prevent test pollution
-	saved := httpFingerprinters
-	t.Cleanup(func() { httpFingerprinters = saved })
-	httpFingerprinters = nil
-
 	fp := &OpenWebUIFingerprinter{}
-	Register(fp)
 
 	body := []byte(`{
 		"status": true,
@@ -453,19 +447,20 @@ func TestOpenWebUIFingerprinter_Integration(t *testing.T) {
 	}
 	resp.Header.Set("Content-Type", "application/json")
 
-	results := RunFingerprinters(resp, body)
-
-	found := false
-	for _, result := range results {
-		if result.Technology == "open_webui" {
-			found = true
-			if result.Version != "0.5.20" {
-				t.Errorf("Version = %q, want %q", result.Version, "0.5.20")
-			}
-		}
+	if got := fp.Match(resp); !got {
+		t.Fatal("Match() returned false, want true")
 	}
-
-	if !found {
-		t.Error("OpenWebUIFingerprinter not found in results")
+	result, err := fp.Fingerprint(resp, body)
+	if err != nil {
+		t.Fatalf("Fingerprint() error = %v", err)
+	}
+	if result == nil {
+		t.Fatal("Fingerprint() returned nil")
+	}
+	if result.Technology != "open_webui" {
+		t.Errorf("Technology = %q, want open_webui", result.Technology)
+	}
+	if result.Version != "0.5.20" {
+		t.Errorf("Version = %q, want %q", result.Version, "0.5.20")
 	}
 }

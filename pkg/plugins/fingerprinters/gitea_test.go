@@ -571,13 +571,7 @@ func TestHasGiteaCookie(t *testing.T) {
 }
 
 func TestGiteaFingerprinter_Integration(t *testing.T) {
-	// Save and restore global state to prevent test pollution
-	saved := httpFingerprinters
-	t.Cleanup(func() { httpFingerprinters = saved })
-	httpFingerprinters = nil
-
 	fp := &GiteaFingerprinter{}
-	Register(fp)
 
 	t.Run("active path JSON", func(t *testing.T) {
 		body := []byte(`{"version":"1.21.0"}`)
@@ -589,10 +583,12 @@ func TestGiteaFingerprinter_Integration(t *testing.T) {
 			Body: io.NopCloser(bytes.NewReader(body)),
 		}
 
-		results := RunFingerprinters(resp, body)
-		require.Len(t, results, 1)
-		assert.Equal(t, "gitea", results[0].Technology)
-		assert.Equal(t, "1.21.0", results[0].Version)
+		require.True(t, fp.Match(resp))
+		result, err := fp.Fingerprint(resp, body)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Equal(t, "gitea", result.Technology)
+		assert.Equal(t, "1.21.0", result.Version)
 	})
 
 	t.Run("passive path cookie", func(t *testing.T) {
@@ -605,10 +601,12 @@ func TestGiteaFingerprinter_Integration(t *testing.T) {
 			},
 		}
 
-		results := RunFingerprinters(resp, body)
-		require.Len(t, results, 1)
-		assert.Equal(t, "gitea", results[0].Technology)
-		assert.Equal(t, "cookie", results[0].Metadata["detection_path"])
+		require.True(t, fp.Match(resp))
+		result, err := fp.Fingerprint(resp, body)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Equal(t, "gitea", result.Technology)
+		assert.Equal(t, "cookie", result.Metadata["detection_path"])
 	})
 
 	t.Run("passive path header", func(t *testing.T) {
@@ -621,15 +619,16 @@ func TestGiteaFingerprinter_Integration(t *testing.T) {
 			},
 		}
 
-		results := RunFingerprinters(resp, body)
-		require.Len(t, results, 1)
-		assert.Equal(t, "gitea", results[0].Technology)
-		assert.Equal(t, "1.22.0", results[0].Version)
-		assert.Equal(t, "header", results[0].Metadata["detection_path"])
+		require.True(t, fp.Match(resp))
+		result, err := fp.Fingerprint(resp, body)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Equal(t, "gitea", result.Technology)
+		assert.Equal(t, "1.22.0", result.Version)
+		assert.Equal(t, "header", result.Metadata["detection_path"])
 	})
 
 	t.Run("non-gitea HTML not matched", func(t *testing.T) {
-		body := []byte(`<html><body>Not Gitea</body></html>`)
 		resp := &http.Response{
 			StatusCode: 200,
 			Header: http.Header{
@@ -637,7 +636,6 @@ func TestGiteaFingerprinter_Integration(t *testing.T) {
 			},
 		}
 
-		results := RunFingerprinters(resp, body)
-		assert.Len(t, results, 0)
+		assert.False(t, fp.Match(resp))
 	})
 }

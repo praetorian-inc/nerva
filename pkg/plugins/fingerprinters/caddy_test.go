@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // ── Name / ProbeEndpoint ───────────────────────────────────────────────────────
@@ -604,13 +605,7 @@ func TestDetectCaddyAutoHTTPS(t *testing.T) {
 // ── Integration test ──────────────────────────────────────────────────────────
 
 func TestCaddyFingerprinter_Integration(t *testing.T) {
-	// Save and restore global state to prevent test pollution.
-	saved := httpFingerprinters
-	t.Cleanup(func() { httpFingerprinters = saved })
-	httpFingerprinters = nil
-
 	fp := &CaddyFingerprinter{}
-	Register(fp)
 
 	t.Run("server header only triggers detection", func(t *testing.T) {
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -625,19 +620,15 @@ func TestCaddyFingerprinter_Integration(t *testing.T) {
 		defer resp.Body.Close()
 
 		body := []byte("<html><body>Hello</body></html>")
-		results := RunFingerprinters(resp, body)
-
-		found := false
-		for _, result := range results {
-			if result.Technology == "caddy" {
-				found = true
-				assert.Equal(t, "2.7.6", result.Version)
-				assert.Equal(t, []string{"cpe:2.3:a:caddyserver:caddy:2.7.6:*:*:*:*:*:*:*"}, result.CPEs)
-				assert.Equal(t, "caddyserver", result.Metadata["vendor"])
-				assert.Equal(t, "Caddy", result.Metadata["product"])
-			}
-		}
-		assert.True(t, found, "CaddyFingerprinter not found in RunFingerprinters results")
+		assert.True(t, fp.Match(resp))
+		result, err := fp.Fingerprint(resp, body)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Equal(t, "caddy", result.Technology)
+		assert.Equal(t, "2.7.6", result.Version)
+		assert.Equal(t, []string{"cpe:2.3:a:caddyserver:caddy:2.7.6:*:*:*:*:*:*:*"}, result.CPEs)
+		assert.Equal(t, "caddyserver", result.Metadata["vendor"])
+		assert.Equal(t, "Caddy", result.Metadata["product"])
 	})
 
 	t.Run("admin API response triggers high severity", func(t *testing.T) {
@@ -653,16 +644,12 @@ func TestCaddyFingerprinter_Integration(t *testing.T) {
 		defer resp.Body.Close()
 
 		body := []byte(`{"apps":{"http":{"servers":{}}}}`)
-		results := RunFingerprinters(resp, body)
-
-		found := false
-		for _, result := range results {
-			if result.Technology == "caddy" {
-				found = true
-				assert.Equal(t, true, result.Metadata["admin_api_exposed"])
-				assert.NotEmpty(t, result.Severity)
-			}
-		}
-		assert.True(t, found, "CaddyFingerprinter not found in RunFingerprinters results for admin API")
+		assert.True(t, fp.Match(resp))
+		result, err := fp.Fingerprint(resp, body)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Equal(t, "caddy", result.Technology)
+		assert.Equal(t, true, result.Metadata["admin_api_exposed"])
+		assert.NotEmpty(t, result.Severity)
 	})
 }

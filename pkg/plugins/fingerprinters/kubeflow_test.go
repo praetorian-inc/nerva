@@ -420,13 +420,7 @@ func TestBuildKubeflowCPE(t *testing.T) {
 }
 
 func TestKubeflowFingerprinter_Integration(t *testing.T) {
-	originalCount := len(GetFingerprinters())
-	t.Cleanup(func() {
-		httpFingerprinters = httpFingerprinters[:originalCount]
-	})
-
 	fp := &KubeflowFingerprinter{}
-	Register(fp)
 
 	body := []byte(`{
 		"platform": {"provider": "gcp", "providerName": "Google Cloud", "buildVersion": "1.8.0", "buildId": "abc123"},
@@ -443,18 +437,11 @@ func TestKubeflowFingerprinter_Integration(t *testing.T) {
 		},
 	}
 
-	results := RunFingerprinters(resp, body)
-
-	found := false
-	for _, result := range results {
-		if result.Technology == "kubeflow" {
-			found = true
-			assert.Equal(t, "user@example.com", result.Metadata["user"])
-			assert.Equal(t, "1.8.0", result.Version)
-		}
-	}
-
-	if !found {
-		t.Error("KubeflowFingerprinter not found in results")
-	}
+	require.True(t, fp.Match(resp))
+	result, err := fp.Fingerprint(resp, body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "kubeflow", result.Technology)
+	assert.Equal(t, "user@example.com", result.Metadata["user"])
+	assert.Equal(t, "1.8.0", result.Version)
 }

@@ -825,13 +825,7 @@ func TestScreenConnectVersionValidation(t *testing.T) {
 // ── Integration test ──────────────────────────────────────────────────────────
 
 func TestScreenConnectFingerprinter_Integration(t *testing.T) {
-	// Save and restore global state to prevent test pollution (mirrors gradio_test.go:355-357).
-	saved := httpFingerprinters
-	t.Cleanup(func() { httpFingerprinters = saved })
-	httpFingerprinters = nil
-
 	fp := &ScreenConnectFingerprinter{}
-	Register(fp)
 
 	resp := &http.Response{
 		StatusCode: 200,
@@ -843,27 +837,28 @@ func TestScreenConnectFingerprinter_Integration(t *testing.T) {
 <script src="/Script.ashx?sv=24.2.5"></script>
 </head><body><p>Please login to continue</p></body></html>`)
 
-	results := RunFingerprinters(resp, body)
-
-	found := false
-	for _, result := range results {
-		if result.Technology == "screenconnect" {
-			found = true
-			if result.Version != "24.2.5" {
-				t.Errorf("Version = %q, want %q", result.Version, "24.2.5")
-			}
-			if len(result.CPEs) == 0 {
-				t.Error("Expected at least one CPE")
-			} else if result.CPEs[0] != "cpe:2.3:a:connectwise:screenconnect:24.2.5:*:*:*:*:*:*:*" {
-				t.Errorf("CPE = %q, want canonical CPE", result.CPEs[0])
-			}
-			if v, ok := result.Metadata["vendor"].(string); !ok || v != "ConnectWise" {
-				t.Errorf("Metadata[vendor] = %v, want ConnectWise", result.Metadata["vendor"])
-			}
-		}
+	if got := fp.Match(resp); !got {
+		t.Fatal("Match() returned false, want true")
 	}
-
-	if !found {
-		t.Error("ScreenConnectFingerprinter not found in RunFingerprinters results")
+	result, err := fp.Fingerprint(resp, body)
+	if err != nil {
+		t.Fatalf("Fingerprint() error = %v", err)
+	}
+	if result == nil {
+		t.Fatal("Fingerprint() returned nil")
+	}
+	if result.Technology != "screenconnect" {
+		t.Errorf("Technology = %q, want screenconnect", result.Technology)
+	}
+	if result.Version != "24.2.5" {
+		t.Errorf("Version = %q, want %q", result.Version, "24.2.5")
+	}
+	if len(result.CPEs) == 0 {
+		t.Error("Expected at least one CPE")
+	} else if result.CPEs[0] != "cpe:2.3:a:connectwise:screenconnect:24.2.5:*:*:*:*:*:*:*" {
+		t.Errorf("CPE = %q, want canonical CPE", result.CPEs[0])
+	}
+	if v, ok := result.Metadata["vendor"].(string); !ok || v != "ConnectWise" {
+		t.Errorf("Metadata[vendor] = %v, want ConnectWise", result.Metadata["vendor"])
 	}
 }

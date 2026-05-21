@@ -17,6 +17,8 @@ package fingerprinters
 import (
 	"net/http"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // ── Name / ProbeEndpoint ───────────────────────────────────────────────────────
@@ -458,39 +460,27 @@ func TestBuildCleoCPE(t *testing.T) {
 // ── Integration test ──────────────────────────────────────────────────────────
 
 func TestCleoFingerprinter_Integration(t *testing.T) {
-	saved := httpFingerprinters
-	t.Cleanup(func() { httpFingerprinters = saved })
-	httpFingerprinters = nil
-
 	fp := &CleoFingerprinter{}
-	Register(fp)
 
 	resp := &http.Response{StatusCode: 200, Header: make(http.Header)}
 	resp.Header.Set("Server", "Cleo Harmony/5.8.0.21")
 
-	results := RunFingerprinters(resp, []byte(""))
-
-	found := false
-	for _, result := range results {
-		if result.Technology == "cleo" {
-			found = true
-			if result.Version != "5.8.0.21" {
-				t.Errorf("Version = %q, want 5.8.0.21", result.Version)
-			}
-			if len(result.CPEs) == 0 {
-				t.Error("Expected at least one CPE")
-			} else if result.CPEs[0] != "cpe:2.3:a:cleo:harmony:5.8.0.21:*:*:*:*:*:*:*" {
-				t.Errorf("CPE = %q, want canonical CPE", result.CPEs[0])
-			}
-			if v, ok := result.Metadata["vendor"].(string); !ok || v != "Cleo" {
-				t.Errorf("Metadata[vendor] = %v, want Cleo", result.Metadata["vendor"])
-			}
-			if prod, ok := result.Metadata["product"].(string); !ok || prod != "Harmony" {
-				t.Errorf("Metadata[product] = %v, want Harmony", result.Metadata["product"])
-			}
-		}
+	require.True(t, fp.Match(resp))
+	result, err := fp.Fingerprint(resp, []byte(""))
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	if result.Version != "5.8.0.21" {
+		t.Errorf("Version = %q, want 5.8.0.21", result.Version)
 	}
-	if !found {
-		t.Error("CleoFingerprinter not found in RunFingerprinters results")
+	if len(result.CPEs) == 0 {
+		t.Error("Expected at least one CPE")
+	} else if result.CPEs[0] != "cpe:2.3:a:cleo:harmony:5.8.0.21:*:*:*:*:*:*:*" {
+		t.Errorf("CPE = %q, want canonical CPE", result.CPEs[0])
+	}
+	if v, ok := result.Metadata["vendor"].(string); !ok || v != "Cleo" {
+		t.Errorf("Metadata[vendor] = %v, want Cleo", result.Metadata["vendor"])
+	}
+	if prod, ok := result.Metadata["product"].(string); !ok || prod != "Harmony" {
+		t.Errorf("Metadata[product] = %v, want Harmony", result.Metadata["product"])
 	}
 }

@@ -160,9 +160,7 @@ func TestTritonFingerprinter_Fingerprint(t *testing.T) {
 }
 
 func TestTritonFingerprinter_Integration(t *testing.T) {
-	// Register the fingerprinter (should happen in init(), but we test it anyway)
 	fp := &TritonFingerprinter{}
-	Register(fp)
 
 	// Create a valid Triton metadata response
 	body := []byte(`{"name":"triton","version":"2.42.0","extensions":["classification"]}`)
@@ -173,21 +171,13 @@ func TestTritonFingerprinter_Integration(t *testing.T) {
 	}
 	resp.Header.Set("Content-Type", "application/json")
 
-	results := RunFingerprinters(resp, body)
-
-	// Should find at least the Triton fingerprinter
-	found := false
-	for _, result := range results {
-		if result.Technology == "triton" {
-			found = true
-			assert.Equal(t, "2.42.0", result.Version)
-			assert.Equal(t, []string{"cpe:2.3:a:nvidia:triton_inference_server:2.42.0:*:*:*:*:*:*:*"}, result.CPEs)
-		}
-	}
-
-	if !found {
-		t.Error("TritonFingerprinter not found in results")
-	}
+	require.True(t, fp.Match(resp))
+	result, err := fp.Fingerprint(resp, body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "triton", result.Technology)
+	assert.Equal(t, "2.42.0", result.Version)
+	assert.Equal(t, []string{"cpe:2.3:a:nvidia:triton_inference_server:2.42.0:*:*:*:*:*:*:*"}, result.CPEs)
 }
 
 func TestBuildTritonCPE(t *testing.T) {

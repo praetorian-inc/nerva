@@ -475,11 +475,7 @@ func TestExtractTargetNamespace(t *testing.T) {
 }
 
 func TestSOAPFingerprinter_Integration(t *testing.T) {
-	// Clear registry
-	httpFingerprinters = nil
-
 	fp := &SOAPFingerprinter{}
-	Register(fp)
 
 	body := []byte(`<?xml version="1.0" encoding="UTF-8"?>
 <SOAP-ENV:Envelope
@@ -498,9 +494,10 @@ func TestSOAPFingerprinter_Integration(t *testing.T) {
 		},
 	}
 
-	results := RunFingerprinters(resp, body)
-
-	require.Len(t, results, 1)
-	assert.Equal(t, "soap", results[0].Technology)
-	assert.Equal(t, "1.1", results[0].Version)
+	require.True(t, fp.Match(resp))
+	result, err := fp.Fingerprint(resp, body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "soap", result.Technology)
+	assert.Equal(t, "1.1", result.Version)
 }

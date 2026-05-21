@@ -31,6 +31,16 @@ type MockFingerprinter struct {
 	fingerprintFn func(*http.Response, []byte) (*FingerprintResult, error)
 }
 
+// MockActiveFingerprinter for testing active fingerprinter filtering
+type MockActiveFingerprinter struct {
+	MockFingerprinter
+	probeEndpoint string
+}
+
+func (m *MockActiveFingerprinter) ProbeEndpoint() string {
+	return m.probeEndpoint
+}
+
 func (m *MockFingerprinter) Name() string {
 	return m.name
 }
@@ -233,4 +243,135 @@ func TestRunFingerprinters_MultipleFingerprinters(t *testing.T) {
 	require.Len(t, results, 2, "should return results from both fingerprinters")
 	assert.Equal(t, "tech1", results[0].Technology)
 	assert.Equal(t, "tech2", results[1].Technology)
+}
+
+func TestRunFingerprinters_SkipsActiveWithDedicatedEndpoint(t *testing.T) {
+	// Clear registry before test
+	httpFingerprinters = nil
+
+	fp := &MockActiveFingerprinter{
+		MockFingerprinter: MockFingerprinter{
+			name:        "streamlit",
+			matchResult: true,
+		},
+		probeEndpoint: "/_stcore/health",
+	}
+	Register(fp)
+
+	resp := &http.Response{
+		StatusCode: 200,
+		Header:     http.Header{},
+		Body:       io.NopCloser(bytes.NewReader([]byte("test body"))),
+	}
+	body := []byte("test body")
+
+	results := RunFingerprinters(resp, body)
+
+	assert.Empty(t, results, "active fingerprinter with dedicated endpoint should be skipped in passive phase")
+}
+
+func TestRunFingerprinters_IncludesActiveWithRootEndpoint(t *testing.T) {
+	// Clear registry before test
+	httpFingerprinters = nil
+
+	fp := &MockActiveFingerprinter{
+		MockFingerprinter: MockFingerprinter{
+			name:        "root-active",
+			matchResult: true,
+		},
+		probeEndpoint: "/",
+	}
+	Register(fp)
+
+	resp := &http.Response{
+		StatusCode: 200,
+		Header:     http.Header{},
+		Body:       io.NopCloser(bytes.NewReader([]byte("test body"))),
+	}
+	body := []byte("test body")
+
+	results := RunFingerprinters(resp, body)
+
+	require.Len(t, results, 1, "active fingerprinter with root endpoint should run in passive phase")
+	assert.Equal(t, "root-active", results[0].Technology)
+}
+
+func TestRunFingerprinters_IncludesActiveWithEmptyEndpoint(t *testing.T) {
+	// Clear registry before test
+	httpFingerprinters = nil
+
+	fp := &MockActiveFingerprinter{
+		MockFingerprinter: MockFingerprinter{
+			name:        "empty-endpoint-active",
+			matchResult: true,
+		},
+		probeEndpoint: "",
+	}
+	Register(fp)
+
+	resp := &http.Response{
+		StatusCode: 200,
+		Header:     http.Header{},
+		Body:       io.NopCloser(bytes.NewReader([]byte("test body"))),
+	}
+	body := []byte("test body")
+
+	results := RunFingerprinters(resp, body)
+
+	require.Len(t, results, 1, "active fingerprinter with empty endpoint should run in passive phase")
+	assert.Equal(t, "empty-endpoint-active", results[0].Technology)
+}
+
+func TestRunFingerprinters_PassiveFingerprinterUnaffected(t *testing.T) {
+	// Clear registry before test
+	httpFingerprinters = nil
+
+	fp := &MockFingerprinter{
+		name:        "passive-fp",
+		matchResult: true,
+	}
+	Register(fp)
+
+	resp := &http.Response{
+		StatusCode: 200,
+		Header:     http.Header{},
+		Body:       io.NopCloser(bytes.NewReader([]byte("test body"))),
+	}
+	body := []byte("test body")
+
+	results := RunFingerprinters(resp, body)
+
+	require.Len(t, results, 1, "passive fingerprinter should be unaffected by active fingerprinter filtering")
+	assert.Equal(t, "passive-fp", results[0].Technology)
+}
+
+func TestRunFingerprinters_MixedActiveAndPassive(t *testing.T) {
+	// Clear registry before test
+	httpFingerprinters = nil
+
+	passive := &MockFingerprinter{
+		name:        "passive-tech",
+		matchResult: true,
+	}
+	active := &MockActiveFingerprinter{
+		MockFingerprinter: MockFingerprinter{
+			name:        "active-tech",
+			matchResult: true,
+		},
+		probeEndpoint: "/api/v1/version",
+	}
+	Register(passive)
+	Register(active)
+
+	resp := &http.Response{
+		StatusCode: 200,
+		Header:     http.Header{},
+		Body:       io.NopCloser(bytes.NewReader([]byte("test body"))),
+	}
+	body := []byte("test body")
+
+	results := RunFingerprinters(resp, body)
+
+	require.Len(t, results, 1, "only passive fingerprinter should run; active with dedicated endpoint should be skipped")
+	assert.Equal(t, "passive-tech", results[0].Technology)
 }

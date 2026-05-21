@@ -287,11 +287,8 @@ func TestBuildPrometheusCPE(t *testing.T) {
 }
 
 func TestPrometheusFingerprinter_Integration(t *testing.T) {
-	// Register the fingerprinter
 	fp := &PrometheusFingerprinter{}
-	Register(fp)
 
-	// Create a valid Prometheus buildinfo response
 	body := []byte(`{
 		"status": "success",
 		"data": {
@@ -309,16 +306,10 @@ func TestPrometheusFingerprinter_Integration(t *testing.T) {
 	}
 	resp.Header.Set("Content-Type", "application/json")
 
-	results := RunFingerprinters(resp, body)
-
-	// Should find at least the Prometheus fingerprinter
-	found := false
-	for _, result := range results {
-		if result.Technology == "prometheus" {
-			found = true
-			assert.Equal(t, "2.45.0", result.Version)
-		}
-	}
-
-	assert.True(t, found, "PrometheusFingerprinter not found in results")
+	require.True(t, fp.Match(resp))
+	result, err := fp.Fingerprint(resp, body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "prometheus", result.Technology)
+	assert.Equal(t, "2.45.0", result.Version)
 }

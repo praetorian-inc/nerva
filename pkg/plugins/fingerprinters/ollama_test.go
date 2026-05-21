@@ -17,6 +17,8 @@ package fingerprinters
 import (
 	"net/http"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestOllamaFingerprinter_Name(t *testing.T) {
@@ -437,7 +439,7 @@ func TestOllamaFingerprinter_Fingerprint_PassivePlainText(t *testing.T) {
 func TestOllamaFingerprinter_Fingerprint_FalsePositiveRegression(t *testing.T) {
 	// Regression test: a text/plain response that is NOT "Ollama is running"
 	// must not trigger detection. This prevents false positives from the
-	// passive path where RunFingerprinters runs against the root / response.
+	// passive path where Fingerprint() is called against the root / response.
 	fp := &OllamaFingerprinter{}
 
 	tests := []struct {
@@ -486,13 +488,7 @@ func TestOllamaFingerprinter_Fingerprint_FalsePositiveRegression(t *testing.T) {
 }
 
 func TestOllamaFingerprinter_Integration(t *testing.T) {
-	// Save and restore global state to prevent test pollution
-	saved := httpFingerprinters
-	t.Cleanup(func() { httpFingerprinters = saved })
-	httpFingerprinters = nil
-
 	fp := &OllamaFingerprinter{}
-	Register(fp)
 
 	// Test with version response
 	versionBody := []byte(`{"version": "0.5.1"}`)
@@ -502,21 +498,12 @@ func TestOllamaFingerprinter_Integration(t *testing.T) {
 	}
 	resp.Header.Set("Content-Type", "application/json")
 
-	results := RunFingerprinters(resp, versionBody)
-
-	// Should find at least the Ollama fingerprinter
-	found := false
-	for _, result := range results {
-		if result.Technology == "ollama" {
-			found = true
-			if result.Version != "0.5.1" {
-				t.Errorf("Version = %q, want %q", result.Version, "0.5.1")
-			}
-		}
-	}
-
-	if !found {
-		t.Error("OllamaFingerprinter not found in results")
+	require.True(t, fp.Match(resp))
+	result, err := fp.Fingerprint(resp, versionBody)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	if result.Version != "0.5.1" {
+		t.Errorf("Version = %q, want %q", result.Version, "0.5.1")
 	}
 
 	// Test with tags response
@@ -531,20 +518,12 @@ func TestOllamaFingerprinter_Integration(t *testing.T) {
 		]
 	}`)
 
-	results = RunFingerprinters(resp, tagsBody)
-
-	found = false
-	for _, result := range results {
-		if result.Technology == "ollama" {
-			found = true
-			if modelCount, ok := result.Metadata["model_count"].(int); !ok || modelCount != 1 {
-				t.Errorf("model_count = %v, want 1", modelCount)
-			}
-		}
-	}
-
-	if !found {
-		t.Error("OllamaFingerprinter not found in results for tags response")
+	require.True(t, fp.Match(resp))
+	result, err = fp.Fingerprint(resp, tagsBody)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	if modelCount, ok := result.Metadata["model_count"].(int); !ok || modelCount != 1 {
+		t.Errorf("model_count = %v, want 1", modelCount)
 	}
 
 	// Test with passive text/plain response (Ollama root page)
@@ -554,19 +533,11 @@ func TestOllamaFingerprinter_Integration(t *testing.T) {
 	}
 	plainResp.Header.Set("Content-Type", "text/plain")
 
-	results = RunFingerprinters(plainResp, plainBody)
-
-	found = false
-	for _, result := range results {
-		if result.Technology == "ollama" {
-			found = true
-			if result.Version != "" {
-				t.Errorf("Version = %q, want empty for passive detection", result.Version)
-			}
-		}
-	}
-
-	if !found {
-		t.Error("OllamaFingerprinter not found in results for text/plain passive response")
+	require.True(t, fp.Match(plainResp))
+	result, err = fp.Fingerprint(plainResp, plainBody)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	if result.Version != "" {
+		t.Errorf("Version = %q, want empty for passive detection", result.Version)
 	}
 }

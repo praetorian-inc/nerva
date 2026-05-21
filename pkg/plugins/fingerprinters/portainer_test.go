@@ -275,9 +275,7 @@ func TestBuildPortainerCPE(t *testing.T) {
 }
 
 func TestPortainerFingerprinter_Integration(t *testing.T) {
-	// Clear registry and register only this fingerprinter
-	httpFingerprinters = nil
-	Register(&PortainerFingerprinter{})
+	fp := &PortainerFingerprinter{}
 
 	body := []byte(`{
 		"Version": "2.21.0",
@@ -289,19 +287,20 @@ func TestPortainerFingerprinter_Integration(t *testing.T) {
 	}
 	resp.Header.Set("Content-Type", "application/json")
 
-	results := RunFingerprinters(resp, body)
-
-	found := false
-	for _, result := range results {
-		if result.Technology == "portainer" {
-			found = true
-			if result.Version != "2.21.0" {
-				t.Errorf("Version = %q, want %q", result.Version, "2.21.0")
-			}
-		}
+	if got := fp.Match(resp); !got {
+		t.Fatal("Match() returned false, want true")
 	}
-
-	if !found {
-		t.Error("PortainerFingerprinter not found in results")
+	result, err := fp.Fingerprint(resp, body)
+	if err != nil {
+		t.Fatalf("Fingerprint() error = %v", err)
+	}
+	if result == nil {
+		t.Fatal("Fingerprint() returned nil")
+	}
+	if result.Technology != "portainer" {
+		t.Errorf("Technology = %q, want portainer", result.Technology)
+	}
+	if result.Version != "2.21.0" {
+		t.Errorf("Version = %q, want %q", result.Version, "2.21.0")
 	}
 }

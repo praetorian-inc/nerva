@@ -658,13 +658,7 @@ func TestSanitizeIISHeaderValue(t *testing.T) {
 // ── Integration ───────────────────────────────────────────────────────────────
 
 func TestIISFingerprinter_Integration(t *testing.T) {
-	// Save and restore global fingerprinter state to avoid test pollution.
-	saved := httpFingerprinters
-	t.Cleanup(func() { httpFingerprinters = saved })
-	httpFingerprinters = nil
-
 	fp := &IISFingerprinter{}
-	Register(fp)
 
 	// Start an httptest server that responds with IIS-like headers.
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -681,23 +675,20 @@ func TestIISFingerprinter_Integration(t *testing.T) {
 	defer resp.Body.Close()
 
 	body := []byte("<html><head><title>Default Web Site</title></head><body></body></html>")
-	results := RunFingerprinters(resp, body)
 
-	found := false
-	for _, result := range results {
-		if result.Technology == "iis" {
-			found = true
-			assert.Equal(t, "10.0", result.Version)
-			require.NotEmpty(t, result.CPEs)
-			assert.Equal(t,
-				"cpe:2.3:a:microsoft:internet_information_services:10.0:*:*:*:*:*:*:*",
-				result.CPEs[0],
-			)
-			assert.Equal(t, "Microsoft", result.Metadata["vendor"])
-			assert.Equal(t, "IIS", result.Metadata["product"])
-			assert.Equal(t, "Windows Server 2016/2019/2022", result.Metadata["windows_version"])
-			assert.Equal(t, "4.0.30319", result.Metadata["aspnet_version"])
-		}
-	}
-	assert.True(t, found, "IISFingerprinter not found in RunFingerprinters results")
+	require.True(t, fp.Match(resp))
+	result, err := fp.Fingerprint(resp, body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "iis", result.Technology)
+	assert.Equal(t, "10.0", result.Version)
+	require.NotEmpty(t, result.CPEs)
+	assert.Equal(t,
+		"cpe:2.3:a:microsoft:internet_information_services:10.0:*:*:*:*:*:*:*",
+		result.CPEs[0],
+	)
+	assert.Equal(t, "Microsoft", result.Metadata["vendor"])
+	assert.Equal(t, "IIS", result.Metadata["product"])
+	assert.Equal(t, "Windows Server 2016/2019/2022", result.Metadata["windows_version"])
+	assert.Equal(t, "4.0.30319", result.Metadata["aspnet_version"])
 }

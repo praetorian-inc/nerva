@@ -326,14 +326,7 @@ func TestBuildLocalAICPE(t *testing.T) {
 }
 
 func TestLocalAIFingerprinter_Integration(t *testing.T) {
-	// Save and restore the global registry to avoid flaky parallel tests
-	originalFingerprinters := httpFingerprinters
-	t.Cleanup(func() { httpFingerprinters = originalFingerprinters })
-	httpFingerprinters = nil
-
-	// Register should work via init() but test explicitly
 	fp := &LocalAIFingerprinter{}
-	Register(fp)
 
 	body := []byte(`{
 		"backends": ["llama-cpp", "stablediffusion"],
@@ -348,11 +341,12 @@ func TestLocalAIFingerprinter_Integration(t *testing.T) {
 		Body: io.NopCloser(bytes.NewReader(body)),
 	}
 
-	results := RunFingerprinters(resp, body)
-
-	require.Len(t, results, 1)
-	assert.Equal(t, "localai", results[0].Technology)
-	assert.Equal(t, "", results[0].Version)
+	require.True(t, fp.Match(resp))
+	result, err := fp.Fingerprint(resp, body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "localai", result.Technology)
+	assert.Equal(t, "", result.Version)
 }
 
 func TestLocalAIFingerprinter_Fingerprint_LargePayload(t *testing.T) {

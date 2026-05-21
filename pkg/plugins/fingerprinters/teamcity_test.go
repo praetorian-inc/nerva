@@ -490,7 +490,6 @@ func TestTeamCityFingerprinter_Fingerprint_Invalid(t *testing.T) {
 
 func TestTeamCityFingerprinter_Integration(t *testing.T) {
 	fp := &TeamCityFingerprinter{}
-	Register(fp)
 
 	body := []byte(`{
 		"version": "2023.11.4 (build 147571)",
@@ -505,20 +504,21 @@ func TestTeamCityFingerprinter_Integration(t *testing.T) {
 	}
 	resp.Header.Set("TeamCity-Node-Id", "MAIN_SERVER")
 
-	results := RunFingerprinters(resp, body)
-
-	found := false
-	for _, result := range results {
-		if result.Technology == "teamcity" {
-			found = true
-			if result.Version != "2023.11.4" {
-				t.Errorf("Version = %q, want %q", result.Version, "2023.11.4")
-			}
-		}
+	if !fp.Match(resp) {
+		t.Error("Match() returned false, want true")
 	}
-
-	if !found {
-		t.Error("TeamCityFingerprinter not found in RunFingerprinters results")
+	result, err := fp.Fingerprint(resp, body)
+	if err != nil {
+		t.Fatalf("Fingerprint() error = %v", err)
+	}
+	if result == nil {
+		t.Fatal("Fingerprint() returned nil result")
+	}
+	if result.Technology != "teamcity" {
+		t.Errorf("Technology = %q, want %q", result.Technology, "teamcity")
+	}
+	if result.Version != "2023.11.4" {
+		t.Errorf("Version = %q, want %q", result.Version, "2023.11.4")
 	}
 }
 

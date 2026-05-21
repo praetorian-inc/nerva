@@ -580,33 +580,21 @@ func TestSanitizeConfluenceHeaderValue(t *testing.T) {
 // ── Integration test ──────────────────────────────────────────────────────────
 
 func TestConfluenceFingerprinter_Integration(t *testing.T) {
-	// Save and restore global state to prevent test pollution.
-	saved := httpFingerprinters
-	t.Cleanup(func() { httpFingerprinters = saved })
-	httpFingerprinters = nil
-
 	fp := &ConfluenceFingerprinter{}
-	Register(fp)
 
 	resp := makeConfluenceResp(200,
 		map[string]string{"Content-Type": "text/html"},
 		confluenceLoginBody,
 	)
 
-	results := RunFingerprinters(resp, []byte(confluenceLoginBody))
-
-	var found bool
-	for _, result := range results {
-		if result.Technology == "confluence" {
-			found = true
-			assert.Equal(t, "8.5.4", result.Version)
-			require.NotEmpty(t, result.CPEs)
-			assert.Equal(t, "cpe:2.3:a:atlassian:confluence_server:8.5.4:*:*:*:*:*:*:*", result.CPEs[0])
-			assert.Equal(t, "Atlassian", result.Metadata["vendor"])
-			assert.Equal(t, "Confluence", result.Metadata["product"])
-			assert.Equal(t, "server", result.Metadata["deployment_type"])
-		}
-	}
-
-	assert.True(t, found, "ConfluenceFingerprinter not found in RunFingerprinters results")
+	require.True(t, fp.Match(resp))
+	result, err := fp.Fingerprint(resp, []byte(confluenceLoginBody))
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "8.5.4", result.Version)
+	require.NotEmpty(t, result.CPEs)
+	assert.Equal(t, "cpe:2.3:a:atlassian:confluence_server:8.5.4:*:*:*:*:*:*:*", result.CPEs[0])
+	assert.Equal(t, "Atlassian", result.Metadata["vendor"])
+	assert.Equal(t, "Confluence", result.Metadata["product"])
+	assert.Equal(t, "server", result.Metadata["deployment_type"])
 }

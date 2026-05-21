@@ -653,13 +653,7 @@ func TestBuildNginxCPE(t *testing.T) {
 // ── Integration test ──────────────────────────────────────────────────────────
 
 func TestNginxFingerprinter_Integration(t *testing.T) {
-	// Save and restore global state to prevent test pollution.
-	saved := httpFingerprinters
-	t.Cleanup(func() { httpFingerprinters = saved })
-	httpFingerprinters = nil
-
 	fp := &NginxFingerprinter{}
-	Register(fp)
 
 	t.Run("server header with version triggers detection", func(t *testing.T) {
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -674,20 +668,17 @@ func TestNginxFingerprinter_Integration(t *testing.T) {
 		defer resp.Body.Close()
 
 		body := []byte("<html><body>Hello</body></html>")
-		results := RunFingerprinters(resp, body)
-
-		found := false
-		for _, result := range results {
-			if result.Technology == "nginx" {
-				found = true
-				assert.Equal(t, "1.25.3", result.Version)
-				assert.Equal(t, []string{"cpe:2.3:a:f5:nginx:1.25.3:*:*:*:*:*:*:*"}, result.CPEs)
-				assert.Equal(t, "F5", result.Metadata["vendor"])
-				assert.Equal(t, "Nginx", result.Metadata["product"])
-				assert.Equal(t, "nginx", result.Metadata["variant"])
-			}
+		assert.True(t, fp.Match(resp))
+		result, err := fp.Fingerprint(resp, body)
+		assert.NoError(t, err)
+		assert.NotNil(t, result)
+		if result != nil {
+			assert.Equal(t, "1.25.3", result.Version)
+			assert.Equal(t, []string{"cpe:2.3:a:f5:nginx:1.25.3:*:*:*:*:*:*:*"}, result.CPEs)
+			assert.Equal(t, "F5", result.Metadata["vendor"])
+			assert.Equal(t, "Nginx", result.Metadata["product"])
+			assert.Equal(t, "nginx", result.Metadata["variant"])
 		}
-		assert.True(t, found, "NginxFingerprinter not found in RunFingerprinters results")
 	})
 
 	t.Run("nginx UI body triggers high severity", func(t *testing.T) {
@@ -703,16 +694,13 @@ func TestNginxFingerprinter_Integration(t *testing.T) {
 		defer resp.Body.Close()
 
 		body := []byte(`<html><head><title>Nginx UI</title></head><body>Login to Nginx UI</body></html>`)
-		results := RunFingerprinters(resp, body)
-
-		found := false
-		for _, result := range results {
-			if result.Technology == "nginx" {
-				found = true
-				assert.Equal(t, true, result.Metadata["nginx_ui_exposed"])
-				assert.NotEmpty(t, result.Severity)
-			}
+		assert.True(t, fp.Match(resp))
+		result, err := fp.Fingerprint(resp, body)
+		assert.NoError(t, err)
+		assert.NotNil(t, result)
+		if result != nil {
+			assert.Equal(t, true, result.Metadata["nginx_ui_exposed"])
+			assert.NotEmpty(t, result.Severity)
 		}
-		assert.True(t, found, "NginxFingerprinter not found in RunFingerprinters results for Nginx UI")
 	})
 }

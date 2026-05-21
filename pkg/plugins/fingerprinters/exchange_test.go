@@ -17,6 +17,8 @@ package fingerprinters
 import (
 	"net/http"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestExchangeFingerprinter_Name(t *testing.T) {
@@ -354,9 +356,7 @@ func TestMapExchangeEdition(t *testing.T) {
 }
 
 func TestExchangeFingerprinter_Integration(t *testing.T) {
-	// Register the fingerprinter (should happen in init(), but we test it anyway)
 	fp := &ExchangeFingerprinter{}
-	Register(fp)
 
 	// Create a valid Exchange response
 	resp := &http.Response{
@@ -366,24 +366,15 @@ func TestExchangeFingerprinter_Integration(t *testing.T) {
 	resp.Header.Set("X-FEServer", "MAIL-SRV01")
 	resp.Header.Set("Server", "Microsoft-IIS/10.0")
 
-	results := RunFingerprinters(resp, []byte{})
-
-	// Should find at least the Exchange fingerprinter
-	found := false
-	for _, result := range results {
-		if result.Technology == "exchange_server" {
-			found = true
-			if result.Version != "15.2.1544.11" {
-				t.Errorf("Version = %q, want %q", result.Version, "15.2.1544.11")
-			}
-			if edition, ok := result.Metadata["exchange_edition"].(string); !ok || edition != "Exchange Server 2019" {
-				t.Errorf("exchange_edition = %v, want %v", edition, "Exchange Server 2019")
-			}
-		}
+	require.True(t, fp.Match(resp))
+	result, err := fp.Fingerprint(resp, []byte{})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	if result.Version != "15.2.1544.11" {
+		t.Errorf("Version = %q, want %q", result.Version, "15.2.1544.11")
 	}
-
-	if !found {
-		t.Error("ExchangeFingerprinter not found in results")
+	if edition, ok := result.Metadata["exchange_edition"].(string); !ok || edition != "Exchange Server 2019" {
+		t.Errorf("exchange_edition = %v, want %v", edition, "Exchange Server 2019")
 	}
 }
 

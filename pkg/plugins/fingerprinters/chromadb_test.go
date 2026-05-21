@@ -301,12 +301,7 @@ func TestBuildChromaDBCPE(t *testing.T) {
 }
 
 func TestChromaDBFingerprinter_Integration(t *testing.T) {
-	// Clear registry
-	httpFingerprinters = nil
-
-	// Register should work via init() but test explicitly
 	fp := &ChromaDBFingerprinter{}
-	Register(fp)
 
 	body := []byte(`{"nanosecond heartbeat": 1735740123456789000}`)
 
@@ -318,9 +313,10 @@ func TestChromaDBFingerprinter_Integration(t *testing.T) {
 		Body: io.NopCloser(bytes.NewReader(body)),
 	}
 
-	results := RunFingerprinters(resp, body)
-
-	require.Len(t, results, 1)
-	assert.Equal(t, "chromadb", results[0].Technology)
-	assert.Equal(t, "", results[0].Version) // Version is empty in heartbeat-only response
+	require.True(t, fp.Match(resp))
+	result, err := fp.Fingerprint(resp, body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "chromadb", result.Technology)
+	assert.Equal(t, "", result.Version) // Version is empty in heartbeat-only response
 }
