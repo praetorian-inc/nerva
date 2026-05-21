@@ -311,6 +311,24 @@ func TestCheckDirectoryListing_FalsePositiveSeparatedPatterns(t *testing.T) {
 	assert.Nil(t, finding)
 }
 
+func TestCheckDirectoryListing_FalsePositiveRelativeLinkInPre(t *testing.T) {
+	// A page with a relative parent-directory link inside a <pre> block
+	// should NOT trigger — only nginx autoindex format <pre><a href="../"> should match.
+	body := []byte(`<html><body><pre><a href="../docs">Documentation</a></pre></body></html>`)
+	finding := checkDirectoryListing(body)
+	assert.Nil(t, finding)
+}
+
+func TestCheckServerVersion_HTTPVersionInServer(t *testing.T) {
+	// "1.1 proxy" contains a version-like pattern (1.1) — this is flagged
+	// because the Server header contains version information.
+	headers := http.Header{}
+	headers.Set("Server", "1.1 proxy")
+	finding := checkServerVersion(headers)
+	assert.NotNil(t, finding)
+	assert.Equal(t, "http-server-version", finding.ID)
+}
+
 // ---------------------------------------------------------------------------
 // checkCORSWildcard additional tests
 // ---------------------------------------------------------------------------

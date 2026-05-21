@@ -414,12 +414,12 @@ func checkDirectoryListing(body []byte) *plugins.SecurityFinding {
 			}
 		}
 	}
-	if bytes.Contains(lower, []byte(`<pre><a href="../`)) {
+	if bytes.Contains(lower, []byte(`<pre><a href="../">`)) {
 		return &plugins.SecurityFinding{
 			ID:          "http-directory-listing",
 			Severity:    plugins.SeverityLow,
 			Description: "Server returns an auto-generated directory listing",
-			Evidence:    `<pre><a href="../`,
+			Evidence:    `<pre><a href="../">`,
 		}
 	}
 	return nil
