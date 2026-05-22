@@ -55,7 +55,6 @@ var (
 	synologySDSJslibAsset    = []byte("synoSDSjslib/")
 	synologyCoreDesktopAsset = []byte("SYNO.Core.Desktop")
 	synologyDSMMarker        = []byte("Synology DiskStation Manager (DSM):")
-	synologyCSPDomainMarker  = []byte("synology.com")
 )
 
 // SynologyDSMFingerprinter detects Synology DiskStation Manager via passive
@@ -81,27 +80,29 @@ func (f *SynologyDSMFingerprinter) Match(resp *http.Response) bool {
 //   - Title alone → REJECTED (require Class B corroborator)
 //   - Title + Class B → DETECTED
 func (f *SynologyDSMFingerprinter) Fingerprint(resp *http.Response, body []byte) (*FingerprintResult, error) {
-	if resp == nil || len(body) == 0 {
+	if resp == nil {
 		return nil, nil
 	}
 
-	// Class A signals.
-	// Use bytes.Index to find the first marker occurrence, then bound the regex
-	// search to a 512-byte window starting at that position (C2: prevents the
-	// regex engine from scanning the entire body when the marker appears many
-	// times in a pathological response).
-	markerIdx := bytes.Index(body, synologyDSMMarker)
-	versionLeakMatched := markerIdx >= 0
+	// Class A: version-leak marker presence (iron-clad).
+	versionLeakMatched := bytes.Contains(body, synologyDSMMarker)
 
+	// Version extraction. Scan from the first marker occurrence up to 64 KB
+	// forward — large enough that no real DSM response places the "Version:"
+	// token further away, and small enough to remain well under 100 ms on a
+	// 10 MB pathological body (C2). Unlike the original 512-byte window, this
+	// window will not miss a version that follows a prose mention of the marker.
+	const maxVersionScanBytes = 64 * 1024
 	var dsmVersion string
 	if versionLeakMatched {
-		window := body[markerIdx:]
-		if len(window) > 512 {
-			window = window[:512]
+		idx := bytes.Index(body, synologyDSMMarker)
+		window := body[idx:]
+		if len(window) > maxVersionScanBytes {
+			window = window[:maxVersionScanBytes]
 		}
 		if m := synologyDSMHeaderPattern.FindSubmatch(window); len(m) >= 2 {
 			dsmVersion = sanitizeSynologyDSMVersion(string(m[1]))
-			// sanitizer failure: keep versionLeakMatched=true, dsmVersion=""
+			// sanitizer failure: dsmVersion=""; versionLeakMatched still true
 		}
 	}
 
@@ -115,7 +116,7 @@ func (f *SynologyDSMFingerprinter) Fingerprint(resp *http.Response, body []byte)
 
 	cspMatched := false
 	for _, csp := range resp.Header.Values("Content-Security-Policy") {
-		if bytes.Contains([]byte(strings.ToLower(csp)), synologyCSPDomainMarker) {
+		if strings.Contains(strings.ToLower(csp), "synology.com") {
 			cspMatched = true
 			break
 		}

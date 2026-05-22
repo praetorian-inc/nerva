@@ -190,8 +190,12 @@ func TestSynologyDSMFingerprinter_Fingerprint(t *testing.T) {
 			wantCPE:  "cpe:2.3:o:synology:diskstation_manager:*:*:*:*:*:*:*:*",
 		},
 		{
-			// Title "Synology RackStation NAS" — regex alternation (DiskStation|NAS|RackStation)
-			// matches "NAS" first because it appears earlier in the title text.
+			// Title "Synology RackStation NAS" — the regex has a greedy [^<]{0,30}
+			// wildcard before the alternation (DiskStation|NAS|RackStation), so the
+			// engine advances as far right as possible within the 30-char budget and
+			// matches "NAS" rather than "RackStation" (which appears earlier).
+			// To match the first-appearing form factor, the wildcard would need to be
+			// lazy ([^<]{0,30}?); the current greedy form is intentionally preserved.
 			name:     "title RackStation NAS + webman ClassB → form_factor NAS",
 			resp:     newSynologyResp(htmlCT, nil),
 			body:     []byte(synoRackStation),
@@ -234,6 +238,44 @@ func TestSynologyDSMFingerprinter_Fingerprint(t *testing.T) {
 			resp:    newSynologyRespCSPs([]string{"default-src 'self' *.example.com"}),
 			body:    []byte("<html></html>"),
 			wantNil: true,
+		},
+		// Fix 1: CSP-only iron-clad detection on empty body
+		{
+			name: "CSP-only iron-clad detection on empty body",
+			resp: newSynologyRespCSPs([]string{"default-src 'self' https://*.synology.com"}),
+			body: []byte{},
+			// CSP alone is iron-clad Class A; empty body is fine — no version, no title.
+			wantTech: "synology-dsm",
+			wantFF:   "unknown",
+			wantCPE:  "cpe:2.3:o:synology:diskstation_manager:*:*:*:*:*:*:*:*",
+		},
+		{
+			// 204 No Content carries an empty body by definition; CSP header alone suffices.
+			name: "CSP-only iron-clad on 204 No Content with empty body",
+			resp: func() *http.Response {
+				h := http.Header{}
+				h.Set("Content-Type", "text/html")
+				h.Add("Content-Security-Policy", "default-src 'self' https://*.synology.com")
+				return &http.Response{StatusCode: 204, Header: h}
+			}(),
+			body:     []byte{},
+			wantTech: "synology-dsm",
+			wantFF:   "unknown",
+			wantCPE:  "cpe:2.3:o:synology:diskstation_manager:*:*:*:*:*:*:*:*",
+		},
+		// Fix 2: marker in prose then version block appears later — simplified scan must find it
+		{
+			name: "marker appears in prose then version block appears later",
+			resp: newSynologyResp("text/html", nil),
+			body: []byte(
+				`<p>The string "Synology DiskStation Manager (DSM):" is mentioned here in prose.</p>` +
+					"\n" + strings.Repeat("padding\n", 500) +
+					"Synology DiskStation Manager (DSM):\n  Version: 7.1.1-42962\n  Hostname: x",
+			),
+			wantTech:    "synology-dsm",
+			wantVersion: "7.1.1-42962",
+			wantFF:      "unknown",
+			wantCPE:     "cpe:2.3:o:synology:diskstation_manager:7.1.1-42962:*:*:*:*:*:*:*",
 		},
 	}
 
