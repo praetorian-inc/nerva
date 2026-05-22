@@ -47,6 +47,11 @@ var (
 	synologyDSMVersionCharPattern = regexp.MustCompile(`^[0-9.\-]{1,32}$`)
 	// synologyDSMVersionStructPattern is the structural allowlist (C1).
 	synologyDSMVersionStructPattern = regexp.MustCompile(`^[0-9]+\.[0-9]+(?:\.[0-9]+)?(?:-[0-9]+)?$`)
+	// synologyCSPHostPattern matches synology.com or *.synology.com as a hostname,
+	// rejecting substring false-positives like "notsynology.com" or
+	// "synology.com.evil.example". The optional (\*\.)? prefix handles DNS
+	// wildcard entries in CSP source lists. Bounded subdomain length prevents ReDoS.
+	synologyCSPHostPattern = regexp.MustCompile(`(?i)(^|[^\w.-])(\*\.)?([a-z0-9-]{1,63}\.)*synology\.com([^\w.-]|$)`)
 )
 
 // Byte-literal slices for substring detection (allocation-free, C7).
@@ -65,13 +70,18 @@ func init() { Register(&SynologyDSMFingerprinter{}) }
 
 func (f *SynologyDSMFingerprinter) Name() string { return "synology-dsm" }
 
-// Match accepts HTML, XHTML, or empty Content-Type (C4: case-insensitive).
+// Match accepts HTML, XHTML, plain-text, or empty Content-Type (C4: case-insensitive).
+// text/plain is included because DSM serves its version-leak block with that
+// Content-Type on some firmware versions (plaintext fallback path).
 func (f *SynologyDSMFingerprinter) Match(resp *http.Response) bool {
 	if resp == nil {
 		return false
 	}
 	ct := strings.ToLower(resp.Header.Get("Content-Type"))
-	return ct == "" || strings.Contains(ct, "text/html") || strings.Contains(ct, "application/xhtml+xml")
+	return ct == "" ||
+		strings.Contains(ct, "text/html") ||
+		strings.Contains(ct, "application/xhtml+xml") ||
+		strings.Contains(ct, "text/plain")
 }
 
 // Fingerprint applies an asymmetric gate:
@@ -116,7 +126,7 @@ func (f *SynologyDSMFingerprinter) Fingerprint(resp *http.Response, body []byte)
 
 	cspMatched := false
 	for _, csp := range resp.Header.Values("Content-Security-Policy") {
-		if strings.Contains(strings.ToLower(csp), "synology.com") {
+		if synologyCSPHostPattern.MatchString(csp) {
 			cspMatched = true
 			break
 		}
