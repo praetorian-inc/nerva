@@ -77,11 +77,9 @@ test-coverage: ## Run tests with coverage report
 lint: ## Run linters
 	@if command -v golangci-lint >/dev/null 2>&1; then \
 		golangci-lint run ./...; \
-	elif go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) 2>/dev/null; then \
-		golangci-lint run ./...; \
 	else \
-		echo "golangci-lint not available, running go vet..."; \
-		go vet ./...; \
+		echo "golangci-lint not found, running via go run $(GOLANGCI_LINT_VERSION)..."; \
+		go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) run ./...; \
 	fi
 
 fmt: ## Format Go code
