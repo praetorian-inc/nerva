@@ -22,6 +22,8 @@ GO_LDFLAGS ?= -s -w
 TEST_FLAGS ?= -v
 COVERAGE_FILE ?= coverage.out
 
+GOLANGCI_LINT_VERSION ?= v2.12.2
+
 # Auto-discover Go source files
 GO_SOURCES := $(shell find . -type f -name '*.go' -not -path './vendor/*')
 
@@ -73,7 +75,14 @@ test-coverage: ## Run tests with coverage report
 #############################################################################
 
 lint: ## Run linters
-	golangci-lint run ./...
+	@if command -v golangci-lint >/dev/null 2>&1; then \
+		golangci-lint run ./...; \
+	elif go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) 2>/dev/null; then \
+		golangci-lint run ./...; \
+	else \
+		echo "golangci-lint not available, running go vet..."; \
+		go vet ./...; \
+	fi
 
 fmt: ## Format Go code
 	$(GO) fmt ./...
