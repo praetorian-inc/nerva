@@ -831,16 +831,23 @@ func TestBuildPreauthProbe(t *testing.T) {
 	})
 
 	t.Run("oversized realm returns nil", func(t *testing.T) {
-		longRealm := strings.Repeat("A", 51)
+		longRealm := strings.Repeat("A", 41)
 		if buildPreauthProbe(longRealm, "administrator") != nil {
 			t.Errorf("expected nil for realm of length %d", len(longRealm))
 		}
 	})
 
 	t.Run("oversized principal returns nil", func(t *testing.T) {
-		longPrincipal := strings.Repeat("A", 51)
+		longPrincipal := strings.Repeat("A", 41)
 		if buildPreauthProbe("EXAMPLE.COM", longPrincipal) != nil {
 			t.Errorf("expected nil for principal of length %d", len(longPrincipal))
+		}
+	})
+
+	t.Run("max allowed inputs produce non-nil probe", func(t *testing.T) {
+		probe := buildPreauthProbe(strings.Repeat("A", 40), strings.Repeat("A", 40))
+		if probe == nil {
+			t.Error("expected non-nil probe for max allowed realm and principal (40 bytes each)")
 		}
 	})
 }
@@ -908,6 +915,8 @@ func TestIsInternetRoutable(t *testing.T) {
 		{"198.51.100.1", false},  // TEST-NET-2 (RFC 5737)
 		{"203.0.113.1", false},   // TEST-NET-3 (RFC 5737)
 		{"2001:db8::1", false},   // IPv6 documentation (RFC 3849)
+		{"198.18.0.1", false},    // RFC 2544 benchmarking
+		{"255.255.255.255", false}, // IPv4 limited broadcast
 	}
 	for _, tt := range tests {
 		t.Run(tt.addr, func(t *testing.T) {

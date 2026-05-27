@@ -399,7 +399,7 @@ func checkWeakEtypes(conn net.Conn, timeout time.Duration, realm string) bool {
 func kerberosWeakEtypesFinding(realm string) plugins.SecurityFinding {
 	evidence := "RC4-HMAC (etype 23) accepted by KDC"
 	if realm != "" {
-		evidence = fmt.Sprintf("RC4-HMAC (etype 23) accepted by KDC in realm %s", realm)
+		evidence = fmt.Sprintf("RC4-HMAC (etype 23) accepted by KDC in realm %q", realm)
 	}
 	return plugins.SecurityFinding{
 		ID:          "kerberos-weak-etypes",
@@ -429,12 +429,12 @@ func derWrap(tag byte, content []byte) []byte {
 
 // buildPreauthProbe builds an AS-REQ for the given realm and principal with no padata
 // (no pre-authentication data). Returns nil if realm or principal is empty or too long.
-// Both realm and principal are capped at 50 bytes to keep DER lengths within the range
+// Both realm and principal are capped at 40 bytes to keep DER lengths within the range
 // supported by derWrap (max 255 bytes per field).
 func buildPreauthProbe(realm, principal string) []byte {
 	r := []byte(realm)
 	p := []byte(principal)
-	if len(r) == 0 || len(r) > 50 || len(p) == 0 || len(p) > 50 {
+	if len(r) == 0 || len(r) > 40 || len(p) == 0 || len(p) > 40 {
 		return nil
 	}
 
@@ -447,7 +447,7 @@ func buildPreauthProbe(realm, principal string) []byte {
 	nameStrSeqWrapped := derWrap(0x30, nameStrSeq)
 	cnameInner := append([]byte{0xa0, 0x03, 0x02, 0x01, 0x01}, // name-type = 1
 		derWrap(0xa1, nameStrSeqWrapped)...)
-	body = append(body, derWrap(0xa1, cnameInner)...)
+	body = append(body, derWrap(0xa1, derWrap(0x30, cnameInner))...)
 
 	// [2] realm = GeneralString(realm)
 	body = append(body, derWrap(0xa2, derWrap(0x1b, r))...)
@@ -460,9 +460,9 @@ func buildPreauthProbe(realm, principal string) []byte {
 		derWrap(0xa1, snameStrSeqWrapped)...)
 	body = append(body, derWrap(0xa3, derWrap(0x30, snameInner))...)
 
-	// [5] till = GeneralizedTime "19700101000000Z"
+	// [5] till = GeneralizedTime "20370913024805Z"
 	body = append(body, 0xa5, 0x11, 0x18, 0x0f)
-	body = append(body, []byte("19700101000000Z")...)
+	body = append(body, []byte("20370913024805Z")...)
 
 	// [7] nonce
 	body = append(body, 0xa7, 0x06, 0x02, 0x04, 0x1f, 0x1e, 0xb9, 0xd9)
@@ -514,9 +514,9 @@ func checkPreauthNotRequired(conn net.Conn, timeout time.Duration, realm string)
 func kerberosPreauthNotRequiredFinding(realm, account string) plugins.SecurityFinding {
 	var evidence string
 	if account != "" && realm != "" {
-		evidence = fmt.Sprintf("KDC issued AS-REP for account %q in realm %s without pre-authentication", account, realm)
+		evidence = fmt.Sprintf("KDC issued AS-REP for account %q in realm %q without pre-authentication", account, realm)
 	} else if realm != "" {
-		evidence = fmt.Sprintf("KDC in realm %s issued AS-REP without pre-authentication (unknown principal)", realm)
+		evidence = fmt.Sprintf("KDC in realm %q issued AS-REP without pre-authentication (unknown principal)", realm)
 	} else {
 		evidence = "KDC issued AS-REP without pre-authentication"
 	}
@@ -529,11 +529,13 @@ func kerberosPreauthNotRequiredFinding(realm, account string) plugins.SecurityFi
 }
 
 var (
-	cgnatPrefix = netip.MustParsePrefix("100.64.0.0/10")  // RFC 6598 Shared Address Space (CGNAT)
-	testNet1    = netip.MustParsePrefix("192.0.2.0/24")   // RFC 5737 TEST-NET-1
-	testNet2    = netip.MustParsePrefix("198.51.100.0/24") // RFC 5737 TEST-NET-2
-	testNet3    = netip.MustParsePrefix("203.0.113.0/24")  // RFC 5737 TEST-NET-3
-	doc6Prefix  = netip.MustParsePrefix("2001:db8::/32")   // RFC 3849 IPv6 documentation
+	cgnatPrefix     = netip.MustParsePrefix("100.64.0.0/10")   // RFC 6598 Shared Address Space (CGNAT)
+	testNet1        = netip.MustParsePrefix("192.0.2.0/24")    // RFC 5737 TEST-NET-1
+	testNet2        = netip.MustParsePrefix("198.51.100.0/24") // RFC 5737 TEST-NET-2
+	testNet3        = netip.MustParsePrefix("203.0.113.0/24")  // RFC 5737 TEST-NET-3
+	doc6Prefix      = netip.MustParsePrefix("2001:db8::/32")   // RFC 3849 IPv6 documentation
+	benchmarkPrefix = netip.MustParsePrefix("198.18.0.0/15")   // RFC 2544 benchmarking
+	broadcastAddr   = netip.MustParseAddr("255.255.255.255")   // IPv4 limited broadcast
 )
 
 // isInternetRoutable returns true if addr is a publicly routable IP address
@@ -548,7 +550,9 @@ func isInternetRoutable(addr netip.Addr) bool {
 		!testNet1.Contains(addr) &&
 		!testNet2.Contains(addr) &&
 		!testNet3.Contains(addr) &&
-		!doc6Prefix.Contains(addr)
+		!doc6Prefix.Contains(addr) &&
+		!benchmarkPrefix.Contains(addr) &&
+		addr != broadcastAddr
 }
 
 // kerberosInternetExposedFinding returns a SecurityFinding for a KDC accessible
