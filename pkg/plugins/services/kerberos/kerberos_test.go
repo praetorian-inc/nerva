@@ -400,16 +400,16 @@ func TestKerberosWithMisconfigsEnabled(t *testing.T) {
 	response := buildTestKRBError(6, "EXAMPLE.COM", "")
 	conn := &mockKerberosConn{responseData: response}
 
-	// TEST-NET address (RFC 5737) — guaranteed not to route/connect.
+	// Private IP — not internet-routable, so internet-exposed finding is not triggered.
+	// The mock conn's response data is consumed by detectKerberos, so subsequent
+	// probes (checkPreauthNotRequired, checkWeakEtypes) time out and return false.
 	target := plugins.Target{
-		Address:    netip.MustParseAddrPort("192.0.2.1:88"),
-		Host:       "192.0.2.1",
+		Address:    netip.MustParseAddrPort("10.0.0.1:88"),
+		Host:       "10.0.0.1",
 		Misconfigs: true,
 	}
 
 	p := &KerberosPlugin{}
-	// The mock conn's response data is already consumed by detectKerberos,
-	// so the RC4 probe gets an empty response and probeRC4Support returns false.
 	service, err := p.Run(conn, 100*time.Millisecond, target)
 	if err != nil {
 		t.Fatalf("Run returned error: %v", err)
@@ -417,9 +417,9 @@ func TestKerberosWithMisconfigsEnabled(t *testing.T) {
 	if service == nil {
 		t.Fatal("expected a detected service, got nil")
 	}
-	// The mock conn has no more data, so probeRC4Support returns false → no finding.
+	// The mock conn has no more data, so all probes return false → no findings.
 	if len(service.SecurityFindings) != 0 {
-		t.Errorf("expected no SecurityFindings when checkWeakEtypes cannot connect, got %d", len(service.SecurityFindings))
+		t.Errorf("expected no SecurityFindings when probes cannot connect, got %d", len(service.SecurityFindings))
 	}
 }
 
@@ -632,17 +632,26 @@ func TestKerberosIntegrationMisconfigs(t *testing.T) {
 		t.Errorf("expected version %q, got %q", "5", service.Version)
 	}
 
-	if len(service.SecurityFindings) != 1 {
-		t.Fatalf("Expected 1 SecurityFinding with Misconfigs=true, got %d", len(service.SecurityFindings))
+	// The Docker KDC container runs on 127.0.0.1 (loopback) and uses MIT KDC defaults:
+	// - RC4-HMAC accepted → kerberos-weak-etypes should fire
+	// - "administrator" principal doesn't exist → kerberos-preauth-not-required should NOT fire
+	// - Loopback address → kerberos-internet-exposed should NOT fire
+	var foundWeakEtypes bool
+	for _, f := range service.SecurityFindings {
+		t.Logf("SecurityFinding: id=%s severity=%s", f.ID, f.Severity)
+		if f.ID == "kerberos-weak-etypes" {
+			foundWeakEtypes = true
+			if f.Severity != plugins.SeverityMedium {
+				t.Errorf("kerberos-weak-etypes severity: got %q, want %q", f.Severity, plugins.SeverityMedium)
+			}
+		}
+		if f.ID == "kerberos-internet-exposed" {
+			t.Errorf("unexpected kerberos-internet-exposed finding on loopback address")
+		}
 	}
-	f := service.SecurityFindings[0]
-	if f.ID != "kerberos-weak-etypes" {
-		t.Errorf("expected finding ID %q, got %q", "kerberos-weak-etypes", f.ID)
+	if !foundWeakEtypes {
+		t.Errorf("expected kerberos-weak-etypes finding; got findings: %v", service.SecurityFindings)
 	}
-	if f.Severity != plugins.SeverityMedium {
-		t.Errorf("expected severity %q, got %q", plugins.SeverityMedium, f.Severity)
-	}
-	t.Logf("SecurityFinding: id=%s severity=%s", f.ID, f.Severity)
 }
 
 func TestKerberosIntegrationDetectionNoMisconfigs(t *testing.T) {
@@ -730,3 +739,342 @@ func TestProbeRC4SupportErrorCode0FromValidKRBError(t *testing.T) {
 		t.Error("expected probeRC4Support to return false when errorCode==0 (treated as parse failure)")
 	}
 }
+
+// multiResponseConn returns different responses for sequential reads.
+type multiResponseConn struct {
+	responses [][]byte
+	current   int
+	readBuf   []byte
+}
+
+func (m *multiResponseConn) Read(b []byte) (int, error) {
+	// If readBuf has leftover data from the current response, drain it first.
+	if len(m.readBuf) > 0 {
+		n := copy(b, m.readBuf)
+		m.readBuf = m.readBuf[n:]
+		return n, nil
+	}
+	if m.current >= len(m.responses) {
+		return 0, &net.OpError{Op: "read", Err: &timeoutError{}}
+	}
+	resp := m.responses[m.current]
+	m.current++
+	n := copy(b, resp)
+	if n < len(resp) {
+		m.readBuf = resp[n:]
+	}
+	return n, nil
+}
+
+func (m *multiResponseConn) Write(b []byte) (int, error)         { return len(b), nil }
+func (m *multiResponseConn) Close() error                         { return nil }
+func (m *multiResponseConn) SetDeadline(t time.Time) error        { return nil }
+func (m *multiResponseConn) SetReadDeadline(t time.Time) error    { return nil }
+func (m *multiResponseConn) SetWriteDeadline(t time.Time) error   { return nil }
+func (m *multiResponseConn) LocalAddr() net.Addr                  { return nil }
+func (m *multiResponseConn) RemoteAddr() net.Addr                 { return nil }
+
+// buildMinimalASREP builds a minimal TCP-framed AS-REP response (tag 0x6B + pvno).
+func buildMinimalASREP() []byte {
+	// APPLICATION 11 (AS-REP) = 0x6B, minimal content with pvno=5
+	inner := []byte{
+		0x6b,             // APPLICATION 11 (AS-REP)
+		0x0a,             // length 10
+		0x30, 0x08,       // SEQUENCE
+		0xa0, 0x03, 0x02, 0x01, 0x05, // pvno = 5
+		0xa1, 0x01, 0x00, // msg-type placeholder
+	}
+	tcpLen := make([]byte, 4)
+	binary.BigEndian.PutUint32(tcpLen, uint32(len(inner)))
+	return append(tcpLen, inner...)
+}
+
+func TestBuildPreauthProbe(t *testing.T) {
+	t.Run("valid realm and principal produces well-formed probe", func(t *testing.T) {
+		probe := buildPreauthProbe("EXAMPLE.COM", "administrator")
+		if probe == nil {
+			t.Fatal("expected non-nil probe")
+		}
+		// Verify APPLICATION 10 tag (0x6a = AS-REQ)
+		if probe[0] != 0x6a {
+			t.Errorf("APPLICATION tag: got 0x%02x, want 0x6a", probe[0])
+		}
+		// Verify pvno=5 pattern (context tag [1] in AS-REQ outer SEQUENCE)
+		asReqPvnoPattern := []byte{0xa1, 0x03, 0x02, 0x01, 0x05}
+		if !bytes.Contains(probe, asReqPvnoPattern) {
+			t.Error("pvno=5 pattern not found in probe")
+		}
+		// Verify cname bytes present
+		if !bytes.Contains(probe, []byte("administrator")) {
+			t.Error("principal bytes not found in probe")
+		}
+		// Verify realm bytes present
+		if !bytes.Contains(probe, []byte("EXAMPLE.COM")) {
+			t.Error("realm bytes not found in probe")
+		}
+		// Verify etype list contains AES256 (18 = 0x12), AES128 (17 = 0x11), RC4 (23 = 0x17)
+		if !bytes.Contains(probe, []byte{0x02, 0x01, 0x12}) {
+			t.Error("etype 18 (AES256) not found in probe")
+		}
+	})
+
+	t.Run("empty realm returns nil", func(t *testing.T) {
+		if buildPreauthProbe("", "administrator") != nil {
+			t.Error("expected nil for empty realm")
+		}
+	})
+
+	t.Run("empty principal returns nil", func(t *testing.T) {
+		if buildPreauthProbe("EXAMPLE.COM", "") != nil {
+			t.Error("expected nil for empty principal")
+		}
+	})
+
+	t.Run("oversized realm returns nil", func(t *testing.T) {
+		longRealm := strings.Repeat("A", 51)
+		if buildPreauthProbe(longRealm, "administrator") != nil {
+			t.Errorf("expected nil for realm of length %d", len(longRealm))
+		}
+	})
+}
+
+func TestCheckPreauthNotRequired(t *testing.T) {
+	t.Run("AS-REP response returns true", func(t *testing.T) {
+		asrep := buildMinimalASREP()
+		conn := &mockKerberosConn{responseData: asrep}
+		if !checkPreauthNotRequired(conn, 2*time.Second, "EXAMPLE.COM") {
+			t.Error("expected true for AS-REP response")
+		}
+	})
+
+	t.Run("KRB-ERROR 25 (PREAUTH_REQUIRED) returns false", func(t *testing.T) {
+		response := buildTestKRBError(25, "EXAMPLE.COM", "")
+		conn := &mockKerberosConn{responseData: response}
+		if checkPreauthNotRequired(conn, 2*time.Second, "EXAMPLE.COM") {
+			t.Error("expected false for KRB-ERROR with PREAUTH_REQUIRED (25)")
+		}
+	})
+
+	t.Run("KRB-ERROR 6 (C_PRINCIPAL_UNKNOWN) returns false", func(t *testing.T) {
+		response := buildTestKRBError(6, "EXAMPLE.COM", "")
+		conn := &mockKerberosConn{responseData: response}
+		if checkPreauthNotRequired(conn, 2*time.Second, "EXAMPLE.COM") {
+			t.Error("expected false for KRB-ERROR with C_PRINCIPAL_UNKNOWN (6)")
+		}
+	})
+
+	t.Run("short response returns false", func(t *testing.T) {
+		short := []byte{0x00, 0x00, 0x00, 0x02, 0x6b, 0x00}
+		conn := &mockKerberosConn{responseData: short}
+		if checkPreauthNotRequired(conn, 2*time.Second, "EXAMPLE.COM") {
+			t.Error("expected false for short response")
+		}
+	})
+
+	t.Run("connection error returns false", func(t *testing.T) {
+		conn := &mockKerberosConn{responseData: []byte{}}
+		if checkPreauthNotRequired(conn, 2*time.Second, "EXAMPLE.COM") {
+			t.Error("expected false for empty/timeout connection")
+		}
+	})
+}
+
+func TestIsInternetRoutable(t *testing.T) {
+	tests := []struct {
+		addr string
+		want bool
+	}{
+		{"10.0.0.1", false},
+		{"172.16.0.1", false},
+		{"192.168.1.1", false},
+		{"127.0.0.1", false},
+		{"::1", false},
+		{"169.254.1.1", false},
+		{"0.0.0.0", false},
+		{"8.8.8.8", true},
+		{"1.1.1.1", true},
+		{"2600:1900::1", true},
+		{"100.64.0.1", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.addr, func(t *testing.T) {
+			addr, err := netip.ParseAddr(tt.addr)
+			if err != nil {
+				t.Fatalf("ParseAddr(%q): %v", tt.addr, err)
+			}
+			got := isInternetRoutable(addr)
+			if got != tt.want {
+				t.Errorf("isInternetRoutable(%q) = %v, want %v", tt.addr, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestKerberosPreauthNotRequiredFinding(t *testing.T) {
+	t.Run("with realm and account", func(t *testing.T) {
+		f := kerberosPreauthNotRequiredFinding("EXAMPLE.COM", "administrator")
+		if f.ID != "kerberos-preauth-not-required" {
+			t.Errorf("ID: got %q, want %q", f.ID, "kerberos-preauth-not-required")
+		}
+		if f.Severity != plugins.SeverityHigh {
+			t.Errorf("Severity: got %q, want %q", f.Severity, plugins.SeverityHigh)
+		}
+		if !strings.Contains(f.Evidence, "administrator") {
+			t.Errorf("Evidence missing account: %q", f.Evidence)
+		}
+		if !strings.Contains(f.Evidence, "EXAMPLE.COM") {
+			t.Errorf("Evidence missing realm: %q", f.Evidence)
+		}
+	})
+
+	t.Run("with empty account produces generic evidence", func(t *testing.T) {
+		f := kerberosPreauthNotRequiredFinding("EXAMPLE.COM", "")
+		if f.ID != "kerberos-preauth-not-required" {
+			t.Errorf("ID: got %q, want %q", f.ID, "kerberos-preauth-not-required")
+		}
+		if strings.Contains(f.Evidence, "administrator") {
+			t.Errorf("Evidence should not contain account for empty account: %q", f.Evidence)
+		}
+	})
+}
+
+func TestKerberosInternetExposedFinding(t *testing.T) {
+	f := kerberosInternetExposedFinding()
+	if f.ID != "kerberos-internet-exposed" {
+		t.Errorf("ID: got %q, want %q", f.ID, "kerberos-internet-exposed")
+	}
+	if f.Severity != plugins.SeverityMedium {
+		t.Errorf("Severity: got %q, want %q", f.Severity, plugins.SeverityMedium)
+	}
+	if !strings.Contains(f.Description, "internet") && !strings.Contains(f.Description, "Internet") {
+		t.Errorf("Description missing 'internet': %q", f.Description)
+	}
+}
+
+func TestRunPreauthNotRequiredFinding(t *testing.T) {
+	// Start a local TCP server that returns AS-REP for the pre-auth probe.
+	// Each accepted connection reads the incoming probe (discarded) then sends AS-REP.
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to start listener: %v", err)
+	}
+	defer listener.Close()
+
+	asrepResponse := buildMinimalASREP()
+
+	go func() {
+		for {
+			conn, acceptErr := listener.Accept()
+			if acceptErr != nil {
+				return
+			}
+			buf := make([]byte, 4096)
+			conn.SetReadDeadline(time.Now().Add(2 * time.Second)) //nolint:errcheck
+			conn.Read(buf)                                        //nolint:errcheck
+			conn.Write(asrepResponse)                             //nolint:errcheck
+			conn.Close()
+		}
+	}()
+
+	// Parse the listener's address for the target.
+	listenerAddr := listener.Addr().(*net.TCPAddr)
+	addrPort := netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), uint16(listenerAddr.Port))
+
+	// Build a mock conn for detectKerberos — returns KRB-ERROR with realm so that
+	// the pre-auth branch is taken (not the initialASREP shortcut).
+	initialKRBError := buildTestKRBError(6, "EXAMPLE.COM", "")
+	mockConn := &mockKerberosConn{responseData: initialKRBError}
+
+	target := plugins.Target{
+		Address:    addrPort,
+		Host:       "127.0.0.1",
+		Misconfigs: true,
+	}
+
+	p := &KerberosPlugin{}
+	service, err := p.Run(mockConn, 2*time.Second, target)
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if service == nil {
+		t.Fatal("expected detected service, got nil")
+	}
+
+	foundPreauth := false
+	for _, f := range service.SecurityFindings {
+		if f.ID == "kerberos-preauth-not-required" {
+			foundPreauth = true
+			if f.Severity != plugins.SeverityHigh {
+				t.Errorf("severity: got %q, want %q", f.Severity, plugins.SeverityHigh)
+			}
+		}
+	}
+	if !foundPreauth {
+		t.Errorf("expected kerberos-preauth-not-required finding; got findings: %v", service.SecurityFindings)
+	}
+}
+
+func TestRunInitialASREPFinding(t *testing.T) {
+	// Initial detection receives AS-REP — KDC issues tickets to unknown principals.
+	asrep := buildMinimalASREP()
+	conn := &multiResponseConn{responses: [][]byte{asrep}}
+
+	target := plugins.Target{
+		Address:    netip.MustParseAddrPort("10.0.0.1:88"),
+		Host:       "10.0.0.1",
+		Misconfigs: true,
+	}
+
+	p := &KerberosPlugin{}
+	service, err := p.Run(conn, 100*time.Millisecond, target)
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if service == nil {
+		t.Fatal("expected detected service, got nil")
+	}
+
+	foundPreauth := false
+	for _, f := range service.SecurityFindings {
+		if f.ID == "kerberos-preauth-not-required" {
+			foundPreauth = true
+			if strings.Contains(f.Evidence, "administrator") {
+				t.Errorf("initial AS-REP finding should not mention administrator: %q", f.Evidence)
+			}
+		}
+	}
+	if !foundPreauth {
+		t.Errorf("expected kerberos-preauth-not-required finding for initial AS-REP; got: %v", service.SecurityFindings)
+	}
+}
+
+func TestDerWrap(t *testing.T) {
+	t.Run("short form", func(t *testing.T) {
+		content := []byte{0x01, 0x02, 0x03}
+		result := derWrap(0x30, content)
+		if result[0] != 0x30 || result[1] != 0x03 {
+			t.Errorf("short form: got %x, want 30 03 01 02 03", result)
+		}
+	})
+	t.Run("long form", func(t *testing.T) {
+		content := make([]byte, 200)
+		result := derWrap(0x30, content)
+		if result[0] != 0x30 || result[1] != 0x81 || result[2] != 200 {
+			t.Errorf("long form header: got %x %x %x, want 30 81 c8", result[0], result[1], result[2])
+		}
+	})
+	t.Run("overflow returns nil", func(t *testing.T) {
+		content := make([]byte, 256)
+		if derWrap(0x30, content) != nil {
+			t.Error("expected nil for content > 255 bytes")
+		}
+	})
+	t.Run("nil content returns nil", func(t *testing.T) {
+		if derWrap(0x30, nil) != nil {
+			t.Error("expected nil for nil content")
+		}
+	})
+}
+
+
+
