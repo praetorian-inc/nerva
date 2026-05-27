@@ -895,6 +895,8 @@ func TestIsInternetRoutable(t *testing.T) {
 		{"1.1.1.1", true},
 		{"2600:1900::1", true},
 		{"100.64.0.1", false},
+		{"224.0.0.1", false},   // IPv4 multicast
+		{"ff02::1", false},     // IPv6 multicast
 	}
 	for _, tt := range tests {
 		t.Run(tt.addr, func(t *testing.T) {

@@ -538,6 +538,7 @@ func isInternetRoutable(addr netip.Addr) bool {
 	return !addr.IsPrivate() &&
 		!addr.IsLoopback() &&
 		!addr.IsLinkLocalUnicast() &&
+		!addr.IsMulticast() &&
 		!addr.IsUnspecified() &&
 		!cgnatPrefix.Contains(addr)
 }
