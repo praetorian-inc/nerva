@@ -836,6 +836,13 @@ func TestBuildPreauthProbe(t *testing.T) {
 			t.Errorf("expected nil for realm of length %d", len(longRealm))
 		}
 	})
+
+	t.Run("oversized principal returns nil", func(t *testing.T) {
+		longPrincipal := strings.Repeat("A", 51)
+		if buildPreauthProbe("EXAMPLE.COM", longPrincipal) != nil {
+			t.Errorf("expected nil for principal of length %d", len(longPrincipal))
+		}
+	})
 }
 
 func TestCheckPreauthNotRequired(t *testing.T) {
