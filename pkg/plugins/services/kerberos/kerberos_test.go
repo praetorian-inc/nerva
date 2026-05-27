@@ -902,8 +902,12 @@ func TestIsInternetRoutable(t *testing.T) {
 		{"1.1.1.1", true},
 		{"2600:1900::1", true},
 		{"100.64.0.1", false},
-		{"224.0.0.1", false},   // IPv4 multicast
-		{"ff02::1", false},     // IPv6 multicast
+		{"224.0.0.1", false},     // IPv4 multicast
+		{"ff02::1", false},       // IPv6 multicast
+		{"192.0.2.1", false},     // TEST-NET-1 (RFC 5737)
+		{"198.51.100.1", false},  // TEST-NET-2 (RFC 5737)
+		{"203.0.113.1", false},   // TEST-NET-3 (RFC 5737)
+		{"2001:db8::1", false},   // IPv6 documentation (RFC 3849)
 	}
 	for _, tt := range tests {
 		t.Run(tt.addr, func(t *testing.T) {
@@ -1083,6 +1087,65 @@ func TestDerWrap(t *testing.T) {
 			t.Error("expected nil for nil content")
 		}
 	})
+}
+
+func TestRunInternetExposedFinding(t *testing.T) {
+	response := buildTestKRBError(6, "EXAMPLE.COM", "")
+	conn := &mockKerberosConn{responseData: response}
+
+	target := plugins.Target{
+		Address:    netip.MustParseAddrPort("8.8.8.8:88"),
+		Host:       "8.8.8.8",
+		Misconfigs: true,
+	}
+
+	p := &KerberosPlugin{}
+	service, err := p.Run(conn, 100*time.Millisecond, target)
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if service == nil {
+		t.Fatal("expected detected service, got nil")
+	}
+
+	var foundExposed bool
+	for _, f := range service.SecurityFindings {
+		if f.ID == "kerberos-internet-exposed" {
+			foundExposed = true
+			if f.Severity != plugins.SeverityMedium {
+				t.Errorf("severity: got %q, want %q", f.Severity, plugins.SeverityMedium)
+			}
+		}
+	}
+	if !foundExposed {
+		t.Errorf("expected kerberos-internet-exposed finding; got findings: %v", service.SecurityFindings)
+	}
+}
+
+func TestRunEmptyRealmPath(t *testing.T) {
+	response := buildTestKRBError(0, "", "")
+	conn := &mockKerberosConn{responseData: response}
+
+	target := plugins.Target{
+		Address:    netip.MustParseAddrPort("10.0.0.1:88"),
+		Host:       "10.0.0.1",
+		Misconfigs: true,
+	}
+
+	p := &KerberosPlugin{}
+	service, err := p.Run(conn, 100*time.Millisecond, target)
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if service == nil {
+		t.Fatal("expected detected service, got nil")
+	}
+
+	for _, f := range service.SecurityFindings {
+		if f.ID == "kerberos-preauth-not-required" {
+			t.Errorf("unexpected kerberos-preauth-not-required finding with empty realm")
+		}
+	}
 }
 
 

@@ -528,19 +528,27 @@ func kerberosPreauthNotRequiredFinding(realm, account string) plugins.SecurityFi
 	}
 }
 
-// cgnatPrefix is RFC 6598 Shared Address Space (100.64.0.0/10), used for CGNAT.
-// Go's netip.Addr.IsPrivate() does not cover this range, so we check it explicitly.
-var cgnatPrefix = netip.MustParsePrefix("100.64.0.0/10")
+var (
+	cgnatPrefix = netip.MustParsePrefix("100.64.0.0/10")  // RFC 6598 Shared Address Space (CGNAT)
+	testNet1    = netip.MustParsePrefix("192.0.2.0/24")   // RFC 5737 TEST-NET-1
+	testNet2    = netip.MustParsePrefix("198.51.100.0/24") // RFC 5737 TEST-NET-2
+	testNet3    = netip.MustParsePrefix("203.0.113.0/24")  // RFC 5737 TEST-NET-3
+	doc6Prefix  = netip.MustParsePrefix("2001:db8::/32")   // RFC 3849 IPv6 documentation
+)
 
 // isInternetRoutable returns true if addr is a publicly routable IP address
-// (not private, loopback, link-local, unspecified, or CGNAT).
+// (not private, loopback, link-local, unspecified, CGNAT, or documentation range).
 func isInternetRoutable(addr netip.Addr) bool {
 	return !addr.IsPrivate() &&
 		!addr.IsLoopback() &&
 		!addr.IsLinkLocalUnicast() &&
 		!addr.IsMulticast() &&
 		!addr.IsUnspecified() &&
-		!cgnatPrefix.Contains(addr)
+		!cgnatPrefix.Contains(addr) &&
+		!testNet1.Contains(addr) &&
+		!testNet2.Contains(addr) &&
+		!testNet3.Contains(addr) &&
+		!doc6Prefix.Contains(addr)
 }
 
 // kerberosInternetExposedFinding returns a SecurityFinding for a KDC accessible
