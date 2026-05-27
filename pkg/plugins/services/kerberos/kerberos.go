@@ -590,7 +590,7 @@ func (p *KerberosPlugin) Run(conn net.Conn, timeout time.Duration, target plugin
 				if checkPreauthNotRequired(preauthConn, timeout, realm) {
 					findings = append(findings, kerberosPreauthNotRequiredFinding(realm, preauthPrincipal))
 				}
-				preauthConn.Close()
+				_ = preauthConn.Close()
 			}
 		}
 
@@ -598,7 +598,7 @@ func (p *KerberosPlugin) Run(conn net.Conn, timeout time.Duration, target plugin
 			if checkWeakEtypes(weakConn, timeout, realm) {
 				findings = append(findings, kerberosWeakEtypesFinding(realm))
 			}
-			weakConn.Close()
+			_ = weakConn.Close()
 		}
 
 		if isInternetRoutable(target.Address.Addr()) {
