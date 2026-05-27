@@ -351,13 +351,7 @@ func TestBuildGradioCPE(t *testing.T) {
 }
 
 func TestGradioFingerprinter_Integration(t *testing.T) {
-	// Save and restore global state to prevent test pollution
-	saved := httpFingerprinters
-	t.Cleanup(func() { httpFingerprinters = saved })
-	httpFingerprinters = nil
-
 	fp := &GradioFingerprinter{}
-	Register(fp)
 
 	resp := &http.Response{
 		Header: make(http.Header),
@@ -375,25 +369,26 @@ func TestGradioFingerprinter_Integration(t *testing.T) {
 		"dependencies": []
 	}`)
 
-	results := RunFingerprinters(resp, body)
-
-	found := false
-	for _, result := range results {
-		if result.Technology == "gradio" {
-			found = true
-			if result.Version != "4.44.1" {
-				t.Errorf("Version = %q, want %q", result.Version, "4.44.1")
-			}
-			if mode, ok := result.Metadata["mode"].(string); !ok || mode != "blocks" {
-				t.Errorf("Metadata[mode] = %v, want %q", result.Metadata["mode"], "blocks")
-			}
-			if protocol, ok := result.Metadata["protocol"].(string); !ok || protocol != "sse_v3" {
-				t.Errorf("Metadata[protocol] = %v, want %q", result.Metadata["protocol"], "sse_v3")
-			}
-		}
+	if got := fp.Match(resp); !got {
+		t.Fatal("Match() = false, want true")
 	}
-
-	if !found {
-		t.Error("GradioFingerprinter not found in RunFingerprinters results")
+	result, err := fp.Fingerprint(resp, body)
+	if err != nil {
+		t.Fatalf("Fingerprint() error = %v", err)
+	}
+	if result == nil {
+		t.Fatal("Fingerprint() returned nil result")
+	}
+	if result.Technology != "gradio" {
+		t.Errorf("Technology = %q, want %q", result.Technology, "gradio")
+	}
+	if result.Version != "4.44.1" {
+		t.Errorf("Version = %q, want %q", result.Version, "4.44.1")
+	}
+	if mode, ok := result.Metadata["mode"].(string); !ok || mode != "blocks" {
+		t.Errorf("Metadata[mode] = %v, want %q", result.Metadata["mode"], "blocks")
+	}
+	if protocol, ok := result.Metadata["protocol"].(string); !ok || protocol != "sse_v3" {
+		t.Errorf("Metadata[protocol] = %v, want %q", result.Metadata["protocol"], "sse_v3")
 	}
 }

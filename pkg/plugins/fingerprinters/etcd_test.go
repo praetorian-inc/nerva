@@ -267,12 +267,7 @@ func TestBuildEtcdCPE(t *testing.T) {
 }
 
 func TestEtcdFingerprinter_Integration(t *testing.T) {
-	// Clear registry
-	httpFingerprinters = nil
-
-	// Register should work via init() but test explicitly
 	fp := &EtcdFingerprinter{}
-	Register(fp)
 
 	body := []byte(`{
 		"etcdserver": "3.5.9",
@@ -287,9 +282,10 @@ func TestEtcdFingerprinter_Integration(t *testing.T) {
 		Body: io.NopCloser(bytes.NewReader(body)),
 	}
 
-	results := RunFingerprinters(resp, body)
-
-	require.Len(t, results, 1)
-	assert.Equal(t, "etcd", results[0].Technology)
-	assert.Equal(t, "3.5.9", results[0].Version)
+	require.True(t, fp.Match(resp))
+	result, err := fp.Fingerprint(resp, body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "etcd", result.Technology)
+	assert.Equal(t, "3.5.9", result.Version)
 }

@@ -238,12 +238,7 @@ func TestBuildMinioCPE(t *testing.T) {
 }
 
 func TestMinIOFingerprinter_Integration(t *testing.T) {
-	// Clear registry
-	httpFingerprinters = nil
-
-	// Register should work via init() but test explicitly
 	fp := &MinIOFingerprinter{}
-	Register(fp)
 
 	body := []byte{}
 
@@ -255,9 +250,10 @@ func TestMinIOFingerprinter_Integration(t *testing.T) {
 		Body: io.NopCloser(bytes.NewReader(body)),
 	}
 
-	results := RunFingerprinters(resp, body)
-
-	require.Len(t, results, 1)
-	assert.Equal(t, "minio", results[0].Technology)
-	assert.Equal(t, "RELEASE.2024-01-01T00-00-00Z", results[0].Version)
+	require.True(t, fp.Match(resp))
+	result, err := fp.Fingerprint(resp, body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "minio", result.Technology)
+	assert.Equal(t, "RELEASE.2024-01-01T00-00-00Z", result.Version)
 }

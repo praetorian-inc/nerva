@@ -78,10 +78,17 @@ func GetFingerprinters() []HTTPFingerprinter {
 	return httpFingerprinters
 }
 
-// RunFingerprinters executes all matching fingerprinters and returns results
+// RunFingerprinters executes all matching passive fingerprinters and returns results.
+// Active fingerprinters with a dedicated probe endpoint (not "/" or "") are skipped
+// here and run separately in the active phase against their specific endpoint response.
 func RunFingerprinters(resp *http.Response, body []byte) []*FingerprintResult {
 	var results []*FingerprintResult
 	for _, fp := range httpFingerprinters {
+		if active, ok := fp.(ActiveHTTPFingerprinter); ok {
+			if endpoint := active.ProbeEndpoint(); endpoint != "" && endpoint != "/" {
+				continue
+			}
+		}
 		if fp.Match(resp) {
 			if result, err := fp.Fingerprint(resp, body); err == nil && result != nil {
 				results = append(results, result)

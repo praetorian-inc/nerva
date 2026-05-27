@@ -549,12 +549,7 @@ func TestBuildCrushFTPCPE(t *testing.T) {
 // ── Integration test ──────────────────────────────────────────────────────────
 
 func TestCrushFTPFingerprinter_Integration(t *testing.T) {
-	saved := httpFingerprinters
-	t.Cleanup(func() { httpFingerprinters = saved })
-	httpFingerprinters = nil
-
 	fp := &CrushFTPFingerprinter{}
-	Register(fp)
 
 	// Server header is fixed string with no version; version comes from meta generator.
 	header := make(http.Header)
@@ -564,26 +559,28 @@ func TestCrushFTPFingerprinter_Integration(t *testing.T) {
 <meta name="generator" content="CrushFTP 10.7.0">
 </head><body></body></html>`)
 
-	results := RunFingerprinters(resp, body)
-
-	found := false
-	for _, result := range results {
-		if result.Technology == "crushftp" {
-			found = true
-			if result.Version != "10.7.0" {
-				t.Errorf("Version = %q, want 10.7.0", result.Version)
-			}
-			if len(result.CPEs) == 0 {
-				t.Error("Expected at least one CPE")
-			} else if result.CPEs[0] != "cpe:2.3:a:crushftp:crushftp:10.7.0:*:*:*:*:*:*:*" {
-				t.Errorf("CPE = %q, want canonical CPE", result.CPEs[0])
-			}
-			if v, ok := result.Metadata["vendor"].(string); !ok || v != "CrushFTP" {
-				t.Errorf("Metadata[vendor] = %v, want CrushFTP", result.Metadata["vendor"])
-			}
-		}
+	if !fp.Match(resp) {
+		t.Fatal("Match() returned false, want true")
 	}
-	if !found {
-		t.Error("CrushFTPFingerprinter not found in RunFingerprinters results")
+	result, err := fp.Fingerprint(resp, body)
+	if err != nil {
+		t.Fatalf("Fingerprint() error = %v", err)
+	}
+	if result == nil {
+		t.Fatal("Fingerprint() returned nil")
+	}
+	if result.Technology != "crushftp" {
+		t.Errorf("Technology = %q, want crushftp", result.Technology)
+	}
+	if result.Version != "10.7.0" {
+		t.Errorf("Version = %q, want 10.7.0", result.Version)
+	}
+	if len(result.CPEs) == 0 {
+		t.Error("Expected at least one CPE")
+	} else if result.CPEs[0] != "cpe:2.3:a:crushftp:crushftp:10.7.0:*:*:*:*:*:*:*" {
+		t.Errorf("CPE = %q, want canonical CPE", result.CPEs[0])
+	}
+	if v, ok := result.Metadata["vendor"].(string); !ok || v != "CrushFTP" {
+		t.Errorf("Metadata[vendor] = %v, want CrushFTP", result.Metadata["vendor"])
 	}
 }

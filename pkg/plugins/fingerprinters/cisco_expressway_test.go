@@ -17,6 +17,9 @@ package fingerprinters
 import (
 	"net/http"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestCiscoExpresswayFingerprinter_Name(t *testing.T) {
@@ -338,9 +341,7 @@ func TestBuildCiscoExpresswayCPE(t *testing.T) {
 }
 
 func TestCiscoExpresswayFingerprinter_Integration(t *testing.T) {
-	// Register the fingerprinter (should happen in init(), but we test it anyway)
 	fp := &CiscoExpresswayFingerprinter{}
-	Register(fp)
 
 	// Create a valid Cisco Expressway response
 	body := []byte(`<html><head><title>Cisco Expressway - Login</title></head><body>Cisco Expressway Version X14.3.2</body></html>`)
@@ -350,20 +351,10 @@ func TestCiscoExpresswayFingerprinter_Integration(t *testing.T) {
 		Header:     make(http.Header),
 	}
 
-	results := RunFingerprinters(resp, body)
-
-	// Should find at least the Cisco Expressway fingerprinter
-	found := false
-	for _, result := range results {
-		if result.Technology == "cisco-expressway" {
-			found = true
-			if result.Version != "X14.3.2" {
-				t.Errorf("Version = %q, want %q", result.Version, "X14.3.2")
-			}
-		}
-	}
-
-	if !found {
-		t.Error("CiscoExpresswayFingerprinter not found in results")
-	}
+	require.True(t, fp.Match(resp))
+	result, err := fp.Fingerprint(resp, body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "cisco-expressway", result.Technology)
+	assert.Equal(t, "X14.3.2", result.Version)
 }

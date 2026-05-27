@@ -273,15 +273,7 @@ func TestBuildTomcatCPE(t *testing.T) {
 }
 
 func TestTomcatFingerprinter_Integration(t *testing.T) {
-	// Save current registry state and restore after test
-	originalCount := len(GetFingerprinters())
-	t.Cleanup(func() {
-		httpFingerprinters = httpFingerprinters[:originalCount]
-	})
-
-	// Register the fingerprinter (should happen in init(), but we test it anyway)
 	fp := &TomcatFingerprinter{}
-	Register(fp)
 
 	// Create a valid Tomcat response
 	body := []byte(`<html><head><title>Error</title></head><body><h3>Apache Tomcat/9.0.98</h3></body></html>`)
@@ -291,20 +283,20 @@ func TestTomcatFingerprinter_Integration(t *testing.T) {
 	}
 	resp.Header.Set("Server", "Apache Tomcat/9.0.98")
 
-	results := RunFingerprinters(resp, body)
-
-	// Should find at least the Tomcat fingerprinter
-	found := false
-	for _, result := range results {
-		if result.Technology == "tomcat" {
-			found = true
-			if result.Version != "9.0.98" {
-				t.Errorf("Version = %q, want %q", result.Version, "9.0.98")
-			}
-		}
+	if !fp.Match(resp) {
+		t.Error("Match() returned false, want true")
 	}
-
-	if !found {
-		t.Error("TomcatFingerprinter not found in results")
+	result, err := fp.Fingerprint(resp, body)
+	if err != nil {
+		t.Fatalf("Fingerprint() error = %v", err)
+	}
+	if result == nil {
+		t.Fatal("Fingerprint() returned nil result")
+	}
+	if result.Technology != "tomcat" {
+		t.Errorf("Technology = %q, want %q", result.Technology, "tomcat")
+	}
+	if result.Version != "9.0.98" {
+		t.Errorf("Version = %q, want %q", result.Version, "9.0.98")
 	}
 }

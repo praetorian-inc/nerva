@@ -573,12 +573,7 @@ func TestCouchDBAdminPartyFingerprinter_NestedJSON(t *testing.T) {
 }
 
 func TestCouchDBFingerprinter_Integration(t *testing.T) {
-	// Clear registry
-	httpFingerprinters = nil
-
-	// Register should work via init() but test explicitly
 	fp := &CouchDBFingerprinter{}
-	Register(fp)
 
 	body := []byte(`{
 		"couchdb": "Welcome",
@@ -597,10 +592,11 @@ func TestCouchDBFingerprinter_Integration(t *testing.T) {
 		Body: io.NopCloser(bytes.NewReader(body)),
 	}
 
-	results := RunFingerprinters(resp, body)
-
-	require.Len(t, results, 1)
-	assert.Equal(t, "couchdb", results[0].Technology)
-	assert.Equal(t, "3.4.2", results[0].Version)
-	assert.Contains(t, results[0].CPEs, "cpe:2.3:a:apache:couchdb:3.4.2:*:*:*:*:*:*:*")
+	require.True(t, fp.Match(resp))
+	result, err := fp.Fingerprint(resp, body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "couchdb", result.Technology)
+	assert.Equal(t, "3.4.2", result.Version)
+	assert.Contains(t, result.CPEs, "cpe:2.3:a:apache:couchdb:3.4.2:*:*:*:*:*:*:*")
 }

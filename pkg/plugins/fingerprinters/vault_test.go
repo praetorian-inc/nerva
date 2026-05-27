@@ -297,9 +297,7 @@ func TestBuildVaultCPE(t *testing.T) {
 }
 
 func TestVaultFingerprinter_Integration(t *testing.T) {
-	// Register the fingerprinter (should happen in init(), but we test it anyway)
 	fp := &VaultFingerprinter{}
-	Register(fp)
 
 	// Create a valid Vault health response
 	body := []byte(`{
@@ -314,20 +312,20 @@ func TestVaultFingerprinter_Integration(t *testing.T) {
 	}
 	resp.Header.Set("Cache-Control", "no-store")
 
-	results := RunFingerprinters(resp, body)
-
-	// Should find at least the Vault fingerprinter
-	found := false
-	for _, result := range results {
-		if result.Technology == "vault" {
-			found = true
-			if result.Version != "1.12.3" {
-				t.Errorf("Version = %q, want %q", result.Version, "1.12.3")
-			}
-		}
+	if !fp.Match(resp) {
+		t.Error("Match() returned false, want true")
 	}
-
-	if !found {
-		t.Error("VaultFingerprinter not found in results")
+	result, err := fp.Fingerprint(resp, body)
+	if err != nil {
+		t.Fatalf("Fingerprint() error = %v", err)
+	}
+	if result == nil {
+		t.Fatal("Fingerprint() returned nil result")
+	}
+	if result.Technology != "vault" {
+		t.Errorf("Technology = %q, want %q", result.Technology, "vault")
+	}
+	if result.Version != "1.12.3" {
+		t.Errorf("Version = %q, want %q", result.Version, "1.12.3")
 	}
 }

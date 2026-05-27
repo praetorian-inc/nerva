@@ -635,13 +635,7 @@ func TestColdFusionFingerprinter_ActiveProbeResponse(t *testing.T) {
 // ── Integration test ──────────────────────────────────────────────────────────
 
 func TestColdFusionFingerprinter_Integration(t *testing.T) {
-	// Save and restore global state to prevent test pollution (mirrors gradio_test.go:355-357).
-	saved := httpFingerprinters
-	t.Cleanup(func() { httpFingerprinters = saved })
-	httpFingerprinters = nil
-
 	fp := &ColdFusionFingerprinter{}
-	Register(fp)
 
 	resp := &http.Response{
 		StatusCode: 200,
@@ -649,20 +643,14 @@ func TestColdFusionFingerprinter_Integration(t *testing.T) {
 	}
 	resp.Header.Set("Content-Type", "text/html; charset=utf-8")
 
-	results := RunFingerprinters(resp, []byte(realisticColdFusionAdminBody))
-
-	var found bool
-	for _, result := range results {
-		if result.Technology == "coldfusion" {
-			found = true
-			assert.Equal(t, "2023", result.Version)
-			require.NotEmpty(t, result.CPEs)
-			assert.Equal(t, "cpe:2.3:a:adobe:coldfusion:2023:*:*:*:*:*:*:*", result.CPEs[0])
-			assert.Equal(t, plugins.SeverityHigh, result.Severity)
-			assert.Equal(t, "Adobe", result.Metadata["vendor"])
-			assert.Equal(t, "ColdFusion", result.Metadata["product"])
-		}
-	}
-
-	assert.True(t, found, "ColdFusionFingerprinter not found in RunFingerprinters results")
+	require.True(t, fp.Match(resp))
+	result, err := fp.Fingerprint(resp, []byte(realisticColdFusionAdminBody))
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "2023", result.Version)
+	require.NotEmpty(t, result.CPEs)
+	assert.Equal(t, "cpe:2.3:a:adobe:coldfusion:2023:*:*:*:*:*:*:*", result.CPEs[0])
+	assert.Equal(t, plugins.SeverityHigh, result.Severity)
+	assert.Equal(t, "Adobe", result.Metadata["vendor"])
+	assert.Equal(t, "ColdFusion", result.Metadata["product"])
 }

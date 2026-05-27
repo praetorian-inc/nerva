@@ -17,7 +17,6 @@ package fingerprinters
 import (
 	"net/http"
 	"testing"
-
 )
 
 func TestGrafanaFingerprinter_Name(t *testing.T) {
@@ -257,9 +256,7 @@ func TestBuildGrafanaCPE(t *testing.T) {
 }
 
 func TestGrafanaFingerprinter_Integration(t *testing.T) {
-	// Register the fingerprinter (should happen in init(), but we test it anyway)
 	fp := &GrafanaFingerprinter{}
-	Register(fp)
 
 	// Create a valid Grafana health response
 	body := []byte(`{
@@ -273,20 +270,20 @@ func TestGrafanaFingerprinter_Integration(t *testing.T) {
 	}
 	resp.Header.Set("Content-Type", "application/json")
 
-	results := RunFingerprinters(resp, body)
-
-	// Should find at least the Grafana fingerprinter
-	found := false
-	for _, result := range results {
-		if result.Technology == "grafana" {
-			found = true
-			if result.Version != "10.4.1" {
-				t.Errorf("Version = %q, want %q", result.Version, "10.4.1")
-			}
-		}
+	if got := fp.Match(resp); !got {
+		t.Fatal("Match() = false, want true")
 	}
-
-	if !found {
-		t.Error("GrafanaFingerprinter not found in results")
+	result, err := fp.Fingerprint(resp, body)
+	if err != nil {
+		t.Fatalf("Fingerprint() error = %v", err)
+	}
+	if result == nil {
+		t.Fatal("Fingerprint() returned nil result")
+	}
+	if result.Technology != "grafana" {
+		t.Errorf("Technology = %q, want %q", result.Technology, "grafana")
+	}
+	if result.Version != "10.4.1" {
+		t.Errorf("Version = %q, want %q", result.Version, "10.4.1")
 	}
 }

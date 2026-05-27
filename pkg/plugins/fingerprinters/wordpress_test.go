@@ -318,9 +318,7 @@ func TestBuildWordPressCPE(t *testing.T) {
 }
 
 func TestWordPressFingerprinter_Integration(t *testing.T) {
-	// Register the fingerprinter (should happen in init(), but we test it anyway)
 	fp := &WordPressFingerprinter{}
-	Register(fp)
 
 	// Create a valid WordPress REST API response
 	body := []byte(`{
@@ -334,22 +332,21 @@ func TestWordPressFingerprinter_Integration(t *testing.T) {
 		Header:     make(http.Header),
 	}
 
-	results := RunFingerprinters(resp, body)
-
-	// Should find at least the WordPress fingerprinter
-	found := false
-	for _, result := range results {
-		if result.Technology == "wordpress" {
-			found = true
-			// Verify site name was extracted
-			if siteName, ok := result.Metadata["site_name"].(string); !ok || siteName != "Test WordPress Site" {
-				t.Errorf("siteName = %v, want %q", result.Metadata["site_name"], "Test WordPress Site")
-			}
-		}
+	if !fp.Match(resp) {
+		t.Error("Match() returned false, want true")
 	}
-
-	if !found {
-		t.Error("WordPressFingerprinter not found in results")
+	result, err := fp.Fingerprint(resp, body)
+	if err != nil {
+		t.Fatalf("Fingerprint() error = %v", err)
+	}
+	if result == nil {
+		t.Fatal("Fingerprint() returned nil result")
+	}
+	if result.Technology != "wordpress" {
+		t.Errorf("Technology = %q, want %q", result.Technology, "wordpress")
+	}
+	if siteName, ok := result.Metadata["site_name"].(string); !ok || siteName != "Test WordPress Site" {
+		t.Errorf("siteName = %v, want %q", result.Metadata["site_name"], "Test WordPress Site")
 	}
 }
 

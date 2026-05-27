@@ -290,14 +290,7 @@ func TestBuildSplunkCPE(t *testing.T) {
 }
 
 func TestSplunkFingerprinter_Integration(t *testing.T) {
-	// Save current registry
-	saved := httpFingerprinters
-	t.Cleanup(func() { httpFingerprinters = saved })
-
-	// Clear and re-register
-	httpFingerprinters = nil
 	fp := &SplunkFingerprinter{}
-	Register(fp)
 
 	body := []byte("")
 	resp := &http.Response{
@@ -309,9 +302,10 @@ func TestSplunkFingerprinter_Integration(t *testing.T) {
 		Body: io.NopCloser(bytes.NewReader(body)),
 	}
 
-	results := RunFingerprinters(resp, body)
-
-	require.Len(t, results, 1)
-	assert.Equal(t, "splunk", results[0].Technology)
-	assert.Equal(t, "9.1.2", results[0].Version)
+	require.True(t, fp.Match(resp))
+	result, err := fp.Fingerprint(resp, body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "splunk", result.Technology)
+	assert.Equal(t, "9.1.2", result.Version)
 }

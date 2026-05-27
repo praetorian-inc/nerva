@@ -320,12 +320,7 @@ func TestKubernetesFingerprinter_Fingerprint_GrafanaFalsePositive(t *testing.T) 
 }
 
 func TestKubernetesFingerprinter_Integration(t *testing.T) {
-	// Clear registry
-	httpFingerprinters = nil
-
-	// Register should work via init() but test explicitly
 	fp := &KubernetesFingerprinter{}
-	Register(fp)
 
 	body := []byte(`{
 		"major": "1",
@@ -347,9 +342,10 @@ func TestKubernetesFingerprinter_Integration(t *testing.T) {
 		Body: io.NopCloser(bytes.NewReader(body)),
 	}
 
-	results := RunFingerprinters(resp, body)
-
-	require.Len(t, results, 1)
-	assert.Equal(t, "kubernetes", results[0].Technology)
-	assert.Equal(t, "1.29.0", results[0].Version)
+	require.True(t, fp.Match(resp))
+	result, err := fp.Fingerprint(resp, body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "kubernetes", result.Technology)
+	assert.Equal(t, "1.29.0", result.Version)
 }

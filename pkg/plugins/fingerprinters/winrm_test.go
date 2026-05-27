@@ -173,9 +173,7 @@ func TestBuildWinRMCPE(t *testing.T) {
 }
 
 func TestWinRMFingerprinter_Integration(t *testing.T) {
-	// Register the fingerprinter
 	fp := &WinRMFingerprinter{}
-	Register(fp)
 
 	// Create a WinRM response with 401
 	body := []byte{}
@@ -185,18 +183,12 @@ func TestWinRMFingerprinter_Integration(t *testing.T) {
 	}
 	resp.Header.Set("Server", "Microsoft-HTTPAPI/2.0")
 
-	results := RunFingerprinters(resp, body)
-
-	// Should find the WinRM fingerprinter
-	found := false
-	for _, result := range results {
-		if result.Technology == "winrm" {
-			found = true
-			authRequired, ok := result.Metadata["auth_required"].(bool)
-			assert.True(t, ok, "authRequired should be bool type")
-			assert.True(t, authRequired)
-		}
-	}
-
-	assert.True(t, found, "WinRMFingerprinter not found in results")
+	require.True(t, fp.Match(resp))
+	result, err := fp.Fingerprint(resp, body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "winrm", result.Technology)
+	authRequired, ok := result.Metadata["auth_required"].(bool)
+	assert.True(t, ok, "authRequired should be bool type")
+	assert.True(t, authRequired)
 }

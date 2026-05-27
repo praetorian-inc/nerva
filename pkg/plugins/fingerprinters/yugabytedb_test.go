@@ -334,12 +334,7 @@ func TestBuildYugabyteDBCPE(t *testing.T) {
 }
 
 func TestYugabyteDBFingerprinter_Integration(t *testing.T) {
-	// Clear registry
-	httpFingerprinters = nil
-
-	// Register should work via init() but test explicitly
 	fp := &YugabyteDBFingerprinter{}
-	Register(fp)
 
 	body := []byte(`{
 		"version_info": {
@@ -360,9 +355,10 @@ func TestYugabyteDBFingerprinter_Integration(t *testing.T) {
 		Body: io.NopCloser(bytes.NewReader(body)),
 	}
 
-	results := RunFingerprinters(resp, body)
-
-	require.Len(t, results, 1)
-	assert.Equal(t, "yugabytedb", results[0].Technology)
-	assert.Equal(t, "2.14.0.0-b94", results[0].Version)
+	require.True(t, fp.Match(resp))
+	result, err := fp.Fingerprint(resp, body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "yugabytedb", result.Technology)
+	assert.Equal(t, "2.14.0.0-b94", result.Version)
 }

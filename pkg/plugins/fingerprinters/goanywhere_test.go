@@ -18,6 +18,8 @@ import (
 	"net/http"
 	"net/url"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // goAnywhereLoginPage is a realistic GoAnywhere MFT login page body used across
@@ -481,13 +483,7 @@ func TestGoAnywhereVersionValidation(t *testing.T) {
 // ── Integration test ──────────────────────────────────────────────────────────
 
 func TestGoAnywhereFingerprinter_Integration(t *testing.T) {
-	// Save and restore global state to prevent test pollution.
-	saved := httpFingerprinters
-	t.Cleanup(func() { httpFingerprinters = saved })
-	httpFingerprinters = nil
-
 	fp := &GoAnywhereFingerprinter{}
-	Register(fp)
 
 	resp := &http.Response{
 		StatusCode: 200,
@@ -495,30 +491,22 @@ func TestGoAnywhereFingerprinter_Integration(t *testing.T) {
 	}
 	resp.Header.Set("Content-Type", "text/html; charset=UTF-8")
 
-	results := RunFingerprinters(resp, []byte(goAnywhereLoginPage))
-
-	found := false
-	for _, result := range results {
-		if result.Technology == "goanywhere" {
-			found = true
-			if result.Version != "7.4.1" {
-				t.Errorf("Version = %q, want %q", result.Version, "7.4.1")
-			}
-			if len(result.CPEs) == 0 {
-				t.Error("Expected at least one CPE")
-			} else if result.CPEs[0] != "cpe:2.3:a:fortra:goanywhere_managed_file_transfer:7.4.1:*:*:*:*:*:*:*" {
-				t.Errorf("CPE = %q, want canonical CPE", result.CPEs[0])
-			}
-			if v, ok := result.Metadata["vendor"].(string); !ok || v != "Fortra" {
-				t.Errorf("Metadata[vendor] = %v, want Fortra", result.Metadata["vendor"])
-			}
-			if v, ok := result.Metadata["product"].(string); !ok || v != "GoAnywhere MFT" {
-				t.Errorf("Metadata[product] = %v, want GoAnywhere MFT", result.Metadata["product"])
-			}
-		}
+	require.True(t, fp.Match(resp))
+	result, err := fp.Fingerprint(resp, []byte(goAnywhereLoginPage))
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	if result.Version != "7.4.1" {
+		t.Errorf("Version = %q, want %q", result.Version, "7.4.1")
 	}
-
-	if !found {
-		t.Error("GoAnywhereFingerprinter not found in RunFingerprinters results")
+	if len(result.CPEs) == 0 {
+		t.Error("Expected at least one CPE")
+	} else if result.CPEs[0] != "cpe:2.3:a:fortra:goanywhere_managed_file_transfer:7.4.1:*:*:*:*:*:*:*" {
+		t.Errorf("CPE = %q, want canonical CPE", result.CPEs[0])
+	}
+	if v, ok := result.Metadata["vendor"].(string); !ok || v != "Fortra" {
+		t.Errorf("Metadata[vendor] = %v, want Fortra", result.Metadata["vendor"])
+	}
+	if v, ok := result.Metadata["product"].(string); !ok || v != "GoAnywhere MFT" {
+		t.Errorf("Metadata[product] = %v, want GoAnywhere MFT", result.Metadata["product"])
 	}
 }

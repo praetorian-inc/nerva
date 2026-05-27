@@ -505,30 +505,19 @@ func TestHasZimbraCookie(t *testing.T) {
 // ── Integration test ──────────────────────────────────────────────────────────
 
 func TestZimbraFingerprinter_Integration(t *testing.T) {
-	// Save and restore global state to prevent test pollution.
-	saved := httpFingerprinters
-	t.Cleanup(func() { httpFingerprinters = saved })
-	httpFingerprinters = nil
-
 	fp := &ZimbraFingerprinter{}
-	Register(fp)
 
 	resp := makeZimbraResp(200, map[string]string{"Content-Type": "text/html"}, "")
 	resp.Request = &http.Request{URL: &url.URL{Path: "/zimbra/"}}
 
-	results := RunFingerprinters(resp, []byte(zimbraLoginPageBody))
-
-	found := false
-	for _, result := range results {
-		if result.Technology == "zimbra" {
-			found = true
-			assert.Equal(t, "8.8.15", result.Version)
-			require.NotEmpty(t, result.CPEs)
-			assert.Equal(t, "cpe:2.3:a:zimbra:collaboration:8.8.15:*:*:*:*:*:*:*", result.CPEs[0])
-			assert.Equal(t, "Zimbra", result.Metadata["vendor"])
-			assert.Equal(t, "Collaboration", result.Metadata["product"])
-		}
-	}
-
-	assert.True(t, found, "ZimbraFingerprinter not found in RunFingerprinters results")
+	require.True(t, fp.Match(resp))
+	result, err := fp.Fingerprint(resp, []byte(zimbraLoginPageBody))
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "zimbra", result.Technology)
+	assert.Equal(t, "8.8.15", result.Version)
+	require.NotEmpty(t, result.CPEs)
+	assert.Equal(t, "cpe:2.3:a:zimbra:collaboration:8.8.15:*:*:*:*:*:*:*", result.CPEs[0])
+	assert.Equal(t, "Zimbra", result.Metadata["vendor"])
+	assert.Equal(t, "Collaboration", result.Metadata["product"])
 }

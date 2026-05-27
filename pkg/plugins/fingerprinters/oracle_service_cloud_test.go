@@ -363,12 +363,7 @@ func TestOracleServiceCloudFingerprinter_Fingerprint_VersionPrecedence(t *testin
 }
 
 func TestOracleServiceCloudFingerprinter_Integration(t *testing.T) {
-	saved := httpFingerprinters
-	t.Cleanup(func() { httpFingerprinters = saved })
-	httpFingerprinters = nil
-
 	fp := &OracleServiceCloudFingerprinter{}
-	Register(fp)
 
 	body := []byte(`<html>
 <script>RightNow.Env = {"mode":"production"};</script>
@@ -383,9 +378,10 @@ func TestOracleServiceCloudFingerprinter_Integration(t *testing.T) {
 		Header:     header,
 	}
 
-	results := RunFingerprinters(resp, body)
-
-	require.Len(t, results, 1)
-	assert.Equal(t, "oracle-service-cloud", results[0].Technology)
-	assert.Equal(t, "3.9", results[0].Version)
+	require.True(t, fp.Match(resp))
+	result, err := fp.Fingerprint(resp, body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "oracle-service-cloud", result.Technology)
+	assert.Equal(t, "3.9", result.Version)
 }

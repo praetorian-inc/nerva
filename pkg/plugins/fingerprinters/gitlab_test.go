@@ -555,12 +555,7 @@ func TestGitLabFingerprinter_Fingerprint_PreSuffix(t *testing.T) {
 }
 
 func TestGitLabFingerprinter_Integration(t *testing.T) {
-	saved := httpFingerprinters
-	t.Cleanup(func() { httpFingerprinters = saved })
-	httpFingerprinters = nil
-
 	fp := &GitLabFingerprinter{}
-	Register(fp)
 
 	body := []byte(`{"version":"17.0.0-ee","revision":"abc123"}`)
 	resp := &http.Response{
@@ -571,12 +566,13 @@ func TestGitLabFingerprinter_Integration(t *testing.T) {
 		Body: io.NopCloser(bytes.NewReader(body)),
 	}
 
-	results := RunFingerprinters(resp, body)
-
-	require.Len(t, results, 1)
-	assert.Equal(t, "gitlab", results[0].Technology)
-	assert.Equal(t, "17.0.0", results[0].Version)
-	assert.Equal(t, "ee", results[0].Metadata["edition"])
+	require.True(t, fp.Match(resp))
+	result, err := fp.Fingerprint(resp, body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "gitlab", result.Technology)
+	assert.Equal(t, "17.0.0", result.Version)
+	assert.Equal(t, "ee", result.Metadata["edition"])
 }
 
 func TestGitLabFingerprinter_Fingerprint_NoRevisionJSON(t *testing.T) {

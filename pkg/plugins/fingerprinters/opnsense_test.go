@@ -465,12 +465,7 @@ func TestBuildOPNsenseCPE(t *testing.T) {
 }
 
 func TestOPNsenseFingerprinter_Integration(t *testing.T) {
-	saved := httpFingerprinters
-	t.Cleanup(func() { httpFingerprinters = saved })
-	httpFingerprinters = nil
-
 	fp := &OPNsenseFingerprinter{}
-	Register(fp)
 
 	body := []byte(`<html><head><title>Login | OPNsense</title></head>
 <body class="page-login">
@@ -487,12 +482,13 @@ func TestOPNsenseFingerprinter_Integration(t *testing.T) {
 		Header:     header,
 	}
 
-	results := RunFingerprinters(resp, body)
-
-	require.Len(t, results, 1)
-	assert.Equal(t, "opnsense", results[0].Technology)
-	assert.Equal(t, "Deciso B.V.", results[0].Metadata["vendor"])
-	assert.Equal(t, "web-admin", results[0].Metadata["management_interface"])
+	require.True(t, fp.Match(resp))
+	result, err := fp.Fingerprint(resp, body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "opnsense", result.Technology)
+	assert.Equal(t, "Deciso B.V.", result.Metadata["vendor"])
+	assert.Equal(t, "web-admin", result.Metadata["management_interface"])
 }
 
 func TestExtractOPNsenseHostname(t *testing.T) {

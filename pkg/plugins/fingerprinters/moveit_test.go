@@ -654,12 +654,7 @@ func TestFingerprintMOVEitSSHBanner(t *testing.T) {
 // ── Integration test ──────────────────────────────────────────────────────────
 
 func TestMOVEitFingerprinter_Integration(t *testing.T) {
-	saved := httpFingerprinters
-	t.Cleanup(func() { httpFingerprinters = saved })
-	httpFingerprinters = nil
-
 	fp := &MOVEitFingerprinter{}
-	Register(fp)
 
 	resp := &http.Response{StatusCode: 200, Header: make(http.Header)}
 	body := []byte(`<!DOCTYPE html>
@@ -671,29 +666,31 @@ func TestMOVEitFingerprinter_Integration(t *testing.T) {
 <a href="https://docs.ipswitch.com/MOVEit/Transfer2023/Help/Admin/en/">Docs</a>
 </body></html>`)
 
-	results := RunFingerprinters(resp, body)
-
-	found := false
-	for _, result := range results {
-		if result.Technology == "moveit" {
-			found = true
-			if result.Version != "15" {
-				t.Errorf("Version = %q, want 15", result.Version)
-			}
-			if len(result.CPEs) == 0 {
-				t.Error("Expected at least one CPE")
-			} else if result.CPEs[0] != "cpe:2.3:a:progress:moveit_transfer:15:*:*:*:*:*:*:*" {
-				t.Errorf("CPE = %q, want canonical CPE", result.CPEs[0])
-			}
-			if v, ok := result.Metadata["vendor"].(string); !ok || v != "Progress" {
-				t.Errorf("Metadata[vendor] = %v, want Progress", result.Metadata["vendor"])
-			}
-			if prod, ok := result.Metadata["product"].(string); !ok || prod != "MOVEit Transfer" {
-				t.Errorf("Metadata[product] = %v, want MOVEit Transfer", result.Metadata["product"])
-			}
-		}
+	if got := fp.Match(resp); !got {
+		t.Fatal("Match() returned false, want true")
 	}
-	if !found {
-		t.Error("MOVEitFingerprinter not found in RunFingerprinters results")
+	result, err := fp.Fingerprint(resp, body)
+	if err != nil {
+		t.Fatalf("Fingerprint() error = %v", err)
+	}
+	if result == nil {
+		t.Fatal("Fingerprint() returned nil")
+	}
+	if result.Technology != "moveit" {
+		t.Errorf("Technology = %q, want moveit", result.Technology)
+	}
+	if result.Version != "15" {
+		t.Errorf("Version = %q, want 15", result.Version)
+	}
+	if len(result.CPEs) == 0 {
+		t.Error("Expected at least one CPE")
+	} else if result.CPEs[0] != "cpe:2.3:a:progress:moveit_transfer:15:*:*:*:*:*:*:*" {
+		t.Errorf("CPE = %q, want canonical CPE", result.CPEs[0])
+	}
+	if v, ok := result.Metadata["vendor"].(string); !ok || v != "Progress" {
+		t.Errorf("Metadata[vendor] = %v, want Progress", result.Metadata["vendor"])
+	}
+	if prod, ok := result.Metadata["product"].(string); !ok || prod != "MOVEit Transfer" {
+		t.Errorf("Metadata[product] = %v, want MOVEit Transfer", result.Metadata["product"])
 	}
 }

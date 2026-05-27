@@ -341,12 +341,7 @@ func TestBuildHarborCPE(t *testing.T) {
 }
 
 func TestHarborFingerprinter_Integration(t *testing.T) {
-	// Clear registry
-	httpFingerprinters = nil
-
-	// Register should work via init() but test explicitly
 	fp := &HarborFingerprinter{}
-	Register(fp)
 
 	// Create a valid Harbor systeminfo response
 	body := []byte(`{
@@ -361,20 +356,20 @@ func TestHarborFingerprinter_Integration(t *testing.T) {
 	}
 	resp.Header.Set("Content-Type", "application/json")
 
-	results := RunFingerprinters(resp, body)
-
-	// Should find at least the Harbor fingerprinter
-	found := false
-	for _, result := range results {
-		if result.Technology == "harbor" {
-			found = true
-			if result.Version != "2.10.0" {
-				t.Errorf("Version = %q, want %q", result.Version, "2.10.0")
-			}
-		}
+	if got := fp.Match(resp); !got {
+		t.Fatal("Match() = false, want true")
 	}
-
-	if !found {
-		t.Error("HarborFingerprinter not found in results")
+	result, err := fp.Fingerprint(resp, body)
+	if err != nil {
+		t.Fatalf("Fingerprint() error = %v", err)
+	}
+	if result == nil {
+		t.Fatal("Fingerprint() returned nil result")
+	}
+	if result.Technology != "harbor" {
+		t.Errorf("Technology = %q, want %q", result.Technology, "harbor")
+	}
+	if result.Version != "2.10.0" {
+		t.Errorf("Version = %q, want %q", result.Version, "2.10.0")
 	}
 }

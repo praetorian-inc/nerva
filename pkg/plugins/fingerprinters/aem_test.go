@@ -333,12 +333,7 @@ func TestAEMFingerprinter_Fingerprint_Invalid(t *testing.T) {
 }
 
 func TestAEMFingerprinter_Integration(t *testing.T) {
-	// Clear registry
-	httpFingerprinters = nil
-
-	// Register explicitly
 	fp := &AEMFingerprinter{}
-	Register(fp)
 
 	body := []byte(`<!DOCTYPE html>
 <html>
@@ -359,12 +354,13 @@ func TestAEMFingerprinter_Integration(t *testing.T) {
 		Body: io.NopCloser(bytes.NewReader(body)),
 	}
 
-	results := RunFingerprinters(resp, body)
-
-	require.Len(t, results, 1)
-	assert.Equal(t, "adobe_experience_manager", results[0].Technology)
-	assert.Equal(t, "6.5.21.0", results[0].Version)
-	assert.Contains(t, results[0].CPEs, "cpe:2.3:a:adobe:experience_manager:6.5.21.0:*:*:*:*:*:*:*")
+	require.True(t, fp.Match(resp))
+	result, err := fp.Fingerprint(resp, body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "adobe_experience_manager", result.Technology)
+	assert.Equal(t, "6.5.21.0", result.Version)
+	assert.Contains(t, result.CPEs, "cpe:2.3:a:adobe:experience_manager:6.5.21.0:*:*:*:*:*:*:*")
 }
 
 func TestBuildAEMCPE(t *testing.T) {

@@ -335,12 +335,7 @@ func TestBuildElasticsearchCPE(t *testing.T) {
 }
 
 func TestElasticsearchFingerprinter_Integration(t *testing.T) {
-	// Clear registry
-	httpFingerprinters = nil
-
-	// Register should work via init() but test explicitly
 	fp := &ElasticsearchFingerprinter{}
-	Register(fp)
 
 	body := []byte(`{
 		"name" : "es-node",
@@ -362,9 +357,10 @@ func TestElasticsearchFingerprinter_Integration(t *testing.T) {
 		Body: io.NopCloser(bytes.NewReader(body)),
 	}
 
-	results := RunFingerprinters(resp, body)
-
-	require.Len(t, results, 1)
-	assert.Equal(t, "elasticsearch", results[0].Technology)
-	assert.Equal(t, "8.11.3", results[0].Version)
+	require.True(t, fp.Match(resp))
+	result, err := fp.Fingerprint(resp, body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "elasticsearch", result.Technology)
+	assert.Equal(t, "8.11.3", result.Version)
 }

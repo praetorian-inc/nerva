@@ -313,14 +313,7 @@ func TestBuildWeaviateCPE(t *testing.T) {
 }
 
 func TestWeaviateFingerprinter_Integration(t *testing.T) {
-	// Save and restore the global registry to avoid flaky parallel tests
-	originalFingerprinters := httpFingerprinters
-	t.Cleanup(func() { httpFingerprinters = originalFingerprinters })
-	httpFingerprinters = nil
-
-	// Register should work via init() but test explicitly
 	fp := &WeaviateFingerprinter{}
-	Register(fp)
 
 	body := []byte(`{
 		"hostname": "http://[::]:8080",
@@ -345,9 +338,10 @@ func TestWeaviateFingerprinter_Integration(t *testing.T) {
 		Body: io.NopCloser(bytes.NewReader(body)),
 	}
 
-	results := RunFingerprinters(resp, body)
-
-	require.Len(t, results, 1)
-	assert.Equal(t, "weaviate", results[0].Technology)
-	assert.Equal(t, "1.24.1", results[0].Version)
+	require.True(t, fp.Match(resp))
+	result, err := fp.Fingerprint(resp, body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "weaviate", result.Technology)
+	assert.Equal(t, "1.24.1", result.Version)
 }

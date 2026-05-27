@@ -249,11 +249,7 @@ func TestBuildGotenbergCPE(t *testing.T) {
 }
 
 func TestGotenbergFingerprinter_Integration(t *testing.T) {
-	saved := httpFingerprinters
-	t.Cleanup(func() { httpFingerprinters = saved })
-
-	httpFingerprinters = nil
-	Register(&GotenbergFingerprinter{})
+	fp := &GotenbergFingerprinter{}
 
 	body := []byte("8.9.1")
 
@@ -263,24 +259,25 @@ func TestGotenbergFingerprinter_Integration(t *testing.T) {
 	resp.Header.Set("Gotenberg-Trace", "dc34af5f-4e94-43b3-b8d6-5e2d99f42dc5")
 	resp.Header.Set("Content-Type", "text/plain; charset=UTF-8")
 
-	results := RunFingerprinters(resp, body)
-
-	found := false
-	for _, result := range results {
-		if result.Technology == "gotenberg" {
-			found = true
-			if result.Version != "8.9.1" {
-				t.Errorf("Version = %q, want %q", result.Version, "8.9.1")
-			}
-			expectedCPE := "cpe:2.3:a:gotenberg:gotenberg:8.9.1:*:*:*:*:*:*:*"
-			if len(result.CPEs) == 0 || result.CPEs[0] != expectedCPE {
-				t.Errorf("CPE = %v, want %q", result.CPEs, expectedCPE)
-			}
-		}
+	if got := fp.Match(resp); !got {
+		t.Fatal("Match() = false, want true")
 	}
-
-	if !found {
-		t.Error("GotenbergFingerprinter not found in results")
+	result, err := fp.Fingerprint(resp, body)
+	if err != nil {
+		t.Fatalf("Fingerprint() error = %v", err)
+	}
+	if result == nil {
+		t.Fatal("Fingerprint() returned nil result")
+	}
+	if result.Technology != "gotenberg" {
+		t.Errorf("Technology = %q, want %q", result.Technology, "gotenberg")
+	}
+	if result.Version != "8.9.1" {
+		t.Errorf("Version = %q, want %q", result.Version, "8.9.1")
+	}
+	expectedCPE := "cpe:2.3:a:gotenberg:gotenberg:8.9.1:*:*:*:*:*:*:*"
+	if len(result.CPEs) == 0 || result.CPEs[0] != expectedCPE {
+		t.Errorf("CPE = %v, want %q", result.CPEs, expectedCPE)
 	}
 }
 
@@ -502,11 +499,7 @@ func TestGotenbergHealthFingerprinter_Integration(t *testing.T) {
 	const traceID = "dc34af5f-4e94-43b3-b8d6-5e2d99f42dc5"
 	const expectedCPE = "cpe:2.3:a:gotenberg:gotenberg:*:*:*:*:*:*:*:*"
 
-	saved := httpFingerprinters
-	t.Cleanup(func() { httpFingerprinters = saved })
-
-	httpFingerprinters = nil
-	Register(&GotenbergHealthFingerprinter{})
+	fp := &GotenbergHealthFingerprinter{}
 
 	body := []byte(`{"status":"up","details":{"chromium":{"status":"up","timestamp":"2026-03-06T16:07:01.898483128Z"},"libreoffice":{"status":"up","timestamp":"2026-03-06T16:07:01.898473294Z"}}}`)
 
@@ -516,19 +509,23 @@ func TestGotenbergHealthFingerprinter_Integration(t *testing.T) {
 	resp.Header.Set("Gotenberg-Trace", traceID)
 	resp.Header.Set("Content-Type", "application/json")
 
-	results := RunFingerprinters(resp, body)
-
-	found := false
-	for _, result := range results {
-		if result.Technology == "gotenberg" && result.Version == "" {
-			found = true
-			if len(result.CPEs) == 0 || result.CPEs[0] != expectedCPE {
-				t.Errorf("CPE = %v, want %q", result.CPEs, expectedCPE)
-			}
-		}
+	if got := fp.Match(resp); !got {
+		t.Fatal("Match() = false, want true")
 	}
-
-	if !found {
-		t.Error("GotenbergHealthFingerprinter not found in results (no gotenberg result with empty version)")
+	result, err := fp.Fingerprint(resp, body)
+	if err != nil {
+		t.Fatalf("Fingerprint() error = %v", err)
+	}
+	if result == nil {
+		t.Fatal("Fingerprint() returned nil result")
+	}
+	if result.Technology != "gotenberg" {
+		t.Errorf("Technology = %q, want %q", result.Technology, "gotenberg")
+	}
+	if result.Version != "" {
+		t.Errorf("Version = %q, want empty string", result.Version)
+	}
+	if len(result.CPEs) == 0 || result.CPEs[0] != expectedCPE {
+		t.Errorf("CPE = %v, want %q", result.CPEs, expectedCPE)
 	}
 }
