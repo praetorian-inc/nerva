@@ -230,6 +230,16 @@ func TestAEMFingerprinter_Fingerprint_Valid(t *testing.T) {
 			headers:     map[string]string{"Content-Type": "text/html"},
 			wantVersion: "*",
 		},
+		{
+			name: "Known edge case: documentation page with 2 AEM markers matches (accepted limitation)",
+			body: `<html><head><title>AEM Setup Guide</title></head>
+<body>
+<h1>How to configure AEM Sign In</h1>
+<p>Navigate to /libs/granite/core/content/login to access the login page.</p>
+</body></html>`,
+			headers:     map[string]string{"Content-Type": "text/html"},
+			wantVersion: "*",
+		},
 	}
 
 	for _, tt := range tests {
@@ -308,6 +318,21 @@ func TestAEMFingerprinter_Fingerprint_Invalid(t *testing.T) {
 			name:    "Plain text response",
 			body:    `This is just a plain text response with no AEM markers`,
 			headers: map[string]string{"Content-Type": "text/plain"},
+		},
+		{
+			name:    "Express reflected path (single marker from probe URL)",
+			body:    `<!DOCTYPE html><html><body>Cannot GET /libs/granite/core/content/login.html</body></html>`,
+			headers: map[string]string{"Content-Type": "text/html"},
+		},
+		{
+			name:    "Resin reflected path (single marker from probe URL)",
+			body:    `<html><body>The page /libs/granite/core/content/login.html was not found on this server.</body></html>`,
+			headers: map[string]string{"Content-Type": "text/html"},
+		},
+		{
+			name:    "Body with single non-probe AEM marker",
+			body:    `<html><head><title>Sign In</title></head><body><p>AEM Sign In</p></body></html>`,
+			headers: map[string]string{"Content-Type": "text/html"},
 		},
 	}
 

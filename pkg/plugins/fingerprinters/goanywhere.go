@@ -111,6 +111,14 @@ var goanywhereTitleRegex = regexp.MustCompile(
 	`(?i)<title[^>]*>[^<]*goanywhere[^<]*</title>`,
 )
 
+// goanywhereSecondaryMarkers are product/vendor identifiers that distinguish
+// real GoAnywhere pages from servers that merely echo the probe URL path.
+var goanywhereSecondaryMarkers = []string{
+	"goanywhere mft",
+	"fortra",
+	"helpsystems",
+}
+
 func init() {
 	Register(&GoAnywhereFingerprinter{})
 }
@@ -178,6 +186,22 @@ func (f *GoAnywhereFingerprinter) Fingerprint(resp *http.Response, body []byte) 
 	hasBrandInTitle := goanywhereTitleRegex.Match(body)
 
 	if !hasBrandInBody && !hasBrandInTitle {
+		return nil, nil
+	}
+
+	// Require a secondary signal to distinguish real GoAnywhere from reflected
+	// probe paths. A title match is already a strong secondary signal; otherwise
+	// require a product/vendor identifier that cannot appear in a reflected URL.
+	hasSecondary := hasBrandInTitle
+	if !hasSecondary {
+		for _, marker := range goanywhereSecondaryMarkers {
+			if strings.Contains(bodyLower, marker) {
+				hasSecondary = true
+				break
+			}
+		}
+	}
+	if !hasSecondary {
 		return nil, nil
 	}
 

@@ -200,10 +200,17 @@ func TestGoAnywhereFingerprinter_Fingerprint_Valid(t *testing.T) {
 			wantDetection: "body",
 		},
 		{
-			name:       "Brand token in body — no version found",
+			name:       "Brand in body with GoAnywhere MFT product string (secondary signal)",
 			statusCode: 200,
-			body: `<html><head><title>Login</title></head>
-<body><p>Powered by GoAnywhere</p></body></html>`,
+			body:       `<html><head><title>Login</title></head><body><p>Welcome to GoAnywhere MFT</p></body></html>`,
+			wantVersion:   "",
+			wantCPE:       "cpe:2.3:a:fortra:goanywhere_managed_file_transfer:*:*:*:*:*:*:*:*",
+			wantDetection: "body",
+		},
+		{
+			name:       "Brand in body with Fortra vendor name (secondary signal)",
+			statusCode: 200,
+			body:       `<html><head><title>Login</title></head><body><p>GoAnywhere - A Fortra Product</p></body></html>`,
 			wantVersion:   "",
 			wantCPE:       "cpe:2.3:a:fortra:goanywhere_managed_file_transfer:*:*:*:*:*:*:*:*",
 			wantDetection: "body",
@@ -331,6 +338,31 @@ func TestGoAnywhereFingerprinter_Fingerprint_Invalid(t *testing.T) {
 			name:       "Page with 'go' and 'anywhere' separately — not a brand match",
 			statusCode: 200,
 			body:       `<html><head><title>Go here, go anywhere</title></head><body><p>Go anywhere with us!</p></body></html>`,
+		},
+		{
+			name:       "Brand token in body without secondary signal (bare mention)",
+			statusCode: 200,
+			body:       `<html><head><title>Login</title></head><body><p>Powered by GoAnywhere</p></body></html>`,
+		},
+		{
+			name:       "Jenkins 403 redirect with URL-encoded probe path",
+			statusCode: 403,
+			body:       `<html><head><meta http-equiv='refresh' content='1;url=/login?from=%2Fgoanywhere%2F'/></head><body><p>Authentication required</p></body></html>`,
+		},
+		{
+			name:       "Resin 404 with reflected probe path",
+			statusCode: 404,
+			body:       `<html><body><h1>404 Not Found</h1><p>/goanywhere/ was not found on this server.</p></body></html>`,
+		},
+		{
+			name:       "Express reflected probe path in error body",
+			statusCode: 404,
+			body:       `<!DOCTYPE html><html><body>Cannot GET /goanywhere/</body></html>`,
+		},
+		{
+			name:       "MFT comparison page with goanywhere mention (no product-specific secondary signal)",
+			statusCode: 200,
+			body:       `<html><head><title>Managed File Transfer Comparison</title></head><body><p>GoAnywhere is one solution in the managed file transfer space.</p></body></html>`,
 		},
 	}
 
