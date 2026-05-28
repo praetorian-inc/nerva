@@ -116,9 +116,10 @@ func (p *RTSPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 		if target.Misconfigs && !strings.ContainsAny(target.Host, "\r\n") {
 			describeCseq := strconv.Itoa(rand.Intn(10000)) //#nosec G404 -- CSeq is not security-sensitive //nolint:gosec
 			// Probes the common /stream default path. Servers using other paths may not generate this finding.
+			hostPort := net.JoinHostPort(target.Host, strconv.Itoa(int(target.Address.Port())))
 			describeRequest := fmt.Sprintf(
-				"DESCRIBE rtsp://%s:%d/stream RTSP/1.0\r\nCSeq: %s\r\nAccept: application/sdp\r\n\r\n",
-				target.Host, target.Address.Port(), describeCseq,
+				"DESCRIBE rtsp://%s/stream RTSP/1.0\r\nCSeq: %s\r\nAccept: application/sdp\r\n\r\n",
+				hostPort, describeCseq,
 			)
 			describeResponse, describeErr := utils.SendRecv(conn, []byte(describeRequest), timeout)
 			if describeErr == nil && len(describeResponse) > 0 {
@@ -142,7 +143,7 @@ func (p *RTSPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 
 // sanitizeEvidence extracts the first line, caps at 256 bytes, and strips control characters.
 func sanitizeEvidence(raw string) string {
-	if idx := strings.Index(raw, "\r\n"); idx != -1 {
+	if idx := strings.IndexAny(raw, "\r\n"); idx != -1 {
 		raw = raw[:idx]
 	}
 	if len(raw) > 256 {

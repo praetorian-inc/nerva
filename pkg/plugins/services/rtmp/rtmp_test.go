@@ -309,7 +309,8 @@ func TestBuildRTMPConnect(t *testing.T) {
 	assert.Equal(t, byte(0x02), cmd[12])
 	// "connect" and "live" app name should be in the payload
 	assert.True(t, bytes.Contains(cmd, []byte("connect")))
-	assert.True(t, bytes.Contains(cmd, []byte("live")))}
+	assert.True(t, bytes.Contains(cmd, []byte("live")))
+}
 
 func TestIsValidRTMPResponse(t *testing.T) {
 	tests := []struct {

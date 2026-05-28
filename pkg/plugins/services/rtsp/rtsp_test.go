@@ -159,6 +159,35 @@ func TestParseRTSPStatusCode(t *testing.T) {
 	}
 }
 
+
+// TestSanitizeEvidence tests the sanitizeEvidence helper function.
+func TestSanitizeEvidence(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"normal status line", "RTSP/1.0 200 OK\r\nServer: test\r\n", "RTSP/1.0 200 OK"},
+		{"bare LF only", "RTSP/1.0 200 OK\nServer: test\n", "RTSP/1.0 200 OK"},
+		{"no newline", "RTSP/1.0 200 OK", "RTSP/1.0 200 OK"},
+		{"embedded control chars", "RTSP/1.0 200\x00\x01\x1f OK\r\n", "RTSP/1.0 200 OK"},
+		{"DEL character stripped", "RTSP/1.0\x7f 200 OK\r\n", "RTSP/1.0 200 OK"},
+		{"long input truncated", string(make([]byte, 300)), ""},
+		{"empty input", "", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := sanitizeEvidence(tt.input)
+			if tt.name == "long input truncated" {
+				assert.LessOrEqual(t, len(got), 256)
+			} else {
+				assert.Equal(t, tt.want, got)
+			}
+		})
+	}
+}
+
 // TestRTSPSecurityFindings verifies security findings when the DESCRIBE probe
 // is used against a mock TCP server.
 func TestRTSPSecurityFindings(t *testing.T) {
