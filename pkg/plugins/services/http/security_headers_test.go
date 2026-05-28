@@ -143,7 +143,7 @@ func TestCheckCORSWildcard_WildcardWithCredentials(t *testing.T) {
 
 	assert.NotNil(t, finding)
 	assert.Equal(t, "http-cors-wildcard-credentials", finding.ID)
-	assert.Equal(t, plugins.SeverityCritical, finding.Severity)
+	assert.Equal(t, plugins.SeverityMedium, finding.Severity)
 }
 
 func TestCheckCORSWildcard_WildcardWithCredentialsFalse(t *testing.T) {
@@ -284,6 +284,26 @@ func TestCheckDirectoryListing_NginxAutoindex(t *testing.T) {
 	assert.Equal(t, plugins.SeverityLow, finding.Severity)
 }
 
+func TestCheckDirectoryListing_IIS(t *testing.T) {
+	body := []byte(`<html><body><table><tr><td><a href="/">[To Parent Directory]</a></td></tr></table></body></html>`)
+
+	finding := checkDirectoryListing(body)
+
+	assert.NotNil(t, finding)
+	assert.Equal(t, "http-directory-listing", finding.ID)
+	assert.Equal(t, plugins.SeverityLow, finding.Severity)
+}
+
+func TestCheckDirectoryListing_NginxAutoindexSingleQuote(t *testing.T) {
+	body := []byte("<html><head><title>/ </title></head><body><h1>/ </h1><hr><pre><a href='../'>../</a>\n<a href='file.txt'>file.txt</a></pre></body></html>")
+
+	finding := checkDirectoryListing(body)
+
+	assert.NotNil(t, finding)
+	assert.Equal(t, "http-directory-listing", finding.ID)
+	assert.Equal(t, plugins.SeverityLow, finding.Severity)
+}
+
 func TestCheckDirectoryListing_NormalHTML(t *testing.T) {
 	body := []byte("<html><head><title>Welcome</title></head><body><h1>Hello World</h1></body></html>")
 
@@ -322,6 +342,23 @@ func TestCheckDirectoryListing_FalsePositiveRelativeLinkInPre(t *testing.T) {
 	assert.Nil(t, finding)
 }
 
+func TestCheckDirectoryListing_LargeBodyPatternBeforeLimit(t *testing.T) {
+	prefix := []byte("<html><head><title>Index of /</title></head><body>")
+	padding := bytes.Repeat([]byte("x"), 8192)
+	body := append(prefix, padding...)
+	finding := checkDirectoryListing(body)
+	assert.NotNil(t, finding)
+	assert.Equal(t, "http-directory-listing", finding.ID)
+}
+
+func TestCheckDirectoryListing_LargeBodyPatternAfterLimit(t *testing.T) {
+	padding := bytes.Repeat([]byte("x"), 8192)
+	suffix := []byte("<title>Index of /</title>")
+	body := append(padding, suffix...)
+	finding := checkDirectoryListing(body)
+	assert.Nil(t, finding)
+}
+
 func TestCheckServerVersion_NoFalsePositive_HTTPVersionFragment(t *testing.T) {
 	// "1.1 proxy" looks version-like but lacks a product name prefix.
 	// The regex requires name/version format to avoid this class of false positive.
@@ -344,7 +381,7 @@ func TestCheckCORSWildcard_WildcardWithCredentialsCaseInsensitive(t *testing.T) 
 
 	assert.NotNil(t, finding)
 	assert.Equal(t, "http-cors-wildcard-credentials", finding.ID)
-	assert.Equal(t, plugins.SeverityCritical, finding.Severity)
+	assert.Equal(t, plugins.SeverityMedium, finding.Severity)
 }
 
 // ---------------------------------------------------------------------------
@@ -371,6 +408,25 @@ func TestCheckServerVersion_GunicornWithVersion(t *testing.T) {
 	finding := checkServerVersion(headers)
 	assert.NotNil(t, finding)
 	assert.Equal(t, "http-server-version", finding.ID)
+}
+
+func TestCheckServerVersion_LongHeader(t *testing.T) {
+	// Version number appears early; the rest is padding to exceed 256 chars.
+	long := "CustomServer/1.2.3 " + strings.Repeat("x", 300)
+	headers := http.Header{}
+	headers.Set("Server", long)
+	finding := checkServerVersion(headers)
+	assert.NotNil(t, finding)
+	assert.Equal(t, "http-server-version", finding.ID)
+	assert.True(t, len(finding.Evidence) <= 265, "evidence should be truncated (Server: prefix + 256 chars max)")
+}
+
+func TestCheckServerVersion_LongHeaderNoVersion(t *testing.T) {
+	long := strings.Repeat("x", 300)
+	headers := http.Header{}
+	headers.Set("Server", long)
+	finding := checkServerVersion(headers)
+	assert.Nil(t, finding)
 }
 
 // ---------------------------------------------------------------------------
@@ -577,7 +633,7 @@ func TestHTTPPlugin_CORSWildcard_Live(t *testing.T) {
 
 // TestHTTPPlugin_CORSWildcardCredentials_Live verifies that a CORS wildcard
 // header combined with Access-Control-Allow-Credentials: true produces an
-// http-cors-wildcard-credentials finding with Critical severity.
+// http-cors-wildcard-credentials finding with Medium severity.
 func TestHTTPPlugin_CORSWildcardCredentials_Live(t *testing.T) {
 	const body = "<html><body><h1>Hello</h1></body></html>"
 	response := "HTTP/1.1 200 OK\r\n" +
@@ -594,8 +650,8 @@ func TestHTTPPlugin_CORSWildcardCredentials_Live(t *testing.T) {
 	if finding == nil {
 		t.Fatalf("expected http-cors-wildcard-credentials finding, got findings: %v", service.SecurityFindings)
 	}
-	if finding.Severity != plugins.SeverityCritical {
-		t.Errorf("http-cors-wildcard-credentials severity = %q, want %q", finding.Severity, plugins.SeverityCritical)
+	if finding.Severity != plugins.SeverityMedium {
+		t.Errorf("http-cors-wildcard-credentials severity = %q, want %q", finding.Severity, plugins.SeverityMedium)
 	}
 }
 

@@ -342,7 +342,8 @@ func checkMissingSecurityHeaders(headers http.Header, checkHSTS bool) []plugins.
 }
 
 // checkCORSWildcard returns a SecurityFinding when Access-Control-Allow-Origin is set to "*".
-// Severity is elevated to Critical when Access-Control-Allow-Credentials is also "true".
+// Severity is elevated to Medium when Access-Control-Allow-Credentials is also "true",
+// since browsers reject this combination per the Fetch spec.
 func checkCORSWildcard(headers http.Header) *plugins.SecurityFinding {
 	origin := headers.Get("Access-Control-Allow-Origin")
 	if origin != "*" {
@@ -351,8 +352,8 @@ func checkCORSWildcard(headers http.Header) *plugins.SecurityFinding {
 	if strings.EqualFold(headers.Get("Access-Control-Allow-Credentials"), "true") {
 		return &plugins.SecurityFinding{
 			ID:          "http-cors-wildcard-credentials",
-			Severity:    plugins.SeverityCritical,
-			Description: "Server sends CORS wildcard with Access-Control-Allow-Credentials: true, signaling intent to allow credentialed cross-origin access",
+			Severity:    plugins.SeverityMedium,
+			Description: "Server sends CORS wildcard with Access-Control-Allow-Credentials: true; browsers reject this combination per the Fetch spec, but it signals a server misconfiguration",
 			Evidence:    "Access-Control-Allow-Origin: * | Access-Control-Allow-Credentials: true",
 		}
 	}
@@ -372,22 +373,20 @@ func checkServerVersion(headers http.Header) *plugins.SecurityFinding {
 	if server == "" {
 		return nil
 	}
+	if len(server) > 256 {
+		server = server[:256]
+		for i := len(server) - 1; i >= 253 && server[i]&0xC0 == 0x80; i-- {
+			server = server[:i]
+		}
+	}
 	if !serverVersionRe.MatchString(server) {
 		return nil
-	}
-	evidence := server
-	if len(evidence) > 256 {
-		evidence = evidence[:256]
-		// Ensure we don't split a multi-byte UTF-8 character at the boundary.
-		for i := len(evidence) - 1; i >= 253 && evidence[i]&0xC0 == 0x80; i-- {
-			evidence = evidence[:i]
-		}
 	}
 	return &plugins.SecurityFinding{
 		ID:          "http-server-version",
 		Severity:    plugins.SeverityInfo,
 		Description: "Server header discloses software version information",
-		Evidence:    "Server: " + evidence,
+		Evidence:    "Server: " + server,
 	}
 }
 
@@ -407,6 +406,7 @@ func checkDirectoryListing(body []byte) *plugins.SecurityFinding {
 	patterns := [][]byte{
 		[]byte("<title>index of /"),
 		[]byte("<h1>directory listing for /"),
+		[]byte("[to parent directory]"),
 	}
 	for _, p := range patterns {
 		if bytes.Contains(lower, p) {
@@ -424,6 +424,14 @@ func checkDirectoryListing(body []byte) *plugins.SecurityFinding {
 			Severity:    plugins.SeverityLow,
 			Description: "Server returns an auto-generated directory listing",
 			Evidence:    `<pre><a href="../">`,
+		}
+	}
+	if bytes.Contains(lower, []byte(`<pre><a href='../'>`)) {
+		return &plugins.SecurityFinding{
+			ID:          "http-directory-listing",
+			Severity:    plugins.SeverityLow,
+			Description: "Server returns an auto-generated directory listing",
+			Evidence:    `<pre><a href='../'>`,
 		}
 	}
 	return nil
