@@ -40,10 +40,10 @@ Exposed Gradio instances present several security concerns:
 Detection uses active probing of the /config endpoint, available since Gradio 3.x.
 This endpoint requires no authentication and returns a comprehensive JSON object
 describing the application layout. Detection requires:
-  1. Content-Type: application/json response header
-  2. A "version" field present in the JSON body
-  3. At least one Gradio-specific structural field (components, known mode value, or dependencies)
-     to avoid false positives from generic JSON APIs that may return a "version" field
+ 1. Content-Type: application/json response header
+ 2. A "version" field present in the JSON body
+ 3. At least one Gradio-specific structural field (components, known mode value, or dependencies)
+    to avoid false positives from generic JSON APIs that may return a "version" field
 
 # API Response Format
 
@@ -225,7 +225,7 @@ func (f *GradioFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fi
 		SecurityFindings: []plugins.SecurityFinding{{
 			ID:          "gradio-unauthenticated-interface",
 			Severity:    plugins.SeverityMedium,
-			Description: "Gradio ML model interface accessible without authentication; allows arbitrary model inference and application configuration disclosure",
+			Description: "Gradio application configuration endpoint accessible without authentication; exposes application structure, component layout, and server-side dependencies",
 			Evidence:    "Gradio /config endpoint accessible without credentials",
 		}},
 	}, nil

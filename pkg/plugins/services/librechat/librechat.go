@@ -340,12 +340,12 @@ func (p *LibreChatPlugin) Run(conn net.Conn, timeout time.Duration, target plugi
 	service := plugins.CreateServiceFrom(target, payload, false, version, plugins.TCP)
 	if target.Misconfigs {
 		service.AnonymousAccess = true
-		service.SecurityFindings = []plugins.SecurityFinding{{
+		service.SecurityFindings = append(service.SecurityFindings, plugins.SecurityFinding{
 			ID:          "librechat-unauthenticated",
 			Severity:    plugins.SeverityMedium,
-			Description: "LibreChat accessible without authentication; may expose chat history and configured API keys for LLM providers",
-			Evidence:    "LibreChat detected via JS bundle version extraction or /api/config endpoint",
-		}}
+			Description: "LibreChat detected via publicly accessible endpoints; if access controls are not enforced, chat history and configured LLM API keys may be exposed",
+			Evidence:    "LibreChat application root and configuration endpoints responded without credentials",
+		})
 	}
 	return service, nil
 }
@@ -405,12 +405,12 @@ func (p *LibreChatTLSPlugin) Run(conn net.Conn, timeout time.Duration, target pl
 	service := plugins.CreateServiceFrom(target, payload, true, version, plugins.TCPTLS)
 	if target.Misconfigs {
 		service.AnonymousAccess = true
-		service.SecurityFindings = []plugins.SecurityFinding{{
+		service.SecurityFindings = append(service.SecurityFindings, plugins.SecurityFinding{
 			ID:          "librechat-unauthenticated",
 			Severity:    plugins.SeverityMedium,
-			Description: "LibreChat accessible without authentication; may expose chat history and configured API keys for LLM providers",
-			Evidence:    "LibreChat detected via JS bundle version extraction or /api/config endpoint",
-		}}
+			Description: "LibreChat detected via publicly accessible endpoints; if access controls are not enforced, chat history and configured LLM API keys may be exposed",
+			Evidence:    "LibreChat application root and configuration endpoints responded without credentials",
+		})
 	}
 	return service, nil
 }

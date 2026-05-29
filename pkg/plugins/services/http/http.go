@@ -404,7 +404,7 @@ func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *ht
 		tech, resultCPEs, metadata, severity := processFingerprintResult(result)
 		if result.Technology != "" { // Guard against empty technology
 			technologies = append(technologies, tech)
-			if result.Severity != "" {
+			if result.Severity != "" || len(result.SecurityFindings) > 0 {
 				fingerprintedTechs = append(fingerprintedTechs, fingerprintedTech{
 					name:           tech,
 					severity:       severity,
@@ -462,7 +462,7 @@ func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *ht
 					tech, resultCPEs, metadata, severity := processFingerprintResult(result)
 					if result.Technology != "" { // Guard against empty technology
 						technologies = append(technologies, tech)
-						if result.Severity != "" {
+						if result.Severity != "" || len(result.SecurityFindings) > 0 {
 							fingerprintedTechs = append(fingerprintedTechs, fingerprintedTech{
 								name:           tech,
 								severity:       severity,
