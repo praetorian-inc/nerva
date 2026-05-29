@@ -83,6 +83,8 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+
+	"github.com/praetorian-inc/nerva/pkg/plugins"
 )
 
 // OpenWebUIFingerprinter detects Open WebUI instances via /api/config endpoint
@@ -197,11 +199,34 @@ func (f *OpenWebUIFingerprinter) Fingerprint(resp *http.Response, body []byte) (
 		metadata["oauth_providers"] = providers
 	}
 
+	// Build security findings: always add the config endpoint finding,
+	// and add the higher-severity onboarding finding when applicable.
+	securityFindings := []plugins.SecurityFinding{{
+		ID:          "open-webui-unauthenticated-api",
+		Severity:    plugins.SeverityMedium,
+		Description: "Open WebUI configuration endpoint accessible without authentication; exposes feature flags, authentication settings, and OAuth provider configuration",
+		Evidence:    "Open WebUI /api/config endpoint accessible without credentials",
+	}}
+
+	topSeverity := plugins.SeverityHigh
+	if config.Onboarding {
+		securityFindings = append(securityFindings, plugins.SecurityFinding{
+			ID:          "open-webui-onboarding-exposed",
+			Severity:    plugins.SeverityHigh,
+			Description: "Open WebUI in onboarding mode; anyone can create an administrator account and take full control of the platform",
+			Evidence:    "Open WebUI /api/config returned onboarding=true",
+		})
+	} else {
+		topSeverity = plugins.SeverityMedium
+	}
+
 	return &FingerprintResult{
-		Technology: "open_webui",
-		Version:    config.Version,
-		CPEs:       []string{buildOpenWebUICPE(config.Version)},
-		Metadata:   metadata,
+		Technology:       "open_webui",
+		Version:          config.Version,
+		CPEs:             []string{buildOpenWebUICPE(config.Version)},
+		Metadata:         metadata,
+		Severity:         topSeverity,
+		SecurityFindings: securityFindings,
 	}, nil
 }
 

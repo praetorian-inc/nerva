@@ -22,6 +22,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/praetorian-inc/nerva/pkg/plugins"
 )
 
 func TestLocalAIFingerprinter_Name(t *testing.T) {
@@ -396,4 +398,29 @@ func TestLocalAIFingerprinter_Fingerprint_LargePayload(t *testing.T) {
 	assert.Len(t, loadedModels, 50)
 	assert.Equal(t, "model-00", loadedModels[0])
 	assert.Equal(t, "model-49", loadedModels[49])
+}
+
+func TestLocalAIFingerprinter_SecurityFindings(t *testing.T) {
+	body := []byte(`{
+		"backends": ["llama-cpp", "stablediffusion"],
+		"loaded_models": [{"id": "ggml-gpt4all-j"}]
+	}`)
+
+	fp := &LocalAIFingerprinter{}
+	resp := &http.Response{
+		StatusCode: 200,
+		Header: http.Header{
+			"Content-Type": []string{"application/json"},
+		},
+		Body: io.NopCloser(bytes.NewReader(body)),
+	}
+
+	result, err := fp.Fingerprint(resp, body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	require.Equal(t, plugins.SeverityHigh, result.Severity)
+	require.Len(t, result.SecurityFindings, 1)
+	require.Equal(t, "localai-unauthenticated-api", result.SecurityFindings[0].ID)
+	require.Equal(t, plugins.SeverityHigh, result.SecurityFindings[0].Severity)
 }

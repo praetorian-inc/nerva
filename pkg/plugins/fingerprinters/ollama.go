@@ -99,6 +99,8 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+
+	"github.com/praetorian-inc/nerva/pkg/plugins"
 )
 
 // OllamaFingerprinter detects Ollama LLM inference server instances
@@ -162,6 +164,13 @@ func (f *OllamaFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fi
 				Version:    "",
 				CPEs:       []string{buildOllamaCPE("")},
 				Metadata:   map[string]any{},
+				Severity:   plugins.SeverityHigh,
+				SecurityFindings: []plugins.SecurityFinding{{
+					ID:          "ollama-unauthenticated-api",
+					Severity:    plugins.SeverityHigh,
+					Description: "Ollama API accessible without authentication; allows arbitrary model inference, model enumeration, and resource abuse",
+					Evidence:    "Ollama returned 'Ollama is running' response",
+				}},
 			}, nil
 		}
 		return nil, nil
@@ -192,6 +201,13 @@ func (f *OllamaFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fi
 			Version:    versionResp.Version,
 			CPEs:       []string{buildOllamaCPE(versionResp.Version)},
 			Metadata:   map[string]any{},
+			Severity:   plugins.SeverityHigh,
+			SecurityFindings: []plugins.SecurityFinding{{
+				ID:          "ollama-unauthenticated-api",
+				Severity:    plugins.SeverityHigh,
+				Description: "Ollama API accessible without authentication; allows arbitrary model inference, model enumeration, and resource abuse",
+				Evidence:    fmt.Sprintf("Ollama version endpoint responded: %s", versionResp.Version),
+			}},
 		}, nil
 	}
 
@@ -230,6 +246,13 @@ func (f *OllamaFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fi
 		Version:    "", // Tags endpoint doesn't include version
 		CPEs:       []string{buildOllamaCPE("")},
 		Metadata:   metadata,
+		Severity:   plugins.SeverityHigh,
+		SecurityFindings: []plugins.SecurityFinding{{
+			ID:          "ollama-unauthenticated-api",
+			Severity:    plugins.SeverityHigh,
+			Description: "Ollama API accessible without authentication; allows arbitrary model inference, model enumeration, and resource abuse",
+			Evidence:    "Ollama API returned model listing",
+		}},
 	}, nil
 }
 

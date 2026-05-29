@@ -141,12 +141,16 @@ func (p *HTTPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 	if target.Misconfigs && len(fingerprintedTechs) > 0 {
 		service.AnonymousAccess = true
 		for _, ft := range fingerprintedTechs {
-			service.SecurityFindings = append(service.SecurityFindings, plugins.SecurityFinding{
-				ID:          ft.name + "-anon-access",
-				Severity:    ft.severity,
-				Description: ft.name + " accessible without authentication",
-				Evidence:    "Successfully queried endpoint without credentials",
-			})
+			if len(ft.customFindings) > 0 {
+				service.SecurityFindings = append(service.SecurityFindings, ft.customFindings...)
+			} else {
+				service.SecurityFindings = append(service.SecurityFindings, plugins.SecurityFinding{
+					ID:          ft.name + "-anon-access",
+					Severity:    ft.severity,
+					Description: ft.name + " accessible without authentication",
+					Evidence:    "Successfully queried endpoint without credentials",
+				})
+			}
 		}
 	}
 	if target.Misconfigs && resp.StatusCode/100 != 3 {
@@ -219,12 +223,16 @@ func (p *HTTPSPlugin) Run(
 	if target.Misconfigs && len(fingerprintedTechs) > 0 {
 		service.AnonymousAccess = true
 		for _, ft := range fingerprintedTechs {
-			service.SecurityFindings = append(service.SecurityFindings, plugins.SecurityFinding{
-				ID:          ft.name + "-anon-access",
-				Severity:    ft.severity,
-				Description: ft.name + " accessible without authentication",
-				Evidence:    "Successfully queried endpoint without credentials",
-			})
+			if len(ft.customFindings) > 0 {
+				service.SecurityFindings = append(service.SecurityFindings, ft.customFindings...)
+			} else {
+				service.SecurityFindings = append(service.SecurityFindings, plugins.SecurityFinding{
+					ID:          ft.name + "-anon-access",
+					Severity:    ft.severity,
+					Description: ft.name + " accessible without authentication",
+					Evidence:    "Successfully queried endpoint without credentials",
+				})
+			}
 		}
 	}
 	if target.Misconfigs {
@@ -277,10 +285,11 @@ func formatTechnologyWithVersion(technology, version string) string {
 	return technology + ":" + version
 }
 
-// fingerprintedTech pairs a formatted technology name with its severity.
+// fingerprintedTech pairs a formatted technology name with its severity and optional custom findings.
 type fingerprintedTech struct {
-	name     string
-	severity plugins.Severity
+	name           string
+	severity       plugins.Severity
+	customFindings []plugins.SecurityFinding
 }
 
 func checkMissingSecurityHeaders(headers http.Header, checkHSTS bool) []plugins.SecurityFinding {
@@ -396,7 +405,11 @@ func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *ht
 		if result.Technology != "" { // Guard against empty technology
 			technologies = append(technologies, tech)
 			if result.Severity != "" {
-				fingerprintedTechs = append(fingerprintedTechs, fingerprintedTech{name: tech, severity: severity})
+				fingerprintedTechs = append(fingerprintedTechs, fingerprintedTech{
+					name:           tech,
+					severity:       severity,
+					customFindings: result.SecurityFindings,
+				})
 			}
 		}
 		cpes = append(cpes, resultCPEs...)
@@ -450,7 +463,11 @@ func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *ht
 					if result.Technology != "" { // Guard against empty technology
 						technologies = append(technologies, tech)
 						if result.Severity != "" {
-							fingerprintedTechs = append(fingerprintedTechs, fingerprintedTech{name: tech, severity: severity})
+							fingerprintedTechs = append(fingerprintedTechs, fingerprintedTech{
+								name:           tech,
+								severity:       severity,
+								customFindings: result.SecurityFindings,
+							})
 						}
 					}
 					cpes = append(cpes, resultCPEs...)

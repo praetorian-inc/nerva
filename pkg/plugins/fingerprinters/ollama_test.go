@@ -19,6 +19,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/praetorian-inc/nerva/pkg/plugins"
 )
 
 func TestOllamaFingerprinter_Name(t *testing.T) {
@@ -483,6 +485,67 @@ func TestOllamaFingerprinter_Fingerprint_FalsePositiveRegression(t *testing.T) {
 			if result != nil {
 				t.Errorf("Fingerprint() = %+v, want nil for non-Ollama text/plain", result)
 			}
+		})
+	}
+}
+
+func TestOllamaFingerprinter_SecurityFindings(t *testing.T) {
+	tests := []struct {
+		name             string
+		body             string
+		contentType      string
+		wantFindingID    string
+		wantEvidenceContains string
+	}{
+		{
+			name:                 "version endpoint yields unauthenticated-api finding",
+			body:                 `{"version": "0.5.1"}`,
+			contentType:          "application/json",
+			wantFindingID:        "ollama-unauthenticated-api",
+			wantEvidenceContains: "version endpoint responded",
+		},
+		{
+			name: "tags endpoint yields unauthenticated-api finding with model listing evidence",
+			body: `{
+				"models": [
+					{
+						"name": "llama3.2:latest",
+						"model": "llama3.2:latest",
+						"size": 2019393189,
+						"digest": "sha256:abc123"
+					}
+				]
+			}`,
+			contentType:          "application/json",
+			wantFindingID:        "ollama-unauthenticated-api",
+			wantEvidenceContains: "model listing",
+		},
+		{
+			name:                 "passive plain text path yields unauthenticated-api finding",
+			body:                 "Ollama is running",
+			contentType:          "text/plain",
+			wantFindingID:        "ollama-unauthenticated-api",
+			wantEvidenceContains: "'Ollama is running'",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fp := &OllamaFingerprinter{}
+			resp := &http.Response{
+				Header: make(http.Header),
+			}
+			resp.Header.Set("Content-Type", tt.contentType)
+
+			result, err := fp.Fingerprint(resp, []byte(tt.body))
+			require.NoError(t, err)
+			require.NotNil(t, result)
+
+			require.Equal(t, plugins.SeverityHigh, result.Severity)
+			require.Len(t, result.SecurityFindings, 1)
+			require.Equal(t, tt.wantFindingID, result.SecurityFindings[0].ID)
+			require.Equal(t, plugins.SeverityHigh, result.SecurityFindings[0].Severity)
+			require.Contains(t, result.SecurityFindings[0].Evidence, tt.wantEvidenceContains)
 		})
 	}
 }

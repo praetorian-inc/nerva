@@ -103,6 +103,8 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+
+	"github.com/praetorian-inc/nerva/pkg/plugins"
 )
 
 // GradioFingerprinter detects Gradio ML web UI instances via the /config endpoint
@@ -219,6 +221,13 @@ func (f *GradioFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fi
 		Version:    config.Version,
 		CPEs:       []string{buildGradioCPE(cpeVersion)},
 		Metadata:   metadata,
+		Severity:   plugins.SeverityMedium,
+		SecurityFindings: []plugins.SecurityFinding{{
+			ID:          "gradio-unauthenticated-interface",
+			Severity:    plugins.SeverityMedium,
+			Description: "Gradio ML model interface accessible without authentication; allows arbitrary model inference and application configuration disclosure",
+			Evidence:    "Gradio /config endpoint accessible without credentials",
+		}},
 	}, nil
 }
 
