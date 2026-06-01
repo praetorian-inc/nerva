@@ -72,6 +72,12 @@ release:
 sboms:
   - artifacts: archive
 
+# cosign keyless OIDC signing of the checksums file. NOTE: these are the cosign
+# v2 sign-blob flags. The central go-release.yml SHA-pins cosign via
+# sigstore/cosign-installer@v3.8.2 (=> cosign v2.4.3, verified shipping .sig+.pem).
+# cosign v3 replaces --output-certificate/--output-signature with a single
+# --bundle=${signature} (.sigstore.json); migrate this stanza in lockstep IF/when
+# the central workflow bumps cosign to v3.
 signs:
   - cmd: cosign
     certificate: "${artifact}.pem"
