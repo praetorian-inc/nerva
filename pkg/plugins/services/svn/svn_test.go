@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/praetorian-inc/nerva/pkg/plugins"
 )
@@ -234,4 +235,105 @@ func TestCheckSVN_InvalidPrefix(t *testing.T) {
 func TestCheckSVN_TooShort(t *testing.T) {
 	data := []byte("( s")
 	assert.False(t, checkSVN(data))
+}
+
+// TestSVNSecurityFindings verifies that a SecurityFinding is attached when Misconfigs is true
+// and the server allows anonymous access (empty auth mechs or ANONYMOUS listed).
+func TestSVNSecurityFindings(t *testing.T) {
+	cases := []struct {
+		name     string
+		greeting string
+	}{
+		{
+			name:     "empty auth mechs",
+			greeting: "( success ( 2 2 ( ) ( edit-pipeline svndiff1 ) ) )\n",
+		},
+		{
+			name:     "ANONYMOUS auth mech",
+			greeting: "( success ( 2 2 ( ANONYMOUS ) ( edit-pipeline svndiff1 ) ) )\n",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			conn := &mockConn{readData: []byte(tc.greeting)}
+
+			plugin := &SVNPlugin{}
+			target := plugins.Target{
+				Address:    netip.MustParseAddrPort("192.168.1.1:3690"),
+				Host:       "svn.example.com",
+				Misconfigs: true,
+			}
+
+			service, err := plugin.Run(conn, time.Second*5, target)
+
+			assert.NoError(t, err)
+			require.NotNil(t, service)
+			require.Len(t, service.SecurityFindings, 1)
+			assert.Equal(t, "svn-source-code-exposed", service.SecurityFindings[0].ID)
+			assert.Equal(t, plugins.SeverityHigh, service.SecurityFindings[0].Severity)
+			assert.Contains(t, service.SecurityFindings[0].Evidence, "192.168.1.1:3690")
+		})
+	}
+}
+
+// TestSVNNoSecurityFindingsWithoutFlag verifies that no SecurityFinding is attached when Misconfigs is false.
+func TestSVNNoSecurityFindingsWithoutFlag(t *testing.T) {
+	greeting := "( success ( 2 2 ( ) ( edit-pipeline svndiff1 ) ) )\n"
+	conn := &mockConn{readData: []byte(greeting)}
+
+	plugin := &SVNPlugin{}
+	target := plugins.Target{
+		Address:    netip.MustParseAddrPort("192.168.1.1:3690"),
+		Host:       "svn.example.com",
+		Misconfigs: false,
+	}
+
+	service, err := plugin.Run(conn, time.Second*5, target)
+
+	assert.NoError(t, err)
+	require.NotNil(t, service)
+	assert.Len(t, service.SecurityFindings, 0)
+}
+
+// TestSVNNoSecurityFindingsWithAuth verifies that no SecurityFinding is produced when the server
+// requires authentication (non-ANONYMOUS mechanisms), even when Misconfigs is true.
+func TestSVNNoSecurityFindingsWithAuth(t *testing.T) {
+	greeting := "( success ( 2 2 ( CRAM-MD5 ) ( edit-pipeline svndiff1 ) ) )\n"
+	conn := &mockConn{readData: []byte(greeting)}
+
+	plugin := &SVNPlugin{}
+	target := plugins.Target{
+		Address:    netip.MustParseAddrPort("192.168.1.1:3690"),
+		Host:       "svn.example.com",
+		Misconfigs: true,
+	}
+
+	service, err := plugin.Run(conn, time.Second*5, target)
+
+	assert.NoError(t, err)
+	require.NotNil(t, service)
+	assert.Len(t, service.SecurityFindings, 0)
+}
+
+// TestSvnAllowsAnonymous unit-tests the svnAllowsAnonymous helper.
+func TestSvnAllowsAnonymous(t *testing.T) {
+	cases := []struct {
+		name      string
+		authMechs []string
+		want      bool
+	}{
+		{name: "empty slice", authMechs: []string{}, want: true},
+		{name: "ANONYMOUS only", authMechs: []string{"ANONYMOUS"}, want: true},
+		{name: "ANONYMOUS with CRAM-MD5", authMechs: []string{"ANONYMOUS", "CRAM-MD5"}, want: true},
+		{name: "CRAM-MD5 only", authMechs: []string{"CRAM-MD5"}, want: false},
+		{name: "PLAIN only", authMechs: []string{"PLAIN"}, want: false},
+		{name: "lowercase anonymous", authMechs: []string{"anonymous"}, want: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, svnAllowsAnonymous(tc.authMechs))
+		})
+	}
 }
