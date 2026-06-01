@@ -19,6 +19,8 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+
+	"github.com/praetorian-inc/nerva/pkg/plugins"
 )
 
 // MinIOFingerprinter detects MinIO object storage via /minio/health/live endpoint.
@@ -83,6 +85,12 @@ func (f *MinIOFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fin
 		Version:    version,
 		CPEs:       []string{buildMinioCPE(version)},
 		Metadata:   metadata,
+		SecurityFindings: []plugins.SecurityFinding{{
+			ID:          "minio-unauthenticated",
+			Severity:    plugins.SeverityHigh,
+			Description: "MinIO object storage accessible without authentication",
+			Evidence:    "Server header: " + serverHeader,
+		}},
 	}, nil
 }
 

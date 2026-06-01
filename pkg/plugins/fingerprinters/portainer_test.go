@@ -16,7 +16,12 @@ package fingerprinters
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"testing"
+
+	"github.com/praetorian-inc/nerva/pkg/plugins"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestPortainerFingerprinter_Name(t *testing.T) {
@@ -302,5 +307,71 @@ func TestPortainerFingerprinter_Integration(t *testing.T) {
 	}
 	if result.Version != "2.21.0" {
 		t.Errorf("Version = %q, want %q", result.Version, "2.21.0")
+	}
+}
+
+func TestPortainerFingerprinter_Fingerprint_SetsSeverity(t *testing.T) {
+	fp := &PortainerFingerprinter{}
+	body := []byte(`{"Version": "2.21.0", "InstanceID": "299ab403-70a8-4c05-92f7-bf7a994d50df"}`)
+	resp := &http.Response{Header: make(http.Header)}
+
+	result, err := fp.Fingerprint(resp, body)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, plugins.SeverityHigh, result.Severity)
+}
+
+func TestPortainerFingerprinter_CheckMisconfigs(t *testing.T) {
+	tests := []struct {
+		name             string
+		statusCode       int
+		expectFinding    bool
+		expectedID       string
+		expectedSeverity plugins.Severity
+	}{
+		{
+			name:             "no admin exists (404) returns finding",
+			statusCode:       404,
+			expectFinding:    true,
+			expectedID:       "portainer-setup-exposed",
+			expectedSeverity: plugins.SeverityCritical,
+		},
+		{
+			name:          "admin exists (200) returns nil",
+			statusCode:    200,
+			expectFinding: false,
+		},
+		{
+			name:          "auth required (401) returns nil",
+			statusCode:    401,
+			expectFinding: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			statusCode := tt.statusCode
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/users/admin/check" {
+					w.WriteHeader(statusCode)
+					return
+				}
+				w.WriteHeader(404)
+			}))
+			defer ts.Close()
+
+			fp := &PortainerFingerprinter{}
+			findings := fp.CheckMisconfigs(ts.Client(), ts.URL, "")
+
+			if tt.expectFinding {
+				require.NotNil(t, findings)
+				require.Len(t, findings, 1)
+				assert.Equal(t, tt.expectedID, findings[0].ID)
+				assert.Equal(t, tt.expectedSeverity, findings[0].Severity)
+			} else {
+				assert.Nil(t, findings)
+			}
+		})
 	}
 }

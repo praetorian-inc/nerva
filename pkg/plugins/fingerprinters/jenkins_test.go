@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -195,6 +196,58 @@ func TestBuildJenkinsCPE(t *testing.T) {
 	}
 }
 
+func TestJenkinsFingerprinter_Fingerprint_CPEInjection(t *testing.T) {
+	tests := []struct {
+		name            string
+		headers         map[string]string
+		expectNil       bool
+		expectedVersion string
+		expectedCPE     string
+	}{
+		{
+			name:      "injection in X-Jenkins with no X-Hudson — returns nil (no valid signal)",
+			headers:   map[string]string{"X-Jenkins": "2.0:*:*:evil"},
+			expectNil: true,
+		},
+		{
+			name: "injection in X-Jenkins with valid X-Hudson — result has empty version and wildcard CPE",
+			headers: map[string]string{
+				"X-Jenkins": "2.0:*:*:evil",
+				"X-Hudson":  "1.395",
+			},
+			expectNil:       false,
+			expectedVersion: "",
+			expectedCPE:     "cpe:2.3:a:jenkins:jenkins:*:*:*:*:*:*:*:*",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fp := &JenkinsFingerprinter{}
+			header := http.Header{}
+			for k, v := range tt.headers {
+				header.Set(k, v)
+			}
+			resp := &http.Response{
+				StatusCode: 200,
+				Header:     header,
+				Body:       io.NopCloser(bytes.NewReader([]byte(""))),
+			}
+
+			result, err := fp.Fingerprint(resp, []byte(""))
+
+			require.NoError(t, err)
+			if tt.expectNil {
+				assert.Nil(t, result)
+				return
+			}
+			require.NotNil(t, result)
+			assert.Equal(t, tt.expectedVersion, result.Version)
+			assert.Contains(t, result.CPEs, tt.expectedCPE)
+		})
+	}
+}
+
 func TestJenkinsFingerprinter_Integration(t *testing.T) {
 	fp := &JenkinsFingerprinter{}
 
@@ -218,4 +271,103 @@ func TestJenkinsFingerprinter_Integration(t *testing.T) {
 	assert.Equal(t, "jenkins", result.Technology)
 	assert.Equal(t, "2.541.1", result.Version)
 	assert.Equal(t, "1.395", result.Metadata["hudson_version"])
+}
+
+func TestJenkinsFingerprinter_Fingerprint_SetsSeverity(t *testing.T) {
+	fp := &JenkinsFingerprinter{}
+	header := http.Header{}
+	header.Set("X-Jenkins", "2.541.1")
+	resp := &http.Response{
+		StatusCode: 200,
+		Header:     header,
+		Body:       io.NopCloser(bytes.NewReader([]byte(""))),
+	}
+
+	result, err := fp.Fingerprint(resp, []byte(""))
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "high", string(result.Severity))
+}
+
+func TestJenkinsFingerprinter_CheckMisconfigs(t *testing.T) {
+	tests := []struct {
+		name             string
+		statusCode       int
+		responseBody     string
+		expectFinding    bool
+		expectedID       string
+		expectedSeverity string
+	}{
+		{
+			name:       "script console accessible with crumb.init",
+			statusCode: 200,
+			responseBody: `<html><body><textarea name="script"></textarea>` +
+				`<script>crumb.init("Jenkins-Crumb", "abc123")</script></body></html>`,
+			expectFinding:    true,
+			expectedID:       "jenkins-script-console",
+			expectedSeverity: "critical",
+		},
+		{
+			name:       "script console accessible with textarea and script",
+			statusCode: 200,
+			responseBody: `<html><body><textarea name="script">println "hello"</textarea>` +
+				`<input name="script" type="hidden"/></body></html>`,
+			expectFinding:    true,
+			expectedID:       "jenkins-script-console",
+			expectedSeverity: "critical",
+		},
+		{
+			name:          "script console auth required (403)",
+			statusCode:    403,
+			responseBody:  `<html><body>Access Denied</body></html>`,
+			expectFinding: false,
+		},
+		{
+			name:          "non-Jenkins page at /script (200 but no indicators)",
+			statusCode:    200,
+			responseBody:  `<html><body><p>Hello World</p></body></html>`,
+			expectFinding: false,
+		},
+		{
+			name:          "server error (500)",
+			statusCode:    500,
+			responseBody:  `Internal Server Error`,
+			expectFinding: false,
+		},
+		{
+			name:          "non-Jenkins page with generic textarea and script tags",
+			statusCode:    200,
+			responseBody:  `<html><body><textarea name="content">some text</textarea><script>alert(1)</script></body></html>`,
+			expectFinding: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			statusCode := tt.statusCode
+			responseBody := tt.responseBody
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/script" {
+					w.WriteHeader(statusCode)
+					_, _ = w.Write([]byte(responseBody))
+					return
+				}
+				w.WriteHeader(404)
+			}))
+			defer ts.Close()
+
+			fp := &JenkinsFingerprinter{}
+			findings := fp.CheckMisconfigs(ts.Client(), ts.URL, "")
+
+			if tt.expectFinding {
+				require.NotNil(t, findings)
+				require.Len(t, findings, 1)
+				assert.Equal(t, tt.expectedID, findings[0].ID)
+				assert.Equal(t, tt.expectedSeverity, string(findings[0].Severity))
+			} else {
+				assert.Nil(t, findings)
+			}
+		})
+	}
 }

@@ -257,3 +257,43 @@ func TestMinIOFingerprinter_Integration(t *testing.T) {
 	assert.Equal(t, "minio", result.Technology)
 	assert.Equal(t, "RELEASE.2024-01-01T00-00-00Z", result.Version)
 }
+
+func TestMinIOFingerprinter_Fingerprint_SecurityFindings(t *testing.T) {
+	fp := &MinIOFingerprinter{}
+	serverHeader := "MinIO/RELEASE.2024-01-01T00-00-00Z"
+	resp := &http.Response{
+		StatusCode: 200,
+		Header: http.Header{
+			"Server": []string{serverHeader},
+		},
+		Body: io.NopCloser(bytes.NewReader([]byte{})),
+	}
+
+	result, err := fp.Fingerprint(resp, []byte{})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Len(t, result.SecurityFindings, 1)
+	assert.Equal(t, "minio-unauthenticated", result.SecurityFindings[0].ID)
+	assert.Equal(t, "high", string(result.SecurityFindings[0].Severity))
+	assert.Contains(t, result.SecurityFindings[0].Evidence, serverHeader)
+}
+
+func TestMinIOFingerprinter_Fingerprint_NoSeverityField(t *testing.T) {
+	fp := &MinIOFingerprinter{}
+	resp := &http.Response{
+		StatusCode: 200,
+		Header: http.Header{
+			"Server": []string{"MinIO/RELEASE.2024-01-01T00-00-00Z"},
+		},
+		Body: io.NopCloser(bytes.NewReader([]byte{})),
+	}
+
+	result, err := fp.Fingerprint(resp, []byte{})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	// MinIO sets findings in SecurityFindings, not the top-level Severity field,
+	// to avoid duplicating the generic finding.
+	assert.Equal(t, "", string(result.Severity))
+}
