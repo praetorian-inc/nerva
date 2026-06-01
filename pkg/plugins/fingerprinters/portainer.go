@@ -155,8 +155,8 @@ func (f *PortainerFingerprinter) CheckMisconfigs(client *http.Client, baseURL, h
 	}
 	defer resp.Body.Close()
 
-	// 404 means no admin user exists — anyone can create one
-	if resp.StatusCode == 404 {
+	// 404 with JSON content-type means Portainer's API confirmed no admin exists
+	if resp.StatusCode == 404 && strings.Contains(resp.Header.Get("Content-Type"), "application/json") {
 		return []plugins.SecurityFinding{{
 			ID:          "portainer-setup-exposed",
 			Severity:    plugins.SeverityCritical,

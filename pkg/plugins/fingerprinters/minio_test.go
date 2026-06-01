@@ -274,8 +274,8 @@ func TestMinIOFingerprinter_Fingerprint_SecurityFindings(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Len(t, result.SecurityFindings, 1)
-	assert.Equal(t, "minio-unauthenticated", result.SecurityFindings[0].ID)
-	assert.Equal(t, "high", string(result.SecurityFindings[0].Severity))
+	assert.Equal(t, "minio-exposed", result.SecurityFindings[0].ID)
+	assert.Equal(t, "low", string(result.SecurityFindings[0].Severity))
 	assert.Contains(t, result.SecurityFindings[0].Evidence, serverHeader)
 }
 

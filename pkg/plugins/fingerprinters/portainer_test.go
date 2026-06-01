@@ -326,16 +326,24 @@ func TestPortainerFingerprinter_CheckMisconfigs(t *testing.T) {
 	tests := []struct {
 		name             string
 		statusCode       int
+		contentType      string
 		expectFinding    bool
 		expectedID       string
 		expectedSeverity plugins.Severity
 	}{
 		{
-			name:             "no admin exists (404) returns finding",
+			name:             "no admin exists (404 with JSON) returns finding",
 			statusCode:       404,
+			contentType:      "application/json",
 			expectFinding:    true,
 			expectedID:       "portainer-setup-exposed",
 			expectedSeverity: plugins.SeverityCritical,
+		},
+		{
+			name:          "non-Portainer 404 (no JSON content-type) returns nil",
+			statusCode:    404,
+			contentType:   "text/html",
+			expectFinding: false,
 		},
 		{
 			name:          "admin exists (200) returns nil",
@@ -352,8 +360,12 @@ func TestPortainerFingerprinter_CheckMisconfigs(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			statusCode := tt.statusCode
+			contentType := tt.contentType
 			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == "/api/users/admin/check" {
+					if contentType != "" {
+						w.Header().Set("Content-Type", contentType)
+					}
 					w.WriteHeader(statusCode)
 					return
 				}

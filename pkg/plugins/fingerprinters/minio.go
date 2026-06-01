@@ -86,9 +86,9 @@ func (f *MinIOFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fin
 		CPEs:       []string{buildMinioCPE(version)},
 		Metadata:   metadata,
 		SecurityFindings: []plugins.SecurityFinding{{
-			ID:          "minio-unauthenticated",
-			Severity:    plugins.SeverityHigh,
-			Description: "MinIO object storage accessible without authentication",
+			ID:          "minio-exposed",
+			Severity:    plugins.SeverityLow,
+			Description: "MinIO instance detected via public health endpoint",
 			Evidence:    "Server header: " + serverHeader,
 		}},
 	}, nil
