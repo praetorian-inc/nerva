@@ -208,8 +208,8 @@ func (p *SVNPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 		service.SecurityFindings = []plugins.SecurityFinding{{
 			ID:          "svn-source-code-exposed",
 			Severity:    plugins.SeverityHigh,
-			Description: "SVN server exposes version control repositories without authentication",
-			Evidence:    "SVN protocol accessible on " + target.Address.String(),
+			Description: "SVN server does not require authentication for repository access",
+			Evidence:    "SVN greeting advertises anonymous access on " + target.Address.String(),
 		}}
 	}
 	return service, nil
