@@ -123,6 +123,28 @@ func extractServerHeader(response []byte) string {
 	return ""
 }
 
+// extractHTTPStatusCode parses the HTTP status code from the response status line.
+func extractHTTPStatusCode(response []byte) int {
+	text := string(response)
+	lines := strings.Split(text, "\r\n")
+	if len(lines) == 0 {
+		return 0
+	}
+	// Status line format: "HTTP/1.1 200 OK"
+	parts := strings.SplitN(lines[0], " ", 3)
+	if len(parts) < 2 {
+		return 0
+	}
+	code := 0
+	for _, c := range parts[1] {
+		if c < '0' || c > '9' {
+			return 0
+		}
+		code = code*10 + int(c-'0')
+	}
+	return code
+}
+
 // parseCUPSVersion extracts the numeric version from a Server header value.
 // It matches "CUPS/X.Y" or "CUPS/X.Y.Z", ignoring packaging suffixes.
 //
@@ -201,7 +223,21 @@ func detectCUPS(conn net.Conn, target plugins.Target, timeout time.Duration, tls
 		transport = plugins.TCPTLS
 	}
 
-	return plugins.CreateServiceFrom(target, payload, tls, version, transport), nil
+	service := plugins.CreateServiceFrom(target, payload, tls, version, transport)
+	if target.Misconfigs && extractHTTPStatusCode(response) == 200 {
+		service.AnonymousAccess = true
+		evidence := "CUPS HTTP interface accessible without authentication on " + target.Address.String()
+		if version != "" {
+			evidence += " (version " + version + ")"
+		}
+		service.SecurityFindings = []plugins.SecurityFinding{{
+			ID:          "cups-remote-access",
+			Severity:    plugins.SeverityHigh,
+			Description: "CUPS web interface allows unauthenticated access enabling printer enumeration, print job interception, and sensitive document exposure; systems running cups-browsed may also be vulnerable to CVE-2024-47176 RCE chain on UDP 631",
+			Evidence:    evidence,
+		}}
+	}
+	return service, nil
 }
 
 // CUPSPlugin methods (TCP - port 631)
