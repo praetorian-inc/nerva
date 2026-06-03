@@ -18,11 +18,11 @@ CUPS (Common Unix Printing System) Fingerprinting
 This plugin implements CUPS fingerprinting using HTTP detection.
 Note: This does NOT implement IPP (Internet Printing Protocol) binary probing.
 CUPS exposes its version through the Server header in HTTP responses,
-making detection straightforward via a simple GET / request.
+making detection straightforward via a simple GET /admin request.
 
 Detection Strategy:
-  PHASE 1 - HTTP GET / REQUEST:
-    - Send HTTP/1.1 GET / request to port 631
+  PHASE 1 - HTTP GET /admin REQUEST:
+    - Send HTTP/1.1 GET /admin request to port 631
     - Parse HTTP response headers for "Server" header
     - Check if Server header contains "CUPS" (case-insensitive)
     - Extract version from "CUPS/X.Y.Z" pattern using regex
@@ -79,7 +79,7 @@ func init() {
 	plugins.RegisterPlugin(&CUPSTLSPlugin{})
 }
 
-// buildCUPSHTTPRequest constructs an HTTP/1.1 GET request for the root path.
+// buildCUPSHTTPRequest constructs an HTTP/1.1 GET request for the admin path.
 //
 // Parameters:
 //   - host: Target host:port (e.g., "192.168.1.10:631")
@@ -88,7 +88,7 @@ func init() {
 //   - string: Complete HTTP request ready to send over net.Conn
 func buildCUPSHTTPRequest(host string) string {
 	return fmt.Sprintf(
-		"GET / HTTP/1.1\r\n"+
+		"GET /admin HTTP/1.1\r\n"+
 			"Host: %s\r\n"+
 			"User-Agent: nerva/1.0\r\n"+
 			"Accept: */*\r\n"+
@@ -126,12 +126,12 @@ func extractServerHeader(response []byte) string {
 // extractHTTPStatusCode parses the HTTP status code from the response status line.
 func extractHTTPStatusCode(response []byte) int {
 	text := string(response)
-	lines := strings.Split(text, "\r\n")
-	if len(lines) == 0 {
+	statusLine, _, _ := strings.Cut(text, "\r\n")
+	if statusLine == "" {
 		return 0
 	}
 	// Status line format: "HTTP/1.1 200 OK"
-	parts := strings.SplitN(lines[0], " ", 3)
+	parts := strings.SplitN(statusLine, " ", 3)
 	if len(parts) < 2 {
 		return 0
 	}
@@ -176,7 +176,7 @@ func buildCUPSCPE(version string) string {
 	return fmt.Sprintf("cpe:2.3:a:apple:cups:%s:*:*:*:*:*:*:*", version)
 }
 
-// detectCUPS performs CUPS detection by sending an HTTP GET / request and
+// detectCUPS performs CUPS detection by sending an HTTP GET /admin request and
 // inspecting the Server response header for the "CUPS" identifier.
 //
 // Parameters:
@@ -226,16 +226,16 @@ func detectCUPS(conn net.Conn, target plugins.Target, timeout time.Duration, tls
 	service := plugins.CreateServiceFrom(target, payload, tls, version, transport)
 	if target.Misconfigs && extractHTTPStatusCode(response) == 200 {
 		service.AnonymousAccess = true
-		evidence := "CUPS HTTP interface accessible without authentication on " + target.Address.String()
+		evidence := "CUPS admin interface accessible without authentication on " + target.Address.String()
 		if version != "" {
 			evidence += " (version " + version + ")"
 		}
-		service.SecurityFindings = []plugins.SecurityFinding{{
+		service.SecurityFindings = append(service.SecurityFindings, plugins.SecurityFinding{
 			ID:          "cups-remote-access",
 			Severity:    plugins.SeverityHigh,
-			Description: "CUPS web interface allows unauthenticated access enabling printer enumeration, print job interception, and sensitive document exposure; systems running cups-browsed may also be vulnerable to CVE-2024-47176 RCE chain on UDP 631",
+			Description: "CUPS admin interface allows unauthenticated access enabling printer enumeration, print job interception, and sensitive document exposure; systems running cups-browsed may also be vulnerable to CVE-2024-47176 RCE chain on UDP 631",
 			Evidence:    evidence,
-		}}
+		})
 	}
 	return service, nil
 }

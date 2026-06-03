@@ -228,7 +228,7 @@ func TestBuildCUPSHTTPRequest(t *testing.T) {
 			name: "standard_cups_port",
 			host: "192.168.1.10:631",
 			expectedContains: []string{
-				"GET / HTTP/1.1\r\n",
+				"GET /admin HTTP/1.1\r\n",
 				"Host: 192.168.1.10:631\r\n",
 				"User-Agent: nerva/1.0\r\n",
 				"Connection: close\r\n",
@@ -239,7 +239,7 @@ func TestBuildCUPSHTTPRequest(t *testing.T) {
 			name: "localhost_cups_port",
 			host: "localhost:631",
 			expectedContains: []string{
-				"GET / HTTP/1.1\r\n",
+				"GET /admin HTTP/1.1\r\n",
 				"Host: localhost:631\r\n",
 				"\r\n\r\n",
 			},
@@ -592,6 +592,7 @@ func TestCUPSSecurityFindingFields(t *testing.T) {
 	assert.NotEmpty(t, f.Description, "Description must be non-empty")
 	assert.NotEmpty(t, f.Evidence, "Evidence must be non-empty")
 	assert.Contains(t, f.Evidence, "127.0.0.1", "Evidence must contain target address")
+	assert.Contains(t, f.Evidence, "admin", "Evidence must reference admin interface")
 }
 
 // TestCUPSNonCUPSServerNoFinding verifies that a non-CUPS HTTP server
