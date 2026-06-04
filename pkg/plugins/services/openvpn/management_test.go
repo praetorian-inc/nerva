@@ -69,8 +69,7 @@ func TestManagementPlugin_Run_ValidBanner(t *testing.T) {
 	assert.True(t, ok, "metadata should be ServiceOpenVPNManagement")
 	assert.Equal(t, "5", meta.Version)
 	assert.True(t, strings.Contains(meta.Banner, ">INFO:OpenVPN"), "Banner should contain >INFO:OpenVPN")
-	assert.NotEmpty(t, meta.CPEs)
-	assert.True(t, strings.Contains(meta.CPEs[0], "openvpn"), "CPE should contain openvpn")
+	assert.Equal(t, []string{"cpe:2.3:a:openvpn:openvpn:*:*:*:*:*:*:*:*"}, meta.CPEs)
 }
 
 func TestManagementPlugin_Run_SecurityFinding_MisconfigsTrue(t *testing.T) {
