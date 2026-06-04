@@ -412,6 +412,260 @@ func TestCivetWebFingerprinter_MongooseNonCollision(t *testing.T) {
 	})
 }
 
+// ---------------------------------------------------------------------------
+// X-Powered-By detection tests (LAB-1831 enhancement)
+// ---------------------------------------------------------------------------
+
+// TestCivetWebFingerprinter_XPoweredBy_Match covers Match() with X-Powered-By.
+func TestCivetWebFingerprinter_XPoweredBy_Match(t *testing.T) {
+	tests := []struct {
+		name       string
+		server     string
+		xPoweredBy string
+		statusCode int
+		want       bool
+	}{
+		{
+			name:       "iSYS server + XPB 1.7",
+			server:     "iSYS Embedded Web Server",
+			xPoweredBy: "Civetweb 1.7",
+			statusCode: 200,
+			want:       true,
+		},
+		{
+			name:       "iSYS server + XPB 1.11",
+			server:     "iSYS Embedded Web Server",
+			xPoweredBy: "Civetweb 1.11",
+			statusCode: 200,
+			want:       true,
+		},
+		{
+			name:       "nginx + XPB 1.11",
+			server:     "nginx/1.26.2",
+			xPoweredBy: "Civetweb 1.11",
+			statusCode: 200,
+			want:       true,
+		},
+		{
+			name:       "XPB alone no Server",
+			xPoweredBy: "Civetweb 1.7",
+			statusCode: 200,
+			want:       true,
+		},
+		{
+			name:       "XPB bare Civetweb",
+			xPoweredBy: "Civetweb",
+			statusCode: 200,
+			want:       true,
+		},
+		{
+			name:       "XPB civetwebproxy no boundary - false positive guard",
+			xPoweredBy: "civetwebproxy/1.0",
+			statusCode: 200,
+			want:       false,
+		},
+		{
+			name:       "500 with XPB rejected",
+			xPoweredBy: "Civetweb 1.7",
+			statusCode: 500,
+			want:       false,
+		},
+		{
+			name:       "neither header - still false",
+			statusCode: 200,
+			want:       false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fp := &CivetWebFingerprinter{}
+			resp := &http.Response{
+				StatusCode: tt.statusCode,
+				Header:     make(http.Header),
+			}
+			if tt.server != "" {
+				resp.Header.Set("Server", tt.server)
+			}
+			if tt.xPoweredBy != "" {
+				resp.Header.Set("X-Powered-By", tt.xPoweredBy)
+			}
+			if got := fp.Match(resp); got != tt.want {
+				t.Errorf("Match() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestCivetWebFingerprinter_XPoweredBy_Fingerprint covers Fingerprint() with real-world banners.
+func TestCivetWebFingerprinter_XPoweredBy_Fingerprint(t *testing.T) {
+	tests := []struct {
+		name           string
+		server         string
+		xPoweredBy     string
+		wantVersion    string
+		wantMetaKeys   []string // keys that must be present in Metadata
+		wantMatchedHdr string   // value of "matched_header" key
+	}{
+		{
+			name:           "iSYS + Civetweb 1.7",
+			server:         "iSYS Embedded Web Server",
+			xPoweredBy:     "Civetweb 1.7",
+			wantVersion:    "1.7",
+			wantMetaKeys:   []string{"x_powered_by", "matched_header"},
+			wantMatchedHdr: "x-powered-by",
+		},
+		{
+			name:           "iSYS + Civetweb 1.11",
+			server:         "iSYS Embedded Web Server",
+			xPoweredBy:     "Civetweb 1.11",
+			wantVersion:    "1.11",
+			wantMetaKeys:   []string{"x_powered_by", "matched_header"},
+			wantMatchedHdr: "x-powered-by",
+		},
+		{
+			name:           "nginx + Civetweb 1.11",
+			server:         "nginx/1.26.2",
+			xPoweredBy:     "Civetweb 1.11",
+			wantVersion:    "1.11",
+			wantMetaKeys:   []string{"x_powered_by", "matched_header"},
+			wantMatchedHdr: "x-powered-by",
+		},
+		{
+			name:           "XPB alone no Server",
+			xPoweredBy:     "Civetweb 1.7",
+			wantVersion:    "1.7",
+			wantMetaKeys:   []string{"x_powered_by", "matched_header"},
+			wantMatchedHdr: "x-powered-by",
+		},
+		{
+			name:           "bare XPB Civetweb -> wildcard version",
+			xPoweredBy:     "Civetweb",
+			wantVersion:    "",
+			wantMetaKeys:   []string{"x_powered_by", "matched_header"},
+			wantMatchedHdr: "x-powered-by",
+		},
+		{
+			// Server has CivetWeb signal and valid version -> matched_header = "server"
+			name:           "Server-only detection still works",
+			server:         "CivetWeb/1.15",
+			wantVersion:    "1.15",
+			wantMetaKeys:   []string{"server_header", "matched_header"},
+			wantMatchedHdr: "server",
+		},
+		{
+			// Both Server and XPB carry civetweb; prefer first valid version (Server wins).
+			name:           "both headers - Server version preferred",
+			server:         "CivetWeb/1.15",
+			xPoweredBy:     "Civetweb 1.7",
+			wantVersion:    "1.15",
+			wantMetaKeys:   []string{"server_header", "x_powered_by", "matched_header"},
+			wantMatchedHdr: "both",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fp := &CivetWebFingerprinter{}
+			resp := &http.Response{
+				StatusCode: 200,
+				Header:     make(http.Header),
+			}
+			if tt.server != "" {
+				resp.Header.Set("Server", tt.server)
+			}
+			if tt.xPoweredBy != "" {
+				resp.Header.Set("X-Powered-By", tt.xPoweredBy)
+			}
+
+			result, err := fp.Fingerprint(resp, []byte{})
+			if err != nil {
+				t.Fatalf("Fingerprint() error = %v", err)
+			}
+			if result == nil {
+				t.Fatal("Fingerprint() returned nil result, want detection")
+			}
+
+			if result.Technology != "civetweb" {
+				t.Errorf("Technology = %q, want %q", result.Technology, "civetweb")
+			}
+			if result.Version != tt.wantVersion {
+				t.Errorf("Version = %q, want %q", result.Version, tt.wantVersion)
+			}
+
+			for _, key := range tt.wantMetaKeys {
+				if _, ok := result.Metadata[key]; !ok {
+					t.Errorf("Metadata missing key %q", key)
+				}
+			}
+
+			if mh, ok := result.Metadata["matched_header"].(string); !ok || mh != tt.wantMatchedHdr {
+				t.Errorf("Metadata[matched_header] = %v, want %q", result.Metadata["matched_header"], tt.wantMatchedHdr)
+			}
+
+			// CPE must never contain attacker-controlled bytes from injection attempts.
+			if len(result.CPEs) == 0 {
+				t.Error("Expected at least one CPE")
+			}
+			expectedVersion := tt.wantVersion
+			if expectedVersion == "" {
+				expectedVersion = "*"
+			}
+			wantCPE := "cpe:2.3:a:civetweb_project:civetweb:" + expectedVersion + ":*:*:*:*:*:*:*"
+			if result.CPEs[0] != wantCPE {
+				t.Errorf("CPE = %q, want %q", result.CPEs[0], wantCPE)
+			}
+		})
+	}
+}
+
+// TestCivetWebFingerprinter_XPoweredBy_InjectionGuard verifies CPE injection via XPB is rejected.
+func TestCivetWebFingerprinter_XPoweredBy_InjectionGuard(t *testing.T) {
+	fp := &CivetWebFingerprinter{}
+	resp := &http.Response{
+		StatusCode: 200,
+		Header:     make(http.Header),
+	}
+	// Attacker-controlled X-Powered-By with CPE injection pattern.
+	resp.Header.Set("X-Powered-By", "Civetweb 1.0:*:*:*")
+
+	result, err := fp.Fingerprint(resp, []byte{})
+	if err != nil {
+		t.Fatalf("Fingerprint() error = %v", err)
+	}
+	// Either nil (rejected entirely) or a result with a safe CPE (wildcard, no injection bytes).
+	if result != nil {
+		if len(result.CPEs) > 0 {
+			cpe := result.CPEs[0]
+			if cpe != "cpe:2.3:a:civetweb_project:civetweb:*:*:*:*:*:*:*:*" {
+				t.Errorf("injection not rejected: CPE = %q, want wildcard CPE", cpe)
+			}
+		}
+	}
+}
+
+// TestCivetWebFingerprinter_XPoweredBy_BoundaryFalsePositive verifies "civetwebproxy/1.0"
+// is NOT detected (no word boundary after "civetweb").
+func TestCivetWebFingerprinter_XPoweredBy_BoundaryFalsePositive(t *testing.T) {
+	fp := &CivetWebFingerprinter{}
+	resp := &http.Response{
+		StatusCode: 200,
+		Header:     make(http.Header),
+	}
+	resp.Header.Set("X-Powered-By", "civetwebproxy/1.0")
+
+	if fp.Match(resp) {
+		t.Error("Match() = true for 'civetwebproxy/1.0', want false (no boundary after civetweb)")
+	}
+	result, err := fp.Fingerprint(resp, []byte{})
+	if err != nil {
+		t.Fatalf("Fingerprint() error = %v", err)
+	}
+	if result != nil {
+		t.Errorf("Fingerprint() = %+v, want nil for civetwebproxy", result)
+	}
+}
+
 func TestCivetWebFingerprinter_Integration(t *testing.T) {
 	originalCount := len(GetFingerprinters())
 	t.Cleanup(func() {

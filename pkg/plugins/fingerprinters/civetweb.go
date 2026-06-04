@@ -19,9 +19,12 @@ Package fingerprinters provides HTTP fingerprinting for the CivetWeb embedded we
 
 CivetWeb is an embedded HTTP/HTTPS server library and a fork of Mongoose, commonly
 embedded in medical and industrial devices. Roughly 10K-50K instances are exposed on
-the public internet. The CivetWeb core does NOT emit a Server header by default, so
-detection here is presence-positive / absence-neutral: a "Server: CivetWeb/..." header
-is a positive signal, but the absence of the header is NOT evidence against CivetWeb.
+the public internet.
+
+In practice, embedded devices rarely expose "Server: CivetWeb/..." directly.
+Embedders set Server to their own product name (e.g. "iSYS Embedded Web Server")
+and advertise CivetWeb in "X-Powered-By: Civetweb 1.7" using a SPACE separator.
+Detection is therefore presence-positive / absence-neutral on EITHER header.
 
 Version casing changed across releases:
   - v1.6-1.9 used "Civetweb/"
@@ -31,11 +34,19 @@ All matching is therefore case-insensitive.
 
 # Detection Method
 
- 1. Check Server header for "civetweb/" (case-insensitive, slash required) or bare
-    "civetweb" (case-insensitive). Server header ONLY; no body fallback.
- 2. Accept status codes 200-499 (reject 5xx server errors).
- 3. Extract version via token-boundary scan after "civetweb/", validate format.
- 4. Reject CPE-injection patterns to keep the emitted CPE safe.
+ 1. Check Server header for "civetweb" followed by a boundary character ('/', ' ', ':',
+    or end-of-string) — case-insensitive. This avoids false positives like "civetwebproxy".
+ 2. Check X-Powered-By header with the same boundary rule. X-Powered-By uses a SPACE
+    separator: "Civetweb 1.7" (not a slash). Either header alone is Tier-1 sufficient.
+ 3. Accept status codes 200-499 (reject 5xx server errors).
+ 4. Extract version after "civetweb" + separator ('/' or ' '), validate format.
+    Reuses the anchored regex ^\d+\.\d+(?:\.\d+)?$ for CPE safety.
+ 5. Reject CPE-injection patterns (":*:" in the raw header value) on both headers.
+ 6. Version precedence: prefer the first header (Server, then X-Powered-By) that
+    yields a valid (non-empty) version. If neither yields a valid version, use ""
+    (wildcard CPE). This means Server version beats X-Powered-By version when both
+    are valid, which is conservative: the Server header is the canonical identity
+    signal for HTTP servers.
 */
 package fingerprinters
 
@@ -46,7 +57,7 @@ import (
 	"strings"
 )
 
-// CivetWebFingerprinter detects the CivetWeb embedded web server via Server header.
+// CivetWebFingerprinter detects the CivetWeb embedded web server via Server or X-Powered-By header.
 type CivetWebFingerprinter struct{}
 
 // civetWebVersionValidateRegex validates an extracted version token for CPE safety.
@@ -66,10 +77,9 @@ func (f *CivetWebFingerprinter) Match(resp *http.Response) bool {
 	if resp.StatusCode < 200 || resp.StatusCode >= 500 {
 		return false
 	}
-	// Server-header ONLY. Absence of the header is neutral (the Contains/== checks
-	// simply return false), never a hard negative beyond this.
-	server := strings.ToLower(resp.Header.Get("Server"))
-	return strings.Contains(server, "civetweb/") || server == "civetweb"
+	// Either header carrying a CivetWeb signal is sufficient (Tier-1 standalone).
+	return civetWebSignalInHeader(resp.Header.Get("Server")) ||
+		civetWebSignalInHeader(resp.Header.Get("X-Powered-By"))
 }
 
 func (f *CivetWebFingerprinter) Fingerprint(resp *http.Response, body []byte) (*FingerprintResult, error) {
@@ -78,34 +88,63 @@ func (f *CivetWebFingerprinter) Fingerprint(resp *http.Response, body []byte) (*
 		return nil, nil
 	}
 
-	// 2. Read raw Server header; empty => neutral, no detection.
 	serverHeader := resp.Header.Get("Server")
-	if serverHeader == "" {
+	xpbHeader := resp.Header.Get("X-Powered-By")
+
+	serverMatch := civetWebSignalInHeader(serverHeader)
+	xpbMatch := civetWebSignalInHeader(xpbHeader)
+
+	// 2. At least one header must carry a CivetWeb signal.
+	if !serverMatch && !xpbMatch {
 		return nil, nil
 	}
 
-	// 3. Confirm CivetWeb signal (case-insensitive): "civetweb/" or bare "civetweb".
-	serverLower := strings.ToLower(serverHeader)
-	if !strings.Contains(serverLower, "civetweb/") && serverLower != "civetweb" {
+	// 3. CPE-injection guard: reject any matched header carrying ":*:".
+	//    Both headers are attacker-controlled and must be sanitised before use.
+	if serverMatch && strings.Contains(serverHeader, ":*:") {
+		serverMatch = false
+	}
+	if xpbMatch && strings.Contains(xpbHeader, ":*:") {
+		xpbMatch = false
+	}
+	if !serverMatch && !xpbMatch {
 		return nil, nil
 	}
 
-	// 4. CPE-injection guard: reject Server headers carrying ":*:" (parallels boa.go:97-99).
-	if strings.Contains(serverHeader, ":*:") {
-		return nil, nil
+	// 4. Version precedence: try Server first, then X-Powered-By.
+	//    Accept the first header that yields a valid (non-empty) version.
+	//    If neither yields a valid version, version = "" (wildcard CPE).
+	//    Rationale: Server is the canonical HTTP identity header; when it
+	//    carries a valid CivetWeb version that version is preferred over any
+	//    X-Powered-By value.
+	version := ""
+	if serverMatch {
+		version = extractCivetWebVersionFromHeader(serverHeader)
+	}
+	if version == "" && xpbMatch {
+		version = extractCivetWebVersionFromHeader(xpbHeader)
 	}
 
-	// 5. Extract + validate version (helper returns "" for bare/invalid).
-	version := extractCivetWebVersion(serverHeader)
-
-	// 6. Build metadata (raw header preserved).
+	// 5. Build metadata. Record raw value(s) of matched header(s) and which
+	//    header(s) contributed to the detection.
 	metadata := map[string]any{
-		"vendor":        "CivetWeb",
-		"product":       "CivetWeb",
-		"server_header": serverHeader,
+		"vendor":  "CivetWeb",
+		"product": "CivetWeb",
+	}
+	switch {
+	case serverMatch && xpbMatch:
+		metadata["server_header"] = serverHeader
+		metadata["x_powered_by"] = xpbHeader
+		metadata["matched_header"] = "both"
+	case serverMatch:
+		metadata["server_header"] = serverHeader
+		metadata["matched_header"] = "server"
+	default:
+		metadata["x_powered_by"] = xpbHeader
+		metadata["matched_header"] = "x-powered-by"
 	}
 
-	// 7. Emit result. Severity left unset (zero value) like boa/mongoose.
+	// 6. Emit result. Severity left unset (zero value) like boa/mongoose.
 	return &FingerprintResult{
 		Technology: "civetweb",
 		Version:    version,
@@ -114,17 +153,52 @@ func (f *CivetWebFingerprinter) Fingerprint(resp *http.Response, body []byte) (*
 	}, nil
 }
 
-// extractCivetWebVersion finds "civetweb/" (case-insensitive) in the Server header,
-// reads the token up to the next space, '(' or ')' (or end of string), and validates
-// the WHOLE token against civetWebVersionValidateRegex. Returns "" if the marker is
-// absent or the token is not a clean version. Validating the whole token (not a
-// capturing group) is what prevents "CivetWeb/1.15:*:*" from yielding "1.15".
-func extractCivetWebVersion(server string) string {
-	idx := strings.Index(strings.ToLower(server), "civetweb/")
+// civetWebSignalInHeader reports whether the given header value contains a CivetWeb
+// signal: the token "civetweb" (case-insensitive) immediately followed by a boundary
+// character ('/', ' ', ':', or end-of-string). The boundary requirement prevents false
+// positives such as "civetwebproxy/1.0".
+func civetWebSignalInHeader(headerValue string) bool {
+	if headerValue == "" {
+		return false
+	}
+	lower := strings.ToLower(headerValue)
+	const marker = "civetweb"
+	idx := strings.Index(lower, marker)
+	if idx == -1 {
+		return false
+	}
+	after := idx + len(marker)
+	if after >= len(lower) {
+		// "civetweb" is at the end of the value — bare token, valid signal.
+		return true
+	}
+	next := lower[after]
+	return next == '/' || next == ' ' || next == ':'
+}
+
+// extractCivetWebVersionFromHeader finds "civetweb" (case-insensitive) in a header
+// value, advances past it and the separator ('/' or ' '), reads the version token up
+// to the next space, '(' or ')' (or end of string), and validates the whole token
+// against civetWebVersionValidateRegex. Returns "" if the marker is absent, the
+// separator is not '/' or ' ', or the token is not a clean version. Validating the
+// whole token (not a capturing group) is what prevents "Civetweb/1.15:*:*" from
+// yielding "1.15".
+func extractCivetWebVersionFromHeader(headerValue string) string {
+	lower := strings.ToLower(headerValue)
+	const marker = "civetweb"
+	idx := strings.Index(lower, marker)
 	if idx == -1 {
 		return ""
 	}
-	versionPart := server[idx+9:] // 9 == len("civetweb/")
+	after := idx + len(marker)
+	if after >= len(lower) {
+		return "" // bare "civetweb", no version
+	}
+	sep := lower[after]
+	if sep != '/' && sep != ' ' {
+		return "" // unsupported separator (e.g. ':'), return no version
+	}
+	versionPart := headerValue[after+1:]
 
 	endIdx := len(versionPart)
 	for i, ch := range versionPart {
