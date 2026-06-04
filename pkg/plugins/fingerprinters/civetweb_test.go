@@ -666,6 +666,244 @@ func TestCivetWebFingerprinter_XPoweredBy_BoundaryFalsePositive(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Leading-boundary false-positive guard (LAB-1831 correctness fix)
+// ---------------------------------------------------------------------------
+
+// TestCivetWebFingerprinter_LeadingBoundary verifies that tokens where the character
+// immediately preceding "civetweb" is a letter are NOT detected.
+func TestCivetWebFingerprinter_LeadingBoundary(t *testing.T) {
+	tests := []struct {
+		name       string
+		server     string
+		xPoweredBy string
+		wantMatch  bool
+		wantNil    bool // Fingerprint must return nil
+	}{
+		{
+			name:      "mycivetweb/1.0 in Server - leading letter rejects",
+			server:    "mycivetweb/1.0",
+			wantMatch: false,
+			wantNil:   true,
+		},
+		{
+			name:       "mycivetweb/1.0 in X-Powered-By - leading letter rejects",
+			xPoweredBy: "mycivetweb/1.0",
+			wantMatch:  false,
+			wantNil:    true,
+		},
+		{
+			name:      "x-civetweb/1.0 in Server - non-letter leading char ok",
+			server:    "x-civetweb/1.0",
+			wantMatch: true,
+			wantNil:   false,
+		},
+		{
+			name:      "foo civetweb/1.15 in Server - space leading char ok",
+			server:    "foo civetweb/1.15",
+			wantMatch: true,
+			wantNil:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fp := &CivetWebFingerprinter{}
+			resp := &http.Response{
+				StatusCode: 200,
+				Header:     make(http.Header),
+			}
+			if tt.server != "" {
+				resp.Header.Set("Server", tt.server)
+			}
+			if tt.xPoweredBy != "" {
+				resp.Header.Set("X-Powered-By", tt.xPoweredBy)
+			}
+			if got := fp.Match(resp); got != tt.wantMatch {
+				t.Errorf("Match() = %v, want %v", got, tt.wantMatch)
+			}
+			result, err := fp.Fingerprint(resp, []byte{})
+			if err != nil {
+				t.Fatalf("Fingerprint() error = %v", err)
+			}
+			if tt.wantNil && result != nil {
+				t.Errorf("Fingerprint() = %+v, want nil", result)
+			}
+			if !tt.wantNil && result == nil {
+				t.Error("Fingerprint() returned nil, want non-nil")
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Multi-occurrence / all-occurrences scanning (LAB-1831 correctness fix)
+// ---------------------------------------------------------------------------
+
+// TestCivetWebFingerprinter_MultiOccurrence verifies that when the first "civetweb"
+// token fails the boundary check the scanner continues to find a later valid one.
+func TestCivetWebFingerprinter_MultiOccurrence(t *testing.T) {
+	tests := []struct {
+		name        string
+		server      string
+		wantMatch   bool
+		wantVersion string
+	}{
+		{
+			name:        "civetwebproxy first then civetweb/1.15 - second occurrence wins",
+			server:      "civetwebproxy/1.0 civetweb/1.15",
+			wantMatch:   true,
+			wantVersion: "1.15",
+		},
+		{
+			name:        "Civetweb 1.7 extra - space separator ok",
+			server:      "Civetweb 1.7 extra",
+			wantMatch:   true,
+			wantVersion: "1.7",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fp := &CivetWebFingerprinter{}
+			resp := &http.Response{
+				StatusCode: 200,
+				Header:     make(http.Header),
+			}
+			resp.Header.Set("Server", tt.server)
+
+			if got := fp.Match(resp); got != tt.wantMatch {
+				t.Errorf("Match() = %v, want %v", got, tt.wantMatch)
+			}
+			result, err := fp.Fingerprint(resp, []byte{})
+			if err != nil {
+				t.Fatalf("Fingerprint() error = %v", err)
+			}
+			if tt.wantMatch {
+				if result == nil {
+					t.Fatal("Fingerprint() returned nil, want detection")
+				}
+				if result.Version != tt.wantVersion {
+					t.Errorf("Version = %q, want %q", result.Version, tt.wantVersion)
+				}
+			} else if result != nil {
+				t.Errorf("Fingerprint() = %+v, want nil", result)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Version terminator tests (LAB-1831 suggestion)
+// ---------------------------------------------------------------------------
+
+// TestCivetWebFingerprinter_VersionTerminators verifies that ';' and ',' are
+// treated as version token boundaries, consistent with real-world header values.
+func TestCivetWebFingerprinter_VersionTerminators(t *testing.T) {
+	tests := []struct {
+		name        string
+		server      string
+		wantVersion string
+	}{
+		{
+			name:        "CivetWeb/1.15; terminated by semicolon",
+			server:      "CivetWeb/1.15;",
+			wantVersion: "1.15",
+		},
+		{
+			name:        "CivetWeb/1.15,gzip terminated by comma",
+			server:      "CivetWeb/1.15,gzip",
+			wantVersion: "1.15",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fp := &CivetWebFingerprinter{}
+			resp := &http.Response{
+				StatusCode: 200,
+				Header:     make(http.Header),
+			}
+			resp.Header.Set("Server", tt.server)
+
+			result, err := fp.Fingerprint(resp, []byte{})
+			if err != nil {
+				t.Fatalf("Fingerprint() error = %v", err)
+			}
+			if result == nil {
+				t.Fatal("Fingerprint() returned nil, want detection")
+			}
+			if result.Version != tt.wantVersion {
+				t.Errorf("Version = %q, want %q", result.Version, tt.wantVersion)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Real Shodan banners regression (LAB-1831)
+// ---------------------------------------------------------------------------
+
+// TestCivetWebFingerprinter_ShodanBanners confirms the three known real-world
+// Shodan banners (iSYS+1.7, iSYS+1.11, nginx+1.11) still detect correctly.
+func TestCivetWebFingerprinter_ShodanBanners(t *testing.T) {
+	tests := []struct {
+		name        string
+		server      string
+		xPoweredBy  string
+		wantVersion string
+	}{
+		{
+			name:        "iSYS + Civetweb 1.7",
+			server:      "iSYS Embedded Web Server",
+			xPoweredBy:  "Civetweb 1.7",
+			wantVersion: "1.7",
+		},
+		{
+			name:        "iSYS + Civetweb 1.11",
+			server:      "iSYS Embedded Web Server",
+			xPoweredBy:  "Civetweb 1.11",
+			wantVersion: "1.11",
+		},
+		{
+			name:        "nginx + Civetweb 1.11",
+			server:      "nginx/1.26.2",
+			xPoweredBy:  "Civetweb 1.11",
+			wantVersion: "1.11",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fp := &CivetWebFingerprinter{}
+			resp := &http.Response{
+				StatusCode: 200,
+				Header:     make(http.Header),
+			}
+			if tt.server != "" {
+				resp.Header.Set("Server", tt.server)
+			}
+			if tt.xPoweredBy != "" {
+				resp.Header.Set("X-Powered-By", tt.xPoweredBy)
+			}
+
+			if !fp.Match(resp) {
+				t.Error("Match() = false, want true for Shodan banner")
+			}
+			result, err := fp.Fingerprint(resp, []byte{})
+			if err != nil {
+				t.Fatalf("Fingerprint() error = %v", err)
+			}
+			if result == nil {
+				t.Fatal("Fingerprint() returned nil, want detection")
+			}
+			if result.Version != tt.wantVersion {
+				t.Errorf("Version = %q, want %q", result.Version, tt.wantVersion)
+			}
+		})
+	}
+}
+
 func TestCivetWebFingerprinter_Integration(t *testing.T) {
 	originalCount := len(GetFingerprinters())
 	t.Cleanup(func() {

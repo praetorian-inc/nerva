@@ -34,8 +34,11 @@ All matching is therefore case-insensitive.
 
 # Detection Method
 
- 1. Check Server header for "civetweb" followed by a boundary character ('/', ' ', ':',
-    or end-of-string) — case-insensitive. This avoids false positives like "civetwebproxy".
+ 1. Check Server header for "civetweb" with word-boundary guards on both sides
+    (leading char must not be [a-z]; trailing char must be '/', ' ', ':', or
+    end-of-string) — case-insensitive. All occurrences are scanned so that a header
+    like "civetwebproxy/1.0 civetweb/1.15" correctly detects the second token.
+    This avoids false positives like "mycivetweb/1.0".
  2. Check X-Powered-By header with the same boundary rule. X-Powered-By uses a SPACE
     separator: "Civetweb 1.7" (not a slash). Either header alone is Tier-1 sufficient.
  3. Accept status codes 200-499 (reject 5xx server errors).
@@ -153,66 +156,95 @@ func (f *CivetWebFingerprinter) Fingerprint(resp *http.Response, body []byte) (*
 	}, nil
 }
 
-// civetWebSignalInHeader reports whether the given header value contains a CivetWeb
-// signal: the token "civetweb" (case-insensitive) immediately followed by a boundary
-// character ('/', ' ', ':', or end-of-string). The boundary requirement prevents false
-// positives such as "civetwebproxy/1.0".
-func civetWebSignalInHeader(headerValue string) bool {
+// scanCivetWebInHeader scans all occurrences of "civetweb" (case-insensitive) in
+// headerValue and returns (true, version) for the first occurrence that satisfies
+// both the leading and trailing word-boundary rules. Returns (false, "") if no
+// valid occurrence is found.
+//
+// Leading boundary: the character immediately before "civetweb" must be absent
+// (start-of-string) or a non-letter. This rejects tokens like "mycivetweb/1.0"
+// where 'y' is a letter, preventing false positives.
+//
+// Trailing boundary: the character immediately after "civetweb" must be '/', ' ',
+// ':', or end-of-string. This rejects "civetwebproxy/1.0".
+//
+// Version extraction: when the trailing separator is '/' or ' ', the version token
+// is read up to the next space, '(', ')', ';', ',' or end-of-string. Validating the
+// complete token against civetWebVersionValidateRegex prevents "Civetweb/1.15:*:*"
+// from yielding "1.15" (the anchored regex is the primary control; the ":*:" guard
+// in Fingerprint is belt-and-suspenders defense-in-depth and is intentionally kept).
+func scanCivetWebInHeader(headerValue string) (found bool, version string) {
 	if headerValue == "" {
-		return false
+		return false, ""
 	}
 	lower := strings.ToLower(headerValue)
 	const marker = "civetweb"
-	idx := strings.Index(lower, marker)
-	if idx == -1 {
-		return false
+	const markerLen = len(marker)
+
+	searchFrom := 0
+	for {
+		idx := strings.Index(lower[searchFrom:], marker)
+		if idx == -1 {
+			return false, ""
+		}
+		idx += searchFrom // absolute index into lower/headerValue
+
+		// Check leading boundary: char before "civetweb" must not be [a-z].
+		if idx > 0 {
+			prev := lower[idx-1]
+			if prev >= 'a' && prev <= 'z' {
+				// Leading letter — not a standalone token; skip to next occurrence.
+				searchFrom = idx + markerLen
+				continue
+			}
+		}
+
+		after := idx + markerLen
+
+		// Check trailing boundary.
+		if after < len(lower) {
+			next := lower[after]
+			if next != '/' && next != ' ' && next != ':' {
+				// Trailing non-boundary character — not a valid token; skip.
+				searchFrom = idx + markerLen
+				continue
+			}
+		}
+		// Valid occurrence found. Extract version if a '/' or ' ' separator follows.
+		found = true
+		if after < len(lower) {
+			sep := lower[after]
+			if sep == '/' || sep == ' ' {
+				versionPart := headerValue[after+1:]
+				endIdx := len(versionPart)
+				for i, ch := range versionPart {
+					if ch == ' ' || ch == '(' || ch == ')' || ch == ';' || ch == ',' {
+						endIdx = i
+						break
+					}
+				}
+				candidate := versionPart[:endIdx]
+				if civetWebVersionValidateRegex.MatchString(candidate) {
+					version = candidate
+				}
+			}
+		}
+		return found, version
 	}
-	after := idx + len(marker)
-	if after >= len(lower) {
-		// "civetweb" is at the end of the value — bare token, valid signal.
-		return true
-	}
-	next := lower[after]
-	return next == '/' || next == ' ' || next == ':'
 }
 
-// extractCivetWebVersionFromHeader finds "civetweb" (case-insensitive) in a header
-// value, advances past it and the separator ('/' or ' '), reads the version token up
-// to the next space, '(' or ')' (or end of string), and validates the whole token
-// against civetWebVersionValidateRegex. Returns "" if the marker is absent, the
-// separator is not '/' or ' ', or the token is not a clean version. Validating the
-// whole token (not a capturing group) is what prevents "Civetweb/1.15:*:*" from
-// yielding "1.15".
+// civetWebSignalInHeader reports whether the given header value contains a valid
+// CivetWeb token (leading and trailing word-boundary checked across all occurrences).
+func civetWebSignalInHeader(headerValue string) bool {
+	found, _ := scanCivetWebInHeader(headerValue)
+	return found
+}
+
+// extractCivetWebVersionFromHeader returns the version string from the first valid
+// CivetWeb token in headerValue, or "" if none is found or the version is malformed.
 func extractCivetWebVersionFromHeader(headerValue string) string {
-	lower := strings.ToLower(headerValue)
-	const marker = "civetweb"
-	idx := strings.Index(lower, marker)
-	if idx == -1 {
-		return ""
-	}
-	after := idx + len(marker)
-	if after >= len(lower) {
-		return "" // bare "civetweb", no version
-	}
-	sep := lower[after]
-	if sep != '/' && sep != ' ' {
-		return "" // unsupported separator (e.g. ':'), return no version
-	}
-	versionPart := headerValue[after+1:]
-
-	endIdx := len(versionPart)
-	for i, ch := range versionPart {
-		if ch == ' ' || ch == '(' || ch == ')' {
-			endIdx = i
-			break
-		}
-	}
-	candidate := versionPart[:endIdx]
-
-	if civetWebVersionValidateRegex.MatchString(candidate) {
-		return candidate
-	}
-	return ""
+	_, version := scanCivetWebInHeader(headerValue)
+	return version
 }
 
 // buildCivetWebCPE returns the CPE 2.3 string. Empty version => "*" wildcard.
