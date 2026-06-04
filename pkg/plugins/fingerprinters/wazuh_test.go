@@ -124,7 +124,7 @@ func TestWazuhAPI_Match(t *testing.T) {
 		{"status 200, text/html → false", 200, "text/html", false},
 		{"status 200, missing content-type → false", 200, "", false},
 		// Content-type checks at status 400 (auth-required scenario)
-		{"status 401, application/json → true (Match only, no body check)", 200, "application/json", true},
+		{"status 401, application/json → true (Match only, no body check)", 401, "application/json", true},
 	}
 
 	for _, tt := range tests {

@@ -49,7 +49,6 @@ import (
 )
 
 const (
-	wazuhAPITitleMarker       = `"title":"Wazuh API"`
 	wazuhDashboardTitleMarker = "Wazuh"
 	wazuhDashboardAssetMarker = "/plugins/wazuh/"
 	wazuhBodyCap              = 2 * 1024 * 1024 // 2 MiB
@@ -59,6 +58,10 @@ const (
 // wazuhVersionRegex is the anchored validator for extracted version strings.
 // Constrained to major versions 3-5 to reduce false-positive risk.
 var wazuhVersionRegex = regexp.MustCompile(`^[3-5]\.\d{1,2}\.\d{1,2}$`)
+
+// wazuhAPITitleRegex matches the canonical Wazuh API title field, tolerating
+// whitespace variants between key and value (minified or pretty-printed JSON).
+var wazuhAPITitleRegex = regexp.MustCompile(`"title"\s*:\s*"Wazuh API"`)
 
 // wazuhAPIVersionExtractRegex extracts api_version from Wazuh API JSON responses.
 var wazuhAPIVersionExtractRegex = regexp.MustCompile(`"api_version"\s*:\s*"(\d+\.\d+\.\d+)"`)
@@ -105,7 +108,7 @@ func (f *WazuhAPIFingerprinter) Fingerprint(resp *http.Response, body []byte) (*
 	if !strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "application/json") {
 		return nil, nil
 	}
-	if !bytes.Contains(body, []byte(wazuhAPITitleMarker)) {
+	if !wazuhAPITitleRegex.Match(body) {
 		return nil, nil
 	}
 
@@ -153,12 +156,11 @@ func (f *WazuhDashboardFingerprinter) Fingerprint(resp *http.Response, body []by
 		return nil, nil
 	}
 
-	bodyStr := string(body)
 	// Dual-marker requirement: defeats vanilla OpenSearch Dashboards and incidental Wazuh mentions.
-	if !strings.Contains(bodyStr, wazuhDashboardTitleMarker) {
+	if !bytes.Contains(body, []byte(wazuhDashboardTitleMarker)) {
 		return nil, nil
 	}
-	if !strings.Contains(bodyStr, wazuhDashboardAssetMarker) {
+	if !bytes.Contains(body, []byte(wazuhDashboardAssetMarker)) {
 		return nil, nil
 	}
 
@@ -188,10 +190,12 @@ func (f *WazuhDashboardFingerprinter) Fingerprint(resp *http.Response, body []by
 // to regex. Returns empty string when no valid version is found.
 func extractWazuhAPIVersion(body []byte) string {
 	var parsed struct {
-		APIVersion string `json:"api_version"`
+		Data struct {
+			APIVersion string `json:"api_version"`
+		} `json:"data"`
 	}
-	if err := json.Unmarshal(body, &parsed); err == nil && parsed.APIVersion != "" {
-		v := parsed.APIVersion
+	if err := json.Unmarshal(body, &parsed); err == nil && parsed.Data.APIVersion != "" {
+		v := parsed.Data.APIVersion
 		if len(v) <= maxWazuhVersionFieldLen && wazuhVersionRegex.MatchString(v) {
 			return v
 		}
