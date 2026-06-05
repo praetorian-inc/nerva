@@ -63,8 +63,15 @@ package fingerprinters
 
 import (
 	"fmt"
+	"io"
 	"net/http"
+	"regexp"
+	"strings"
+
+	"github.com/praetorian-inc/nerva/pkg/plugins"
 )
+
+var jenkinsVersionRegex = regexp.MustCompile(`^\d+(\.\d+)*$`)
 
 // JenkinsFingerprinter detects Jenkins instances via X-Jenkins and X-Hudson headers
 type JenkinsFingerprinter struct{}
@@ -91,6 +98,9 @@ func (f *JenkinsFingerprinter) Fingerprint(resp *http.Response, body []byte) (*F
 
 	// Extract version from X-Jenkins header (direct value)
 	version := resp.Header.Get("X-Jenkins")
+	if version != "" && !jenkinsVersionRegex.MatchString(version) {
+		version = ""
+	}
 
 	// Store X-Hudson version in metadata if present
 	if hudsonVersion := resp.Header.Get("X-Hudson"); hudsonVersion != "" {
@@ -107,7 +117,47 @@ func (f *JenkinsFingerprinter) Fingerprint(resp *http.Response, body []byte) (*F
 		Version:    version,
 		CPEs:       []string{buildJenkinsCPE(version)},
 		Metadata:   metadata,
+		Severity:   plugins.SeverityHigh,
 	}, nil
+}
+
+// CheckMisconfigs probes the Jenkins Script Console (/script) to detect
+// unauthenticated Groovy script console access — a critical RCE vector.
+func (f *JenkinsFingerprinter) CheckMisconfigs(client *http.Client, baseURL, host string) []plugins.SecurityFinding {
+	req, err := http.NewRequest("GET", baseURL+"/script", nil)
+	if err != nil {
+		return nil
+	}
+	if host != "" {
+		req.Host = host
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 256*1024))
+	if err != nil {
+		return nil
+	}
+
+	// Look for Groovy script console indicators
+	bodyStr := string(body)
+	if strings.Contains(bodyStr, "crumb.init") ||
+		(strings.Contains(bodyStr, `name="script"`) && strings.Contains(bodyStr, "textarea")) {
+		return []plugins.SecurityFinding{{
+			ID:          "jenkins-script-console",
+			Severity:    plugins.SeverityCritical,
+			Description: "Jenkins Groovy script console accessible without authentication",
+			Evidence:    "GET /script returned 200 with script console markup",
+		}}
+	}
+	return nil
 }
 
 func buildJenkinsCPE(version string) string {

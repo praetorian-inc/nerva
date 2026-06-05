@@ -129,7 +129,7 @@ func (p *HTTPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 	defer resp.Body.Close()
 
 	baseURL := fmt.Sprintf("http://%s", conn.RemoteAddr().String())
-	technologies, cpes, fingerprintMetadata, fingerprintedTechs, body, _ := p.FingerprintResponse(resp, &client, baseURL, target.Host)
+	technologies, cpes, fingerprintMetadata, fingerprintedTechs, fpFindings, body, _ := p.FingerprintResponse(resp, &client, baseURL, target.Host, target.Misconfigs)
 
 	payload := plugins.ServiceHTTP{
 		Status:          resp.Status,
@@ -161,6 +161,10 @@ func (p *HTTPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 				})
 			}
 		}
+	}
+	if target.Misconfigs && len(fpFindings) > 0 {
+		service.AnonymousAccess = true
+		service.SecurityFindings = append(service.SecurityFindings, fpFindings...)
 	}
 	if target.Misconfigs && resp.StatusCode/100 != 3 {
 		service.SecurityFindings = append(service.SecurityFindings, checkMissingSecurityHeaders(resp.Header, false)...)
@@ -220,7 +224,7 @@ func (p *HTTPSPlugin) Run(
 	defer resp.Body.Close()
 
 	baseURL := fmt.Sprintf("https://%s", conn.RemoteAddr().String())
-	technologies, cpes, fingerprintMetadata, fingerprintedTechs, body, _ := p.FingerprintResponse(resp, &client, baseURL, target.Host)
+	technologies, cpes, fingerprintMetadata, fingerprintedTechs, fpFindings, body, _ := p.FingerprintResponse(resp, &client, baseURL, target.Host, target.Misconfigs)
 
 	payload := plugins.ServiceHTTPS{
 		Status:          resp.Status,
@@ -252,6 +256,10 @@ func (p *HTTPSPlugin) Run(
 				})
 			}
 		}
+	}
+	if target.Misconfigs && len(fpFindings) > 0 {
+		service.AnonymousAccess = true
+		service.SecurityFindings = append(service.SecurityFindings, fpFindings...)
 	}
 	if target.Misconfigs {
 		if finding := checkWeakTLS(conn); finding != nil {
@@ -295,12 +303,12 @@ func (p *HTTPPlugin) Name() string {
 func (p *HTTPSPlugin) Name() string {
 	return HTTPS
 }
-func (p *HTTPPlugin) FingerprintResponse(resp *http.Response, client *http.Client, baseURL string, host string) ([]string, []string, map[string]map[string]any, []fingerprintedTech, []byte, error) {
-	return fingerprint(resp, p.analyzer, client, baseURL, host)
+func (p *HTTPPlugin) FingerprintResponse(resp *http.Response, client *http.Client, baseURL string, host string, misconfigs bool) ([]string, []string, map[string]map[string]any, []fingerprintedTech, []plugins.SecurityFinding, []byte, error) {
+	return fingerprint(resp, p.analyzer, client, baseURL, host, misconfigs)
 }
 
-func (p *HTTPSPlugin) FingerprintResponse(resp *http.Response, client *http.Client, baseURL string, host string) ([]string, []string, map[string]map[string]any, []fingerprintedTech, []byte, error) {
-	return fingerprint(resp, p.analyzer, client, baseURL, host)
+func (p *HTTPSPlugin) FingerprintResponse(resp *http.Response, client *http.Client, baseURL string, host string, misconfigs bool) ([]string, []string, map[string]map[string]any, []fingerprintedTech, []plugins.SecurityFinding, []byte, error) {
+	return fingerprint(resp, p.analyzer, client, baseURL, host, misconfigs)
 }
 
 // formatTechnologyWithVersion returns a technology string with version appended if present.
@@ -499,14 +507,17 @@ func processFingerprintResult(result *fingerprinters.FingerprintResult) (string,
 	return tech, result.CPEs, result.Metadata, result.Severity
 }
 
-func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *http.Client, baseURL string, host string) ([]string, []string, map[string]map[string]any, []fingerprintedTech, []byte, error) {
+func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *http.Client, baseURL string, host string, misconfigs bool) ([]string, []string, map[string]map[string]any, []fingerprintedTech, []plugins.SecurityFinding, []byte, error) {
 	var technologies, cpes []string
 	var fingerprintedTechs []fingerprintedTech
+	var fpFindings []plugins.SecurityFinding
+	// matchedFingerprinters tracks which fingerprinters produced results for MisconfigHTTPFingerprinter calls.
+	var matchedFingerprinters []fingerprinters.HTTPFingerprinter
 	fingerprintMetadata := make(map[string]map[string]any)
 	maxResponseSize := int64(10 * 1024 * 1024) // 10MB limit
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
 	if err != nil {
-		return nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, err
 	}
 	// Close body to release connection for reuse by active fingerprinters.
 	// Without this, the transport may not return the connection to the idle pool,
@@ -523,7 +534,20 @@ func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *ht
 	}
 
 	// Passive fingerprinters (work on root response)
-	for _, result := range fingerprinters.RunFingerprinters(resp, data) {
+	for _, fp := range fingerprinters.GetFingerprinters() {
+		// Skip active fingerprinters with dedicated endpoints (run in the active phase)
+		if active, ok := fp.(fingerprinters.ActiveHTTPFingerprinter); ok {
+			if endpoint := active.ProbeEndpoint(); endpoint != "" && endpoint != "/" {
+				continue
+			}
+		}
+		if !fp.Match(resp) {
+			continue
+		}
+		result, err := fp.Fingerprint(resp, data)
+		if err != nil || result == nil {
+			continue
+		}
 		tech, resultCPEs, metadata, severity := processFingerprintResult(result)
 		if result.Technology != "" { // Guard against empty technology
 			technologies = append(technologies, tech)
@@ -539,6 +563,8 @@ func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *ht
 		if metadata != nil && result.Technology != "" {
 			fingerprintMetadata[result.Technology] = metadata
 		}
+		fpFindings = append(fpFindings, result.SecurityFindings...)
+		matchedFingerprinters = append(matchedFingerprinters, fp)
 	}
 
 	// Active fingerprinters (probe specific endpoints)
@@ -597,10 +623,21 @@ func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *ht
 					if metadata != nil && result.Technology != "" {
 						fingerprintMetadata[result.Technology] = metadata
 					}
+					fpFindings = append(fpFindings, result.SecurityFindings...)
+					matchedFingerprinters = append(matchedFingerprinters, fp)
 				}
 			}
 		}
 	}
 
-	return technologies, cpes, fingerprintMetadata, fingerprintedTechs, data, nil
+	// MisconfigHTTPFingerprinter phase: call CheckMisconfigs on matched fingerprinters
+	if misconfigs && client != nil && baseURL != "" {
+		for _, fp := range matchedFingerprinters {
+			if mfp, ok := fp.(fingerprinters.MisconfigHTTPFingerprinter); ok {
+				fpFindings = append(fpFindings, mfp.CheckMisconfigs(client, baseURL, host)...)
+			}
+		}
+	}
+
+	return technologies, cpes, fingerprintMetadata, fingerprintedTechs, fpFindings, data, nil
 }

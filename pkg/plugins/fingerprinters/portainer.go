@@ -63,6 +63,8 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+
+	"github.com/praetorian-inc/nerva/pkg/plugins"
 )
 
 // PortainerFingerprinter detects Portainer instances via /api/system/status endpoint
@@ -133,7 +135,36 @@ func (f *PortainerFingerprinter) Fingerprint(resp *http.Response, body []byte) (
 		Version:    cpeVersion,
 		CPEs:       []string{buildPortainerCPE(cpeVersion)},
 		Metadata:   metadata,
+		Severity:   plugins.SeverityHigh,
 	}, nil
+}
+
+// CheckMisconfigs probes /api/users/admin/check to detect whether no admin
+// user exists — a 404 response means anyone can create the initial admin account.
+func (f *PortainerFingerprinter) CheckMisconfigs(client *http.Client, baseURL, host string) []plugins.SecurityFinding {
+	req, err := http.NewRequest("GET", baseURL+"/api/users/admin/check", nil)
+	if err != nil {
+		return nil
+	}
+	if host != "" {
+		req.Host = host
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+
+	// 404 with JSON content-type means Portainer's API confirmed no admin exists
+	if resp.StatusCode == 404 && strings.Contains(resp.Header.Get("Content-Type"), "application/json") {
+		return []plugins.SecurityFinding{{
+			ID:          "portainer-setup-exposed",
+			Severity:    plugins.SeverityCritical,
+			Description: "Portainer initial setup page exposed — no admin user exists",
+			Evidence:    "GET /api/users/admin/check returned 404",
+		}}
+	}
+	return nil
 }
 
 func buildPortainerCPE(version string) string {
