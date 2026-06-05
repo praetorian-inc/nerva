@@ -23,6 +23,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/praetorian-inc/nerva/pkg/plugins"
 )
 
 // ── Name / ProbeEndpoint ───────────────────────────────────────────────────────
@@ -133,14 +135,12 @@ func TestAirflowFingerprinter_Fingerprint_Valid(t *testing.T) {
 			wantDetectionMethod: "web_ui",
 		},
 		{
-			name:                   "API health endpoint JSON → anonymous_api_access=true, SeverityHigh",
-			statusCode:             200,
-			body:                   `{"metadatabase":{"status":"healthy"},"scheduler":{"latest_scheduler_heartbeat":"2024-01-01T00:00:00","status":"healthy"},"version":"2.7.0"}`,
-			wantVersion:            "2.7.0",
-			wantCPE:                "cpe:2.3:a:apache:airflow:2.7.0:*:*:*:*:*:*:*",
-			wantDetectionMethod:    "api_health",
-			wantAnonymousAPIAccess: true,
-			wantSeverityHigh:       true,
+			name:                "API health endpoint JSON without path → api_health detection, no anonymous_api_access, no SeverityHigh",
+			statusCode:          200,
+			body:                `{"metadatabase":{"status":"healthy"},"scheduler":{"latest_scheduler_heartbeat":"2024-01-01T00:00:00","status":"healthy"},"version":"2.7.0"}`,
+			wantVersion:         "2.7.0",
+			wantCPE:             "cpe:2.3:a:apache:airflow:2.7.0:*:*:*:*:*:*:*",
+			wantDetectionMethod: "api_health",
 		},
 		{
 			name:                   "Active probe /api/v1/health with health JSON → active_probe detection, probe_path, SeverityHigh",
@@ -203,7 +203,7 @@ func TestAirflowFingerprinter_Fingerprint_Valid(t *testing.T) {
 				assert.False(t, hasAccess, "anonymous_api_access should be absent when not expected")
 			}
 			if tt.wantSeverityHigh {
-				assert.NotEmpty(t, result.Severity, "expected severity to be set")
+				assert.Equal(t, plugins.SeverityHigh, result.Severity, "expected SeverityHigh")
 			}
 			if tt.wantProbePathKey {
 				assert.Equal(t, "/api/v1/health", result.Metadata["probe_path"])
@@ -247,6 +247,11 @@ func TestAirflowFingerprinter_Fingerprint_Invalid(t *testing.T) {
 			name:       "Prose mention of 'airflow' in paragraph → nil (not in title/asset)",
 			statusCode: 200,
 			body:       `<html><body><p>We use airflow for our ETL pipelines.</p></body></html>`,
+		},
+		{
+			name:       "Metadatabase-only JSON (no scheduler) → nil",
+			statusCode: 200,
+			body:       `{"metadatabase":{"status":"healthy"}}`,
 		},
 	}
 
@@ -369,14 +374,14 @@ func TestAirflowFingerprinter_Integration(t *testing.T) {
 		}
 	})
 
-	t.Run("health API body triggers high severity", func(t *testing.T) {
+	t.Run("health API body on health endpoint path triggers high severity", func(t *testing.T) {
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			fmt.Fprintln(w, `{"metadatabase":{"status":"healthy"},"scheduler":{"status":"healthy"},"version":"2.8.1"}`)
 		}))
 		defer ts.Close()
 
-		resp, err := http.Get(ts.URL)
+		resp, err := http.Get(ts.URL + "/api/v1/health")
 		assert.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -386,7 +391,7 @@ func TestAirflowFingerprinter_Integration(t *testing.T) {
 		assert.NoError(t, err)
 		assert.NotNil(t, result)
 		if result != nil {
-			assert.NotEmpty(t, result.Severity)
+			assert.Equal(t, plugins.SeverityHigh, result.Severity)
 			access, ok := result.Metadata["anonymous_api_access"].(bool)
 			assert.True(t, ok)
 			assert.True(t, access)

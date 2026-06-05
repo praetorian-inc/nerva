@@ -68,9 +68,12 @@ var airflowTitleRegex = regexp.MustCompile(`(?i)<title[^>]*>[^<]*airflow[^<]*</t
 // Examples: src="/static/airflow/...", href="/airflow/static/..."
 var airflowAssetRegex = regexp.MustCompile(`(?i)(?:src|href)=["'][^"']*(?:/static/airflow|airflow-webserver)[^"']*["']`)
 
-// airflowHealthAPIRegex detects the Airflow REST API /api/v1/health JSON response
-// by matching both the "metadatabase" and "scheduler" keys unique to Airflow.
-var airflowHealthAPIRegex = regexp.MustCompile(`"metadatabase"\s*:\s*\{[^}]*"status"`)
+// airflowMetadatabaseRegex matches the "metadatabase" key in Airflow health JSON.
+var airflowMetadatabaseRegex = regexp.MustCompile(`"metadatabase"\s*:\s*\{[^}]*"status"`)
+
+// airflowSchedulerRegex matches the "scheduler" key in Airflow health JSON.
+// Both metadatabase AND scheduler must be present to confirm an Airflow health response.
+var airflowSchedulerRegex = regexp.MustCompile(`"scheduler"\s*:\s*\{[^}]*"status"`)
 
 // airflowVersionJSONRegex extracts version from Airflow API JSON responses.
 // Matches: "version": "2.8.1", "version":"2.7.0"
@@ -151,26 +154,26 @@ func (f *AirflowFingerprinter) Fingerprint(resp *http.Response, body []byte) (*F
 	// PRIMARY: Web UI signals — title tag or asset references.
 	hasWebUISignal := airflowTitleRegex.Match(body) || airflowAssetRegex.Match(body)
 
-	// SECONDARY: Health API signal — metadatabase/scheduler JSON structure.
-	hasHealthAPISignal := airflowHealthAPIRegex.Match(body)
+	// SECONDARY: Health API signal — both metadatabase AND scheduler keys must be present.
+	hasHealthAPISignal := airflowMetadatabaseRegex.Match(body) && airflowSchedulerRegex.Match(body)
 
 	// At least one definitive signal must be present.
 	if !hasWebUISignal && !hasHealthAPISignal {
 		return nil, nil
 	}
 
-	// Determine if this response came from the active probe (/api/v1/health).
-	isActiveProbe := false
+	// Determine if this response came from the health endpoint path.
+	// Accepts exact /api/v1/health or paths ending with /api/v1/health (prefix-proxied deployments).
+	isHealthEndpointPath := false
 	if resp.Request != nil && resp.Request.URL != nil {
-		if strings.EqualFold(resp.Request.URL.Path, "/api/v1/health") {
-			isActiveProbe = true
-		}
+		p := strings.ToLower(resp.Request.URL.Path)
+		isHealthEndpointPath = p == "/api/v1/health" || strings.HasSuffix(p, "/api/v1/health")
 	}
 
 	// Determine detection method.
 	var detectionMethod string
 	switch {
-	case isActiveProbe && hasHealthAPISignal:
+	case isHealthEndpointPath && hasHealthAPISignal:
 		detectionMethod = "active_probe"
 	case hasHealthAPISignal:
 		detectionMethod = "api_health"
@@ -193,10 +196,10 @@ func (f *AirflowFingerprinter) Fingerprint(resp *http.Response, body []byte) (*F
 	if version != "" {
 		metadata["version"] = version
 	}
-	if hasHealthAPISignal {
+	if hasHealthAPISignal && isHealthEndpointPath {
 		metadata["anonymous_api_access"] = true
 	}
-	if isActiveProbe && hasHealthAPISignal {
+	if hasHealthAPISignal && isHealthEndpointPath {
 		metadata["probe_path"] = "/api/v1/health"
 	}
 
@@ -207,8 +210,8 @@ func (f *AirflowFingerprinter) Fingerprint(resp *http.Response, body []byte) (*F
 		Metadata:   metadata,
 	}
 
-	// Anonymous API access is a high-severity misconfiguration.
-	if hasHealthAPISignal {
+	// Anonymous API access confirmed on health endpoint path is a high-severity misconfiguration.
+	if hasHealthAPISignal && isHealthEndpointPath {
 		result.Severity = plugins.SeverityHigh
 	}
 
