@@ -476,3 +476,72 @@ func TestRun(t *testing.T) {
 		assert.Nil(t, service, "non-git response should yield nil service")
 	})
 }
+
+// TestGitSecurityFindings verifies that a SecurityFinding is attached when Misconfigs is true.
+func TestGitSecurityFindings(t *testing.T) {
+	mockResponse := append(append(
+		buildFirstRefLine(sha1, "HEAD", "multi_ack"),
+		buildRefLine(sha1, "refs/heads/main")...),
+		flushPkt...)
+
+	target := plugins.Target{
+		Address:    netip.MustParseAddrPort("127.0.0.1:9418"),
+		Host:       "127.0.0.1",
+		Misconfigs: true,
+	}
+
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	defer serverConn.Close()
+
+	go func() {
+		buf := make([]byte, 512)
+		serverConn.SetDeadline(time.Now().Add(2 * time.Second))
+		serverConn.Read(buf)
+		serverConn.Write(mockResponse)
+		serverConn.Close()
+	}()
+
+	plugin := &TCPPlugin{}
+	service, err := plugin.Run(clientConn, 2*time.Second, target)
+
+	require.NoError(t, err)
+	require.NotNil(t, service)
+	require.Len(t, service.SecurityFindings, 1)
+	assert.Equal(t, "git-source-code-exposed", service.SecurityFindings[0].ID)
+	assert.Equal(t, plugins.SeverityHigh, service.SecurityFindings[0].Severity)
+	assert.Contains(t, service.SecurityFindings[0].Evidence, "127.0.0.1:9418")
+}
+
+// TestGitNoSecurityFindingsWithoutFlag verifies that no SecurityFinding is attached when Misconfigs is false.
+func TestGitNoSecurityFindingsWithoutFlag(t *testing.T) {
+	mockResponse := append(append(
+		buildFirstRefLine(sha1, "HEAD", "multi_ack"),
+		buildRefLine(sha1, "refs/heads/main")...),
+		flushPkt...)
+
+	target := plugins.Target{
+		Address:    netip.MustParseAddrPort("127.0.0.1:9418"),
+		Host:       "127.0.0.1",
+		Misconfigs: false,
+	}
+
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	defer serverConn.Close()
+
+	go func() {
+		buf := make([]byte, 512)
+		serverConn.SetDeadline(time.Now().Add(2 * time.Second))
+		serverConn.Read(buf)
+		serverConn.Write(mockResponse)
+		serverConn.Close()
+	}()
+
+	plugin := &TCPPlugin{}
+	service, err := plugin.Run(clientConn, 2*time.Second, target)
+
+	require.NoError(t, err)
+	require.NotNil(t, service)
+	assert.Len(t, service.SecurityFindings, 0)
+}

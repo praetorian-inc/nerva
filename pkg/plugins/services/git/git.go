@@ -134,7 +134,16 @@ func (p *TCPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 		Capabilities:    capabilities,
 	}
 
-	return plugins.CreateServiceFrom(target, payload, false, versionStr, plugins.TCP), nil
+	service := plugins.CreateServiceFrom(target, payload, false, versionStr, plugins.TCP)
+	if target.Misconfigs {
+		service.SecurityFindings = []plugins.SecurityFinding{{
+			ID:          "git-source-code-exposed",
+			Severity:    plugins.SeverityHigh,
+			Description: "Git daemon exposes source code repositories without authentication",
+			Evidence:    "Git protocol accessible on " + target.Address.String(),
+		}}
+	}
+	return service, nil
 }
 
 // buildUploadPackRequest builds a pkt-line encoded git-upload-pack request.

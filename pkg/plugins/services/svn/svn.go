@@ -203,7 +203,16 @@ func (p *SVNPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 	version := fmt.Sprintf("%d", maxVersion)
 	cpe := fmt.Sprintf("cpe:2.3:a:apache:subversion:%s:*:*:*:*:*:*:*", version)
 
-	return plugins.CreateServiceFrom(target, payload, false, cpe, plugins.TCP), nil
+	service := plugins.CreateServiceFrom(target, payload, false, cpe, plugins.TCP)
+	if target.Misconfigs && svnAllowsAnonymous(authMechs) {
+		service.SecurityFindings = []plugins.SecurityFinding{{
+			ID:          "svn-source-code-exposed",
+			Severity:    plugins.SeverityHigh,
+			Description: "SVN server does not require authentication for repository access",
+			Evidence:    "SVN greeting advertises anonymous access on " + target.Address.String(),
+		}}
+	}
+	return service, nil
 }
 
 func (p *SVNPlugin) Name() string {
@@ -216,4 +225,19 @@ func (p *SVNPlugin) Type() plugins.Protocol {
 
 func (p *SVNPlugin) Priority() int {
 	return 2
+}
+
+// svnAllowsAnonymous returns true when the SVN server permits unauthenticated
+// access — either because no auth mechanisms are advertised, or because ANONYMOUS
+// is explicitly listed among them.
+func svnAllowsAnonymous(authMechs []string) bool {
+	if len(authMechs) == 0 {
+		return true
+	}
+	for _, mech := range authMechs {
+		if strings.EqualFold(mech, "ANONYMOUS") {
+			return true
+		}
+	}
+	return false
 }
