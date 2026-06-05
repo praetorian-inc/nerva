@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+
+	"github.com/praetorian-inc/nerva/pkg/plugins"
 )
 
 // LocalAIFingerprinter detects LocalAI self-hosted inference server via /system endpoint
@@ -93,6 +95,13 @@ func (f *LocalAIFingerprinter) Fingerprint(resp *http.Response, body []byte) (*F
 		Version:    "",
 		CPEs:       []string{buildLocalAICPE("")},
 		Metadata:   metadata,
+		Severity:   plugins.SeverityHigh,
+		SecurityFindings: []plugins.SecurityFinding{{
+			ID:          "localai-unauthenticated-api",
+			Severity:    plugins.SeverityHigh,
+			Description: "LocalAI API accessible without authentication; allows arbitrary model inference and system information disclosure",
+			Evidence:    "LocalAI /system endpoint accessible without credentials",
+		}},
 	}, nil
 }
 

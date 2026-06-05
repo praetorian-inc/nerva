@@ -25,11 +25,12 @@ import (
 
 // FingerprintResult contains the detected technology information
 type FingerprintResult struct {
-	Technology string           // e.g., "kubernetes"
-	Version    string           // e.g., "1.29.0"
-	CPEs       []string         // e.g., ["cpe:2.3:a:kubernetes:kubernetes:1.29.0:*:*:*:*:*:*:*"]
-	Metadata   map[string]any   // service-specific additional data
-	Severity   plugins.Severity // severity for anonymous access finding if detected
+	Technology      string                  // e.g., "kubernetes"
+	Version         string                  // e.g., "1.29.0"
+	CPEs            []string                // e.g., ["cpe:2.3:a:kubernetes:kubernetes:1.29.0:*:*:*:*:*:*:*"]
+	Metadata        map[string]any          // service-specific additional data
+	Severity        plugins.Severity        // severity for anonymous access finding if detected
+	SecurityFindings []plugins.SecurityFinding // custom findings (used instead of generic anon-access when non-empty)
 }
 
 // HTTPFingerprinter detects applications running over HTTP
