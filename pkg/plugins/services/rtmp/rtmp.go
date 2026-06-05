@@ -24,6 +24,9 @@
 package rtmp
 
 import (
+	"bytes"
+	"encoding/binary"
+	"math"
 	"net"
 	"time"
 
@@ -63,7 +66,81 @@ func (p *RTMPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 	}
 
 	payload := plugins.ServiceRTMP{}
-	return plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP), nil
+	service := plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP)
+	if target.Misconfigs && len(response) >= 1537 {
+		c2 := response[1:1537]
+		connectCmd := buildRTMPConnect()
+		sendErr := utils.Send(conn, append(c2, connectCmd...), timeout)
+		if sendErr == nil {
+			var fullResp []byte
+			for range 3 {
+				chunk, recvErr := utils.Recv(conn, timeout)
+				if recvErr != nil || len(chunk) == 0 {
+					break
+				}
+				fullResp = append(fullResp, chunk...)
+				if containsAMF0Result(fullResp) {
+					break
+				}
+			}
+			if containsAMF0Result(fullResp) {
+				service.AnonymousAccess = true
+				service.SecurityFindings = []plugins.SecurityFinding{{
+					ID:          "rtmp-unauthenticated-stream",
+					Severity:    plugins.SeverityMedium,
+					Description: "RTMP stream accessible without authentication",
+					Evidence:    "RTMP connect accepted (_result)",
+				}}
+			}
+		}
+	}
+	return service, nil
+}
+
+// buildRTMPConnect constructs an RTMP chunk containing an AMF0 connect command.
+func buildRTMPConnect() []byte {
+	// AMF0 payload
+	var amf []byte
+
+	// "connect" string: type(1) + length(2) + data(7)
+	amf = append(amf, 0x02, 0x00, 0x07)
+	amf = append(amf, []byte("connect")...)
+
+	// Transaction ID = 1.0: type(1) + double(8)
+	amf = append(amf, 0x00)
+	var buf [8]byte
+	binary.BigEndian.PutUint64(buf[:], math.Float64bits(1.0))
+	amf = append(amf, buf[:]...)
+
+	// Command object (minimal)
+	amf = append(amf, 0x03) // object start
+	// "app" property = "live" (most common default application name)
+	amf = append(amf, 0x00, 0x03)
+	amf = append(amf, []byte("app")...)
+	amf = append(amf, 0x02, 0x00, 0x04)
+	amf = append(amf, []byte("live")...)
+	// object end marker
+	amf = append(amf, 0x00, 0x00, 0x09)
+
+	// RTMP chunk header (type 0 = 12 bytes)
+	msgLen := len(amf)
+	header := []byte{
+		0x03,                                                  // fmt=0, csid=3
+		0x00, 0x00, 0x00,                                      // timestamp
+		byte(msgLen >> 16), byte(msgLen >> 8), byte(msgLen),   //#nosec G115 -- msgLen is a static AMF payload, always < 256 //nolint:gosec
+		0x14,                                                  // message type = AMF0 command
+		0x00, 0x00, 0x00, 0x00,                                // message stream ID (little-endian)
+	}
+
+	return append(header, amf...)
+}
+
+// containsAMF0Result checks for an AMF0-encoded "_result" string in the response.
+// AMF0 strings are: type byte 0x02 + 2-byte big-endian length + data.
+var amf0ResultMarker = []byte{0x02, 0x00, 0x07, '_', 'r', 'e', 's', 'u', 'l', 't'}
+
+func containsAMF0Result(data []byte) bool {
+	return bytes.Contains(data, amf0ResultMarker)
 }
 
 // isValidRTMPResponse validates an RTMP S0+S1 response.
