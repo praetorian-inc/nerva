@@ -17,6 +17,10 @@ package fingerprinters
 import (
 	"net/http"
 	"testing"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/praetorian-inc/nerva/pkg/plugins"
 )
 
 func TestGradioFingerprinter_Name(t *testing.T) {
@@ -391,4 +395,27 @@ func TestGradioFingerprinter_Integration(t *testing.T) {
 	if protocol, ok := result.Metadata["protocol"].(string); !ok || protocol != "sse_v3" {
 		t.Errorf("Metadata[protocol] = %v, want %q", result.Metadata["protocol"], "sse_v3")
 	}
+}
+
+func TestGradioFingerprinter_SecurityFindings(t *testing.T) {
+	body := []byte(`{
+		"version": "4.44.1",
+		"mode": "blocks",
+		"components": [{"id": 1, "type": "textbox"}],
+		"dependencies": []
+	}`)
+
+	fp := &GradioFingerprinter{}
+	resp := &http.Response{
+		Header: make(http.Header),
+	}
+
+	result, err := fp.Fingerprint(resp, body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	require.Equal(t, plugins.SeverityMedium, result.Severity)
+	require.Len(t, result.SecurityFindings, 1)
+	require.Equal(t, "gradio-unauthenticated-interface", result.SecurityFindings[0].ID)
+	require.Equal(t, plugins.SeverityMedium, result.SecurityFindings[0].Severity)
 }

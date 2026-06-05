@@ -68,3 +68,21 @@ release:
   draft: false
   prerelease: auto
   name_template: "Nerva v{{.Version}}"
+
+sboms:
+  - artifacts: archive
+
+# cosign keyless OIDC signing of checksums.txt — cosign v3 modern Sigstore
+# .sigstore.json bundle. The central go-release.yml installs cosign v3 via
+# cosign-installer v4.1.2; sign-blob --bundle is the v3 form (v2's
+# --output-certificate/--output-signature were removed in cosign v3).
+signs:
+  - cmd: cosign
+    signature: "${artifact}.sigstore.json"
+    args:
+      - sign-blob
+      - "--bundle=${signature}"
+      - "${artifact}"
+      - "--yes"
+    artifacts: checksum
+    output: true

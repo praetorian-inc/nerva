@@ -99,6 +99,8 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+
+	"github.com/praetorian-inc/nerva/pkg/plugins"
 )
 
 // OllamaFingerprinter detects Ollama LLM inference server instances
@@ -116,10 +118,10 @@ type ollamaTagsResponse struct {
 
 // ollamaModel represents a single model in the tags response
 type ollamaModel struct {
-	Name   string                 `json:"name"`
-	Model  string                 `json:"model"`
-	Size   int64                  `json:"size"`
-	Digest string                 `json:"digest"`
+	Name    string                 `json:"name"`
+	Model   string                 `json:"model"`
+	Size    int64                  `json:"size"`
+	Digest  string                 `json:"digest"`
 	Details map[string]interface{} `json:"details"`
 }
 
@@ -158,10 +160,12 @@ func (f *OllamaFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fi
 		trimmed := strings.TrimSpace(string(body))
 		if trimmed == "Ollama is running" {
 			return &FingerprintResult{
-				Technology: "ollama",
-				Version:    "",
-				CPEs:       []string{buildOllamaCPE("")},
-				Metadata:   map[string]any{},
+				Technology:       "ollama",
+				Version:          "",
+				CPEs:             []string{buildOllamaCPE("")},
+				Metadata:         map[string]any{},
+				Severity:         plugins.SeverityHigh,
+				SecurityFindings: []plugins.SecurityFinding{ollamaUnauthFinding("Ollama returned 'Ollama is running' response")},
 			}, nil
 		}
 		return nil, nil
@@ -188,10 +192,12 @@ func (f *OllamaFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fi
 		}
 
 		return &FingerprintResult{
-			Technology: "ollama",
-			Version:    versionResp.Version,
-			CPEs:       []string{buildOllamaCPE(versionResp.Version)},
-			Metadata:   map[string]any{},
+			Technology:       "ollama",
+			Version:          versionResp.Version,
+			CPEs:             []string{buildOllamaCPE(versionResp.Version)},
+			Metadata:         map[string]any{},
+			Severity:         plugins.SeverityHigh,
+			SecurityFindings: []plugins.SecurityFinding{ollamaUnauthFinding(fmt.Sprintf("Ollama version endpoint responded: %s", versionResp.Version))},
 		}, nil
 	}
 
@@ -226,11 +232,22 @@ func (f *OllamaFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fi
 	}
 
 	return &FingerprintResult{
-		Technology: "ollama",
-		Version:    "", // Tags endpoint doesn't include version
-		CPEs:       []string{buildOllamaCPE("")},
-		Metadata:   metadata,
+		Technology:       "ollama",
+		Version:          "", // Tags endpoint doesn't include version
+		CPEs:             []string{buildOllamaCPE("")},
+		Metadata:         metadata,
+		Severity:         plugins.SeverityHigh,
+		SecurityFindings: []plugins.SecurityFinding{ollamaUnauthFinding("Ollama API returned model listing")},
 	}, nil
+}
+
+func ollamaUnauthFinding(evidence string) plugins.SecurityFinding {
+	return plugins.SecurityFinding{
+		ID:          "ollama-unauthenticated-api",
+		Severity:    plugins.SeverityHigh,
+		Description: "Ollama API accessible without authentication; allows arbitrary model inference, model enumeration, and resource abuse",
+		Evidence:    evidence,
+	}
 }
 
 func buildOllamaCPE(version string) string {

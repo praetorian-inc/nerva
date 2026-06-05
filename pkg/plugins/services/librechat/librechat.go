@@ -337,7 +337,17 @@ func (p *LibreChatPlugin) Run(conn net.Conn, timeout time.Duration, target plugi
 		HasHealth:     hasHealth,
 		CPEs:          []string{cpe},
 	}
-	return plugins.CreateServiceFrom(target, payload, false, version, plugins.TCP), nil
+	service := plugins.CreateServiceFrom(target, payload, false, version, plugins.TCP)
+	if target.Misconfigs {
+		service.AnonymousAccess = true
+		service.SecurityFindings = append(service.SecurityFindings, plugins.SecurityFinding{
+			ID:          "librechat-unauthenticated",
+			Severity:    plugins.SeverityMedium,
+			Description: "LibreChat detected via publicly accessible endpoints; if access controls are not enforced, chat history and configured LLM API keys may be exposed",
+			Evidence:    "LibreChat application root and configuration endpoints responded without credentials",
+		})
+	}
+	return service, nil
 }
 
 func (p *LibreChatPlugin) PortPriority(port uint16) bool {
@@ -360,42 +370,52 @@ func (p *LibreChatPlugin) Priority() int {
 type LibreChatTLSPlugin struct{}
 
 func (p *LibreChatTLSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
-    client := createHTTPClient(conn, timeout)
-    baseURL := fmt.Sprintf("http://%s", conn.RemoteAddr().String())
+	client := createHTTPClient(conn, timeout)
+	baseURL := fmt.Sprintf("http://%s", conn.RemoteAddr().String())
 
-    // Phase 1: Primary detection via JS bundle VERSION extraction
-    // Errors here (e.g. connection reset) are non-fatal; fall through to Phase 2
-    version, configVersion, detected, err := detectViaJSBundle(client, baseURL)
-    if err != nil {
-            detected = false
-    }
+	// Phase 1: Primary detection via JS bundle VERSION extraction
+	// Errors here (e.g. connection reset) are non-fatal; fall through to Phase 2
+	version, configVersion, detected, err := detectViaJSBundle(client, baseURL)
+	if err != nil {
+		detected = false
+	}
 
-    // Phase 2: Fallback/enrichment via /api/config
-    if !detected {
-            if apiConfigDetected, _ := detectViaAPIConfig(client, baseURL); apiConfigDetected {
-                    detected = true
-                    // No exact version from /api/config, but product confirmed
-                    version = ""
-                    configVersion = ""
-            }
-    }
+	// Phase 2: Fallback/enrichment via /api/config
+	if !detected {
+		if apiConfigDetected, _ := detectViaAPIConfig(client, baseURL); apiConfigDetected {
+			detected = true
+			// No exact version from /api/config, but product confirmed
+			version = ""
+			configVersion = ""
+		}
+	}
 
-    if !detected {
-            return nil, nil
-    }
+	if !detected {
+		return nil, nil
+	}
 
-    hasHealth := checkHealthEndpoint(client, baseURL)
+	hasHealth := checkHealthEndpoint(client, baseURL)
 
-    cpe := buildLibreChatCPE(version)
-    payload := plugins.ServiceLibreChat{
-            ConfigVersion: configVersion,
-            HasHealth:     hasHealth,
-            CPEs:          []string{cpe},
-    }
-    return plugins.CreateServiceFrom(target, payload, true, version, plugins.TCPTLS), nil
+	cpe := buildLibreChatCPE(version)
+	payload := plugins.ServiceLibreChat{
+		ConfigVersion: configVersion,
+		HasHealth:     hasHealth,
+		CPEs:          []string{cpe},
+	}
+	service := plugins.CreateServiceFrom(target, payload, true, version, plugins.TCPTLS)
+	if target.Misconfigs {
+		service.AnonymousAccess = true
+		service.SecurityFindings = append(service.SecurityFindings, plugins.SecurityFinding{
+			ID:          "librechat-unauthenticated",
+			Severity:    plugins.SeverityMedium,
+			Description: "LibreChat detected via publicly accessible endpoints; if access controls are not enforced, chat history and configured LLM API keys may be exposed",
+			Evidence:    "LibreChat application root and configuration endpoints responded without credentials",
+		})
+	}
+	return service, nil
 }
 
 func (p *LibreChatTLSPlugin) PortPriority(port uint16) bool { return port == 443 }
 func (p *LibreChatTLSPlugin) Name() string                  { return LIBRECHAT }
-func (p *LibreChatTLSPlugin) Type() plugins.Protocol         { return plugins.TCPTLS }
-func (p *LibreChatTLSPlugin) Priority() int                  { return 100 }
+func (p *LibreChatTLSPlugin) Type() plugins.Protocol        { return plugins.TCPTLS }
+func (p *LibreChatTLSPlugin) Priority() int                 { return 100 }

@@ -52,6 +52,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
+	"net/netip"
 	"time"
 
 	"github.com/praetorian-inc/nerva/pkg/plugins"
@@ -67,6 +68,8 @@ const (
 	tagASREP          = 0x6B // APPLICATION 11, constructed
 	kdcErrEtypeNosupp = 14   // KDC_ERR_ETYPE_NOSUPP
 )
+
+const preauthPrincipal = "administrator"
 
 // ambiguousErrorCodes lists KRB-ERROR codes where the KDC response does not
 // reliably indicate whether the requested etype was evaluated. With the
@@ -396,13 +399,170 @@ func checkWeakEtypes(conn net.Conn, timeout time.Duration, realm string) bool {
 func kerberosWeakEtypesFinding(realm string) plugins.SecurityFinding {
 	evidence := "RC4-HMAC (etype 23) accepted by KDC"
 	if realm != "" {
-		evidence = fmt.Sprintf("RC4-HMAC (etype 23) accepted by KDC in realm %s", realm)
+		evidence = fmt.Sprintf("RC4-HMAC (etype 23) accepted by KDC in realm %q", realm)
 	}
 	return plugins.SecurityFinding{
 		ID:          "kerberos-weak-etypes",
 		Severity:    plugins.SeverityMedium,
 		Description: "Kerberos KDC supports RC4-HMAC (etype 23) — enables Kerberoasting attacks",
 		Evidence:    evidence,
+	}
+}
+
+// derWrap encodes tag + DER length + content. Supports long-form length (0x81 prefix)
+// for lengths 128-255. Returns nil for content exceeding 255 bytes to prevent silent truncation.
+func derWrap(tag byte, content []byte) []byte {
+	if content == nil {
+		return nil
+	}
+	out := []byte{tag}
+	n := len(content)
+	if n < 128 {
+		out = append(out, byte(n)) // #nosec G115 -- n < 128, fits in byte
+	} else if n <= 255 {
+		out = append(out, 0x81, byte(n)) // #nosec G115 -- n <= 255, guarded above
+	} else {
+		return nil
+	}
+	return append(out, content...)
+}
+
+// buildPreauthProbe builds an AS-REQ for the given realm and principal with no padata
+// (no pre-authentication data). Returns nil if realm or principal is empty or too long.
+// Both realm and principal are capped at 40 bytes to keep DER lengths within the range
+// supported by derWrap (max 255 bytes per field).
+func buildPreauthProbe(realm, principal string) []byte {
+	r := []byte(realm)
+	p := []byte(principal)
+	if len(r) == 0 || len(r) > 40 || len(p) == 0 || len(p) > 40 {
+		return nil
+	}
+
+	var body []byte
+	// [0] kdc-options
+	body = append(body, 0xa0, 0x07, 0x03, 0x05, 0x00, 0x50, 0x80, 0x00, 0x10)
+
+	// [1] cname = PrincipalName { name-type=1 (KRB_NT_PRINCIPAL), name-string=[principal] }
+	nameStrSeq := derWrap(0x1b, p) // GeneralString(principal)
+	nameStrSeqWrapped := derWrap(0x30, nameStrSeq)
+	cnameInner := append([]byte{0xa0, 0x03, 0x02, 0x01, 0x01}, // name-type = 1
+		derWrap(0xa1, nameStrSeqWrapped)...)
+	body = append(body, derWrap(0xa1, derWrap(0x30, cnameInner))...)
+
+	// [2] realm = GeneralString(realm)
+	body = append(body, derWrap(0xa2, derWrap(0x1b, r))...)
+
+	// [3] sname = PrincipalName { name-type=0, name-string=["krbtgt", realm] }
+	krbtgt := []byte("krbtgt")
+	snameStrSeq := append(derWrap(0x1b, krbtgt), derWrap(0x1b, r)...)
+	snameStrSeqWrapped := derWrap(0x30, snameStrSeq)
+	snameInner := append([]byte{0xa0, 0x03, 0x02, 0x01, 0x00}, // name-type = 0
+		derWrap(0xa1, snameStrSeqWrapped)...)
+	body = append(body, derWrap(0xa3, derWrap(0x30, snameInner))...)
+
+	// [5] till = GeneralizedTime "20370913024805Z"
+	body = append(body, 0xa5, 0x11, 0x18, 0x0f)
+	body = append(body, []byte("20370913024805Z")...)
+
+	// [7] nonce
+	body = append(body, 0xa7, 0x06, 0x02, 0x04, 0x1f, 0x1e, 0xb9, 0xd9)
+
+	// [8] etype = SEQUENCE { INTEGER 18, INTEGER 17, INTEGER 23 }
+	body = append(body, 0xa8, 0x0b, 0x30, 0x09,
+		0x02, 0x01, 0x12, // 18 (AES256-CTS-HMAC-SHA1-96)
+		0x02, 0x01, 0x11, // 17 (AES128-CTS-HMAC-SHA1-96)
+		0x02, 0x01, 0x17) // 23 (RC4-HMAC)
+
+	// Wrap body in [4] req-body context tag
+	reqBodyContent := derWrap(0x30, body)
+	reqBody := derWrap(0xa4, reqBodyContent)
+
+	// Outer SEQUENCE: pvno + msg-type + req-body (no padata — intentional)
+	var seq []byte
+	seq = append(seq, 0xa1, 0x03, 0x02, 0x01, 0x05) // pvno = 5
+	seq = append(seq, 0xa2, 0x03, 0x02, 0x01, 0x0a) // msg-type = 10 (AS-REQ)
+	seq = append(seq, reqBody...)
+
+	return derWrap(0x6a, derWrap(0x30, seq))
+}
+
+// checkPreauthNotRequired probes whether the KDC issues an AS-REP for the
+// "administrator" principal without pre-authentication. Returns true only if
+// the KDC responds with an AS-REP (tag 0x6B).
+func checkPreauthNotRequired(conn net.Conn, timeout time.Duration, realm string) bool {
+	probe := buildPreauthProbe(realm, preauthPrincipal)
+	if probe == nil {
+		return false
+	}
+	tcpProbe := make([]byte, 4+len(probe))
+	binary.BigEndian.PutUint32(tcpProbe[0:4], uint32(len(probe))) // #nosec G115 -- probe is at most a few hundred bytes; cannot overflow uint32
+	copy(tcpProbe[4:], probe)
+
+	response, err := utils.SendRecv(conn, tcpProbe, timeout)
+	if err != nil {
+		return false
+	}
+	if len(response) < 10 {
+		return false
+	}
+	// AS-REP (tag 0x6B) means the KDC issued a ticket without pre-auth.
+	return response[4] == tagASREP
+}
+
+// kerberosPreauthNotRequiredFinding returns a SecurityFinding for a KDC that does
+// not require Kerberos pre-authentication, enabling AS-REP roasting.
+func kerberosPreauthNotRequiredFinding(realm, account string) plugins.SecurityFinding {
+	var evidence string
+	if account != "" && realm != "" {
+		evidence = fmt.Sprintf("KDC issued AS-REP for account %q in realm %q without pre-authentication", account, realm)
+	} else if realm != "" {
+		evidence = fmt.Sprintf("KDC in realm %q issued AS-REP without pre-authentication (unknown principal)", realm)
+	} else {
+		evidence = "KDC issued AS-REP without pre-authentication"
+	}
+	return plugins.SecurityFinding{
+		ID:          "kerberos-preauth-not-required",
+		Severity:    plugins.SeverityHigh,
+		Description: "Kerberos pre-authentication not required — enables AS-REP roasting (MITRE ATT&CK T1558.004)",
+		Evidence:    evidence,
+	}
+}
+
+var (
+	cgnatPrefix     = netip.MustParsePrefix("100.64.0.0/10")   // RFC 6598 Shared Address Space (CGNAT)
+	testNet1        = netip.MustParsePrefix("192.0.2.0/24")    // RFC 5737 TEST-NET-1
+	testNet2        = netip.MustParsePrefix("198.51.100.0/24") // RFC 5737 TEST-NET-2
+	testNet3        = netip.MustParsePrefix("203.0.113.0/24")  // RFC 5737 TEST-NET-3
+	doc6Prefix      = netip.MustParsePrefix("2001:db8::/32")   // RFC 3849 IPv6 documentation
+	benchmarkPrefix = netip.MustParsePrefix("198.18.0.0/15")   // RFC 2544 benchmarking
+	broadcastAddr   = netip.MustParseAddr("255.255.255.255")   // IPv4 limited broadcast
+)
+
+// isInternetRoutable returns true if addr is a publicly routable IP address
+// (not private, loopback, link-local, unspecified, CGNAT, or documentation range).
+func isInternetRoutable(addr netip.Addr) bool {
+	return !addr.IsPrivate() &&
+		!addr.IsLoopback() &&
+		!addr.IsLinkLocalUnicast() &&
+		!addr.IsMulticast() &&
+		!addr.IsUnspecified() &&
+		!cgnatPrefix.Contains(addr) &&
+		!testNet1.Contains(addr) &&
+		!testNet2.Contains(addr) &&
+		!testNet3.Contains(addr) &&
+		!doc6Prefix.Contains(addr) &&
+		!benchmarkPrefix.Contains(addr) &&
+		addr != broadcastAddr
+}
+
+// kerberosInternetExposedFinding returns a SecurityFinding for a KDC accessible
+// from a publicly routable IP address.
+func kerberosInternetExposedFinding() plugins.SecurityFinding {
+	return plugins.SecurityFinding{
+		ID:          "kerberos-internet-exposed",
+		Severity:    plugins.SeverityMedium,
+		Description: "Kerberos KDC accessible from the internet — exposes AD infrastructure",
+		Evidence:    "KDC listening on a publicly routable IP address",
 	}
 }
 
@@ -429,9 +589,36 @@ func (p *KerberosPlugin) Run(conn net.Conn, timeout time.Duration, target plugin
 	service := plugins.CreateServiceFrom(target, payload, false, "5", plugins.TCP)
 
 	if target.Misconfigs {
-		if checkWeakEtypes(conn, timeout, realm) {
-			service.SecurityFindings = []plugins.SecurityFinding{kerberosWeakEtypesFinding(realm)}
+		var findings []plugins.SecurityFinding
+
+		// Check if the initial detection probe received an AS-REP — this means the
+		// KDC issues tickets to unknown principals without pre-authentication.
+		initialASREP := len(response) >= 5 && response[4] == tagASREP
+		if initialASREP {
+			findings = append(findings, kerberosPreauthNotRequiredFinding(realm, ""))
+		} else if realm != "" {
+			// KDCs (including MIT KDC) close the TCP connection after the first
+			// request. Dial a fresh connection for each misconfig probe.
+			if preauthConn, dialErr := net.DialTimeout("tcp", target.Address.String(), timeout); dialErr == nil {
+				if checkPreauthNotRequired(preauthConn, timeout, realm) {
+					findings = append(findings, kerberosPreauthNotRequiredFinding(realm, preauthPrincipal))
+				}
+				_ = preauthConn.Close()
+			}
 		}
+
+		if weakConn, dialErr := net.DialTimeout("tcp", target.Address.String(), timeout); dialErr == nil {
+			if checkWeakEtypes(weakConn, timeout, realm) {
+				findings = append(findings, kerberosWeakEtypesFinding(realm))
+			}
+			_ = weakConn.Close()
+		}
+
+		if isInternetRoutable(target.Address.Addr()) {
+			findings = append(findings, kerberosInternetExposedFinding())
+		}
+
+		service.SecurityFindings = findings
 	}
 
 	return service, nil

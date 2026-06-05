@@ -18,6 +18,10 @@ import (
 	"net/http"
 	"sort"
 	"testing"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/praetorian-inc/nerva/pkg/plugins"
 )
 
 func TestOpenWebUIFingerprinter_Name(t *testing.T) {
@@ -463,4 +467,75 @@ func TestOpenWebUIFingerprinter_Integration(t *testing.T) {
 	if result.Version != "0.5.20" {
 		t.Errorf("Version = %q, want %q", result.Version, "0.5.20")
 	}
+}
+
+func TestOpenWebUIFingerprinter_SecurityFindings(t *testing.T) {
+	t.Run("without onboarding yields single medium finding", func(t *testing.T) {
+		body := []byte(`{
+			"status": true,
+			"name": "Open WebUI",
+			"version": "0.5.20",
+			"default_locale": "en-US",
+			"oauth": {"providers": {}},
+			"features": {
+				"auth": true,
+				"enable_signup": true,
+				"enable_login_form": true,
+				"enable_api_keys": false,
+				"enable_ldap": false
+			}
+		}`)
+
+		fp := &OpenWebUIFingerprinter{}
+		resp := &http.Response{
+			Header: make(http.Header),
+		}
+
+		result, err := fp.Fingerprint(resp, body)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+
+		require.Equal(t, plugins.SeverityMedium, result.Severity)
+		require.Len(t, result.SecurityFindings, 1)
+		require.Equal(t, "open-webui-unauthenticated-api", result.SecurityFindings[0].ID)
+		require.Equal(t, plugins.SeverityMedium, result.SecurityFindings[0].Severity)
+	})
+
+	t.Run("with onboarding=true yields two findings with high top-level severity", func(t *testing.T) {
+		body := []byte(`{
+			"status": true,
+			"name": "Open WebUI",
+			"version": "0.5.20",
+			"default_locale": "en-US",
+			"onboarding": true,
+			"oauth": {"providers": {}},
+			"features": {
+				"auth": true,
+				"enable_signup": true,
+				"enable_login_form": true,
+				"enable_api_keys": false,
+				"enable_ldap": false
+			}
+		}`)
+
+		fp := &OpenWebUIFingerprinter{}
+		resp := &http.Response{
+			Header: make(http.Header),
+		}
+
+		result, err := fp.Fingerprint(resp, body)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+
+		require.Equal(t, plugins.SeverityHigh, result.Severity)
+		require.Len(t, result.SecurityFindings, 2)
+
+		// First finding: unauthenticated API (medium)
+		require.Equal(t, "open-webui-unauthenticated-api", result.SecurityFindings[0].ID)
+		require.Equal(t, plugins.SeverityMedium, result.SecurityFindings[0].Severity)
+
+		// Second finding: onboarding exposed (high)
+		require.Equal(t, "open-webui-onboarding-exposed", result.SecurityFindings[1].ID)
+		require.Equal(t, plugins.SeverityHigh, result.SecurityFindings[1].Severity)
+	})
 }

@@ -15,6 +15,7 @@
 package rtsp
 
 import (
+	"fmt"
 	"math/rand"
 	"net"
 	"strconv"
@@ -59,7 +60,7 @@ func (p *RTSPPlugin) PortPriority(port uint16) bool {
 */
 
 func (p *RTSPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
-	cseq := strconv.Itoa(rand.Intn(10000)) //nolint:gosec
+	cseq := strconv.Itoa(rand.Intn(10000)) //#nosec G404 -- CSeq is not security-sensitive //nolint:gosec
 
 	requestString := strings.Join([]string{
 		"OPTIONS rtsp://example.com RTSP/1.0\r\n",
@@ -111,10 +112,72 @@ func (p *RTSPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 		payload := plugins.ServiceRtsp{
 			ServerInfo: serverinfo,
 		}
-		return plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP), nil
+		service := plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP)
+		if target.Misconfigs && !strings.ContainsAny(target.Host, "\r\n") {
+			describeCseq := strconv.Itoa(rand.Intn(10000)) //#nosec G404 -- CSeq is not security-sensitive //nolint:gosec
+			// Probes the common /stream default path. Servers using other paths may not generate this finding.
+			hostPort := net.JoinHostPort(target.Host, strconv.Itoa(int(target.Address.Port())))
+			describeRequest := fmt.Sprintf(
+				"DESCRIBE rtsp://%s/stream RTSP/1.0\r\nCSeq: %s\r\nAccept: application/sdp\r\n\r\n",
+				hostPort, describeCseq,
+			)
+			describeResponse, describeErr := utils.SendRecv(conn, []byte(describeRequest), timeout)
+			if describeErr == nil && len(describeResponse) > 0 {
+				statusCode := parseRTSPStatusCode(string(describeResponse))
+				if statusCode == 200 {
+					service.AnonymousAccess = true
+					service.SecurityFindings = []plugins.SecurityFinding{{
+						ID:          "rtsp-unauthenticated-stream",
+						Severity:    plugins.SeverityHigh,
+						Description: "RTSP stream accessible without authentication",
+						Evidence:    sanitizeEvidence(string(describeResponse)),
+					}}
+				}
+			}
+		}
+		return service, nil
 	}
 
 	return nil, nil
+}
+
+// sanitizeEvidence extracts the first line, caps at 256 bytes, and strips control characters.
+func sanitizeEvidence(raw string) string {
+	if idx := strings.IndexAny(raw, "\r\n"); idx != -1 {
+		raw = raw[:idx]
+	}
+	if len(raw) > 256 {
+		raw = raw[:256]
+	}
+	var b strings.Builder
+	for _, r := range raw {
+		if r >= 0x20 && r != 0x7f {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// parseRTSPStatusCode extracts the status code from an RTSP response line.
+// Expected format: "RTSP/1.0 200 OK\r\n..."
+func parseRTSPStatusCode(response string) int {
+	const prefix = "RTSP/1.0 "
+	if !strings.HasPrefix(response, prefix) {
+		return 0
+	}
+	rest := response[len(prefix):]
+	end := strings.IndexAny(rest, " \r\n")
+	if end == -1 {
+		end = len(rest)
+	}
+	if end != 3 {
+		return 0
+	}
+	code, err := strconv.Atoi(rest[:end])
+	if err != nil {
+		return 0
+	}
+	return code
 }
 
 func (p *RTSPPlugin) Name() string {

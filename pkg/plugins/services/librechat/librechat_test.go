@@ -646,3 +646,143 @@ func TestLibreChatTLSPlugin_Metadata(t *testing.T) {
 	assert.False(t, plugin.PortPriority(3080))
 	assert.False(t, plugin.PortPriority(80))
 }
+
+func TestLibreChatTLSSecurityFindings(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/":
+			w.Header().Set("Content-Type", "text/html")
+			fmt.Fprintf(w, `<html><head><script type="module" crossorigin src="/assets/index-tls-sec.js"></script></head></html>`)
+		case "/assets/index-tls-sec.js":
+			w.Header().Set("Content-Type", "application/javascript")
+			fmt.Fprintf(w, `(function(){e.VERSION="v0.9.1";console.log("LibreChat")})()`)
+		case "/health":
+			w.WriteHeader(200)
+			fmt.Fprintf(w, "OK")
+		default:
+			w.WriteHeader(404)
+		}
+	})
+
+	t.Run("with Misconfigs=true yields AnonymousAccess and unauthenticated finding", func(t *testing.T) {
+		server := httptest.NewServer(handler)
+		defer server.Close()
+
+		addr := parseTestServerAddr(t, server.URL)
+		conn, err := net.DialTimeout("tcp", strings.TrimPrefix(server.URL, "http://"), 5*time.Second)
+		require.NoError(t, err)
+		defer conn.Close()
+
+		target := plugins.Target{
+			Host:       addr.Addr().String(),
+			Address:    addr,
+			Misconfigs: true,
+		}
+
+		plugin := &LibreChatTLSPlugin{}
+		service, err := plugin.Run(conn, 5*time.Second, target)
+
+		require.NoError(t, err)
+		require.NotNil(t, service)
+
+		assert.True(t, service.AnonymousAccess)
+		require.Len(t, service.SecurityFindings, 1)
+		assert.Equal(t, "librechat-unauthenticated", service.SecurityFindings[0].ID)
+		assert.Equal(t, plugins.SeverityMedium, service.SecurityFindings[0].Severity)
+	})
+
+	t.Run("with Misconfigs=false yields no SecurityFindings", func(t *testing.T) {
+		server := httptest.NewServer(handler)
+		defer server.Close()
+
+		addr := parseTestServerAddr(t, server.URL)
+		conn, err := net.DialTimeout("tcp", strings.TrimPrefix(server.URL, "http://"), 5*time.Second)
+		require.NoError(t, err)
+		defer conn.Close()
+
+		target := plugins.Target{
+			Host:       addr.Addr().String(),
+			Address:    addr,
+			Misconfigs: false,
+		}
+
+		plugin := &LibreChatTLSPlugin{}
+		service, err := plugin.Run(conn, 5*time.Second, target)
+
+		require.NoError(t, err)
+		require.NotNil(t, service)
+
+		assert.False(t, service.AnonymousAccess)
+		assert.Empty(t, service.SecurityFindings)
+	})
+}
+
+func TestLibreChatSecurityFindings(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/":
+			w.Header().Set("Content-Type", "text/html")
+			fmt.Fprintf(w, `<html><head><script type="module" crossorigin src="/assets/index-test.js"></script></head></html>`)
+		case "/assets/index-test.js":
+			w.Header().Set("Content-Type", "application/javascript")
+			fmt.Fprintf(w, `(function(){e.VERSION="v0.8.2";console.log("LibreChat")})()`)
+		case "/health":
+			w.WriteHeader(200)
+			fmt.Fprintf(w, "OK")
+		default:
+			w.WriteHeader(404)
+		}
+	})
+
+	t.Run("with Misconfigs=true yields AnonymousAccess and unauthenticated finding", func(t *testing.T) {
+		server := httptest.NewServer(handler)
+		defer server.Close()
+
+		addr := parseTestServerAddr(t, server.URL)
+		conn, err := net.DialTimeout("tcp", strings.TrimPrefix(server.URL, "http://"), 5*time.Second)
+		require.NoError(t, err)
+		defer conn.Close()
+
+		target := plugins.Target{
+			Host:       addr.Addr().String(),
+			Address:    addr,
+			Misconfigs: true,
+		}
+
+		plugin := &LibreChatPlugin{}
+		service, err := plugin.Run(conn, 5*time.Second, target)
+
+		require.NoError(t, err)
+		require.NotNil(t, service)
+
+		assert.True(t, service.AnonymousAccess)
+		require.Len(t, service.SecurityFindings, 1)
+		assert.Equal(t, "librechat-unauthenticated", service.SecurityFindings[0].ID)
+		assert.Equal(t, plugins.SeverityMedium, service.SecurityFindings[0].Severity)
+	})
+
+	t.Run("with Misconfigs=false yields no SecurityFindings", func(t *testing.T) {
+		server := httptest.NewServer(handler)
+		defer server.Close()
+
+		addr := parseTestServerAddr(t, server.URL)
+		conn, err := net.DialTimeout("tcp", strings.TrimPrefix(server.URL, "http://"), 5*time.Second)
+		require.NoError(t, err)
+		defer conn.Close()
+
+		target := plugins.Target{
+			Host:       addr.Addr().String(),
+			Address:    addr,
+			Misconfigs: false,
+		}
+
+		plugin := &LibreChatPlugin{}
+		service, err := plugin.Run(conn, 5*time.Second, target)
+
+		require.NoError(t, err)
+		require.NotNil(t, service)
+
+		assert.False(t, service.AnonymousAccess)
+		assert.Empty(t, service.SecurityFindings)
+	})
+}
