@@ -110,6 +110,14 @@ func TestKibanaFingerprinter_Match(t *testing.T) {
 			contentType: "text/html",
 			want:        true,
 		},
+		{
+			name:       "503 with kbn-name → true (startup grace)",
+			statusCode: 503,
+			headers: map[string]string{
+				"kbn-name": "kibana",
+			},
+			want: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -144,7 +152,7 @@ func TestKibanaFingerprinter_Fingerprint_APIStatus(t *testing.T) {
 		wantAnonymousAccess bool
 		wantSeverityHigh    bool
 		wantBuildHash       bool
-		wantClusterUUID     bool
+		wantInstanceUUID    bool
 	}{
 		{
 			name: "full Kibana 8.12.0 status response → version extracted, anonymous_access, SeverityHigh",
@@ -169,7 +177,7 @@ func TestKibanaFingerprinter_Fingerprint_APIStatus(t *testing.T) {
 			wantAnonymousAccess: true,
 			wantSeverityHigh:    true,
 			wantBuildHash:       true,
-			wantClusterUUID:     true,
+			wantInstanceUUID:    true,
 		},
 		{
 			name: "Kibana 7.17.3 status response → version extracted",
@@ -223,6 +231,16 @@ func TestKibanaFingerprinter_Fingerprint_APIStatus(t *testing.T) {
 			wantNil: true,
 		},
 		{
+			name: "version.number present but no name/uuid/build_hash → not Kibana",
+			body: `{
+				"version": {
+					"number": "8.12.0"
+				},
+				"status": {"overall": {"state": "green"}}
+			}`,
+			wantNil: true,
+		},
+		{
 			name:    "plain JSON unrelated to Kibana → not matched",
 			body:    `{"status": "ok", "service": "my-api"}`,
 			wantNil: true,
@@ -231,6 +249,24 @@ func TestKibanaFingerprinter_Fingerprint_APIStatus(t *testing.T) {
 			name:    "invalid JSON → not matched",
 			body:    `not json at all`,
 			wantNil: true,
+		},
+		{
+			name: "Kibana 8.x status with level instead of state",
+			body: `{
+				"name": "kibana-8x",
+				"uuid": "uuid-8x",
+				"version": {
+					"number": "8.15.0",
+					"build_hash": "abc123",
+					"build_number": 1
+				},
+				"status": {"overall": {"level": "available"}}
+			}`,
+			wantVersion:         "8.15.0",
+			wantCPE:             "cpe:2.3:a:elastic:kibana:8.15.0:*:*:*:*:*:*:*",
+			wantDetectionMethod: "api_status",
+			wantAnonymousAccess: true,
+			wantSeverityHigh:    true,
 		},
 	}
 
@@ -281,9 +317,9 @@ func TestKibanaFingerprinter_Fingerprint_APIStatus(t *testing.T) {
 				assert.True(t, hasBuildHash, "expected build_hash in metadata")
 			}
 
-			if tt.wantClusterUUID {
-				_, hasUUID := result.Metadata["cluster_uuid"]
-				assert.True(t, hasUUID, "expected cluster_uuid in metadata")
+			if tt.wantInstanceUUID {
+				_, hasUUID := result.Metadata["instance_uuid"]
+				assert.True(t, hasUUID, "expected instance_uuid in metadata")
 			}
 		})
 	}
@@ -312,10 +348,9 @@ func TestKibanaFingerprinter_Fingerprint_WebUI(t *testing.T) {
 			wantAuthEnabled:     true,
 		},
 		{
-			name:                "title contains 'Elastic' → web_ui detection",
-			body:                `<html><head><title>Elastic</title></head><body></body></html>`,
-			wantDetectionMethod: "web_ui",
-			wantAuthEnabled:     true,
+			name:    "title contains only 'Elastic' → not matched (too broad)",
+			body:    `<html><head><title>Elastic</title></head><body></body></html>`,
+			wantNil: true,
 		},
 		{
 			name:                "title 'Kibana - Login' → web_ui detection",
@@ -426,7 +461,7 @@ func TestKibanaFingerprinter_Fingerprint_StatusCodeFilters(t *testing.T) {
 		{name: "401 → not nil", statusCode: 401, wantNil: false},
 		{name: "404 → not nil", statusCode: 404, wantNil: false},
 		{name: "500 → nil", statusCode: 500, wantNil: true},
-		{name: "503 → nil", statusCode: 503, wantNil: true},
+		{name: "503 → not nil (startup grace)", statusCode: 503, wantNil: false},
 		{name: "199 → nil", statusCode: 199, wantNil: true},
 	}
 

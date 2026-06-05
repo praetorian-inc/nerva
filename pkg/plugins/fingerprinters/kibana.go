@@ -88,14 +88,16 @@ type kibanaStatusBlock struct {
 }
 
 // kibanaOverallState is the overall state object within the status block.
+// Kibana ≤7.x uses "state"; Kibana 8.x uses "level".
 type kibanaOverallState struct {
 	State string `json:"state"`
+	Level string `json:"level"`
 }
 
-// kibanaTitleRegex matches the Kibana or Elastic login/app page title tag.
+// kibanaTitleRegex matches the Kibana login/app page title tag.
 // Structural match — the <title> tag is a definitive page identity marker.
-// Examples: "<title>Kibana</title>", "<title>Elastic</title>", "<title>Kibana - Dashboard</title>"
-var kibanaTitleRegex = regexp.MustCompile(`(?i)<title[^>]*>[^<]*(?:kibana|elastic)[^<]*</title>`)
+// Examples: "<title>Kibana</title>", "<title>Kibana - Dashboard</title>"
+var kibanaTitleRegex = regexp.MustCompile(`(?i)<title[^>]*>[^<]*kibana[^<]*</title>`)
 
 // kibanaInjectedMetaRegex matches the <kbn-injected-metadata> element that
 // Kibana injects into every page it serves. This is a structural HTML marker
@@ -134,10 +136,11 @@ func (f *KibanaFingerprinter) ProbeAccept() string {
 // Body-scan candidates: text/html (login page / web UI) and application/json
 // (status API). Other content types are not worth scanning.
 //
-// 5xx responses are rejected: server errors do not provide usable fingerprint
-// data. Responses below 200 (informational) are also rejected.
+// 5xx responses are rejected (except 503, which Kibana returns during startup
+// while Elasticsearch is not yet ready — kbn-* headers are still present).
+// Responses below 200 (informational) are also rejected.
 func (f *KibanaFingerprinter) Match(resp *http.Response) bool {
-	if resp.StatusCode < 200 || resp.StatusCode >= 500 {
+	if resp.StatusCode < 200 || (resp.StatusCode >= 500 && resp.StatusCode != 503) {
 		return false
 	}
 
@@ -169,7 +172,7 @@ func (f *KibanaFingerprinter) Match(resp *http.Response) bool {
 // When only the login page is detected, authentication_enabled=true is set.
 func (f *KibanaFingerprinter) Fingerprint(resp *http.Response, body []byte) (*FingerprintResult, error) {
 	// Gate 1: status filter.
-	if resp.StatusCode < 200 || resp.StatusCode >= 500 {
+	if resp.StatusCode < 200 || (resp.StatusCode >= 500 && resp.StatusCode != 503) {
 		return nil, nil
 	}
 
@@ -197,8 +200,10 @@ func (f *KibanaFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fi
 	var statusResp kibanaStatusResponse
 	hasAPISignal := false
 	if err := json.Unmarshal(body, &statusResp); err == nil {
-		// Only treat as Kibana status if version.number is present (not just any JSON).
-		if statusResp.Version.Number != "" {
+		// Require version.number AND at least one Kibana-specific field (name, uuid,
+		// or build_hash) to avoid matching arbitrary JSON with a version.number key.
+		if statusResp.Version.Number != "" &&
+			(statusResp.Name != "" || statusResp.UUID != "" || statusResp.Version.BuildHash != "") {
 			hasAPISignal = true
 		}
 	}
@@ -271,10 +276,14 @@ func (f *KibanaFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fi
 			metadata["build_number"] = statusResp.Version.BuildNumber
 		}
 		if statusResp.UUID != "" {
-			metadata["cluster_uuid"] = statusResp.UUID
+			metadata["instance_uuid"] = statusResp.UUID
 		}
-		if statusResp.Status.Overall.State != "" {
-			metadata["status_state"] = statusResp.Status.Overall.State
+		statusState := statusResp.Status.Overall.State
+		if statusState == "" {
+			statusState = statusResp.Status.Overall.Level
+		}
+		if statusState != "" {
+			metadata["status_state"] = statusState
 		}
 	} else if hasWebUISignal {
 		// Login page detected — authentication is (likely) enabled.
