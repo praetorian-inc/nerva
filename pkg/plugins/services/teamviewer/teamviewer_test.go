@@ -257,6 +257,45 @@ func TestTeamViewerPlugin_Run_EmptyResponse(t *testing.T) {
 	assert.Nil(t, service)
 }
 
+func TestTeamViewerPlugin_Run_SecurityFinding_MisconfigsTrue(t *testing.T) {
+	conn := &mockConn{
+		readData: []byte{0x17, 0x24, 0x11, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00},
+	}
+
+	plugin := &TeamViewerPlugin{}
+	target := plugins.Target{
+		Address:    netip.MustParseAddrPort("192.168.1.1:5938"),
+		Misconfigs: true,
+	}
+
+	service, err := plugin.Run(conn, time.Second*5, target)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, service)
+	assert.Len(t, service.SecurityFindings, 1)
+	assert.Equal(t, "teamviewer-exposed", service.SecurityFindings[0].ID)
+	assert.Equal(t, plugins.SeverityMedium, service.SecurityFindings[0].Severity)
+	assert.Equal(t, "magic=1724 cmd=0x11", service.SecurityFindings[0].Evidence)
+}
+
+func TestTeamViewerPlugin_Run_SecurityFinding_MisconfigsFalse(t *testing.T) {
+	conn := &mockConn{
+		readData: []byte{0x17, 0x24, 0x11, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00},
+	}
+
+	plugin := &TeamViewerPlugin{}
+	target := plugins.Target{
+		Address:    netip.MustParseAddrPort("192.168.1.1:5938"),
+		Misconfigs: false,
+	}
+
+	service, err := plugin.Run(conn, time.Second*5, target)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, service)
+	assert.Empty(t, service.SecurityFindings)
+}
+
 func TestTeamViewerPlugin_Run_TooShortResponse(t *testing.T) {
 	conn := &mockConn{
 		readData: []byte{0x17, 0x24}, // only 2 bytes, need 3

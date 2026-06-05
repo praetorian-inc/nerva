@@ -92,7 +92,16 @@ func (p *AnyDeskPlugin) Run(conn net.Conn, timeout time.Duration, target plugins
 		CPEs:        []string{buildAnyDeskCPE("")},
 	}
 
-	return plugins.CreateServiceFrom(target, payload, true, "", plugins.TCPTLS), nil
+	service := plugins.CreateServiceFrom(target, payload, true, "", plugins.TCPTLS)
+	if target.Misconfigs {
+		service.SecurityFindings = []plugins.SecurityFinding{{
+			ID:          "anydesk-exposed",
+			Severity:    plugins.SeverityMedium,
+			Description: "AnyDesk remote desktop listener exposed to the network",
+			Evidence:    cert.Subject.CommonName,
+		}}
+	}
+	return service, nil
 }
 
 func (p *AnyDeskPlugin) PortPriority(port uint16) bool {

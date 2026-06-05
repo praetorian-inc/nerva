@@ -15,6 +15,7 @@
 package teamviewer
 
 import (
+	"encoding/hex"
 	"net"
 	"time"
 
@@ -104,9 +105,18 @@ func (p *TeamViewerPlugin) Run(conn net.Conn, timeout time.Duration, target plug
 		return nil, nil
 	}
 
-	return plugins.CreateServiceFrom(target, plugins.ServiceTeamViewer{
+	service := plugins.CreateServiceFrom(target, plugins.ServiceTeamViewer{
 		CPEs: []string{"cpe:2.3:a:teamviewer:teamviewer:*:*:*:*:*:*:*:*"},
-	}, false, "", plugins.TCP), nil
+	}, false, "", plugins.TCP)
+	if target.Misconfigs {
+		service.SecurityFindings = []plugins.SecurityFinding{{
+			ID:          "teamviewer-exposed",
+			Severity:    plugins.SeverityMedium,
+			Description: "TeamViewer remote access listener exposed to the network",
+			Evidence:    "magic=" + hex.EncodeToString(response[:2]) + " cmd=0x" + hex.EncodeToString(response[2:3]),
+		}}
+	}
+	return service, nil
 }
 
 func (p *TeamViewerPlugin) Name() string {

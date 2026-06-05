@@ -24,6 +24,7 @@ import (
 	"math/big"
 	"net"
 	"net/netip"
+	"strings"
 	"testing"
 	"time"
 
@@ -240,6 +241,84 @@ func TestAnyDeskPlugin_Run_NonTLSConn(t *testing.T) {
 	}
 	if result != nil {
 		t.Errorf("Run() = %+v, want nil for non-TLS conn", result)
+	}
+}
+
+func TestAnyDeskPlugin_Run_SecurityFinding_MisconfigsTrue(t *testing.T) {
+	cert, err := generateTestCert("AnyDesk Client", "AnyDesk Client")
+	if err != nil {
+		t.Fatalf("failed to generate cert: %v", err)
+	}
+
+	addr, cleanup := startTLSServer(t, cert)
+	defer cleanup()
+
+	tlsConn, err := tls.Dial("tcp", addr, &tls.Config{InsecureSkipVerify: true})
+	if err != nil {
+		t.Fatalf("failed to dial TLS: %v", err)
+	}
+	defer tlsConn.Close()
+
+	target := plugins.Target{
+		Address:    netip.MustParseAddrPort(addr),
+		Misconfigs: true,
+	}
+
+	p := &AnyDeskPlugin{}
+	service, err := p.Run(tlsConn, 5*time.Second, target)
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if service == nil {
+		t.Fatal("Run() returned nil, expected AnyDesk detection")
+	}
+
+	if len(service.SecurityFindings) != 1 {
+		t.Fatalf("len(SecurityFindings) = %d, want 1", len(service.SecurityFindings))
+	}
+	finding := service.SecurityFindings[0]
+	if finding.ID != "anydesk-exposed" {
+		t.Errorf("SecurityFinding.ID = %q, want %q", finding.ID, "anydesk-exposed")
+	}
+	if finding.Severity != plugins.SeverityMedium {
+		t.Errorf("SecurityFinding.Severity = %q, want %q", finding.Severity, plugins.SeverityMedium)
+	}
+	if !strings.Contains(finding.Evidence, "AnyDesk Client") {
+		t.Errorf("SecurityFinding.Evidence = %q, want it to contain %q", finding.Evidence, "AnyDesk Client")
+	}
+}
+
+func TestAnyDeskPlugin_Run_SecurityFinding_MisconfigsFalse(t *testing.T) {
+	cert, err := generateTestCert("AnyDesk Client", "AnyDesk Client")
+	if err != nil {
+		t.Fatalf("failed to generate cert: %v", err)
+	}
+
+	addr, cleanup := startTLSServer(t, cert)
+	defer cleanup()
+
+	tlsConn, err := tls.Dial("tcp", addr, &tls.Config{InsecureSkipVerify: true})
+	if err != nil {
+		t.Fatalf("failed to dial TLS: %v", err)
+	}
+	defer tlsConn.Close()
+
+	target := plugins.Target{
+		Address:    netip.MustParseAddrPort(addr),
+		Misconfigs: false,
+	}
+
+	p := &AnyDeskPlugin{}
+	service, err := p.Run(tlsConn, 5*time.Second, target)
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if service == nil {
+		t.Fatal("Run() returned nil, expected AnyDesk detection")
+	}
+
+	if len(service.SecurityFindings) != 0 {
+		t.Errorf("len(SecurityFindings) = %d, want 0", len(service.SecurityFindings))
 	}
 }
 
