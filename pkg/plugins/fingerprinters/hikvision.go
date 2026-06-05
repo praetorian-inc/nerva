@@ -78,11 +78,11 @@ import (
 // hikvisionServerRe matches the distinctive Hikvision server headers.
 // "DNVRS-Webs" and "App-webs/" are exclusive to Hikvision/HiSilicon devices.
 // Anchored to prevent prefix/suffix injection via CPE metacharacters.
-var hikvisionServerRe = regexp.MustCompile(`^(?:DNVRS-Webs|App-webs/)`)
+var hikvisionServerRe = regexp.MustCompile(`^(?:DNVRS-Webs$|App-webs/)`)
 
-// isapiRootRe matches the ISAPI DeviceInfo XML root element.
-// The xmlns attribute confirms this is a genuine ISAPI response, not incidental XML.
-var isapiRootRe = regexp.MustCompile(`(?i)<DeviceInfo\b[^>]*>`)
+// isapiRootRe matches the ISAPI DeviceInfo XML root element with the isapi.org namespace.
+// Requiring xmlns="...isapi.org..." prevents matching non-Hikvision XML that happens to use <DeviceInfo>.
+var isapiRootRe = regexp.MustCompile(`(?i)<DeviceInfo\b[^>]*\bxmlns\s*=\s*["'][^"']*isapi\.org[^"']*["'][^>]*>`)
 
 // isapiModelRe extracts the model from <model>...</model> in the ISAPI XML.
 // Bounded at 128 chars; accepts alphanumeric, spaces, and common separators
@@ -95,7 +95,7 @@ var isapiDeviceNameRe = regexp.MustCompile(`(?i)<deviceName>\s*([A-Za-z0-9][A-Za
 // isapiFirmwareRe extracts the firmware version string from <firmwareVersion>.
 // Accepts an optional leading "V" prefix (e.g., "V5.4.5") that is stripped
 // before CPE emission. Bounded quantifiers prevent catastrophic backtracking.
-var isapiFirmwareRe = regexp.MustCompile(`(?i)<firmwareVersion>\s*V?([0-9]+(?:\.[0-9]+){1,4}(?:\.[0-9]+)*)\s*</firmwareVersion>`)
+var isapiFirmwareRe = regexp.MustCompile(`(?i)<firmwareVersion>\s*V?([0-9]+(?:\.[0-9]+){1,8})\s*</firmwareVersion>`)
 
 // isapiDeviceTypeRe extracts the device type (IPCamera, NVR, DVR, etc.).
 var isapiDeviceTypeRe = regexp.MustCompile(`(?i)<deviceType>\s*([A-Za-z0-9][A-Za-z0-9 \-_.]{0,63})\s*</deviceType>`)

@@ -210,6 +210,38 @@ func TestDahuaFingerprinter_Fingerprint_ActiveProbe(t *testing.T) {
 		require.NotNil(t, result)
 		assert.Equal(t, "magicbox", result.Metadata["detection_method"])
 	})
+
+	t.Run("active probe path but non-magicBox body → nil (no false positive)", func(t *testing.T) {
+		resp := &http.Response{
+			StatusCode: 200,
+			Header:     make(http.Header),
+			Request: &http.Request{
+				URL: &url.URL{Path: "/cgi-bin/magicBox.cgi"},
+			},
+		}
+		resp.Header.Set("Content-Type", "text/html")
+		body := []byte(`<html><head><title>404 Not Found</title></head><body><h1>Not Found</h1></body></html>`)
+
+		result, err := fp.Fingerprint(resp, body)
+		require.NoError(t, err)
+		assert.Nil(t, result, "generic 404 page on magicBox path must NOT trigger Dahua detection")
+	})
+
+	t.Run("active probe path with plain-text non-magicBox body → nil", func(t *testing.T) {
+		resp := &http.Response{
+			StatusCode: 200,
+			Header:     make(http.Header),
+			Request: &http.Request{
+				URL: &url.URL{Path: "/cgi-bin/magicBox.cgi"},
+			},
+		}
+		resp.Header.Set("Content-Type", "text/plain")
+		body := []byte("OK\n")
+
+		result, err := fp.Fingerprint(resp, body)
+		require.NoError(t, err)
+		assert.Nil(t, result, "plain-text 'OK' on magicBox path must NOT trigger Dahua detection")
+	})
 }
 
 // ── Fingerprint: web UI (login page) detection ────────────────────────────────

@@ -56,6 +56,7 @@ a wildcard is used when the model cannot be determined.
 package fingerprinters
 
 import (
+	"bytes"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -192,7 +193,7 @@ func (f *DahuaFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fin
 	// Attempt magicBox detection: plain-text body starting with "type=".
 	model, version, isMagicBox := extractDahuaMagicBoxInfo(body)
 
-	if isMagicBox || isActiveProbe {
+	if isMagicBox {
 		// magicBox response indicates unauthenticated device-info access.
 		metadata := map[string]any{
 			"vendor":           "Dahua",
@@ -287,14 +288,13 @@ func extractDahuaMagicBoxInfo(body []byte) (model, version string, isMagicBox bo
 		return "", "", false
 	}
 
-	// Match "type=<value>" at start of body (may have leading/trailing whitespace).
-	trimmed := strings.TrimSpace(string(body))
-	m := dahuaMagicBoxTypeRegex.FindStringSubmatch(trimmed)
+	trimmed := bytes.TrimSpace(body)
+	m := dahuaMagicBoxTypeRegex.FindSubmatch(trimmed)
 	if len(m) < 2 {
 		return "", "", false
 	}
 
-	rawModel := m[1]
+	rawModel := string(m[1])
 	// CPE injection defense: reject if model contains CPE metacharacters.
 	if strings.ContainsAny(rawModel, ":*") {
 		return "", "", false

@@ -127,6 +127,12 @@ func TestHikvisionFingerprinter_Match(t *testing.T) {
 			server:     "DNVRS-Webs",
 			want:       true,
 		},
+		{
+			name:       "DNVRS-Webs-Extended server header → false (exact match required)",
+			statusCode: 200,
+			server:     "DNVRS-Webs-Extended",
+			want:       false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -321,6 +327,16 @@ func TestHikvisionFingerprinter_Fingerprint_Invalid(t *testing.T) {
 			statusCode: 200,
 			server:     "webserver",
 			body:       `<html><head><title>Dahua Web Service</title></head><body></body></html>`,
+		},
+		{
+			name:       "DeviceInfo XML without ISAPI namespace → nil",
+			statusCode: 200,
+			body:       `<?xml version="1.0" encoding="UTF-8"?><DeviceInfo><model>SomeDevice</model><firmwareVersion>V1.0.0</firmwareVersion></DeviceInfo>`,
+		},
+		{
+			name:       "DeviceInfo XML with non-ISAPI namespace → nil",
+			statusCode: 200,
+			body:       `<?xml version="1.0" encoding="UTF-8"?><DeviceInfo xmlns="http://www.example.com/schema"><model>SomeDevice</model></DeviceInfo>`,
 		},
 	}
 
