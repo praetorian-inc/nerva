@@ -24,8 +24,8 @@ instances by matching HTML body content against four signals:
  3. A div with id="__nuxt" (Nuxt.js SPA container)
  4. window.__NUXT__ runtime object (Nuxt.js hydration marker)
 
-Detection fires when at least 2 of 4 signals match, reducing false positives
-from generic Nuxt.js apps (which trigger signals 3 and/or 4 without 1 or 2).
+Detection fires when at least 1 Doccano-specific signal matches AND the total
+signal count is at least 2 (i.e. at least one framework signal also matches).
 
 # Why Passive
 
@@ -41,12 +41,22 @@ responses. Version strings appear only in authenticated API responses or
 build artifacts, making reliable passive extraction impossible. The CPE uses
 a wildcard version component ("*") per the mlflow.go pattern.
 
-# Signal Gate (≥2 of 4)
+# Signal Gate (≥1 specific AND total ≥2)
 
-Requiring at least two independent signals prevents false positives from:
-  - Generic Nuxt.js apps (id="__nuxt" + window.__NUXT__ without doccano title/meta)
+Signals 1 and 2 are Doccano-specific. Signals 3 and 4 are generic Nuxt.js
+markers that co-occur on every Nuxt.js application (including non-Doccano
+apps such as Kong Developer Portal). Because signals 3 and 4 always appear
+together on any Nuxt.js SPA, a gate of "≥2 of 4" was insufficient: two
+correlated framework signals could satisfy it without any Doccano-specific
+evidence.
+
+The current gate requires:
+  - specificSignals >= 1  (title or meta description must match)
+  - specificSignals + frameworkSignals >= 2  (at least one framework signal too)
+
+This prevents false positives from:
+  - Generic Nuxt.js apps (id="__nuxt" + window.__NUXT__ with no doccano title/meta)
   - Pages that mention "doccano" in prose (title without Nuxt markers)
-  - Non-Doccano annotation tools with similar meta descriptions
 */
 package fingerprinters
 
@@ -83,28 +93,32 @@ func (f *DoccanoFingerprinter) Match(resp *http.Response) bool {
 	return ct == "" || strings.Contains(ct, "text/html") || strings.Contains(ct, "application/xhtml+xml")
 }
 
-// Fingerprint detects Doccano by counting body signals. Returns nil if resp is nil,
-// body is empty, or fewer than 2 of 4 signals match.
+// Fingerprint detects Doccano by evaluating body signals. Returns nil if resp is nil,
+// body is empty, or the signal gate is not satisfied. Detection requires at least
+// 1 Doccano-specific signal (title or meta description) AND a combined signal
+// count of at least 2.
 func (f *DoccanoFingerprinter) Fingerprint(resp *http.Response, body []byte) (*FingerprintResult, error) {
 	if resp == nil || len(body) == 0 {
 		return nil, nil
 	}
 
-	signals := 0
+	specificSignals := 0
 	if doccanoTitlePattern.Match(body) {
-		signals++
+		specificSignals++
 	}
 	if doccanoMetaDescriptionPattern.Match(body) {
-		signals++
-	}
-	if doccanoNuxtContainerPattern.Match(body) {
-		signals++
-	}
-	if doccanoNuxtRuntimePattern.Match(body) {
-		signals++
+		specificSignals++
 	}
 
-	if signals < 2 {
+	frameworkSignals := 0
+	if doccanoNuxtContainerPattern.Match(body) {
+		frameworkSignals++
+	}
+	if doccanoNuxtRuntimePattern.Match(body) {
+		frameworkSignals++
+	}
+
+	if specificSignals < 1 || (specificSignals+frameworkSignals) < 2 {
 		return nil, nil
 	}
 
