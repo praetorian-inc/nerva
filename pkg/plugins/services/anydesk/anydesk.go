@@ -100,6 +100,7 @@ func (p *AnyDeskPlugin) Run(conn net.Conn, timeout time.Duration, target plugins
 			Description: "AnyDesk remote desktop listener exposed to the network",
 			Evidence:    cert.Subject.CommonName,
 		}}
+		service.SecurityFindings = append(service.SecurityFindings, plugins.CheckTLS(conn)...)
 	}
 	return service, nil
 }

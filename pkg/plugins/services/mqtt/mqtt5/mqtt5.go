@@ -73,7 +73,11 @@ func (p *MQTT5Plugin) Type() plugins.Protocol {
 }
 
 func (p *TLSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
-	return Run(conn, timeout, true, target)
+	service, err := Run(conn, timeout, true, target)
+	if err == nil && service != nil && target.Misconfigs {
+		service.SecurityFindings = append(service.SecurityFindings, plugins.CheckTLS(conn)...)
+	}
+	return service, err
 }
 
 func (p *TLSPlugin) PortPriority(i uint16) bool {

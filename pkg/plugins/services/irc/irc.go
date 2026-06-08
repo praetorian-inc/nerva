@@ -463,5 +463,9 @@ func (p *TLSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 		ver = result.serverSoftware
 	}
 
-	return plugins.CreateServiceFrom(target, payload, true, ver, plugins.TCPTLS), nil
+	service := plugins.CreateServiceFrom(target, payload, true, ver, plugins.TCPTLS)
+	if target.Misconfigs {
+		service.SecurityFindings = append(service.SecurityFindings, plugins.CheckTLS(conn)...)
+	}
+	return service, nil
 }

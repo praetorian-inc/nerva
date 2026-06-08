@@ -379,7 +379,11 @@ func (p *TLSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 		CPEs:           cpes,
 	}
 
-	return plugins.CreateServiceFrom(target, payload, true, version, plugins.TCPTLS), nil
+	service := plugins.CreateServiceFrom(target, payload, true, version, plugins.TCPTLS)
+	if target.Misconfigs {
+		service.SecurityFindings = append(service.SecurityFindings, plugins.CheckTLS(conn)...)
+	}
+	return service, nil
 }
 
 func (p *TLSPlugin) PortPriority(port uint16) bool {

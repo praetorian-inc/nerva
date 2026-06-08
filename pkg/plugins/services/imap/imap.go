@@ -184,7 +184,11 @@ func (p *TLSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 	payload := plugins.ServiceIMAPS{
 		Banner: result,
 	}
-	return plugins.CreateServiceFrom(target, payload, true, "", plugins.TCP), nil
+	service := plugins.CreateServiceFrom(target, payload, true, "", plugins.TCP)
+	if target.Misconfigs {
+		service.SecurityFindings = append(service.SecurityFindings, plugins.CheckTLS(conn)...)
+	}
+	return service, nil
 }
 
 func (p *TLSPlugin) PortPriority(i uint16) bool {

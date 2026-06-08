@@ -140,7 +140,11 @@ func (p *Plugin) Priority() int {
 
 // TLSPlugin - Binary protocol on port 6651 (TCPTLS)
 func (p *TLSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
-	return detectPulsarBinary(conn, true, timeout, target)
+	service, err := detectPulsarBinary(conn, true, timeout, target)
+	if err == nil && service != nil && target.Misconfigs {
+		service.SecurityFindings = append(service.SecurityFindings, plugins.CheckTLS(conn)...)
+	}
+	return service, err
 }
 
 func (p *TLSPlugin) PortPriority(port uint16) bool {
@@ -182,7 +186,11 @@ func (p *AdminPlugin) Priority() int {
 
 // AdminTLSPlugin - HTTPS admin API on port 8443 (TCPTLS)
 func (p *AdminTLSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
-	return detectPulsarAdmin(conn, true, timeout, target)
+	service, err := detectPulsarAdmin(conn, true, timeout, target)
+	if err == nil && service != nil && target.Misconfigs {
+		service.SecurityFindings = append(service.SecurityFindings, plugins.CheckTLS(conn)...)
+	}
+	return service, err
 }
 
 func (p *AdminTLSPlugin) PortPriority(port uint16) bool {

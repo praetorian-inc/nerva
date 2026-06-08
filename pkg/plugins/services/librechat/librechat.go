@@ -411,6 +411,7 @@ func (p *LibreChatTLSPlugin) Run(conn net.Conn, timeout time.Duration, target pl
 			Description: "LibreChat detected via publicly accessible endpoints; if access controls are not enforced, chat history and configured LLM API keys may be exposed",
 			Evidence:    "LibreChat application root and configuration endpoints responded without credentials",
 		})
+		service.SecurityFindings = append(service.SecurityFindings, plugins.CheckTLS(conn)...)
 	}
 	return service, nil
 }
