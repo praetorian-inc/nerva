@@ -900,6 +900,140 @@ func TestRunWithSplitResponse(t *testing.T) {
 		"server software should be identified from caps in second segment")
 }
 
+// noTLSResponse is a minimal XMPP stream response that does NOT advertise STARTTLS.
+const noTLSResponse = `<?xml version='1.0'?><stream:stream xmlns='jabber:client' xmlns:stream='http://etherx.jabber.org/streams' id='notls123' from='insecure.example.com' version='1.0'><stream:features><mechanisms xmlns='urn:ietf:params:xml:ns:xmpp-sasl'><mechanism>PLAIN</mechanism></mechanisms></stream:features>`
+
+// TestXMPPSecurityFindings verifies that the xmpp-cleartext finding is emitted when STARTTLS is
+// not offered and Misconfigs=true.
+func TestXMPPSecurityFindings(t *testing.T) {
+	listener := startMockXMPPServer(t, noTLSResponse)
+	defer listener.Close()
+
+	addr := listener.Addr().(*net.TCPAddr)
+	addrPort, err := netip.ParseAddrPort(fmt.Sprintf("127.0.0.1:%d", addr.Port))
+	require.NoError(t, err)
+
+	conn, err := net.DialTimeout("tcp", addr.String(), 5*time.Second)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	p := &TCPPlugin{}
+	target := plugins.Target{
+		Address:    addrPort,
+		Host:       "127.0.0.1",
+		Misconfigs: true,
+	}
+
+	svc, err := p.Run(conn, 5*time.Second, target)
+	require.NoError(t, err, "Run() should not return error")
+	require.NotNil(t, svc, "Run() should return a service")
+
+	if len(svc.SecurityFindings) != 1 {
+		t.Fatalf("expected 1 finding, got %d", len(svc.SecurityFindings))
+	}
+	if svc.SecurityFindings[0].ID != "xmpp-cleartext" {
+		t.Errorf("expected finding ID 'xmpp-cleartext', got %q", svc.SecurityFindings[0].ID)
+	}
+	if svc.SecurityFindings[0].Severity != plugins.SeverityMedium {
+		t.Errorf("expected severity medium, got %s", svc.SecurityFindings[0].Severity)
+	}
+}
+
+// TestXMPPSecurityFindingsDisabled verifies that no findings are emitted when Misconfigs=false,
+// even when STARTTLS is absent.
+func TestXMPPSecurityFindingsDisabled(t *testing.T) {
+	listener := startMockXMPPServer(t, noTLSResponse)
+	defer listener.Close()
+
+	addr := listener.Addr().(*net.TCPAddr)
+	addrPort, err := netip.ParseAddrPort(fmt.Sprintf("127.0.0.1:%d", addr.Port))
+	require.NoError(t, err)
+
+	conn, err := net.DialTimeout("tcp", addr.String(), 5*time.Second)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	p := &TCPPlugin{}
+	target := plugins.Target{
+		Address:    addrPort,
+		Host:       "127.0.0.1",
+		Misconfigs: false,
+	}
+
+	svc, err := p.Run(conn, 5*time.Second, target)
+	require.NoError(t, err, "Run() should not return error")
+	require.NotNil(t, svc, "Run() should return a service")
+
+	if len(svc.SecurityFindings) != 0 {
+		t.Errorf("expected no findings when Misconfigs=false, got %d", len(svc.SecurityFindings))
+	}
+}
+
+// TestXMPPSecurityFindingsWithSTARTTLS verifies that no findings are emitted when STARTTLS is
+// offered (required), even when Misconfigs=true.
+func TestXMPPSecurityFindingsWithSTARTTLS(t *testing.T) {
+	// ejabberdResponse has required STARTTLS — no cleartext finding expected.
+	listener := startMockXMPPServer(t, ejabberdResponse)
+	defer listener.Close()
+
+	addr := listener.Addr().(*net.TCPAddr)
+	addrPort, err := netip.ParseAddrPort(fmt.Sprintf("127.0.0.1:%d", addr.Port))
+	require.NoError(t, err)
+
+	conn, err := net.DialTimeout("tcp", addr.String(), 5*time.Second)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	p := &TCPPlugin{}
+	target := plugins.Target{
+		Address:    addrPort,
+		Host:       "127.0.0.1",
+		Misconfigs: true,
+	}
+
+	svc, err := p.Run(conn, 5*time.Second, target)
+	require.NoError(t, err, "Run() should not return error")
+	require.NotNil(t, svc, "Run() should return a service")
+
+	if len(svc.SecurityFindings) != 0 {
+		t.Errorf("expected no findings when STARTTLS is offered, got %d: %v", len(svc.SecurityFindings), svc.SecurityFindings)
+	}
+}
+
+// TestXMPPSecurityFindingsNoFeatures verifies that no cleartext finding is emitted when
+// the features block is absent (e.g., truncated response), since we cannot confirm STARTTLS
+// is unsupported — only that we failed to observe it.
+func TestXMPPSecurityFindingsNoFeatures(t *testing.T) {
+	// Response with valid stream:stream but no features block at all.
+	noFeaturesResponse := `<?xml version='1.0'?><stream:stream xmlns='jabber:client' xmlns:stream='http://etherx.jabber.org/streams' id='trunc999' from='partial.example.com' version='1.0'>`
+
+	listener := startMockXMPPServer(t, noFeaturesResponse)
+	defer listener.Close()
+
+	addr := listener.Addr().(*net.TCPAddr)
+	addrPort, err := netip.ParseAddrPort(fmt.Sprintf("127.0.0.1:%d", addr.Port))
+	require.NoError(t, err)
+
+	conn, err := net.DialTimeout("tcp", addr.String(), 5*time.Second)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	p := &TCPPlugin{}
+	target := plugins.Target{
+		Address:    addrPort,
+		Host:       "127.0.0.1",
+		Misconfigs: true,
+	}
+
+	svc, err := p.Run(conn, 5*time.Second, target)
+	require.NoError(t, err, "Run() should not return error")
+	require.NotNil(t, svc, "Run() should return a service")
+
+	if len(svc.SecurityFindings) != 0 {
+		t.Errorf("expected no findings when features block is absent, got %d: %v", len(svc.SecurityFindings), svc.SecurityFindings)
+	}
+}
+
 // TestIntegrationDocker runs the XMPP plugin against real XMPP servers
 // running in Docker containers. These tests are skipped when -short is used.
 func TestIntegrationDocker(t *testing.T) {

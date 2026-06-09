@@ -313,5 +313,14 @@ func (p *TCPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 		CPEs:           cpes,
 	}
 
-	return plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP), nil
+	service := plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP)
+	if target.Misconfigs && sf != nil && tlsSupport == "" {
+		service.SecurityFindings = []plugins.SecurityFinding{{
+			ID:          "xmpp-cleartext",
+			Severity:    plugins.SeverityMedium,
+			Description: "XMPP transmits data including credentials in cleartext",
+			Evidence:    "STARTTLS not offered in stream features",
+		}}
+	}
+	return service, nil
 }
