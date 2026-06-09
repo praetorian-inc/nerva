@@ -270,6 +270,9 @@ func TestKongAdminAPIFingerprinter_Fingerprint_Positive(t *testing.T) {
 			if len(result.SecurityFindings) != 0 {
 				t.Errorf("SecurityFindings = %v, want empty", result.SecurityFindings)
 			}
+			if result.Severity != "" {
+				t.Errorf("Severity = %q, want empty (detection-only fingerprinter emits no security finding)", result.Severity)
+			}
 		})
 	}
 }

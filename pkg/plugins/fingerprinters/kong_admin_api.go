@@ -32,8 +32,6 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-
-	"github.com/praetorian-inc/nerva/pkg/plugins"
 )
 
 // KongAdminAPIFingerprinter detects Kong Gateway via the Admin API root response.
@@ -107,7 +105,6 @@ func (f *KongAdminAPIFingerprinter) Fingerprint(resp *http.Response, body []byte
 		Version:    version,
 		CPEs:       []string{buildKongCPE(version)},
 		Metadata:   metadata,
-		Severity:   plugins.SeverityMedium,
 	}, nil
 }
 
