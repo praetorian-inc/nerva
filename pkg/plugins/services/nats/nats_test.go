@@ -389,6 +389,9 @@ func TestNATSSecurityFindings_NoAuthNoTLS(t *testing.T) {
 		t.Fatal("DetectNATS() returned nil service")
 	}
 
+	if !svc.AnonymousAccess {
+		t.Errorf("AnonymousAccess: got false, want true")
+	}
 	if len(svc.SecurityFindings) != 2 {
 		t.Fatalf("expected 2 findings, got %d: %v", len(svc.SecurityFindings), svc.SecurityFindings)
 	}
@@ -446,6 +449,9 @@ func TestNATSSecurityFindings_AuthAndTLS(t *testing.T) {
 		t.Fatal("DetectNATS() returned nil service")
 	}
 
+	if svc.AnonymousAccess {
+		t.Errorf("AnonymousAccess: got true, want false (auth required)")
+	}
 	if len(svc.SecurityFindings) != 0 {
 		t.Errorf("expected no findings when auth+TLS required, got %d: %v", len(svc.SecurityFindings), svc.SecurityFindings)
 	}
@@ -481,6 +487,9 @@ func TestNATSSecurityFindings_TLSConnection(t *testing.T) {
 		t.Fatal("DetectNATS() returned nil service")
 	}
 
+	if !svc.AnonymousAccess {
+		t.Errorf("AnonymousAccess: got false, want true")
+	}
 	// Should have nats-no-auth (auth_required=false) but NOT nats-no-tls (connection is already TLS).
 	if len(svc.SecurityFindings) != 1 {
 		t.Fatalf("expected 1 finding (nats-no-auth only), got %d: %v", len(svc.SecurityFindings), svc.SecurityFindings)
@@ -518,6 +527,9 @@ func TestNATSSecurityFindingsDisabled(t *testing.T) {
 		t.Fatal("DetectNATS() returned nil service")
 	}
 
+	if svc.AnonymousAccess {
+		t.Errorf("AnonymousAccess: got true, want false (misconfigs disabled)")
+	}
 	if len(svc.SecurityFindings) != 0 {
 		t.Errorf("expected no findings when Misconfigs=false, got %d: %v", len(svc.SecurityFindings), svc.SecurityFindings)
 	}

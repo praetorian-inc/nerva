@@ -813,3 +813,69 @@ func TestIRCSecurityFindingsDisabled(t *testing.T) {
 		t.Errorf("expected no findings when Misconfigs=false, got %d", len(svc.SecurityFindings))
 	}
 }
+
+// TestIRCTLSSecurityFindings verifies that the irc-unauthenticated finding is emitted and
+// AnonymousAccess is set when Misconfigs=true for the TLS plugin.
+func TestIRCTLSSecurityFindings(t *testing.T) {
+	server, client := buildIRCMockServer(t)
+	defer server.Close()
+	defer client.Close()
+
+	p := &TLSPlugin{}
+	target := plugins.Target{
+		Address:    netip.MustParseAddrPort("127.0.0.1:6697"),
+		Host:       "127.0.0.1",
+		Misconfigs: true,
+	}
+
+	svc, err := p.Run(client, 2*time.Second, target)
+	if err != nil {
+		t.Fatalf("Run() returned error: %v", err)
+	}
+	if svc == nil {
+		t.Fatal("Run() returned nil service")
+	}
+
+	if !svc.AnonymousAccess {
+		t.Errorf("AnonymousAccess: got false, want true")
+	}
+	if len(svc.SecurityFindings) != 1 {
+		t.Fatalf("expected 1 finding, got %d", len(svc.SecurityFindings))
+	}
+	if svc.SecurityFindings[0].ID != "irc-unauthenticated" {
+		t.Errorf("expected finding ID 'irc-unauthenticated', got %q", svc.SecurityFindings[0].ID)
+	}
+	if svc.SecurityFindings[0].Severity != plugins.SeverityLow {
+		t.Errorf("expected severity low, got %s", svc.SecurityFindings[0].Severity)
+	}
+}
+
+// TestIRCTLSSecurityFindingsDisabled verifies that no findings are emitted and AnonymousAccess
+// is false when Misconfigs=false for the TLS plugin.
+func TestIRCTLSSecurityFindingsDisabled(t *testing.T) {
+	server, client := buildIRCMockServer(t)
+	defer server.Close()
+	defer client.Close()
+
+	p := &TLSPlugin{}
+	target := plugins.Target{
+		Address:    netip.MustParseAddrPort("127.0.0.1:6697"),
+		Host:       "127.0.0.1",
+		Misconfigs: false,
+	}
+
+	svc, err := p.Run(client, 2*time.Second, target)
+	if err != nil {
+		t.Fatalf("Run() returned error: %v", err)
+	}
+	if svc == nil {
+		t.Fatal("Run() returned nil service")
+	}
+
+	if svc.AnonymousAccess {
+		t.Errorf("AnonymousAccess: got true, want false")
+	}
+	if len(svc.SecurityFindings) != 0 {
+		t.Errorf("expected no findings when Misconfigs=false, got %d", len(svc.SecurityFindings))
+	}
+}

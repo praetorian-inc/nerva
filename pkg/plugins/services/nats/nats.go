@@ -191,6 +191,7 @@ func DetectNATS(conn net.Conn, target plugins.Target, timeout time.Duration, tls
 	}
 	if target.Misconfigs {
 		if !info.AuthRequired {
+			service.AnonymousAccess = true
 			service.SecurityFindings = append(service.SecurityFindings, plugins.SecurityFinding{
 				ID:          "nats-no-auth",
 				Severity:    plugins.SeverityMedium,
