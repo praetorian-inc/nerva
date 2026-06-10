@@ -358,7 +358,11 @@ func (p *DockerPlugin) Priority() int {
 // DockerTLSPlugin methods (TCPTLS - port 2376)
 
 func (p *DockerTLSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
-	return detectDocker(conn, target, timeout, true)
+	service, err := detectDocker(conn, target, timeout, true)
+	if err == nil && service != nil && target.Misconfigs {
+		service.SecurityFindings = append(service.SecurityFindings, plugins.CheckTLS(conn)...)
+	}
+	return service, err
 }
 
 func (p *DockerTLSPlugin) PortPriority(port uint16) bool {

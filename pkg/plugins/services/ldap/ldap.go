@@ -261,7 +261,11 @@ func (p *TLSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 	}
 
 	if isLDAPS {
-		return plugins.CreateServiceFrom(target, plugins.ServiceLDAPS{}, true, "", plugins.TCP), nil
+		service := plugins.CreateServiceFrom(target, plugins.ServiceLDAPS{}, true, "", plugins.TCP)
+		if target.Misconfigs {
+			service.SecurityFindings = append(service.SecurityFindings, plugins.CheckTLS(conn)...)
+		}
+		return service, nil
 	}
 	return nil, nil
 }

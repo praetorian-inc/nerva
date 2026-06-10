@@ -140,7 +140,11 @@ func (p *NATSTLSPlugin) PortPriority(port uint16) bool {
 }
 
 func (p *NATSTLSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
-	return DetectNATS(conn, target, timeout, true)
+	service, err := DetectNATS(conn, target, timeout, true)
+	if err == nil && service != nil && target.Misconfigs {
+		service.SecurityFindings = append(service.SecurityFindings, plugins.CheckTLS(conn)...)
+	}
+	return service, err
 }
 
 func DetectNATS(conn net.Conn, target plugins.Target, timeout time.Duration, tls bool) (*plugins.Service, error) {

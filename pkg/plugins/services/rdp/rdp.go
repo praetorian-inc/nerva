@@ -491,10 +491,13 @@ func (p *TLSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 		return nil, nil
 	} else if check && info != nil && err == nil {
 		service := plugins.CreateServiceFrom(target, *info, true, "", plugins.TCP)
-		if target.Misconfigs && info.OSVersion != "" {
-			if finding := checkEOLOSVersion(info.OSVersion); finding != nil {
-				service.SecurityFindings = append(service.SecurityFindings, *finding)
+		if target.Misconfigs {
+			if info.OSVersion != "" {
+				if finding := checkEOLOSVersion(info.OSVersion); finding != nil {
+					service.SecurityFindings = append(service.SecurityFindings, *finding)
+				}
 			}
+			service.SecurityFindings = append(service.SecurityFindings, plugins.CheckTLS(conn)...)
 		}
 		return service, nil
 	}

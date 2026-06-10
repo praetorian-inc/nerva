@@ -63,6 +63,9 @@ func (p *Plugin) Type() plugins.Protocol {
 
 func (p *TLSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
 	result, err := Run(conn, true, timeout, target)
+	if err == nil && result != nil && target.Misconfigs {
+		result.SecurityFindings = append(result.SecurityFindings, plugins.CheckTLS(conn)...)
+	}
 	return result, err
 }
 

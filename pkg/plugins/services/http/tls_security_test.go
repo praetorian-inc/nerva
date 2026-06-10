@@ -120,15 +120,15 @@ func TestTlsVersionName(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		got := tlsVersionName(tc.version)
+		got := plugins.TLSVersionName(tc.version)
 		if got != tc.wantName {
-			t.Errorf("tlsVersionName(0x%04x) = %q, want %q", tc.version, got, tc.wantName)
+			t.Errorf("plugins.TLSVersionName(0x%04x) = %q, want %q", tc.version, got, tc.wantName)
 		}
 	}
 }
 
 // TestCheckWeakTLS_NonTLSConn verifies that a plain net.Conn (not a *tls.Conn)
-// causes checkWeakTLS to return nil.
+// causes plugins.CheckTLS to return nil.
 func TestCheckWeakTLS_NonTLSConn(t *testing.T) {
 	srvPipe, cliPipe := net.Pipe()
 	t.Cleanup(func() {
@@ -137,9 +137,9 @@ func TestCheckWeakTLS_NonTLSConn(t *testing.T) {
 	})
 
 	// cliPipe is a *net.pipe – not a *tls.Conn.
-	finding := checkWeakTLS(cliPipe)
-	if finding != nil {
-		t.Errorf("checkWeakTLS(plain net.Conn) = %+v, want nil", finding)
+	findings := plugins.CheckTLS(cliPipe)
+	if findings != nil {
+		t.Errorf("plugins.CheckTLS(plain net.Conn) = %+v, want nil", findings)
 	}
 }
 
@@ -203,7 +203,18 @@ func dialTLSVersion(t *testing.T, addr string, version uint16) *tls.Conn {
 	return conn
 }
 
-// TestCheckWeakTLS exercises checkWeakTLS against real in-process TLS
+// findWeakVersionFinding returns the first tls-weak-version SecurityFinding from
+// a slice, or nil if none is present.
+func findWeakVersionFinding(findings []plugins.SecurityFinding) *plugins.SecurityFinding {
+	for i := range findings {
+		if findings[i].ID == "tls-weak-version" {
+			return &findings[i]
+		}
+	}
+	return nil
+}
+
+// TestCheckWeakTLS exercises plugins.CheckTLS against real in-process TLS
 // connections at each version and asserts the expected SecurityFinding result.
 //
 // TLS 1.0/1.1 require GODEBUG=tls10server=1. In Go ≥1.22 this env var must be
@@ -261,17 +272,18 @@ func TestCheckWeakTLS(t *testing.T) {
 				t.Fatalf("handshake negotiated version 0x%04x, expected 0x%04x", negotiated, tc.version)
 			}
 
-			finding := checkWeakTLS(conn)
+			findings := plugins.CheckTLS(conn)
+			finding := findWeakVersionFinding(findings)
 
 			if tc.wantNil {
 				if finding != nil {
-					t.Errorf("checkWeakTLS() = %+v, want nil for version 0x%04x", finding, tc.version)
+					t.Errorf("plugins.CheckTLS() tls-weak-version = %+v, want nil for version 0x%04x", finding, tc.version)
 				}
 				return
 			}
 
 			if finding == nil {
-				t.Fatalf("checkWeakTLS() = nil, want non-nil finding for version 0x%04x", tc.version)
+				t.Fatalf("plugins.CheckTLS() tls-weak-version = nil, want non-nil finding for version 0x%04x", tc.version)
 			}
 			if finding.ID != tc.wantID {
 				t.Errorf("finding.ID = %q, want %q", finding.ID, tc.wantID)
