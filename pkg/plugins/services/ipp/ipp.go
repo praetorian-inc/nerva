@@ -587,7 +587,11 @@ func (p *IPPPlugin) Priority() int {
 // IPPTLSPlugin methods (TCPTLS - port 631)
 
 func (p *IPPTLSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
-	return detectIPP(conn, target, timeout, true)
+	service, err := detectIPP(conn, target, timeout, true)
+	if err == nil && service != nil && target.Misconfigs {
+		service.SecurityFindings = append(service.SecurityFindings, plugins.CheckTLS(conn)...)
+	}
+	return service, err
 }
 
 func (p *IPPTLSPlugin) PortPriority(port uint16) bool {

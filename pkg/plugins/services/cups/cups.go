@@ -265,7 +265,11 @@ func (p *CUPSPlugin) Priority() int {
 // CUPSTLSPlugin methods (TCPTLS - port 631)
 
 func (p *CUPSTLSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
-	return detectCUPS(conn, target, timeout, true)
+	service, err := detectCUPS(conn, target, timeout, true)
+	if err == nil && service != nil && target.Misconfigs {
+		service.SecurityFindings = append(service.SecurityFindings, plugins.CheckTLS(conn)...)
+	}
+	return service, err
 }
 
 func (p *CUPSTLSPlugin) PortPriority(port uint16) bool {

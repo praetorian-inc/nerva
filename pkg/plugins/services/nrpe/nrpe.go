@@ -286,7 +286,11 @@ func (p *NRPETLSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins
 		CPEs:               generateCPE(version),
 	}
 
-	return plugins.CreateServiceFrom(target, payload, true, version, plugins.TCPTLS), nil
+	service := plugins.CreateServiceFrom(target, payload, true, version, plugins.TCPTLS)
+	if target.Misconfigs {
+		service.SecurityFindings = append(service.SecurityFindings, plugins.CheckTLS(conn)...)
+	}
+	return service, nil
 }
 
 func (p *NRPETLSPlugin) PortPriority(port uint16) bool {

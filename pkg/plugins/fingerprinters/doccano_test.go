@@ -131,6 +131,16 @@ func TestDoccanoFingerprinter_Fingerprint(t *testing.T) {
 			wantNil: true,
 		},
 		{
+			name:    "nuxt container + nuxt runtime only (no Doccano signals) returns nil",
+			body:    `<html><body>` + nuxtDiv + nuxtRuntime + `</body></html>`,
+			wantNil: true,
+		},
+		{
+			name:    "nuxt container + nuxt runtime + unrelated title returns nil",
+			body:    `<html><head><title>Kong Developer Portal</title></head><body>` + nuxtDiv + nuxtRuntime + `</body></html>`,
+			wantNil: true,
+		},
+		{
 			name:    "empty body returns nil",
 			body:    "",
 			wantNil: true,

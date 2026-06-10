@@ -482,6 +482,7 @@ func (p *TLSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 			Description: "IRC server allows unauthenticated access",
 			Evidence:    "Server accepted NICK/USER and returned welcome burst without requiring credentials",
 		})
+		service.SecurityFindings = append(service.SecurityFindings, plugins.CheckTLS(conn)...)
 	}
 	return service, nil
 }

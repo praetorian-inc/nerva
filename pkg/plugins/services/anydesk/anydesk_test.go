@@ -273,18 +273,66 @@ func TestAnyDeskPlugin_Run_SecurityFinding_MisconfigsTrue(t *testing.T) {
 		t.Fatal("Run() returned nil, expected AnyDesk detection")
 	}
 
-	if len(service.SecurityFindings) != 1 {
-		t.Fatalf("len(SecurityFindings) = %d, want 1", len(service.SecurityFindings))
+	if len(service.SecurityFindings) < 1 {
+		t.Fatalf("len(SecurityFindings) = %d, want >= 1", len(service.SecurityFindings))
 	}
-	finding := service.SecurityFindings[0]
-	if finding.ID != "anydesk-exposed" {
-		t.Errorf("SecurityFinding.ID = %q, want %q", finding.ID, "anydesk-exposed")
+	var finding *plugins.SecurityFinding
+	for i := range service.SecurityFindings {
+		if service.SecurityFindings[i].ID == "anydesk-exposed" {
+			finding = &service.SecurityFindings[i]
+			break
+		}
+	}
+	if finding == nil {
+		t.Fatal("SecurityFindings missing anydesk-exposed finding")
 	}
 	if finding.Severity != plugins.SeverityMedium {
 		t.Errorf("SecurityFinding.Severity = %q, want %q", finding.Severity, plugins.SeverityMedium)
 	}
 	if !strings.Contains(finding.Evidence, "AnyDesk Client") {
 		t.Errorf("SecurityFinding.Evidence = %q, want it to contain %q", finding.Evidence, "AnyDesk Client")
+	}
+}
+
+func TestAnyDeskPlugin_Run_CheckTLS_Integration(t *testing.T) {
+	cert, err := generateTestCert("AnyDesk Client", "AnyDesk Client")
+	if err != nil {
+		t.Fatalf("failed to generate cert: %v", err)
+	}
+
+	addr, cleanup := startTLSServer(t, cert)
+	defer cleanup()
+
+	tlsConn, err := tls.Dial("tcp", addr, &tls.Config{InsecureSkipVerify: true})
+	if err != nil {
+		t.Fatalf("failed to dial TLS: %v", err)
+	}
+	defer tlsConn.Close()
+
+	target := plugins.Target{
+		Address:    netip.MustParseAddrPort(addr),
+		Misconfigs: true,
+	}
+
+	p := &AnyDeskPlugin{}
+	service, err := p.Run(tlsConn, 5*time.Second, target)
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if service == nil {
+		t.Fatal("Run() returned nil, expected AnyDesk detection")
+	}
+
+	findingIDs := make(map[string]bool)
+	for _, f := range service.SecurityFindings {
+		findingIDs[f.ID] = true
+	}
+
+	if !findingIDs["anydesk-exposed"] {
+		t.Error("SecurityFindings missing anydesk-exposed finding")
+	}
+	if !findingIDs["tls-self-signed"] {
+		t.Error("SecurityFindings missing tls-self-signed finding from CheckTLS")
 	}
 }
 

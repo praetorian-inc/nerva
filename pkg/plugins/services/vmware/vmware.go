@@ -268,7 +268,11 @@ func (p *VMwarePlugin) Run(conn net.Conn, timeout time.Duration, target plugins.
 		CPEs:          []string{cpe},
 	}
 
-	return plugins.CreateServiceFrom(target, payload, true, result.Version, plugins.TCPTLS), nil
+	service := plugins.CreateServiceFrom(target, payload, true, result.Version, plugins.TCPTLS)
+	if target.Misconfigs {
+		service.SecurityFindings = append(service.SecurityFindings, plugins.CheckTLS(conn)...)
+	}
+	return service, nil
 }
 
 func (p *VMwarePlugin) PortPriority(port uint16) bool {

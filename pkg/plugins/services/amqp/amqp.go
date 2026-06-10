@@ -414,6 +414,7 @@ func (p *TLSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 		if checkDefaultCredentials(conn, timeout) {
 			service.SecurityFindings = []plugins.SecurityFinding{amqpDefaultCredsFinding(product)}
 		}
+		service.SecurityFindings = append(service.SecurityFindings, plugins.CheckTLS(conn)...)
 	}
 	return service, nil
 }
