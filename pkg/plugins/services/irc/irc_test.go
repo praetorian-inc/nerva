@@ -724,3 +724,158 @@ func TestTLSPlugin_Run_Protocol(t *testing.T) {
 		t.Errorf("Metadata type: got %T, want plugins.ServiceIRCS", svc.Metadata())
 	}
 }
+
+// buildIRCMockServer returns a net.Pipe pair and starts a goroutine that simulates a
+// minimal IRC welcome burst. The goroutine reads NICK+USER, writes the burst, then
+// drains subsequent reads so the plugin can finish gracefully.
+func buildIRCMockServer(t *testing.T) (server net.Conn, client net.Conn) {
+	t.Helper()
+	server, client = net.Pipe()
+	go func() {
+		buf := make([]byte, 4096)
+		n, _ := server.Read(buf)
+		if n == 0 {
+			return
+		}
+		welcome := ":irc.test.com 001 nervaprobe :Welcome to the TestNet Internet Relay Chat Network nervaprobe\r\n" +
+			":irc.test.com 002 nervaprobe :Your host is irc.test.com, running version InspIRCd-4.0.1\r\n" +
+			":irc.test.com 003 nervaprobe :This server was created 2024-01-01\r\n" +
+			":irc.test.com 004 nervaprobe irc.test.com InspIRCd-4.0.1 iosw bklosu\r\n" +
+			":irc.test.com 251 nervaprobe :There are 10 users and 0 services on 1 servers\r\n"
+		server.Write([]byte(welcome))
+		server.Read(buf)
+	}()
+	return server, client
+}
+
+// TestIRCSecurityFindings verifies that the irc-unauthenticated finding is emitted and
+// AnonymousAccess is set when Misconfigs=true.
+func TestIRCSecurityFindings(t *testing.T) {
+	server, client := buildIRCMockServer(t)
+	defer server.Close()
+	defer client.Close()
+
+	p := &TCPPlugin{}
+	target := plugins.Target{
+		Address:    netip.MustParseAddrPort("127.0.0.1:6667"),
+		Host:       "127.0.0.1",
+		Misconfigs: true,
+	}
+
+	svc, err := p.Run(client, 2*time.Second, target)
+	if err != nil {
+		t.Fatalf("Run() returned error: %v", err)
+	}
+	if svc == nil {
+		t.Fatal("Run() returned nil service")
+	}
+
+	if !svc.AnonymousAccess {
+		t.Errorf("AnonymousAccess: got false, want true")
+	}
+	if len(svc.SecurityFindings) != 1 {
+		t.Fatalf("expected 1 finding, got %d", len(svc.SecurityFindings))
+	}
+	if svc.SecurityFindings[0].ID != "irc-unauthenticated" {
+		t.Errorf("expected finding ID 'irc-unauthenticated', got %q", svc.SecurityFindings[0].ID)
+	}
+	if svc.SecurityFindings[0].Severity != plugins.SeverityLow {
+		t.Errorf("expected severity low, got %s", svc.SecurityFindings[0].Severity)
+	}
+}
+
+// TestIRCSecurityFindingsDisabled verifies that no findings are emitted and AnonymousAccess
+// is false when Misconfigs=false.
+func TestIRCSecurityFindingsDisabled(t *testing.T) {
+	server, client := buildIRCMockServer(t)
+	defer server.Close()
+	defer client.Close()
+
+	p := &TCPPlugin{}
+	target := plugins.Target{
+		Address:    netip.MustParseAddrPort("127.0.0.1:6667"),
+		Host:       "127.0.0.1",
+		Misconfigs: false,
+	}
+
+	svc, err := p.Run(client, 2*time.Second, target)
+	if err != nil {
+		t.Fatalf("Run() returned error: %v", err)
+	}
+	if svc == nil {
+		t.Fatal("Run() returned nil service")
+	}
+
+	if svc.AnonymousAccess {
+		t.Errorf("AnonymousAccess: got true, want false")
+	}
+	if len(svc.SecurityFindings) != 0 {
+		t.Errorf("expected no findings when Misconfigs=false, got %d", len(svc.SecurityFindings))
+	}
+}
+
+// TestIRCTLSSecurityFindings verifies that the irc-unauthenticated finding is emitted and
+// AnonymousAccess is set when Misconfigs=true for the TLS plugin.
+func TestIRCTLSSecurityFindings(t *testing.T) {
+	server, client := buildIRCMockServer(t)
+	defer server.Close()
+	defer client.Close()
+
+	p := &TLSPlugin{}
+	target := plugins.Target{
+		Address:    netip.MustParseAddrPort("127.0.0.1:6697"),
+		Host:       "127.0.0.1",
+		Misconfigs: true,
+	}
+
+	svc, err := p.Run(client, 2*time.Second, target)
+	if err != nil {
+		t.Fatalf("Run() returned error: %v", err)
+	}
+	if svc == nil {
+		t.Fatal("Run() returned nil service")
+	}
+
+	if !svc.AnonymousAccess {
+		t.Errorf("AnonymousAccess: got false, want true")
+	}
+	if len(svc.SecurityFindings) != 1 {
+		t.Fatalf("expected 1 finding, got %d", len(svc.SecurityFindings))
+	}
+	if svc.SecurityFindings[0].ID != "irc-unauthenticated" {
+		t.Errorf("expected finding ID 'irc-unauthenticated', got %q", svc.SecurityFindings[0].ID)
+	}
+	if svc.SecurityFindings[0].Severity != plugins.SeverityLow {
+		t.Errorf("expected severity low, got %s", svc.SecurityFindings[0].Severity)
+	}
+}
+
+// TestIRCTLSSecurityFindingsDisabled verifies that no findings are emitted and AnonymousAccess
+// is false when Misconfigs=false for the TLS plugin.
+func TestIRCTLSSecurityFindingsDisabled(t *testing.T) {
+	server, client := buildIRCMockServer(t)
+	defer server.Close()
+	defer client.Close()
+
+	p := &TLSPlugin{}
+	target := plugins.Target{
+		Address:    netip.MustParseAddrPort("127.0.0.1:6697"),
+		Host:       "127.0.0.1",
+		Misconfigs: false,
+	}
+
+	svc, err := p.Run(client, 2*time.Second, target)
+	if err != nil {
+		t.Fatalf("Run() returned error: %v", err)
+	}
+	if svc == nil {
+		t.Fatal("Run() returned nil service")
+	}
+
+	if svc.AnonymousAccess {
+		t.Errorf("AnonymousAccess: got true, want false")
+	}
+	if len(svc.SecurityFindings) != 0 {
+		t.Errorf("expected no findings when Misconfigs=false, got %d", len(svc.SecurityFindings))
+	}
+}

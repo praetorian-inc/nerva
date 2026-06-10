@@ -430,7 +430,17 @@ func (p *TCPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 		ver = result.serverSoftware
 	}
 
-	return plugins.CreateServiceFrom(target, payload, false, ver, plugins.TCP), nil
+	service := plugins.CreateServiceFrom(target, payload, false, ver, plugins.TCP)
+	if target.Misconfigs {
+		service.AnonymousAccess = true
+		service.SecurityFindings = append(service.SecurityFindings, plugins.SecurityFinding{
+			ID:          "irc-unauthenticated",
+			Severity:    plugins.SeverityLow,
+			Description: "IRC server allows unauthenticated access",
+			Evidence:    "Server accepted NICK/USER and returned welcome burst without requiring credentials",
+		})
+	}
+	return service, nil
 }
 
 // Run performs IRC service fingerprinting over TLS.
@@ -465,6 +475,13 @@ func (p *TLSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 
 	service := plugins.CreateServiceFrom(target, payload, true, ver, plugins.TCPTLS)
 	if target.Misconfigs {
+		service.AnonymousAccess = true
+		service.SecurityFindings = append(service.SecurityFindings, plugins.SecurityFinding{
+			ID:          "irc-unauthenticated",
+			Severity:    plugins.SeverityLow,
+			Description: "IRC server allows unauthenticated access",
+			Evidence:    "Server accepted NICK/USER and returned welcome burst without requiring credentials",
+		})
 		service.SecurityFindings = append(service.SecurityFindings, plugins.CheckTLS(conn)...)
 	}
 	return service, nil

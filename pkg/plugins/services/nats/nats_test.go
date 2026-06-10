@@ -15,7 +15,10 @@
 package nats
 
 import (
+	"net"
+	"net/netip"
 	"testing"
+	"time"
 
 	"github.com/ory/dockertest/v3"
 
@@ -337,5 +340,197 @@ func TestShodanVectors(t *testing.T) {
 			}
 			tt.validate(t, info)
 		})
+	}
+}
+
+// startNATSMockServer starts a TCP listener that writes a single NATS INFO line and returns.
+func startNATSMockServer(t *testing.T, infoLine string) *net.TCPListener {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to start mock NATS server: %v", err)
+	}
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		conn.Write([]byte(infoLine))
+	}()
+	return listener.(*net.TCPListener)
+}
+
+// TestNATSSecurityFindings_NoAuthNoTLS verifies that both nats-no-auth and nats-no-tls findings
+// are emitted when auth_required=false and tls_required=false with Misconfigs=true.
+func TestNATSSecurityFindings_NoAuthNoTLS(t *testing.T) {
+	infoLine := "INFO {\"server_id\":\"TEST123\",\"version\":\"2.10.0\",\"auth_required\":false,\"tls_required\":false}\r\n"
+	listener := startNATSMockServer(t, infoLine)
+	defer listener.Close()
+
+	addr := listener.Addr().(*net.TCPAddr)
+	conn, err := net.DialTimeout("tcp", addr.String(), 5*time.Second)
+	if err != nil {
+		t.Fatalf("failed to connect: %v", err)
+	}
+	defer conn.Close()
+
+	target := plugins.Target{
+		Address:    netip.MustParseAddrPort(addr.String()),
+		Host:       "127.0.0.1",
+		Misconfigs: true,
+	}
+
+	svc, err := DetectNATS(conn, target, 5*time.Second, false)
+	if err != nil {
+		t.Fatalf("DetectNATS() returned error: %v", err)
+	}
+	if svc == nil {
+		t.Fatal("DetectNATS() returned nil service")
+	}
+
+	if !svc.AnonymousAccess {
+		t.Errorf("AnonymousAccess: got false, want true")
+	}
+	if len(svc.SecurityFindings) != 2 {
+		t.Fatalf("expected 2 findings, got %d: %v", len(svc.SecurityFindings), svc.SecurityFindings)
+	}
+
+	ids := map[string]bool{}
+	for _, f := range svc.SecurityFindings {
+		ids[f.ID] = true
+	}
+	if !ids["nats-no-auth"] {
+		t.Errorf("expected finding 'nats-no-auth' not found in %v", svc.SecurityFindings)
+	}
+	if !ids["nats-no-tls"] {
+		t.Errorf("expected finding 'nats-no-tls' not found in %v", svc.SecurityFindings)
+	}
+
+	for _, f := range svc.SecurityFindings {
+		switch f.ID {
+		case "nats-no-auth":
+			if f.Severity != plugins.SeverityMedium {
+				t.Errorf("nats-no-auth severity: got %s, want medium", f.Severity)
+			}
+		case "nats-no-tls":
+			if f.Severity != plugins.SeverityLow {
+				t.Errorf("nats-no-tls severity: got %s, want low", f.Severity)
+			}
+		}
+	}
+}
+
+// TestNATSSecurityFindings_AuthAndTLS verifies that no findings are emitted when both
+// auth_required=true and tls_required=true, even with Misconfigs=true.
+func TestNATSSecurityFindings_AuthAndTLS(t *testing.T) {
+	infoLine := "INFO {\"server_id\":\"TEST456\",\"version\":\"2.10.0\",\"auth_required\":true,\"tls_required\":true}\r\n"
+	listener := startNATSMockServer(t, infoLine)
+	defer listener.Close()
+
+	addr := listener.Addr().(*net.TCPAddr)
+	conn, err := net.DialTimeout("tcp", addr.String(), 5*time.Second)
+	if err != nil {
+		t.Fatalf("failed to connect: %v", err)
+	}
+	defer conn.Close()
+
+	target := plugins.Target{
+		Address:    netip.MustParseAddrPort(addr.String()),
+		Host:       "127.0.0.1",
+		Misconfigs: true,
+	}
+
+	svc, err := DetectNATS(conn, target, 5*time.Second, false)
+	if err != nil {
+		t.Fatalf("DetectNATS() returned error: %v", err)
+	}
+	if svc == nil {
+		t.Fatal("DetectNATS() returned nil service")
+	}
+
+	if svc.AnonymousAccess {
+		t.Errorf("AnonymousAccess: got true, want false (auth required)")
+	}
+	if len(svc.SecurityFindings) != 0 {
+		t.Errorf("expected no findings when auth+TLS required, got %d: %v", len(svc.SecurityFindings), svc.SecurityFindings)
+	}
+}
+
+// TestNATSSecurityFindings_TLSConnection verifies that nats-no-tls is NOT emitted when the
+// connection is already TLS, even if the server reports tls_required=false (e.g., behind a
+// TLS-terminating proxy).
+func TestNATSSecurityFindings_TLSConnection(t *testing.T) {
+	infoLine := "INFO {\"server_id\":\"TESTTLS\",\"version\":\"2.10.0\",\"auth_required\":false,\"tls_required\":false}\r\n"
+	listener := startNATSMockServer(t, infoLine)
+	defer listener.Close()
+
+	addr := listener.Addr().(*net.TCPAddr)
+	conn, err := net.DialTimeout("tcp", addr.String(), 5*time.Second)
+	if err != nil {
+		t.Fatalf("failed to connect: %v", err)
+	}
+	defer conn.Close()
+
+	target := plugins.Target{
+		Address:    netip.MustParseAddrPort(addr.String()),
+		Host:       "127.0.0.1",
+		Misconfigs: true,
+	}
+
+	// Pass tls=true to simulate an already-encrypted connection.
+	svc, err := DetectNATS(conn, target, 5*time.Second, true)
+	if err != nil {
+		t.Fatalf("DetectNATS() returned error: %v", err)
+	}
+	if svc == nil {
+		t.Fatal("DetectNATS() returned nil service")
+	}
+
+	if !svc.AnonymousAccess {
+		t.Errorf("AnonymousAccess: got false, want true")
+	}
+	// Should have nats-no-auth (auth_required=false) but NOT nats-no-tls (connection is already TLS).
+	if len(svc.SecurityFindings) != 1 {
+		t.Fatalf("expected 1 finding (nats-no-auth only), got %d: %v", len(svc.SecurityFindings), svc.SecurityFindings)
+	}
+	if svc.SecurityFindings[0].ID != "nats-no-auth" {
+		t.Errorf("expected finding 'nats-no-auth', got %q", svc.SecurityFindings[0].ID)
+	}
+}
+
+// TestNATSSecurityFindingsDisabled verifies that no findings are emitted when Misconfigs=false,
+// even when auth_required=false and tls_required=false.
+func TestNATSSecurityFindingsDisabled(t *testing.T) {
+	infoLine := "INFO {\"server_id\":\"TEST789\",\"version\":\"2.10.0\",\"auth_required\":false,\"tls_required\":false}\r\n"
+	listener := startNATSMockServer(t, infoLine)
+	defer listener.Close()
+
+	addr := listener.Addr().(*net.TCPAddr)
+	conn, err := net.DialTimeout("tcp", addr.String(), 5*time.Second)
+	if err != nil {
+		t.Fatalf("failed to connect: %v", err)
+	}
+	defer conn.Close()
+
+	target := plugins.Target{
+		Address:    netip.MustParseAddrPort(addr.String()),
+		Host:       "127.0.0.1",
+		Misconfigs: false,
+	}
+
+	svc, err := DetectNATS(conn, target, 5*time.Second, false)
+	if err != nil {
+		t.Fatalf("DetectNATS() returned error: %v", err)
+	}
+	if svc == nil {
+		t.Fatal("DetectNATS() returned nil service")
+	}
+
+	if svc.AnonymousAccess {
+		t.Errorf("AnonymousAccess: got true, want false (misconfigs disabled)")
+	}
+	if len(svc.SecurityFindings) != 0 {
+		t.Errorf("expected no findings when Misconfigs=false, got %d: %v", len(svc.SecurityFindings), svc.SecurityFindings)
 	}
 }

@@ -187,10 +187,32 @@ func DetectNATS(conn net.Conn, target plugins.Target, timeout time.Duration, tls
 		CPEs:         []string{cpe},
 	}
 
+	var service *plugins.Service
 	if tls {
-		return plugins.CreateServiceFrom(target, payload, true, info.Version, plugins.TCPTLS), nil
+		service = plugins.CreateServiceFrom(target, payload, true, info.Version, plugins.TCPTLS)
+	} else {
+		service = plugins.CreateServiceFrom(target, payload, false, info.Version, plugins.TCP)
 	}
-	return plugins.CreateServiceFrom(target, payload, false, info.Version, plugins.TCP), nil
+	if target.Misconfigs {
+		if !info.AuthRequired {
+			service.AnonymousAccess = true
+			service.SecurityFindings = append(service.SecurityFindings, plugins.SecurityFinding{
+				ID:          "nats-no-auth",
+				Severity:    plugins.SeverityMedium,
+				Description: "NATS server does not require authentication",
+				Evidence:    "INFO response: auth_required=false",
+			})
+		}
+		if !info.TLSRequired && !tls {
+			service.SecurityFindings = append(service.SecurityFindings, plugins.SecurityFinding{
+				ID:          "nats-no-tls",
+				Severity:    plugins.SeverityLow,
+				Description: "NATS server does not require TLS encryption",
+				Evidence:    "INFO response: tls_required=false",
+			})
+		}
+	}
+	return service, nil
 }
 
 func (p *NATSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
