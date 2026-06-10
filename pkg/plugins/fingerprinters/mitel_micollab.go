@@ -70,7 +70,7 @@ func (f *MitelMicollabFingerprinter) ProbeEndpoint() string {
 }
 
 // Match accepts application/json and text/html content types.
-// Also accepts 3xx redirects to known MiCollab paths (/portal/, /awc/).
+// Also accepts 3xx redirects to MiCollab-specific paths (/awc/).
 // Rejects 5xx.
 func (f *MitelMicollabFingerprinter) Match(resp *http.Response) bool {
 	if resp.StatusCode >= 500 {
@@ -80,7 +80,7 @@ func (f *MitelMicollabFingerprinter) Match(resp *http.Response) bool {
 	// Accept redirects to known MiCollab paths.
 	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
 		location := resp.Header.Get("Location")
-		if strings.Contains(location, "/portal/") || strings.Contains(location, "/awc/") {
+		if strings.Contains(location, "/awc/") {
 			return true
 		}
 		return false
@@ -135,10 +135,10 @@ func (f *MitelMicollabFingerprinter) Fingerprint(resp *http.Response, body []byt
 		return buildMitelResult(""), nil
 	}
 
-	// Accept redirects to MiCollab paths (already filtered in Match).
+	// Accept redirects to MiCollab-specific paths (already filtered in Match).
 	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
 		location := resp.Header.Get("Location")
-		if strings.Contains(location, "/portal/") || strings.Contains(location, "/awc/") {
+		if strings.Contains(location, "/awc/") {
 			return buildMitelResult(""), nil
 		}
 	}

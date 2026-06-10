@@ -62,10 +62,10 @@ func TestMitelMicollabFingerprinter_Match(t *testing.T) {
 			want:       true,
 		},
 		{
-			name:       "accepts 302 redirect to /portal/",
+			name:       "FP prevention: 302 redirect to /portal/ is not MiCollab-specific",
 			statusCode: 302,
 			headers:    http.Header{"Location": []string{"/portal/index.html"}},
-			want:       true,
+			want:       false,
 		},
 		{
 			name:       "accepts 302 redirect to /awc/",
@@ -191,13 +191,13 @@ func TestMitelMicollabFingerprinter_Fingerprint(t *testing.T) {
 			body:       `<html><body><a href="/awc/login">Login</a></body></html>`,
 			wantResult: false,
 		},
-		// Redirect to /portal/
+		// FP prevention: /portal/ is generic, must not match
 		{
-			name:       "redirect to /portal/ detected",
+			name:       "FP prevention: redirect to /portal/login returns nil",
 			statusCode: 302,
-			headers:    http.Header{"Location": []string{"/portal/index.html"}},
+			headers:    http.Header{"Location": []string{"/portal/login"}},
 			body:       ``,
-			wantResult: true,
+			wantResult: false,
 		},
 		// Redirect to /awc/
 		{
