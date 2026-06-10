@@ -86,6 +86,14 @@ var netgearFirmwareContextPattern = regexp.MustCompile(
 	`(?i)(?:firmwareVersion|fw_?ver|firmware)[:\s"=]*V?([0-9]+\.[0-9]+(?:\.[0-9]+)*)(?:"|\s|,|}|$)`,
 )
 
+// netgearCurrentSettingsModelPattern matches the specific format of Netgear's /currentsetting.htm.
+// Each field appears at the start of a line (or start of string). This anchoring
+// prevents false positives on pages that mention "Model=" in prose.
+var netgearCurrentSettingsModelPattern = regexp.MustCompile(`(?m)^Model=`)
+
+// netgearCurrentSettingsFirmwarePattern matches Firmware= at line start in currentsetting.htm.
+var netgearCurrentSettingsFirmwarePattern = regexp.MustCompile(`(?m)^Firmware=`)
+
 // netgearVersionValidRegex validates extracted version strings before CPE use.
 var netgearVersionValidRegex = regexp.MustCompile(`^\d+\.\d+(?:\.\d+)*$`)
 
@@ -100,8 +108,8 @@ func (f *NetgearFingerprinter) ProbeEndpoint() string {
 	return "/currentsetting.htm"
 }
 
-// Match is a fast pre-filter. Accepts responses with NETGEAR WWW-Authenticate or
-// text/html content-type. Rejects 5xx server errors.
+// Match is a fast pre-filter. Accepts responses with NETGEAR WWW-Authenticate,
+// text/html or text/plain content-type, or no content-type. Rejects 5xx server errors.
 func (f *NetgearFingerprinter) Match(resp *http.Response) bool {
 	if resp.StatusCode < 200 || resp.StatusCode >= 500 {
 		return false
@@ -115,9 +123,14 @@ func (f *NetgearFingerprinter) Match(resp *http.Response) bool {
 		}
 	}
 
-	// Accept text/html for body-based detection
-	ct := resp.Header.Get("Content-Type")
-	if strings.Contains(strings.ToLower(ct), "text/html") {
+	// Accept text/html or text/plain (currentsetting.htm returns plain text)
+	ct := strings.ToLower(resp.Header.Get("Content-Type"))
+	if strings.Contains(ct, "text/html") || strings.Contains(ct, "text/plain") {
+		return true
+	}
+
+	// Accept responses with no Content-Type (some embedded devices omit it)
+	if ct == "" && resp.StatusCode >= 200 && resp.StatusCode < 400 {
 		return true
 	}
 
@@ -139,6 +152,10 @@ func (f *NetgearFingerprinter) Fingerprint(resp *http.Response, body []byte) (*F
 
 	// Signal 1 (standalone): WWW-Authenticate realm contains "NETGEAR".
 	// Check both canonical and wire-form keys.
+	//
+	// Note: as an ActiveHTTPFingerprinter, this fingerprinter only runs on the probe
+	// response (/currentsetting.htm), not the root. The auth header appears on the
+	// probe response when the router returns 401 for the currentsetting endpoint.
 	authHasNetgear := false
 	for _, v := range append(resp.Header["Www-Authenticate"], resp.Header["WWW-Authenticate"]...) {
 		if strings.Contains(strings.ToLower(v), "netgear") {
@@ -148,8 +165,10 @@ func (f *NetgearFingerprinter) Fingerprint(resp *http.Response, body []byte) (*F
 	}
 
 	// Signal 2 (standalone): currentsetting.htm format — both Model= and Firmware= present
-	hasModelField := strings.Contains(bodyStr, "Model=")
-	hasFirmwareField := strings.Contains(bodyStr, "Firmware=")
+	// at the start of a line. Anchored matching prevents false positives from pages that
+	// mention "Model=" or "Firmware=" in prose (e.g., "Set Model=R7000P in the config").
+	hasModelField := netgearCurrentSettingsModelPattern.MatchString(bodyStr)
+	hasFirmwareField := netgearCurrentSettingsFirmwarePattern.MatchString(bodyStr)
 	isCurrentSettings := hasModelField && hasFirmwareField
 
 	// Signal 3 (corroborated): NETGEAR brand AND (model pattern OR known Netgear UI element)

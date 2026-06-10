@@ -462,6 +462,43 @@ func TestBuildDLinkCPEs(t *testing.T) {
 	}
 }
 
+func TestExtractDLinkVersionFromServer(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "DIR-825 version suffix",
+			input: "Linux, HTTP/1.1, DIR-825 2.06",
+			want:  "2.06",
+		},
+		{
+			name:  "DIR-860L with Ver keyword",
+			input: "DIR-860L Ver 1.07",
+			want:  "1.07",
+		},
+		{
+			name:  "unrelated Server header returns empty",
+			input: "Apache/2.4.41",
+			want:  "",
+		},
+		{
+			name:  "empty string returns empty",
+			input: "",
+			want:  "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := extractDLinkVersionFromServer(tt.input); got != tt.want {
+				t.Errorf("extractDLinkVersionFromServer(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestDLinkCPEProduct(t *testing.T) {
 	tests := []struct {
 		name  string

@@ -141,6 +141,10 @@ func (f *TPLinkFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fi
 
 	// Signal 1 (standalone): WWW-Authenticate realm contains "TP-LINK".
 	// Check both canonical and wire-form keys (same reason as Match).
+	//
+	// Note: as an ActiveHTTPFingerprinter, this fingerprinter only runs on the probe
+	// response (/webpages/login.html), not the root. The auth header appears on the
+	// probe response when the router returns 401 for the login page.
 	authHasTPLink := false
 	for _, v := range append(resp.Header["Www-Authenticate"], resp.Header["WWW-Authenticate"]...) {
 		if strings.Contains(strings.ToLower(v), "tp-link") {

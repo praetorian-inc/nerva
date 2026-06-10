@@ -80,6 +80,12 @@ var dlinkFirmwareContextPattern = regexp.MustCompile(
 	`(?i)(?:firmwareVersion|fw_?ver|firmware)[:\s"=]*(\d+\.\d+(?:\.\d+)*)(?:"|\s|,|}|$)`,
 )
 
+// dlinkServerVersionPattern extracts version from D-Link Server headers.
+// Matches: "DIR-825 2.06" → "2.06", "DIR-860L Ver 1.07" → "1.07"
+var dlinkServerVersionPattern = regexp.MustCompile(
+	`(?i)(?:DIR|DAP|DSL|DCS|DWR|DHP)-[A-Z0-9]+[-\s]+(?:Ver\s+)?(\d+\.\d+(?:\.\d+)*)`,
+)
+
 // dlinkVersionValidRegex validates extracted version strings before CPE use.
 var dlinkVersionValidRegex = regexp.MustCompile(`^\d+\.\d+(?:\.\d+)*$`)
 
@@ -161,9 +167,11 @@ func (f *DLinkFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fin
 	}
 
 	version := extractDLinkVersion(bodyStr)
-	// Also try extracting version from Server header suffix if body yields nothing
+	// Also try extracting version from Server header suffix if body yields nothing.
+	// extractDLinkVersionFromServer handles "DIR-825 2.06" format; extractDLinkVersion
+	// requires firmware context keywords that Server headers do not contain.
 	if version == "" && server != "" {
-		version = extractDLinkVersion(server)
+		version = extractDLinkVersionFromServer(server)
 	}
 
 	cpeProduct := dlinkCPEProduct(model)
@@ -194,6 +202,25 @@ func extractDLinkVersion(bodyStr string) string {
 		return version
 	}
 	return ""
+}
+
+// extractDLinkVersionFromServer extracts firmware version from a D-Link Server header.
+// Server headers like "DIR-825 2.06" or "DIR-860L Ver 1.07" carry a version suffix
+// that extractDLinkVersion cannot parse because it requires firmware context keywords.
+// Returns empty string if not found or validation fails.
+func extractDLinkVersionFromServer(server string) string {
+	matches := dlinkServerVersionPattern.FindStringSubmatch(server)
+	if len(matches) < 2 {
+		return ""
+	}
+	version := matches[1]
+	if len(version) > dlinkMaxVersionLen {
+		return ""
+	}
+	if !dlinkVersionValidRegex.MatchString(version) {
+		return ""
+	}
+	return version
 }
 
 // extractDLinkModel extracts a D-Link model identifier from the page body.

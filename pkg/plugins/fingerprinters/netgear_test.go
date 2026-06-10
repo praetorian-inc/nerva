@@ -96,6 +96,20 @@ func TestNetgearFingerprinter_Match(t *testing.T) {
 			},
 			want: false,
 		},
+		{
+			name:       "accepts text/plain content-type",
+			statusCode: 200,
+			headers: http.Header{
+				"Content-Type": []string{"text/plain"},
+			},
+			want: true,
+		},
+		{
+			name:       "accepts response with no Content-Type",
+			statusCode: 200,
+			headers:    http.Header{},
+			want:       true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -262,6 +276,13 @@ func TestNetgearFingerprinter_Fingerprint(t *testing.T) {
 				"Content-Type": []string{"text/html"},
 			},
 			body:       "Firmware=V1.3.2.134\nRegion=1",
+			wantResult: false,
+		},
+		{
+			name:       "does NOT detect Model= in middle of line (FP prevention)",
+			statusCode: 200,
+			headers:    http.Header{"Content-Type": []string{"text/html"}},
+			body:       `<html>Set Model=R7000P in the config. Firmware=latest</html>`,
 			wantResult: false,
 		},
 	}
