@@ -171,7 +171,9 @@ const (
 	ProtoPulsar            = "pulsar"
 	ProtoPulsarAdmin       = "pulsar-admin"
 	ProtoQdrant            = "qdrant"
+	ProtoQUIC              = "quic"
 	ProtoRDP               = "rdp"
+	ProtoRDPEUDP           = "rdpeudp"
 	ProtoRedis             = "redis"
 	ProtoRedisTLS          = "redis"
 	ProtoRMI               = "java-rmi"
@@ -189,6 +191,7 @@ const (
 	ProtoSOCKS4            = "socks4"
 	ProtoSOCKS5            = "socks5"
 	ProtoSMB               = "smb"
+	ProtoSMBUDP            = "smbudp"
 	ProtoSMPP              = "smpp"
 	ProtoSMTP              = "smtp"
 	ProtoSMTPS             = "smtps"
@@ -397,8 +400,16 @@ func (e Service) Metadata() Metadata {
 		var p ServiceHTTP
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
+	case ProtoQUIC:
+		var p ServiceQUIC
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
 	case ProtoSMB:
 		var p ServiceSMB
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoSMBUDP:
+		var p ServiceSMBUDP
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoSMPP:
@@ -407,6 +418,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoRDP:
 		var p ServiceRDP
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoRDPEUDP:
+		var p ServiceRDPEUDP
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoRPC:
@@ -885,6 +900,14 @@ type ServiceRDP struct {
 
 func (e ServiceRDP) Type() string { return ProtoRDP }
 
+type ServiceRDPEUDP struct {
+	ProtocolVersion uint16 `json:"protocol_version,omitempty"`
+	UpStreamMtu     uint16 `json:"upstream_mtu,omitempty"`
+	DownStreamMtu   uint16 `json:"downstream_mtu,omitempty"`
+}
+
+func (e ServiceRDPEUDP) Type() string { return ProtoRDPEUDP }
+
 type ServiceRPC struct {
 	Entries []RPCB `json:"entries"`
 }
@@ -911,6 +934,20 @@ type ServiceSMB struct {
 }
 
 func (e ServiceSMB) Type() string { return ProtoSMB }
+
+type ServiceSMBUDP struct {
+	QUICVersions []string `json:"quic_versions,omitempty"`
+	CertSubject  string   `json:"cert_subject,omitempty"`
+	CertIssuer   string   `json:"cert_issuer,omitempty"`
+}
+
+func (e ServiceSMBUDP) Type() string { return ProtoSMBUDP }
+
+type ServiceQUIC struct {
+	SupportedVersions []string `json:"supported_versions,omitempty"`
+}
+
+func (e ServiceQUIC) Type() string { return ProtoQUIC }
 
 type ServiceMySQL struct {
 	PacketType   string   `json:"packet_type"`    // the type of packet returned by the server (i.e. handshake or error)
@@ -1042,8 +1079,17 @@ type ServiceNTP struct{}
 
 func (e ServiceNTP) Type() string { return ProtoNTP }
 
+type NetbiosEntry struct {
+	Name   string `json:"name"`
+	Suffix byte   `json:"suffix"`
+	Flags  string `json:"flags"` // "unique" or "group"
+}
+
 type ServiceNetbios struct {
-	NetBIOSName string `json:"netbios_name"`
+	NetBIOSName string         `json:"netbios_name"`
+	GroupName   string         `json:"group_name,omitempty"`
+	MACAddress  string         `json:"mac_address,omitempty"`
+	Names       []NetbiosEntry `json:"names,omitempty"`
 }
 
 func (e ServiceNetbios) Type() string { return ProtoNetbios }
