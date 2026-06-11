@@ -54,6 +54,12 @@ func TestRabbitMQManagementFingerprinter_Match(t *testing.T) {
 			want:        true,
 		},
 		{
+			name:        "200 Application/JSON mixed case returns true",
+			statusCode:  http.StatusOK,
+			contentType: "Application/JSON; charset=utf-8",
+			want:        true,
+		},
+		{
 			name:        "200 text/html returns false",
 			statusCode:  http.StatusOK,
 			contentType: "text/html",

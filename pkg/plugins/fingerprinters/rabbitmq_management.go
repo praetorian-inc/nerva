@@ -70,7 +70,8 @@ func (f *RabbitMQManagementFingerprinter) Match(resp *http.Response) bool {
 	}
 
 	if resp.StatusCode == http.StatusOK {
-		return strings.Contains(resp.Header.Get("Content-Type"), "application/json")
+		ct := strings.ToLower(resp.Header.Get("Content-Type"))
+		return strings.Contains(ct, "application/json")
 	}
 
 	if resp.StatusCode == http.StatusUnauthorized {
