@@ -140,7 +140,11 @@ func (p *SSTPluginHTTPS) Run(conn net.Conn, timeout time.Duration, target plugin
 		CPEs:   cpes,
 	}
 
-	return plugins.CreateServiceFrom(target, payload, true, "", plugins.TCPTLS), nil
+	service := plugins.CreateServiceFrom(target, payload, true, "", plugins.TCPTLS)
+	if target.Misconfigs {
+		service.SecurityFindings = append(service.SecurityFindings, plugins.CheckTLS(conn)...)
+	}
+	return service, nil
 }
 
 func (p *SSTPluginHTTPS) Type() plugins.Protocol {

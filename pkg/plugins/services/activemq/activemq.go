@@ -224,7 +224,11 @@ func (p *TLSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 		versionStr = fmt.Sprintf("%d", version)
 	}
 
-	return plugins.CreateServiceFrom(target, payload, true, versionStr, plugins.TCP), nil
+	service := plugins.CreateServiceFrom(target, payload, true, versionStr, plugins.TCP)
+	if target.Misconfigs {
+		service.SecurityFindings = append(service.SecurityFindings, plugins.CheckTLS(conn)...)
+	}
+	return service, nil
 }
 
 func (p *TLSPlugin) PortPriority(port uint16) bool {
