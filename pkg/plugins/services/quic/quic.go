@@ -15,6 +15,7 @@
 package quic
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/binary"
 	"fmt"
@@ -169,18 +170,11 @@ func parseVersionNegotiation(data []byte, sentDCID []byte) (plugins.ServiceQUIC,
 	if offset+respSCIDLen > len(data) {
 		return plugins.ServiceQUIC{}, false
 	}
-	if respSCIDLen == len(sentDCID) {
-		echoed := data[offset : offset+respSCIDLen]
-		match := true
-		for i := range echoed {
-			if echoed[i] != sentDCID[i] {
-				match = false
-				break
-			}
-		}
-		if !match {
-			return plugins.ServiceQUIC{}, false
-		}
+	if respSCIDLen != len(sentDCID) {
+		return plugins.ServiceQUIC{}, false
+	}
+	if !bytes.Equal(data[offset:offset+respSCIDLen], sentDCID) {
+		return plugins.ServiceQUIC{}, false
 	}
 	offset += respSCIDLen
 

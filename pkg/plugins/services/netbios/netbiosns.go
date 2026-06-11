@@ -54,7 +54,12 @@ func (p *Plugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target
 	if err != nil {
 		return nil, err
 	}
-	if len(response) == 0 {
+	if len(response) < 2 {
+		return nil, nil
+	}
+
+	// Validate transaction ID matches what we sent
+	if response[0] != transactionID[0] || response[1] != transactionID[1] {
 		return nil, nil
 	}
 
@@ -91,49 +96,51 @@ func parseNBSTATResponse(data []byte) (plugins.ServiceNetbios, bool) {
 	if flags&0x8000 == 0 {
 		return plugins.ServiceNetbios{}, false
 	}
+	// RCODE must be NOERROR (lower 4 bits of flags)
+	if flags&0x000F != 0 {
+		return plugins.ServiceNetbios{}, false
+	}
+	// ANCOUNT must be > 0 (bytes 6-7)
+	answerCount := (uint16(data[6]) << 8) | uint16(data[7])
+	if answerCount == 0 {
+		return plugins.ServiceNetbios{}, false
+	}
 
 	// Skip header (12 bytes) and question section to find the answer.
 	// The question section has a variable-length name, then 4 bytes (QTYPE + QCLASS).
-	// Skip the encoded name by scanning for the 0x00 terminator.
 	offset := 12
-	for offset < len(data) && data[offset] != 0x00 {
-		offset += int(data[offset]) + 1
-	}
-	if offset >= len(data) {
+	offset = skipDNSName(data, offset)
+	if offset < 0 || offset+4 > len(data) {
 		return plugins.ServiceNetbios{}, false
 	}
-	offset++ // skip 0x00 terminator
 	offset += 4 // skip QTYPE (2) + QCLASS (2)
 
 	// Now at the answer section. Skip the answer name (may be compressed pointer or literal).
-	if offset >= len(data) {
-		return plugins.ServiceNetbios{}, false
-	}
-	if data[offset]&0xC0 == 0xC0 {
-		// Compressed name pointer (2 bytes)
-		offset += 2
-	} else {
-		// Literal name - scan for terminator
-		for offset < len(data) && data[offset] != 0x00 {
-			offset += int(data[offset]) + 1
-		}
-		if offset >= len(data) {
-			return plugins.ServiceNetbios{}, false
-		}
-		offset++ // skip 0x00 terminator
-	}
-
-	// Skip Type (2) + Class (2) + TTL (4) = 8 bytes
-	offset += 8
-	if offset+2 > len(data) {
+	offset = skipDNSName(data, offset)
+	if offset < 0 {
 		return plugins.ServiceNetbios{}, false
 	}
 
-	// RDLENGTH (2 bytes)
-	offset += 2
+	// Validate TYPE (2) + CLASS (2) + TTL (4) + RDLENGTH (2) = 10 bytes
+	if offset+10 > len(data) {
+		return plugins.ServiceNetbios{}, false
+	}
+	rrType := (uint16(data[offset]) << 8) | uint16(data[offset+1])
+	rrClass := (uint16(data[offset+2]) << 8) | uint16(data[offset+3])
+	if rrType != 0x0021 || rrClass != 0x0001 {
+		return plugins.ServiceNetbios{}, false
+	}
+	rdLength := int((uint16(data[offset+8]) << 8) | uint16(data[offset+9]))
+	offset += 10
+
+	// Validate RDLENGTH doesn't exceed remaining data
+	if offset+rdLength > len(data) {
+		return plugins.ServiceNetbios{}, false
+	}
+	rdataEnd := offset + rdLength
 
 	// RDATA: NUM_NAMES (1 byte)
-	if offset >= len(data) {
+	if offset >= rdataEnd {
 		return plugins.ServiceNetbios{}, false
 	}
 	numNames := int(data[offset])
@@ -141,7 +148,7 @@ func parseNBSTATResponse(data []byte) (plugins.ServiceNetbios, bool) {
 
 	// Each name entry is 18 bytes: 15-char name + 1-byte suffix + 2-byte flags
 	const nameEntryLen = 18
-	if offset+numNames*nameEntryLen > len(data) {
+	if offset+numNames*nameEntryLen > rdataEnd {
 		return plugins.ServiceNetbios{}, false
 	}
 
@@ -179,7 +186,7 @@ func parseNBSTATResponse(data []byte) (plugins.ServiceNetbios, bool) {
 
 	// MAC address follows the name table (6 bytes)
 	macOffset := offset + numNames*nameEntryLen
-	if macOffset+6 <= len(data) {
+	if macOffset+6 <= rdataEnd {
 		mac := data[macOffset : macOffset+6]
 		result.MACAddress = fmt.Sprintf("%02x:%02x:%02x:%02x:%02x:%02x",
 			mac[0], mac[1], mac[2], mac[3], mac[4], mac[5])
@@ -191,6 +198,38 @@ func parseNBSTATResponse(data []byte) (plugins.ServiceNetbios, bool) {
 	}
 
 	return result, true
+}
+
+// skipDNSName advances past a DNS-encoded name at data[offset], handling both
+// literal labels and compression pointers (RFC 1035 Section 4.1.4).
+// Returns the new offset after the name, or -1 if the data is malformed.
+func skipDNSName(data []byte, offset int) int {
+	if offset >= len(data) {
+		return -1
+	}
+	// Compression pointer: two bytes starting with 0xC0
+	if data[offset]&0xC0 == 0xC0 {
+		if offset+2 > len(data) {
+			return -1
+		}
+		return offset + 2
+	}
+	// Literal labels: sequence of length-prefixed labels ending with 0x00
+	for offset < len(data) {
+		labelLen := int(data[offset])
+		if labelLen == 0 {
+			return offset + 1 // skip the 0x00 terminator
+		}
+		// Check for compression pointer mid-name
+		if labelLen&0xC0 == 0xC0 {
+			if offset+2 > len(data) {
+				return -1
+			}
+			return offset + 2
+		}
+		offset += labelLen + 1
+	}
+	return -1
 }
 
 func (p *Plugin) PortPriority(i uint16) bool {

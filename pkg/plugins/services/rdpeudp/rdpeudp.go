@@ -102,8 +102,8 @@ func buildSYNProbe() []byte {
 
 	// RDPUDP_SYNDATA_PAYLOAD (8 bytes)
 	seqNum := make([]byte, 4)
-	rand.Read(seqNum)
-	copy(probe[8:12], seqNum)                              // snInitialSequenceNumber
+	_, _ = rand.Read(seqNum) // crypto/rand.Read does not fail on supported platforms
+	copy(probe[8:12], seqNum) // snInitialSequenceNumber
 	binary.LittleEndian.PutUint16(probe[12:14], 1232)      // uUpStreamMtu
 	binary.LittleEndian.PutUint16(probe[14:16], 1232)      // uDownStreamMtu
 

@@ -38,7 +38,7 @@ import (
 
 const (
 	smbudpPort     = 443
-	smbudpPriority = 2101 // Just after generic QUIC plugin (2100)
+	smbudpPriority = 2099 // Before generic QUIC plugin (2100); more specific check runs first
 	alpnSMB        = "smb"
 )
 
@@ -80,6 +80,7 @@ func (p *Plugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target
 	tlsConf := &tls.Config{
 		NextProtos:         []string{alpnSMB},
 		InsecureSkipVerify: true, //nolint:gosec // Required for scanning unknown hosts
+		// MinVersion intentionally omitted to detect services using older TLS versions
 	}
 
 	quicConn, err := quic.DialAddr(ctx, addr, tlsConf, nil)
@@ -95,12 +96,9 @@ func (p *Plugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target
 
 	metadata := plugins.ServiceSMBUDP{}
 
-	if tlsState.NegotiatedProtocol != "" {
-		// Should be "smb" if the server accepted our ALPN
-		if tlsState.NegotiatedProtocol != alpnSMB {
-			// Server negotiated a different protocol -- not SMB
-			return nil, nil
-		}
+	// Require explicit ALPN "smb" negotiation to avoid false positives
+	if tlsState.NegotiatedProtocol != alpnSMB {
+		return nil, nil
 	}
 
 	// Extract certificate information

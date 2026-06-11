@@ -182,6 +182,24 @@ func TestParseVersionNegotiation_WrongDCID(t *testing.T) {
 	}
 }
 
+func TestParseVersionNegotiation_SCIDLengthMismatch(t *testing.T) {
+	dcid := []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08}
+
+	// Response echoes only 4 bytes of SCID when we sent 8-byte DCID
+	resp := []byte{
+		0x80,
+		0x00, 0x00, 0x00, 0x00,
+		0x00,       // DCID Length
+		0x04,       // SCID Length = 4 (does not match our DCID length of 8)
+		0x01, 0x02, 0x03, 0x04, // Partial echo
+	}
+	resp = append(resp, 0x00, 0x00, 0x00, 0x01) // version
+	_, ok := parseVersionNegotiation(resp, dcid)
+	if ok {
+		t.Error("expected parseVersionNegotiation to return false for SCID length mismatch")
+	}
+}
+
 // TestPlugin_RunWithMockServer tests the full Run method using a mock QUIC VN server.
 func TestPlugin_RunWithMockServer(t *testing.T) {
 	serverAddr, err := net.ResolveUDPAddr("udp", "127.0.0.1:0")
