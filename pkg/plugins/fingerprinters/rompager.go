@@ -49,15 +49,19 @@ type RomPagerFingerprinter struct{}
 
 // romPagerVersionRegex extracts version from Server header
 // Matches: RomPager/4.07, RomPager/4.34, RomPager/4.51, Allegro-Software-RomPager/4.34
-var romPagerVersionRegex = regexp.MustCompile(`(?i)RomPager/([\d]+[\d.]*\w*)`)
+var romPagerVersionRegex = regexp.MustCompile(`(?i)RomPager/(\S+)`)
 
 // romPagerVersionValidationRegex validates extracted version format
 // Prevents CPE injection by ensuring version contains only digits, dots, and alphanumeric suffixes
-var romPagerVersionValidationRegex = regexp.MustCompile(`(?i)^[\d]+[\d.]*\w*$`)
+var romPagerVersionValidationRegex = regexp.MustCompile(`^[\d]+[\d.]*[a-zA-Z0-9]*$`)
 
 // romPagerUPnPVersionRegex extracts UPnP version from Server header
 // Matches: UPnP/1.0, UPnP/1.1
 var romPagerUPnPVersionRegex = regexp.MustCompile(`(?i)UPnP/([\d]+[\d.]*)`)
+
+// romPagerUPnPVersionValidationRegex validates extracted UPnP version format
+// Only allows digits and dots to prevent CPE injection
+var romPagerUPnPVersionValidationRegex = regexp.MustCompile(`^[\d]+[\d.]*$`)
 
 func init() {
 	Register(&RomPagerFingerprinter{})
@@ -124,7 +128,7 @@ func (f *RomPagerFingerprinter) Fingerprint(resp *http.Response, body []byte) (*
 
 	// Extract UPnP version if present
 	upnpMatches := romPagerUPnPVersionRegex.FindStringSubmatch(serverHeader)
-	if len(upnpMatches) >= 2 {
+	if len(upnpMatches) >= 2 && romPagerUPnPVersionValidationRegex.MatchString(upnpMatches[1]) {
 		metadata["upnp_version"] = upnpMatches[1]
 	}
 

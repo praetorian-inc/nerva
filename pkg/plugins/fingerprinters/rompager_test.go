@@ -138,6 +138,12 @@ func TestRomPagerFingerprinter_Fingerprint_Valid(t *testing.T) {
 			wantVersion:     "",
 			wantUPnPVersion: "",
 		},
+		{
+			name:            "ROMPAGER (bare uppercase, no version) returns empty version",
+			server:          "ROMPAGER",
+			wantVersion:     "",
+			wantUPnPVersion: "",
+		},
 	}
 
 	for _, tt := range tests {
@@ -233,6 +239,11 @@ func TestRomPagerFingerprinter_Fingerprint_Invalid(t *testing.T) {
 			name:       "Status 500 returns nil",
 			server:     "RomPager/4.07",
 			statusCode: 500,
+		},
+		{
+			name:       "Underscore in version rejected",
+			server:     "RomPager/4.07_build1",
+			statusCode: 200,
 		},
 	}
 
