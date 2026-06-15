@@ -49,6 +49,7 @@ func TestLiteLLMFingerprinter_Match(t *testing.T) {
 		statusCode  int
 		contentType string
 		headers     map[string]string
+		requestPath string
 		want        bool
 	}{
 		{
@@ -94,6 +95,12 @@ func TestLiteLLMFingerprinter_Match(t *testing.T) {
 			contentType: "application/json",
 			want:        false,
 		},
+		{
+			name:        "200 /health/liveliness path without Content-Type returns true",
+			statusCode:  200,
+			requestPath: "/health/liveliness",
+			want:        true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -108,6 +115,11 @@ func TestLiteLLMFingerprinter_Match(t *testing.T) {
 			}
 			for k, v := range tt.headers {
 				resp.Header.Set(k, v)
+			}
+			if tt.requestPath != "" {
+				resp.Request = &http.Request{
+					URL: &url.URL{Path: tt.requestPath},
+				}
 			}
 			assert.Equal(t, tt.want, fp.Match(resp))
 		})
@@ -241,106 +253,6 @@ func TestLiteLLMFingerprinter_Fingerprint_LivelinessSignal(t *testing.T) {
 	})
 }
 
-// ── Signal 3: JSON field names ────────────────────────────────────────────────
-
-func TestLiteLLMFingerprinter_Fingerprint_JSONSignal(t *testing.T) {
-	fp := &LiteLLMFingerprinter{}
-
-	t.Run("body contains litellm_params field yields detected with json_field method", func(t *testing.T) {
-		resp := &http.Response{
-			StatusCode: 200,
-			Header:     make(http.Header),
-		}
-		body := []byte(`{"litellm_params":{"model":"gpt-4","api_key":"sk-xxx"}}`)
-
-		result, err := fp.Fingerprint(resp, body)
-		require.NoError(t, err)
-		require.NotNil(t, result)
-		assert.Equal(t, "json_field", result.Metadata["detection_method"])
-	})
-
-	t.Run("body contains owned_by:litellm-provider without space yields detected", func(t *testing.T) {
-		resp := &http.Response{
-			StatusCode: 200,
-			Header:     make(http.Header),
-		}
-		body := []byte(`{"data":[{"id":"gpt-4","owned_by":"litellm-provider"}]}`)
-
-		result, err := fp.Fingerprint(resp, body)
-		require.NoError(t, err)
-		require.NotNil(t, result)
-		assert.Equal(t, "json_field", result.Metadata["detection_method"])
-	})
-
-	t.Run("body contains owned_by: litellm-provider with space yields detected", func(t *testing.T) {
-		resp := &http.Response{
-			StatusCode: 200,
-			Header:     make(http.Header),
-		}
-		body := []byte(`{"data":[{"id":"gpt-4","owned_by": "litellm-provider"}]}`)
-
-		result, err := fp.Fingerprint(resp, body)
-		require.NoError(t, err)
-		require.NotNil(t, result)
-		assert.Equal(t, "json_field", result.Metadata["detection_method"])
-	})
-
-	t.Run("body contains owned_by:openai is NOT detected", func(t *testing.T) {
-		resp := &http.Response{
-			StatusCode: 200,
-			Header:     make(http.Header),
-		}
-		body := []byte(`{"data":[{"id":"gpt-4","owned_by":"openai"}]}`)
-
-		result, err := fp.Fingerprint(resp, body)
-		require.NoError(t, err)
-		assert.Nil(t, result)
-	})
-}
-
-// ── Signal 4: HTML branding ───────────────────────────────────────────────────
-
-func TestLiteLLMFingerprinter_Fingerprint_HTMLSignal(t *testing.T) {
-	fp := &LiteLLMFingerprinter{}
-
-	t.Run("title LiteLLM Admin Panel plus href=/ui/dashboard yields detected with html_branding method", func(t *testing.T) {
-		resp := &http.Response{
-			StatusCode: 200,
-			Header:     make(http.Header),
-		}
-		body := []byte(`<html><head><title>LiteLLM Admin Panel</title></head><body><a href="/ui/dashboard">Dashboard</a></body></html>`)
-
-		result, err := fp.Fingerprint(resp, body)
-		require.NoError(t, err)
-		require.NotNil(t, result)
-		assert.Equal(t, "html_branding", result.Metadata["detection_method"])
-	})
-
-	t.Run("title LiteLLM Admin Panel without /ui path is NOT detected", func(t *testing.T) {
-		resp := &http.Response{
-			StatusCode: 200,
-			Header:     make(http.Header),
-		}
-		body := []byte(`<html><head><title>LiteLLM Admin Panel</title></head><body><a href="/dashboard">Dashboard</a></body></html>`)
-
-		result, err := fp.Fingerprint(resp, body)
-		require.NoError(t, err)
-		assert.Nil(t, result)
-	})
-
-	t.Run("title AI Blog with href=/ui/something is NOT detected", func(t *testing.T) {
-		resp := &http.Response{
-			StatusCode: 200,
-			Header:     make(http.Header),
-		}
-		body := []byte(`<html><head><title>AI Blog</title></head><body><a href="/ui/something">Link</a></body></html>`)
-
-		result, err := fp.Fingerprint(resp, body)
-		require.NoError(t, err)
-		assert.Nil(t, result)
-	})
-}
-
 // ── Negative cases ────────────────────────────────────────────────────────────
 
 func TestLiteLLMFingerprinter_Fingerprint_NegativeCases(t *testing.T) {
@@ -451,21 +363,4 @@ func TestLiteLLMFingerprinter_Integration(t *testing.T) {
 		assert.NotEmpty(t, result.Metadata["litellm_headers"])
 	})
 
-	t.Run("JSON response with litellm_params field and no headers yields json_field detection", func(t *testing.T) {
-		resp := &http.Response{
-			StatusCode: 200,
-			Header:     make(http.Header),
-		}
-		resp.Header.Set("Content-Type", "application/json")
-		body := []byte(`{"litellm_params":{"model":"claude-3","api_key":"sk-xxx"},"data":[]}`)
-
-		require.True(t, fp.Match(resp))
-
-		result, err := fp.Fingerprint(resp, body)
-		require.NoError(t, err)
-		require.NotNil(t, result)
-
-		assert.Equal(t, "litellm", result.Technology)
-		assert.Equal(t, "json_field", result.Metadata["detection_method"])
-	})
 }

@@ -26,28 +26,17 @@ Package fingerprinters provides HTTP fingerprinting for LiteLLM Proxy instances.
     returns exactly the plain-text string "I'm alive!", the instance is
     confirmed. This is the definitive active-probe signal.
 
-  - LiteLLM-specific JSON field name prefixes embedded in API responses.
-    Field names beginning with "litellm_" (e.g., litellm_params,
-    litellm_version, litellm_budget_table) are unique to LiteLLM and
-    constitute a standalone signal. The model list marker
-    "owned_by":"litellm" (with or without a space after the colon) is
-    also matched.
-
-  - LiteLLM admin UI HTML: an HTML <title> tag containing "litellm"
-    combined with a "/ui" path reference in a src or href attribute.
-    Both sub-signals must fire together.
-
 # What We Do NOT Detect
 
   - LiteLLM Proxy instances deployed behind reverse proxies that strip all
-    X-Litellm-* headers and serve a custom HTML front-end without LiteLLM
-    branding.
+    X-Litellm-* headers and block or rewrite the /health/liveliness endpoint.
 
   - LiteLLM SDK usage inside application code (not proxy mode); the SDK does
     not expose an HTTP server with these markers.
 
-  - OpenAI-compatible proxies (LiteLLM-compatible but not LiteLLM itself)
-    that mimic the /models list but omit "owned_by":"litellm".
+  - LiteLLM JSON API markers ("litellm_params", "owned_by":"litellm") and
+    HTML admin UI branding — these appear on endpoints other than
+    /health/liveliness and are not reachable via the active probe path.
 
 # Security Context
 
@@ -91,16 +80,6 @@ var litellmVersionExtractRe = regexp.MustCompile(`^\d+\.\d+\.\d+`)
 // Rejects pre-release suffixes, build metadata, and any CPE metacharacters.
 var litellmVersionValidateRe = regexp.MustCompile(`^\d+\.\d+\.\d+$`)
 
-// litellmTitleRe matches LiteLLM branding in an HTML <title> tag.
-// The <title> element is a structural self-identification marker.
-// Case-insensitive to match "LiteLLM", "litellm", "LITELLM", etc.
-var litellmTitleRe = regexp.MustCompile(`(?i)<title[^>]*>[^<]*litellm[^<]*</title>`)
-
-// litellmUIPathRe matches a "/ui" path reference in a src or href attribute.
-// LiteLLM's admin dashboard is served under /ui; its presence together with
-// the title-tag signal confirms the LiteLLM web front-end.
-var litellmUIPathRe = regexp.MustCompile(`(?i)(?:href|src)=["'][^"']*/ui[/"']`)
-
 // LiteLLMFingerprinter detects LiteLLM Proxy instances.
 // Implements ActiveHTTPFingerprinter + AcceptHeaderProvider.
 type LiteLLMFingerprinter struct{}
@@ -139,6 +118,12 @@ func (f *LiteLLMFingerprinter) Match(resp *http.Response) bool {
 		return false
 	}
 
+	// Fast-path: active probe response from /health/liveliness always matches.
+	if resp.Request != nil && resp.Request.URL != nil &&
+		resp.Request.URL.Path == "/health/liveliness" {
+		return true
+	}
+
 	// Fast-path: any X-Litellm-* response header is a definitive marker.
 	for k := range resp.Header {
 		if strings.HasPrefix(strings.ToLower(k), "x-litellm-") {
@@ -164,8 +149,6 @@ func (f *LiteLLMFingerprinter) Match(resp *http.Response) bool {
 //  1. X-Litellm-* response headers (standalone) — "active_probe" when the
 //     response came from /health/*, otherwise "response_header".
 //  2. /health/liveliness plain-text body == "I'm alive!" (standalone) — "active_probe".
-//  3. JSON body containing "litellm_" key prefix or "owned_by":"litellm" — "json_field".
-//  4. HTML <title> containing "litellm" AND a "/ui" href/src reference — "html_branding".
 //
 // At least one signal must fire, or Fingerprint returns nil.
 func (f *LiteLLMFingerprinter) Fingerprint(resp *http.Response, body []byte) (*FingerprintResult, error) {
@@ -199,24 +182,14 @@ func (f *LiteLLMFingerprinter) Fingerprint(resp *http.Response, body []byte) (*F
 
 	hasLivelinessSignal := false
 	if resp.Request != nil && resp.Request.URL != nil &&
-		strings.Contains(resp.Request.URL.Path, "/health/liveliness") {
+		resp.Request.URL.Path == "/health/liveliness" {
 		if strings.TrimSpace(string(body)) == "I'm alive!" {
 			hasLivelinessSignal = true
 		}
 	}
 
-	// --- Signal 3: LiteLLM-specific JSON field name prefix ---
-
-	hasJSONSignal := strings.Contains(string(body), `"litellm_`) ||
-		strings.Contains(string(body), `"owned_by":"litellm`) ||
-		strings.Contains(string(body), `"owned_by": "litellm`)
-
-	// --- Signal 4: HTML branding in title + /ui path reference ---
-
-	hasHTMLSignal := litellmTitleRe.Match(body) && litellmUIPathRe.Match(body)
-
 	// At least one signal must fire.
-	if !hasHeaderSignal && !hasLivelinessSignal && !hasJSONSignal && !hasHTMLSignal {
+	if !hasHeaderSignal && !hasLivelinessSignal {
 		return nil, nil
 	}
 
@@ -224,7 +197,7 @@ func (f *LiteLLMFingerprinter) Fingerprint(resp *http.Response, body []byte) (*F
 
 	version := extractLiteLLMVersion(resp)
 
-	// --- Detection method (priority: active_probe > response_header > json_field > html_branding) ---
+	// --- Detection method (priority: active_probe > response_header) ---
 
 	var detectionMethod string
 	switch {
@@ -232,12 +205,8 @@ func (f *LiteLLMFingerprinter) Fingerprint(resp *http.Response, body []byte) (*F
 		detectionMethod = "active_probe"
 	case hasLivelinessSignal:
 		detectionMethod = "active_probe"
-	case hasHeaderSignal:
-		detectionMethod = "response_header"
-	case hasJSONSignal:
-		detectionMethod = "json_field"
 	default:
-		detectionMethod = "html_branding"
+		detectionMethod = "response_header"
 	}
 
 	// --- Metadata ---
@@ -249,7 +218,7 @@ func (f *LiteLLMFingerprinter) Fingerprint(resp *http.Response, body []byte) (*F
 	}
 
 	if isActiveProbe || hasLivelinessSignal {
-		metadata["probe_path"] = "/health/liveliness"
+		metadata["probe_path"] = resp.Request.URL.Path
 	}
 
 	if version != "" {
