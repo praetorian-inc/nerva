@@ -33,11 +33,8 @@ Package fingerprinters provides HTTP fingerprinting for Ivanti Connect Secure.
 
   - Realm names from the authentication realm selector, if present in the login form.
 
-  - Product variant (Connect Secure vs Policy Secure) extracted from the HTML <title> tag.
-    "Ivanti Policy Secure" in the title sets the variant to Policy Secure; "Ivanti Connect
-    Secure", "Pulse Secure", and "Pulse Connect Secure" all resolve to Connect Secure.
-    The variant defaults to Connect Secure when no explicit variant marker is found, because
-    the /dana-na/ path structure is specific to the Connect Secure product family.
+  - Product variant is always reported as "Connect Secure" because the /dana-na/
+    path structure detected by this fingerprinter is specific to that product.
 
 # What We Do NOT Detect
 
@@ -92,8 +89,9 @@ import (
 var danaCSSRegex = regexp.MustCompile(`(?i)/dana-na/css/ds[._]`)
 
 // danaLoginFormRegex matches the Ivanti login form structure.
-// The form is named "frmLogin" with action pointing to login.cgi.
-var danaLoginFormRegex = regexp.MustCompile(`(?i)<form[^>]*name\s*=\s*["']frmLogin["'][^>]*>`)
+// Requires both name="frmLogin" AND an action containing login.cgi in the same
+// <form> tag to avoid false positives from unrelated forms with similar names.
+var danaLoginFormRegex = regexp.MustCompile(`(?i)<form[^>]*(?:name\s*=\s*["']frmLogin["'][^>]*action\s*=\s*["'][^"']*login\.cgi[^"']*["']|action\s*=\s*["'][^"']*login\.cgi[^"']*["'][^>]*name\s*=\s*["']frmLogin["'])[^>]*>`)
 
 // ivantiTitleRegex matches Ivanti or Pulse Secure branding in the HTML title.
 var ivantiTitleRegex = regexp.MustCompile(`(?i)<title[^>]*>[^<]*(?:ivanti|pulse\s+secure)[^<]*</title>`)
@@ -101,10 +99,9 @@ var ivantiTitleRegex = regexp.MustCompile(`(?i)<title[^>]*>[^<]*(?:ivanti|pulse\
 // danaPathRegex matches any /dana-na/ or /dana/ path reference in HTML.
 var danaPathRegex = regexp.MustCompile(`(?i)/dana(?:-na)?/`)
 
-// ivantiVariantRegex extracts the product variant from the HTML title.
-// It captures the variant name — either "Connect Secure" or "Policy Secure" —
-// from titles produced by both current Ivanti branding and legacy Pulse Secure branding.
-var ivantiVariantRegex = regexp.MustCompile(`(?i)<title[^>]*>[^<]*(connect\s+secure|policy\s+secure)[^<]*</title>`)
+// realmSelectRegex matches the realm <select> element and captures its inner content.
+// Only options within this specific select are extracted as realm names.
+var realmSelectRegex = regexp.MustCompile(`(?is)<select[^>]*name\s*=\s*["']realm["'][^>]*>(.*?)</select>`)
 
 // realmOptionRegex extracts realm names from <option> elements in the realm select.
 var realmOptionRegex = regexp.MustCompile(`(?i)<option[^>]*value\s*=\s*["']([^"']{1,64})["'][^>]*>`)
@@ -250,20 +247,7 @@ func (f *IvantiConnectSecureFingerprinter) Fingerprint(resp *http.Response, body
 		metadata["legacy_branding"] = "Pulse Secure"
 	}
 
-	// Extract product variant from the HTML title.
-	// Defaults to "Connect Secure" because /dana-na/ is primarily a Connect Secure path.
-	productVariant := "Connect Secure"
-	if m := ivantiVariantRegex.FindSubmatch(body); len(m) >= 2 {
-		captured := strings.ToLower(string(m[1]))
-		if strings.Contains(captured, "policy secure") {
-			productVariant = "Policy Secure"
-		}
-		// "connect secure" (including "pulse connect secure") maps to Connect Secure — already the default.
-	} else if strings.Contains(bodyLower, "pulse secure") || strings.Contains(bodyLower, "pulse connect secure") {
-		// Legacy Pulse Secure branding without an explicit variant in the title is Connect Secure.
-		productVariant = "Connect Secure"
-	}
-	metadata["product_variant"] = productVariant
+	metadata["product_variant"] = "Connect Secure"
 
 	return &FingerprintResult{
 		Technology: "ivanti-connect-secure",
@@ -301,22 +285,24 @@ func countDSCookies(resp *http.Response) ([]string, bool) {
 }
 
 // extractRealms returns realm names from the login form's realm <select> element.
-// Only extracts if the body contains a realm selector (name="realm" or name='realm').
+// It first locates the <select> element with name="realm" (or name='realm'), then
+// extracts <option> values only from within that element to avoid capturing options
+// from unrelated dropdowns (language, timezone, etc.).
 // Returns at most 32 realm names, each bounded to 64 characters by the extraction regex.
 func extractRealms(body []byte) []string {
-	bodyStr := string(body)
-	// Only scan for realms if a realm selector is present.
-	if !strings.Contains(bodyStr, `name="realm"`) && !strings.Contains(bodyStr, `name='realm'`) {
+	m := realmSelectRegex.FindSubmatch(body)
+	if len(m) < 2 {
 		return nil
 	}
-	matches := realmOptionRegex.FindAllSubmatch(body, 32)
+	selectContent := m[1]
+	matches := realmOptionRegex.FindAllSubmatch(selectContent, 32)
 	if len(matches) == 0 {
 		return nil
 	}
 	realms := make([]string, 0, len(matches))
-	for _, m := range matches {
-		if len(m) >= 2 {
-			v := strings.TrimSpace(string(m[1]))
+	for _, match := range matches {
+		if len(match) >= 2 {
+			v := strings.TrimSpace(string(match[1]))
 			if v != "" {
 				realms = append(realms, v)
 			}

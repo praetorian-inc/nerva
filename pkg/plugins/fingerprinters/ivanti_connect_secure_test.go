@@ -543,7 +543,7 @@ func TestIvantiConnectSecureFingerprinter_Fingerprint_ProductVariant(t *testing.
 		assert.Equal(t, "Connect Secure", result.Metadata["product_variant"])
 	})
 
-	t.Run("title 'Ivanti Policy Secure' → product_variant=Policy Secure", func(t *testing.T) {
+	t.Run("title 'Ivanti Policy Secure' → product_variant=Connect Secure (always Connect Secure)", func(t *testing.T) {
 		resp := &http.Response{
 			StatusCode: 200,
 			Header:     make(http.Header),
@@ -556,7 +556,7 @@ func TestIvantiConnectSecureFingerprinter_Fingerprint_ProductVariant(t *testing.
 		result, err := fp.Fingerprint(resp, body)
 		require.NoError(t, err)
 		require.NotNil(t, result)
-		assert.Equal(t, "Policy Secure", result.Metadata["product_variant"])
+		assert.Equal(t, "Connect Secure", result.Metadata["product_variant"])
 	})
 
 	t.Run("title 'Pulse Secure SSL VPN' → product_variant=Connect Secure (legacy)", func(t *testing.T) {
