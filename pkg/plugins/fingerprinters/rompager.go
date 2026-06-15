@@ -123,7 +123,7 @@ func (f *RomPagerFingerprinter) Fingerprint(resp *http.Response, body []byte) (*
 	metadata := map[string]any{
 		"vendor":        "Allegro",
 		"product":       "RomPager",
-		"server_header": serverHeader,
+		"server_header": sanitizeHTTPHeaderValue(serverHeader),
 	}
 
 	// Extract UPnP version if present
