@@ -20,7 +20,9 @@ Package fingerprinters provides HTTP fingerprinting for Jupyter Notebook, Jupyte
 Three fingerprinters are registered:
 
   - JupyterNotebookFingerprinter (Active): probes /api for the Jupyter Notebook
-    REST API, validates the version field in the JSON response.
+    REST API, validates the version field in the JSON response. Requires
+    corroboration: either Jupyter-specific JSON fields (base_url, ws_url) or
+    a Tornado/Jupyter Server header to avoid false-positives on generic APIs.
 
   - JupyterHubFingerprinter (Active): probes /hub/login for JupyterHub login page.
     Primary signal is the X-JupyterHub-Version header (definitive). Secondary
@@ -74,6 +76,8 @@ var (
 // jupyterNotebookAPIResponse represents the minimal JSON structure of the Jupyter Notebook /api endpoint.
 type jupyterNotebookAPIResponse struct {
 	Version string `json:"version"`
+	BaseURL string `json:"base_url"`
+	WsURL   string `json:"ws_url"`
 }
 
 // JupyterNotebookFingerprinter detects Jupyter Notebook via the /api endpoint.
@@ -131,6 +135,15 @@ func (f *JupyterNotebookFingerprinter) Fingerprint(resp *http.Response, body []b
 
 	version := sanitizeJupyterVersion(apiResp.Version, jupyterNotebookVersionRegex)
 	if version == "" {
+		return nil, nil
+	}
+
+	// Require corroboration: Jupyter-specific JSON fields or Server header.
+	// Bare {"version":"N"} at /api is too generic without additional signals.
+	serverHeader := strings.ToLower(resp.Header.Get("Server"))
+	hasJupyterServer := strings.Contains(serverHeader, "tornado") || strings.Contains(serverHeader, "jupyter")
+	hasJupyterFields := apiResp.BaseURL != "" || apiResp.WsURL != ""
+	if !hasJupyterServer && !hasJupyterFields {
 		return nil, nil
 	}
 

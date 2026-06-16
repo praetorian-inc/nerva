@@ -83,7 +83,8 @@ func TestJupyterNotebookFingerprinter_Fingerprint(t *testing.T) {
 
 	t.Run("positive: valid JSON version detected", func(t *testing.T) {
 		fp := &JupyterNotebookFingerprinter{}
-		body := []byte(`{"version": "6.4.12", "last_activity": "2023-01-01T00:00:00Z"}`)
+		// base_url provides the Jupyter-specific corroboration signal.
+		body := []byte(`{"version": "6.4.12", "base_url": "/", "last_activity": "2023-01-01T00:00:00Z"}`)
 
 		result, err := fp.Fingerprint(jsonResp(), body)
 
@@ -99,7 +100,8 @@ func TestJupyterNotebookFingerprinter_Fingerprint(t *testing.T) {
 
 	t.Run("positive: single-digit version", func(t *testing.T) {
 		fp := &JupyterNotebookFingerprinter{}
-		body := []byte(`{"version": "7"}`)
+		// base_url provides the Jupyter-specific corroboration signal.
+		body := []byte(`{"version": "7", "base_url": "/"}`)
 
 		result, err := fp.Fingerprint(jsonResp(), body)
 
@@ -107,6 +109,65 @@ func TestJupyterNotebookFingerprinter_Fingerprint(t *testing.T) {
 		require.NotNil(t, result)
 		assert.Equal(t, "7", result.Version)
 		assert.Contains(t, result.CPEs, "cpe:2.3:a:jupyter:notebook:7:*:*:*:*:*:*:*")
+	})
+
+	t.Run("positive: ws_url field provides corroboration", func(t *testing.T) {
+		fp := &JupyterNotebookFingerprinter{}
+		body := []byte(`{"version": "7.0.6", "ws_url": "ws://localhost:8888/"}`)
+
+		result, err := fp.Fingerprint(jsonResp(), body)
+
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Equal(t, "7.0.6", result.Version)
+	})
+
+	t.Run("positive: Tornado Server header provides corroboration", func(t *testing.T) {
+		fp := &JupyterNotebookFingerprinter{}
+		resp := &http.Response{
+			StatusCode: 200,
+			Header: http.Header{
+				"Content-Type": []string{"application/json"},
+				"Server":       []string{"TornadoServer/6.4.1"},
+			},
+		}
+		// No base_url or ws_url, but Server header confirms Tornado.
+		body := []byte(`{"version": "7"}`)
+
+		result, err := fp.Fingerprint(resp, body)
+
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Equal(t, "7", result.Version)
+	})
+
+	t.Run("positive: jupyter Server header provides corroboration", func(t *testing.T) {
+		fp := &JupyterNotebookFingerprinter{}
+		resp := &http.Response{
+			StatusCode: 200,
+			Header: http.Header{
+				"Content-Type": []string{"application/json"},
+				"Server":       []string{"jupyter/1.0"},
+			},
+		}
+		body := []byte(`{"version": "6.5.0"}`)
+
+		result, err := fp.Fingerprint(resp, body)
+
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Equal(t, "6.5.0", result.Version)
+	})
+
+	t.Run("negative: rejects generic API with version-only response", func(t *testing.T) {
+		fp := &JupyterNotebookFingerprinter{}
+		// Bare {"version":"1.0"} without base_url/ws_url or Tornado/Jupyter Server header.
+		body := []byte(`{"version": "1.0"}`)
+
+		result, err := fp.Fingerprint(jsonResp(), body)
+
+		assert.NoError(t, err)
+		assert.Nil(t, result)
 	})
 
 	t.Run("negative: generic JSON API without version field returns nil", func(t *testing.T) {
@@ -132,7 +193,7 @@ func TestJupyterNotebookFingerprinter_Fingerprint(t *testing.T) {
 	t.Run("negative: invalid version string rejected, returns nil", func(t *testing.T) {
 		fp := &JupyterNotebookFingerprinter{}
 		// Version with non-numeric characters should be rejected.
-		body := []byte(`{"version": "6.4.12-beta"}`)
+		body := []byte(`{"version": "6.4.12-beta", "base_url": "/"}`)
 
 		result, err := fp.Fingerprint(jsonResp(), body)
 
@@ -142,7 +203,7 @@ func TestJupyterNotebookFingerprinter_Fingerprint(t *testing.T) {
 
 	t.Run("negative: CPE injection in version is rejected", func(t *testing.T) {
 		fp := &JupyterNotebookFingerprinter{}
-		body := []byte(`{"version": "6.4.12:*:*:*:*:cpe:2.3:a:evil"}`)
+		body := []byte(`{"version": "6.4.12:*:*:*:*:cpe:2.3:a:evil", "base_url": "/"}`)
 
 		result, err := fp.Fingerprint(jsonResp(), body)
 
@@ -644,7 +705,8 @@ func TestJupyterFingerprinters_NoSeverity(t *testing.T) {
 			StatusCode: 200,
 			Header:     http.Header{"Content-Type": []string{"application/json"}},
 		}
-		result, err := fp.Fingerprint(resp, []byte(`{"version":"6.4.0"}`))
+		// base_url provides the Jupyter-specific corroboration signal.
+		result, err := fp.Fingerprint(resp, []byte(`{"version":"6.4.0","base_url":"/"}`))
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		assert.Zero(t, result.Severity)
