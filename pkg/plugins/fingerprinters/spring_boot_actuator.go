@@ -115,6 +115,13 @@ func init() {
 	Register(&SpringBootActuatorHealthFingerprinter{})
 }
 
+// isActuatorJSONContentType returns true if the Content-Type indicates a JSON response,
+// including vendor media types like application/vnd.spring-boot.actuator.v3+json.
+func isActuatorJSONContentType(ct string) bool {
+	ct = strings.ToLower(ct)
+	return strings.Contains(ct, "application/json") || strings.Contains(ct, "+json")
+}
+
 // --- SpringBootActuatorFingerprinter ---
 
 func (f *SpringBootActuatorFingerprinter) Name() string {
@@ -126,7 +133,7 @@ func (f *SpringBootActuatorFingerprinter) ProbeEndpoint() string {
 }
 
 func (f *SpringBootActuatorFingerprinter) Match(resp *http.Response) bool {
-	return strings.Contains(resp.Header.Get("Content-Type"), "application/json")
+	return isActuatorJSONContentType(resp.Header.Get("Content-Type"))
 }
 
 func (f *SpringBootActuatorFingerprinter) Fingerprint(resp *http.Response, body []byte) (*FingerprintResult, error) {
@@ -176,7 +183,7 @@ func (f *SpringBootActuatorHealthFingerprinter) ProbeEndpoint() string {
 }
 
 func (f *SpringBootActuatorHealthFingerprinter) Match(resp *http.Response) bool {
-	return strings.Contains(resp.Header.Get("Content-Type"), "application/json")
+	return isActuatorJSONContentType(resp.Header.Get("Content-Type"))
 }
 
 func (f *SpringBootActuatorHealthFingerprinter) Fingerprint(resp *http.Response, body []byte) (*FingerprintResult, error) {

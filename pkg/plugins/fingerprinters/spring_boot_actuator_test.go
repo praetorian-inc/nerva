@@ -52,6 +52,16 @@ func TestSpringBootActuatorFingerprinter_Match(t *testing.T) {
 			want:        true,
 		},
 		{
+			name:        "vendor JSON type v3 returns true",
+			contentType: "application/vnd.spring-boot.actuator.v3+json",
+			want:        true,
+		},
+		{
+			name:        "vendor JSON type v2 returns true",
+			contentType: "application/vnd.spring-boot.actuator.v2+json;charset=UTF-8",
+			want:        true,
+		},
+		{
 			name:        "text/html returns false",
 			contentType: "text/html",
 			want:        false,
@@ -303,6 +313,16 @@ func TestSpringBootActuatorHealthFingerprinter_Match(t *testing.T) {
 		{
 			name:        "application/json; charset=utf-8 returns true",
 			contentType: "application/json; charset=utf-8",
+			want:        true,
+		},
+		{
+			name:        "vendor JSON type v3 returns true",
+			contentType: "application/vnd.spring-boot.actuator.v3+json",
+			want:        true,
+		},
+		{
+			name:        "vendor JSON type v2 returns true",
+			contentType: "application/vnd.spring-boot.actuator.v2+json;charset=UTF-8",
 			want:        true,
 		},
 		{
