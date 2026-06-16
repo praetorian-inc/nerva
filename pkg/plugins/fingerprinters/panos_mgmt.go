@@ -30,7 +30,7 @@
 //     - Management-specific asset paths (/php/utils/combined.js or /login/css/)
 //
 // Negative match: If the body contains any GlobalProtect marker
-// (global-protect, prelogin-response, PAN_FORM, portal-prelogin), return nil
+// (global-protect, prelogin-response, pan_form, portal-prelogin), return nil
 // to avoid overlap with the GlobalProtect fingerprinter.
 //
 // Default Ports:
@@ -73,7 +73,7 @@ var panOSMgmtTitlePattern = regexp.MustCompile(`(?i)<title>[^<]*palo\s*alto[^<]*
 
 // panOSMgmtAssetVersionPattern extracts version from asset query params,
 // e.g., combined.js?v=10.2.3
-var panOSMgmtAssetVersionPattern = regexp.MustCompile(`(?i)combined\.js\?v=([0-9]+(?:\.[0-9]+)+)`)
+var panOSMgmtAssetVersionPattern = regexp.MustCompile(`(?i)combined\.js\?v=([0-9]+(?:\.[0-9]+)+(?:-h[0-9]+)?)`)
 
 // panOSMgmtVersionValidPattern validates extracted version strings before
 // they are stored in metadata or CPE. Accepts dotted-decimal versions with
@@ -89,6 +89,9 @@ const panOSMgmtMaxVersionLen = 24
 // GlobalProtect VPN response rather than a management interface response.
 // Any match causes an early nil return.
 //
+// Markers are stored in lowercase; the loop compares against strings.ToLower(body)
+// so no per-iteration conversion is needed.
+//
 // This is an intentional subset of globalprotect.go's patterns. These 4
 // markers cover the primary GlobalProtect response types (portal login,
 // prelogin exchange, VPN form) that could appear at /php/login.php.
@@ -97,7 +100,7 @@ const panOSMgmtMaxVersionLen = 24
 var globalProtectMarkers = []string{
 	"global-protect",
 	"prelogin-response",
-	"PAN_FORM",
+	"pan_form",
 	"portal-prelogin",
 }
 
@@ -163,7 +166,7 @@ func (f *PanosMgmtFingerprinter) Fingerprint(resp *http.Response, body []byte) (
 	// present the response is from the VPN portal, not the management interface.
 	lowerBody := strings.ToLower(bodyStr)
 	for _, marker := range globalProtectMarkers {
-		if strings.Contains(lowerBody, strings.ToLower(marker)) {
+		if strings.Contains(lowerBody, marker) {
 			return nil, nil
 		}
 	}

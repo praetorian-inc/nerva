@@ -394,6 +394,12 @@ func TestPanosMgmtFingerprinter_VersionExtraction(t *testing.T) {
 			wantVersion: "10.2.4",
 		},
 		{
+			name:        "extracts hotfix version from combined.js asset query param",
+			headers:     http.Header{"Server": []string{"PanWeb Server"}},
+			body:        `<html><head><title>Palo Alto Networks - Login</title></head><body><form name="login_form"><script src="/php/utils/combined.js?v=10.2.3-h1"></script></form></body></html>`,
+			wantVersion: "10.2.3-h1",
+		},
+		{
 			name:        "Server header version takes precedence over asset param",
 			headers:     http.Header{"Server": []string{"PAN-OS 11.0.1"}},
 			body:        `<form name="login_form"></form><script src="/php/utils/combined.js?v=10.2.4"></script>`,
