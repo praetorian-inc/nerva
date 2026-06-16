@@ -58,11 +58,14 @@ var (
 	jupyterLabTitleRegex = regexp.MustCompile(`(?i)<title[^>]*>\s*JupyterLab\s*</title>`)
 
 	// jupyterLabScriptRegex matches jupyterlab references in script/CSS paths.
-	jupyterLabScriptRegex = regexp.MustCompile(`(?i)(?:src|href)=['""][^'"]*jupyterlab[^'"]*['"]`)
+	jupyterLabScriptRegex = regexp.MustCompile(`(?i)\b(?:src|href)=['""][^'"]*jupyterlab[^'"]*['"]`)
 
 	// jupyterLabVersionRegex extracts version from app_version or jupyterlab JS attributes.
 	// Matches patterns like: data-app_version="3.6.5", jupyterlab: "4.0.0", var jupyterlab = "4.0.0"
-	jupyterLabVersionRegex = regexp.MustCompile(`(?i)(?:app_?version|jupyterlab)['":\s=]+(\d+\.\d+\.\d+)`)
+	jupyterLabVersionRegex = regexp.MustCompile(`(?i)\b(?:app_?version|jupyterlab)['":\s=]+(\d+\.\d+\.\d+)`)
+
+	// jupyterHubBodyRegex matches "jupyterhub" case-insensitively in HTML body.
+	jupyterHubBodyRegex = regexp.MustCompile(`(?i)jupyterhub`)
 )
 
 // jupyterNotebookAPIResponse represents the minimal JSON structure of the Jupyter Notebook /api endpoint.
@@ -170,7 +173,7 @@ func (f *JupyterHubFingerprinter) Fingerprint(resp *http.Response, body []byte) 
 	}
 
 	// Secondary signal: HTML body contains "jupyterhub" (case-insensitive).
-	if !strings.Contains(strings.ToLower(string(body)), "jupyterhub") {
+	if !jupyterHubBodyRegex.Match(body) {
 		return nil, nil
 	}
 
@@ -211,7 +214,13 @@ func (f *JupyterLabFingerprinter) Fingerprint(resp *http.Response, body []byte) 
 		candidate := string(matches[1])
 		version = sanitizeJupyterVersion(candidate, jupyterHubVersionRegex)
 		if version != "" {
-			versionSource = "html"
+			// Determine source based on what matched before the version.
+			fullMatch := strings.ToLower(string(matches[0]))
+			if strings.Contains(fullMatch, "app") {
+				versionSource = "html_meta"
+			} else {
+				versionSource = "html_regex"
+			}
 		}
 	}
 

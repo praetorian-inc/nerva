@@ -438,7 +438,7 @@ func TestJupyterLabFingerprinter_Fingerprint(t *testing.T) {
 		require.NotNil(t, result)
 		assert.Equal(t, "3.6.5", result.Version)
 		assert.Contains(t, result.CPEs, "cpe:2.3:a:jupyter:jupyterlab:3.6.5:*:*:*:*:*:*:*")
-		assert.Equal(t, "html", result.Metadata["version_source"])
+		assert.Equal(t, "html_meta", result.Metadata["version_source"])
 	})
 
 	t.Run("positive: version extracted from jupyterlab JS variable", func(t *testing.T) {
@@ -489,6 +489,19 @@ func TestJupyterLabFingerprinter_Fingerprint(t *testing.T) {
 
 		assert.NoError(t, err)
 		assert.Nil(t, result)
+	})
+
+	t.Run("rejects version from non-jupyterlab identifier", func(t *testing.T) {
+		fp := &JupyterLabFingerprinter{}
+		// Title matches, but "notjupyterlab" should NOT trigger version extraction
+		// because \b word boundary prevents matching mid-identifier.
+		body := []byte(`<html><title>JupyterLab</title><script>var notjupyterlab = "3.6.5"</script></html>`)
+
+		result, err := fp.Fingerprint(htmlResp(), body)
+
+		require.NoError(t, err)
+		require.NotNil(t, result) // Title matches — should detect JupyterLab
+		assert.Equal(t, "", result.Version) // Version must NOT be extracted from notjupyterlab
 	})
 
 	t.Run("version with pre-release suffix: clean semver prefix is extracted", func(t *testing.T) {
