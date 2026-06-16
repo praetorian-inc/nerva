@@ -67,6 +67,12 @@ func TestPanosMgmtFingerprinter_Match(t *testing.T) {
 			want:       true,
 		},
 		{
+			name:       "mixed-case Location path matches",
+			statusCode: 302,
+			headers:    http.Header{"Location": []string{"/PHP/LOGIN.PHP"}},
+			want:       true,
+		},
+		{
 			name:       "does not match plain server with no indicators",
 			statusCode: 200,
 			headers:    http.Header{"Server": []string{"Apache/2.4"}},
@@ -277,6 +283,16 @@ func TestPanosMgmtFingerprinter_Fingerprint(t *testing.T) {
 			statusCode: 200,
 			headers:    http.Header{"Server": []string{"nginx/1.18"}},
 			body:       mgmtLoginHTML,
+			wantNil:    true,
+		},
+		{
+			// Body has <title>Login</title> (no "palo alto" in title) plus "Palo Alto" in a
+			// paragraph. The anchored title regex must NOT match this; without any other body
+			// signal (no login_form, no combined.js, no /login/css/) the result is nil.
+			name:       "rejects body with palo alto outside title element",
+			statusCode: 200,
+			headers:    http.Header{"Server": []string{"PanWeb Server"}},
+			body:       `<html><title>Login</title><body><p>Powered by Palo Alto Networks</p></body></html>`,
 			wantNil:    true,
 		},
 	}

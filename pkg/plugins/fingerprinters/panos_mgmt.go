@@ -68,6 +68,9 @@ func init() {
 // panOSMgmtLoginFormPattern matches <form name="login_form" (anchored).
 var panOSMgmtLoginFormPattern = regexp.MustCompile(`(?i)<form[^>]+name\s*=\s*["']?login_form["']?`)
 
+// panOSMgmtTitlePattern matches "palo alto" within a <title> element.
+var panOSMgmtTitlePattern = regexp.MustCompile(`(?i)<title>[^<]*palo\s*alto[^<]*</title>`)
+
 // panOSMgmtAssetVersionPattern extracts version from asset query params,
 // e.g., combined.js?v=10.2.3
 var panOSMgmtAssetVersionPattern = regexp.MustCompile(`(?i)combined\.js\?v=([0-9]+(?:\.[0-9]+)+)`)
@@ -85,6 +88,12 @@ const panOSMgmtMaxVersionLen = 24
 // globalProtectMarkers lists body strings whose presence indicates a
 // GlobalProtect VPN response rather than a management interface response.
 // Any match causes an early nil return.
+//
+// This is an intentional subset of globalprotect.go's patterns. These 4
+// markers cover the primary GlobalProtect response types (portal login,
+// prelogin exchange, VPN form) that could appear at /php/login.php.
+// SAML-specific markers (<saml-auth-method>, saml-auth-status, <portal>)
+// are omitted because SAML auth pages are not served at /php/login.php.
 var globalProtectMarkers = []string{
 	"global-protect",
 	"prelogin-response",
@@ -114,7 +123,7 @@ func (f *PanosMgmtFingerprinter) Match(resp *http.Response) bool {
 		return true
 	}
 
-	location := resp.Header.Get("Location")
+	location := strings.ToLower(resp.Header.Get("Location"))
 	if strings.Contains(location, "/php/login.php") {
 		return true
 	}
@@ -137,7 +146,7 @@ func (f *PanosMgmtFingerprinter) Fingerprint(resp *http.Response, body []byte) (
 	server := strings.ToLower(resp.Header.Get("Server"))
 	headerMatch := strings.Contains(server, "panweb server") || strings.Contains(server, "pan-os")
 	if !headerMatch {
-		location := resp.Header.Get("Location")
+		location := strings.ToLower(resp.Header.Get("Location"))
 		headerMatch = strings.Contains(location, "/php/login.php")
 	}
 	if !headerMatch {
@@ -157,7 +166,7 @@ func (f *PanosMgmtFingerprinter) Fingerprint(resp *http.Response, body []byte) (
 
 	// Body corroboration: require at least one management-specific HTML signal.
 	bodyConfirmed := panOSMgmtLoginFormPattern.MatchString(bodyStr) ||
-		strings.Contains(lowerBody, "<title>") && strings.Contains(lowerBody, "palo alto") ||
+		panOSMgmtTitlePattern.MatchString(bodyStr) ||
 		strings.Contains(bodyStr, "/php/utils/combined.js") ||
 		strings.Contains(bodyStr, "/login/css/")
 	if !bodyConfirmed {
