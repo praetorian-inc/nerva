@@ -145,6 +145,9 @@ func TestSpringBootActuatorFingerprinter_Fingerprint_Valid(t *testing.T) {
 			if result.Version != "" {
 				t.Errorf("Version = %q, want empty string", result.Version)
 			}
+			if len(result.CPEs) != 1 || result.CPEs[0] != "cpe:2.3:a:vmware:spring_boot:*:*:*:*:*:*:*:*" {
+				t.Errorf("CPEs = %v, want [cpe:2.3:a:vmware:spring_boot:*:*:*:*:*:*:*:*]", result.CPEs)
+			}
 
 			// Check metadata
 			detectionMethod, ok := result.Metadata["detection_method"].(string)
@@ -248,6 +251,16 @@ func TestBuildSpringBootCPE(t *testing.T) {
 			name:    "empty version uses wildcard",
 			version: "",
 			want:    "cpe:2.3:a:vmware:spring_boot:*:*:*:*:*:*:*:*",
+		},
+		{
+			name:    "invalid version falls back to wildcard",
+			version: "3.2.0abc",
+			want:    "cpe:2.3:a:vmware:spring_boot:*:*:*:*:*:*:*:*",
+		},
+		{
+			name:    "pre-release version is accepted",
+			version: "3.0.0-RC1",
+			want:    "cpe:2.3:a:vmware:spring_boot:3.0.0-RC1:*:*:*:*:*:*:*",
 		},
 	}
 
@@ -403,6 +416,9 @@ func TestSpringBootActuatorHealthFingerprinter_Fingerprint_Valid(t *testing.T) {
 			}
 			if result.Version != "" {
 				t.Errorf("Version = %q, want empty string", result.Version)
+			}
+			if len(result.CPEs) != 1 || result.CPEs[0] != "cpe:2.3:a:vmware:spring_boot:*:*:*:*:*:*:*:*" {
+				t.Errorf("CPEs = %v, want [cpe:2.3:a:vmware:spring_boot:*:*:*:*:*:*:*:*]", result.CPEs)
 			}
 
 			detectionMethod, ok := result.Metadata["detection_method"].(string)
