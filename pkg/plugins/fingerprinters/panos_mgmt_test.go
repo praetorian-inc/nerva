@@ -203,6 +203,15 @@ func TestPanosMgmtFingerprinter_Fingerprint(t *testing.T) {
 			wantNil:  false,
 			wantTech: "palo-alto-panos-management",
 		},
+		{
+			// Location-only match with PAN-OS title qualifies as a detection.
+			name:       "Location match with PAN-OS title succeeds",
+			statusCode: 302,
+			headers:    http.Header{"Location": []string{"/php/login.php"}},
+			body:       `<html><head><title>Palo Alto Networks - Login</title></head><body><form name="login_form"></form></body></html>`,
+			wantNil:    false,
+			wantTech:   "palo-alto-panos-management",
+		},
 		// --- Negative cases ---
 		{
 			name:       "rejects GlobalProtect XML at /php/login.php",
@@ -293,6 +302,16 @@ func TestPanosMgmtFingerprinter_Fingerprint(t *testing.T) {
 			statusCode: 200,
 			headers:    http.Header{"Server": []string{"PanWeb Server"}},
 			body:       `<html><title>Login</title><body><p>Powered by Palo Alto Networks</p></body></html>`,
+			wantNil:    true,
+		},
+		{
+			// A generic PHP app at /php/login.php with <form name="login_form"> would
+			// false-positive if login_form alone qualified for Location-only matches.
+			// Only a PAN-OS-specific signal (title or asset paths) is sufficient here.
+			name:       "rejects Location-only match with only login_form (no PAN-OS-specific signal)",
+			statusCode: 302,
+			headers:    http.Header{"Location": []string{"/php/login.php"}},
+			body:       `<html><head><title>Login</title></head><body><form name="login_form" action="/auth"></form></body></html>`,
 			wantNil:    true,
 		},
 	}

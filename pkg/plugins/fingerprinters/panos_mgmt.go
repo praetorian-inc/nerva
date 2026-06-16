@@ -137,19 +137,23 @@ func (f *PanosMgmtFingerprinter) Match(resp *http.Response) bool {
 //  1. A header signal (Server or Location, same as Match).
 //  2. At least one HTML body signal corroborating that this is the management UI.
 //  3. No GlobalProtect markers in the body (negative match).
+//
+// Body corroboration is tiered by header signal strength:
+//   - Server header match (PanWeb Server / pan-os): login_form OR title OR asset paths qualify.
+//   - Location-only match (/php/login.php): requires PAN-OS-specific signal (title or asset
+//     paths); login_form alone is insufficient because a generic PHP app at /php/login.php
+//     with <form name="login_form"> would false-positive.
 func (f *PanosMgmtFingerprinter) Fingerprint(resp *http.Response, body []byte) (*FingerprintResult, error) {
 	if resp.StatusCode < 200 || resp.StatusCode >= 500 {
 		return nil, nil
 	}
 
-	// Header signal check (same logic as Match).
+	// Split header signal into server vs location to enable tiered body corroboration.
 	server := strings.ToLower(resp.Header.Get("Server"))
-	headerMatch := strings.Contains(server, "panweb server") || strings.Contains(server, "pan-os")
-	if !headerMatch {
-		location := strings.ToLower(resp.Header.Get("Location"))
-		headerMatch = strings.Contains(location, "/php/login.php")
-	}
-	if !headerMatch {
+	serverMatch := strings.Contains(server, "panweb server") || strings.Contains(server, "pan-os")
+	location := strings.ToLower(resp.Header.Get("Location"))
+	locationMatch := strings.Contains(location, "/php/login.php")
+	if !serverMatch && !locationMatch {
 		return nil, nil
 	}
 
@@ -164,11 +168,18 @@ func (f *PanosMgmtFingerprinter) Fingerprint(resp *http.Response, body []byte) (
 		}
 	}
 
-	// Body corroboration: require at least one management-specific HTML signal.
-	bodyConfirmed := panOSMgmtLoginFormPattern.MatchString(bodyStr) ||
-		panOSMgmtTitlePattern.MatchString(bodyStr) ||
-		strings.Contains(bodyStr, "/php/utils/combined.js") ||
+	// Body corroboration with tiered strictness.
+	// PAN-OS-specific signals (title regex or asset paths) are required for Location-only
+	// matches. login_form is only sufficient as standalone corroboration when a Server header
+	// already confirms the target is PAN-OS.
+	hasLoginForm := panOSMgmtLoginFormPattern.MatchString(bodyStr)
+	hasPaloAltoTitle := panOSMgmtTitlePattern.MatchString(bodyStr)
+	hasMgmtAsset := strings.Contains(bodyStr, "/php/utils/combined.js") ||
 		strings.Contains(bodyStr, "/login/css/")
+	bodyConfirmed := hasPaloAltoTitle || hasMgmtAsset
+	if serverMatch {
+		bodyConfirmed = bodyConfirmed || hasLoginForm
+	}
 	if !bodyConfirmed {
 		return nil, nil
 	}
