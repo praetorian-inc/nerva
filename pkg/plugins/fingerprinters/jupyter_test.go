@@ -491,6 +491,17 @@ func TestJupyterLabFingerprinter_Fingerprint(t *testing.T) {
 		assert.Nil(t, result)
 	})
 
+	t.Run("rejects data-src attribute with jupyterlab reference", func(t *testing.T) {
+		fp := &JupyterLabFingerprinter{}
+		// No <title>JupyterLab</title> and data-src should not match script regex.
+		body := []byte(`<html><head><title>Other App</title></head><body><script data-src="/static/jupyterlab/main.js"></script></body></html>`)
+
+		result, err := fp.Fingerprint(htmlResp(), body)
+
+		assert.NoError(t, err)
+		assert.Nil(t, result)
+	})
+
 	t.Run("rejects version from non-jupyterlab identifier", func(t *testing.T) {
 		fp := &JupyterLabFingerprinter{}
 		// Title matches, but "notjupyterlab" should NOT trigger version extraction

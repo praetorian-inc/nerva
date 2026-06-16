@@ -58,7 +58,10 @@ var (
 	jupyterLabTitleRegex = regexp.MustCompile(`(?i)<title[^>]*>\s*JupyterLab\s*</title>`)
 
 	// jupyterLabScriptRegex matches jupyterlab references in script/CSS paths.
-	jupyterLabScriptRegex = regexp.MustCompile(`(?i)\b(?:src|href)=['""][^'"]*jupyterlab[^'"]*['"]`)
+	// Uses [^-\w] instead of \b because \b fires between '-' and a word character,
+	// so \b would match data-src= (the '-' before 's' is non-word, triggering \b).
+	// [^-\w] explicitly excludes attribute prefixes like data-src= and ng-src=.
+	jupyterLabScriptRegex = regexp.MustCompile(`(?i)(?:^|[^-\w])(?:src|href)=['""][^'"]*jupyterlab[^'"]*['"]`)
 
 	// jupyterLabVersionRegex extracts version from app_version or jupyterlab JS attributes.
 	// Matches patterns like: data-app_version="3.6.5", jupyterlab: "4.0.0", var jupyterlab = "4.0.0"
