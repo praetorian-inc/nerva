@@ -147,6 +147,7 @@ func TestFaviconFingerprinter_Fingerprint_KnownHash(t *testing.T) {
 	h := faviconMMH3Hash(body) // -1787112514
 
 	// Temporarily register this hash so we can test the lookup path.
+	// This test must NOT use t.Parallel() — it mutates the package-level faviconHashes map.
 	const testTech = "test-known-tech"
 	faviconHashes[h] = testTech
 	defer delete(faviconHashes, h)

@@ -484,6 +484,8 @@ func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *ht
 	resp.Body.Close()
 
 	// Wappalyzer fingerprinting (existing)
+	// FingerprintWithInfo returns map[string]AppInfo with CPE data needed for vulnerability correlation;
+	// FingerprintWithTitle returns map[string]struct{} + title string — no single method provides both.
 	fingerprintResult := analyzer.FingerprintWithInfo(resp.Header, data)
 	_, title := analyzer.FingerprintWithTitle(resp.Header, data)
 	for tech, appInfo := range fingerprintResult {
@@ -520,8 +522,12 @@ func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *ht
 			}
 		}
 		cpes = append(cpes, resultCPEs...)
-		if metadata != nil && result.Technology != "" {
-			fingerprintMetadata[result.Technology] = metadata
+		if metadata != nil {
+			key := result.Technology
+			if key == "" {
+				key = fp.Name()
+			}
+			fingerprintMetadata[key] = metadata
 		}
 		fpFindings = append(fpFindings, result.SecurityFindings...)
 		matchedFingerprinters = append(matchedFingerprinters, fp)
@@ -560,7 +566,7 @@ func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *ht
 			}
 
 			probeBody, err := io.ReadAll(io.LimitReader(probeResp.Body, maxResponseSize))
-			probeResp.Body.Close()
+			_ = probeResp.Body.Close()
 			if err != nil {
 				continue
 			}
@@ -580,8 +586,12 @@ func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *ht
 						}
 					}
 					cpes = append(cpes, resultCPEs...)
-					if metadata != nil && result.Technology != "" {
-						fingerprintMetadata[result.Technology] = metadata
+					if metadata != nil {
+						key := result.Technology
+						if key == "" {
+							key = fpName
+						}
+						fingerprintMetadata[key] = metadata
 					}
 					fpFindings = append(fpFindings, result.SecurityFindings...)
 					matchedFingerprinters = append(matchedFingerprinters, fp)

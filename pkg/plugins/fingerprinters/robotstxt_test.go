@@ -80,6 +80,18 @@ func TestRobotsTxtFingerprinter_Match(t *testing.T) {
 			contentType: "",
 			expected:    false,
 		},
+		{
+			name:        "200 with TEXT/PLAIN uppercase",
+			statusCode:  200,
+			contentType: "TEXT/PLAIN",
+			expected:    true,
+		},
+		{
+			name:        "200 with Text/Html mixed case",
+			statusCode:  200,
+			contentType: "Text/Html; charset=UTF-8",
+			expected:    true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -441,9 +453,8 @@ Disallow: /cart/
 	require.NoError(t, err)
 	// This IS a known false-positive surface — /catalog/ + /checkout/ triggers Magento
 	// Documenting rather than preventing: these paths are strongly associated with Magento
-	if result != nil {
-		assert.Equal(t, "magento", result.Technology)
-	}
+	require.NotNil(t, result, "known FP surface: /catalog/ + /checkout/ triggers Magento at threshold 2")
+	assert.Equal(t, "magento", result.Technology)
 }
 
 func TestRobotsTxtFingerprinter_FalsePositive_ReverseProxyWPPaths(t *testing.T) {
@@ -464,4 +475,19 @@ Disallow: /xmlrpc.php
 	// This is an accepted false-positive surface — the paths ARE WordPress-specific
 	require.NotNil(t, result)
 	assert.Equal(t, "wordpress", result.Technology)
+}
+
+func TestRobotsTxtFingerprinter_FalsePositive_DjangoSitemap(t *testing.T) {
+	// Any site with /admin/, /static/, and a sitemap URL triggers Django detection.
+	// This is a known false-positive surface — the 3-signal threshold is the strongest
+	// we can require without missing real Django sites.
+	fp := &RobotsTxtFingerprinter{}
+	resp := &http.Response{StatusCode: 200, Header: http.Header{}}
+	body := []byte("User-agent: *\nDisallow: /admin/\nDisallow: /static/\nSitemap: https://example.com/sitemap.xml\n")
+
+	result, err := fp.Fingerprint(resp, body)
+
+	require.NoError(t, err)
+	require.NotNil(t, result, "known FP surface: /admin/ + /static/ + sitemap triggers Django")
+	assert.Equal(t, "django", result.Technology)
 }

@@ -363,3 +363,22 @@ func TestFingerprintPipeline_Integration(t *testing.T) {
 	assert.Equal(t, "linux/amd64", fingerprintMetadata["kubernetes"]["platform"])
 	assert.Nil(t, fingerprintMetadata["nginx"])
 }
+
+func TestProcessFingerprintResult_EmptyTechWithMetadata(t *testing.T) {
+	// Verifies that metadata is accessible even when Technology is empty
+	// (e.g., favicon fingerprinter returning an unknown hash).
+	result := &fingerprinters.FingerprintResult{
+		Technology: "",
+		Version:    "",
+		Metadata: map[string]any{
+			"favicon_hash": "-1787112514",
+		},
+	}
+
+	tech, cpes, metadata, _ := processFingerprintResult(result)
+
+	assert.Equal(t, "", tech)
+	assert.Nil(t, cpes)
+	assert.NotNil(t, metadata, "metadata must be accessible even with empty Technology")
+	assert.Equal(t, "-1787112514", metadata["favicon_hash"])
+}

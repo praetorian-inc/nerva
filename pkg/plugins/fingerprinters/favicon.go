@@ -86,7 +86,7 @@ func faviconMMH3Hash(data []byte) int32 {
 
 	h := murmur3.SeedNew32(0)
 	_, _ = h.Write([]byte(sb.String()))
-	return int32(h.Sum32())
+	return int32(h.Sum32()) // #nosec G115 -- intentional uint32→int32 reinterpretation for Shodan-compatible signed hash
 }
 
 // faviconHashes maps known Shodan favicon hashes to technology names.

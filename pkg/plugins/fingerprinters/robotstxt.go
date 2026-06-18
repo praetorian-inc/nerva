@@ -163,7 +163,7 @@ func (f *RobotsTxtFingerprinter) Match(resp *http.Response) bool {
 	if resp.StatusCode != 200 {
 		return false
 	}
-	ct := resp.Header.Get("Content-Type")
+	ct := strings.ToLower(resp.Header.Get("Content-Type"))
 	return strings.Contains(ct, "text/plain") || strings.Contains(ct, "text/html")
 }
 
