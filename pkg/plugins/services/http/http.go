@@ -44,6 +44,7 @@ type HTTPSPlugin struct {
 const HTTP = "http"
 const HTTPS = "https"
 const USERAGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36"
+const maxTitleLength = 512
 
 func init() {
 	wappalyzerClient, err := wappalyzer.New()
@@ -136,6 +137,9 @@ func (p *HTTPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 		ResponseHeaders: resp.Header,
 	}
 	if title != "" {
+		if len(title) > maxTitleLength {
+			title = title[:maxTitleLength]
+		}
 		payload.Title = title
 	}
 	if len(technologies) > 0 {
@@ -234,6 +238,9 @@ func (p *HTTPSPlugin) Run(
 		ResponseHeaders: resp.Header,
 	}
 	if title != "" {
+		if len(title) > maxTitleLength {
+			title = title[:maxTitleLength]
+		}
 		payload.Title = title
 	}
 	if len(technologies) > 0 {

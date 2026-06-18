@@ -78,7 +78,13 @@ func TestRobotsTxtFingerprinter_Match(t *testing.T) {
 			name:        "200 with no content-type",
 			statusCode:  200,
 			contentType: "",
-			expected:    false,
+			expected:    true,
+		},
+		{
+			name:        "200 with empty content-type accepts as fallback",
+			statusCode:  200,
+			contentType: "",
+			expected:    true,
 		},
 		{
 			name:        "200 with TEXT/PLAIN uppercase",
@@ -349,6 +355,14 @@ Sitemap: https://www.joomla.org/sitemap
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, "joomla", result.Technology)
+
+	// Joomla's /modules/ + /includes/ may trigger Drupal as secondary (known cross-detection)
+	if result.Metadata != nil {
+		if others, ok := result.Metadata["other_detections"]; ok {
+			otherSlice := others.([]string)
+			t.Logf("joomla.org cross-detections: %v", otherSlice)
+		}
+	}
 }
 
 func TestRobotsTxtFingerprinter_RealWorld_DrupalOrg(t *testing.T) {
@@ -490,4 +504,26 @@ func TestRobotsTxtFingerprinter_FalsePositive_DjangoSitemap(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result, "known FP surface: /admin/ + /static/ + sitemap triggers Django")
 	assert.Equal(t, "django", result.Technology)
+}
+
+func TestRobotsTxtFingerprinter_FalsePositive_WordPressNoWpAdmin(t *testing.T) {
+	fp := &RobotsTxtFingerprinter{}
+	resp := &http.Response{StatusCode: 200, Header: http.Header{}}
+	body := []byte("User-agent: *\nDisallow: /wp-includes/\nDisallow: /wp-content/\nDisallow: /wp-json/\n")
+
+	result, err := fp.Fingerprint(resp, body)
+
+	assert.NoError(t, err)
+	assert.Nil(t, result, "wp- paths without /wp-admin/ should not trigger WordPress")
+}
+
+func TestRobotsTxtFingerprinter_FalsePositive_JoomlaNoAdministrator(t *testing.T) {
+	fp := &RobotsTxtFingerprinter{}
+	resp := &http.Response{StatusCode: 200, Header: http.Header{}}
+	body := []byte("User-agent: *\nDisallow: /components/\nDisallow: /modules/\nDisallow: /templates/\n")
+
+	result, err := fp.Fingerprint(resp, body)
+
+	assert.NoError(t, err)
+	assert.Nil(t, result, "Joomla structural paths without /administrator/ should not trigger Joomla")
 }

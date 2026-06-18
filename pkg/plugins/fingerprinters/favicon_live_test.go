@@ -82,15 +82,16 @@ func TestFaviconLive(t *testing.T) {
 			failed++
 			continue
 		}
-		defer resp.Body.Close()
 
 		if resp.StatusCode != 200 {
+			_ = resp.Body.Close()
 			t.Logf("SKIP %s: non-200 status %d", tgt.url, resp.StatusCode)
 			failed++
 			continue
 		}
 
 		body, err := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
 		if err != nil {
 			t.Logf("SKIP %s: read error: %v", tgt.url, err)
 			failed++
@@ -129,6 +130,13 @@ func TestFaviconLive(t *testing.T) {
 	t.Logf("  failed:     %d", failed)
 	t.Log("")
 
+	if matched == 0 {
+		t.Fatalf("expected at least one live favicon match; got matched=%d mismatched=%d failed=%d", matched, mismatched, failed)
+	}
+	if mismatched > 0 {
+		t.Errorf("unexpected live favicon mismatches: %d", mismatched)
+	}
+
 	t.Log("=== Hash Table Verification ===")
 	type tableCheck struct {
 		hash         int32
@@ -147,5 +155,8 @@ func TestFaviconLive(t *testing.T) {
 		correct := ok && actualTech == c.expectedTech
 		t.Logf("  hash %d -> expected=%q actual=%q [%s]",
 			c.hash, c.expectedTech, actualTech, checkMark(correct))
+		if !correct {
+			t.Errorf("hash table mismatch for %d: expected %q, got %q (exists=%v)", c.hash, c.expectedTech, actualTech, ok)
+		}
 	}
 }

@@ -27,8 +27,8 @@ that are unambiguous on their own.
 
 Signatures (all matches against lowercase body):
 
-WordPress: /wp-admin/ + one of /wp-includes/, /wp-content/, /wp-json/ (≥2 total)
-Joomla:    /administrator/ + one of /components/, /modules/, /templates/
+WordPress: /wp-admin/ (required) + one of /wp-includes/, /wp-content/, /wp-json/ (≥2 total)
+Joomla:    /administrator/ (required) + one of /components/, /modules/, /templates/
 Drupal:    ≥2 of /core/, /profiles/, /modules/, /sites/default/files/, /misc/, /includes/, install|update|cron.php
 Ghost:     /ghost/ (highly specific path)
 Umbraco:   /umbraco/ (highly specific path)
@@ -52,8 +52,10 @@ type RobotsTxtFingerprinter struct{}
 
 // robotsSignature holds a technology name and a set of path regexes.
 // matchThreshold controls how many of the patterns must match.
+// required lists patterns that must ALL match before threshold counting begins.
 type robotsSignature struct {
 	technology     string
+	required       []*regexp.Regexp
 	patterns       []*regexp.Regexp
 	matchThreshold int
 }
@@ -79,7 +81,11 @@ var robotsSignatures = []robotsSignature{
 	},
 	{
 		// WordPress: wp-admin plus at least one other wp- path.
+		// /wp-admin/ is required to prevent matching on wp- paths alone.
 		technology: "wordpress",
+		required: []*regexp.Regexp{
+			regexp.MustCompile(`/wp-admin/`),
+		},
 		patterns: []*regexp.Regexp{
 			regexp.MustCompile(`/wp-admin/`),
 			regexp.MustCompile(`/wp-includes/`),
@@ -90,7 +96,11 @@ var robotsSignatures = []robotsSignature{
 	},
 	{
 		// Joomla: /administrator/ plus at least one structural path.
+		// /administrator/ is required to prevent matching on structural paths alone.
 		technology: "joomla",
+		required: []*regexp.Regexp{
+			regexp.MustCompile(`/administrator/`),
+		},
 		patterns: []*regexp.Regexp{
 			regexp.MustCompile(`/administrator/`),
 			regexp.MustCompile(`/components/`),
@@ -159,11 +169,16 @@ func (f *RobotsTxtFingerprinter) ProbeAccept() string { return "text/plain" }
 
 // Match returns true for 200 responses with a text/plain or text/html Content-Type.
 // Servers occasionally return robots.txt with text/html; we accept both.
+// An empty Content-Type is also accepted as a fallback for embedded servers that
+// omit the header entirely.
 func (f *RobotsTxtFingerprinter) Match(resp *http.Response) bool {
 	if resp.StatusCode != 200 {
 		return false
 	}
 	ct := strings.ToLower(resp.Header.Get("Content-Type"))
+	if ct == "" {
+		return true
+	}
 	return strings.Contains(ct, "text/plain") || strings.Contains(ct, "text/html")
 }
 
@@ -212,9 +227,14 @@ func (f *RobotsTxtFingerprinter) Fingerprint(_ *http.Response, body []byte) (*Fi
 	return primary, nil
 }
 
-// matchesRobotsSignature returns true when the number of matched patterns meets
-// the signature's threshold.
+// matchesRobotsSignature returns true when all required patterns match and the
+// number of matched patterns meets the signature's threshold.
 func matchesRobotsSignature(content string, sig robotsSignature) bool {
+	for _, re := range sig.required {
+		if !re.MatchString(content) {
+			return false
+		}
+	}
 	matched := 0
 	for _, re := range sig.patterns {
 		if re.MatchString(content) {

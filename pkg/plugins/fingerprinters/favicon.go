@@ -40,7 +40,14 @@ func (f *FaviconFingerprinter) ProbeEndpoint() string { return "/favicon.ico" }
 func (f *FaviconFingerprinter) ProbeAccept() string { return "*/*" }
 
 func (f *FaviconFingerprinter) Match(resp *http.Response) bool {
-	return resp.StatusCode == 200
+	if resp.StatusCode != 200 {
+		return false
+	}
+	ct := strings.ToLower(resp.Header.Get("Content-Type"))
+	if strings.Contains(ct, "text/html") {
+		return false
+	}
+	return true
 }
 
 func (f *FaviconFingerprinter) Fingerprint(resp *http.Response, body []byte) (*FingerprintResult, error) {

@@ -108,21 +108,32 @@ func TestFaviconFingerprinter_ProbeAccept(t *testing.T) {
 
 func TestFaviconFingerprinter_Match(t *testing.T) {
 	tests := []struct {
-		name       string
-		statusCode int
-		expected   bool
+		name        string
+		statusCode  int
+		contentType string
+		expected    bool
 	}{
-		{"matches 200 OK", 200, true},
-		{"does not match 404", 404, false},
-		{"does not match 403", 403, false},
-		{"does not match 302 redirect", 302, false},
-		{"does not match 500", 500, false},
+		{"matches 200 OK", 200, "", true},
+		{"does not match 404", 404, "", false},
+		{"does not match 403", 403, "", false},
+		{"does not match 302 redirect", 302, "", false},
+		{"does not match 500", 500, "", false},
+		{"rejects HTML soft-404", 200, "text/html; charset=utf-8", false},
+		{"rejects HTML uppercase", 200, "TEXT/HTML", false},
+		{"accepts image/png", 200, "image/png", true},
+		{"accepts image/x-icon", 200, "image/x-icon", true},
+		{"accepts empty content-type", 200, "", true},
+		{"accepts octet-stream", 200, "application/octet-stream", true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			fp := &FaviconFingerprinter{}
-			resp := &http.Response{StatusCode: tt.statusCode, Header: http.Header{}}
+			header := http.Header{}
+			if tt.contentType != "" {
+				header.Set("Content-Type", tt.contentType)
+			}
+			resp := &http.Response{StatusCode: tt.statusCode, Header: header}
 			assert.Equal(t, tt.expected, fp.Match(resp))
 		})
 	}
