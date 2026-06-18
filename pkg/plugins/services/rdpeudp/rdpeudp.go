@@ -64,7 +64,10 @@ func (p *Plugin) Name() string {
 
 // Run sends an RDPUDP SYN datagram and validates the SYN+ACK response.
 func (p *Plugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
-	probe := buildSYNProbe()
+	probe, err := buildSYNProbe()
+	if err != nil {
+		return nil, err
+	}
 
 	response, err := utils.SendRecv(conn, probe, timeout)
 	if err != nil {
@@ -92,7 +95,7 @@ func (p *Plugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target
 //	Bytes 8-11:  snInitialSequenceNumber (random)
 //	Bytes 12-13: uUpStreamMtu          (1232)
 //	Bytes 14-15: uDownStreamMtu        (1232)
-func buildSYNProbe() []byte {
+func buildSYNProbe() ([]byte, error) {
 	probe := make([]byte, 16)
 
 	// RDPUDP_FEC_HEADER (8 bytes)
@@ -101,13 +104,13 @@ func buildSYNProbe() []byte {
 	binary.LittleEndian.PutUint16(probe[6:8], flagSYN)    // uFlags
 
 	// RDPUDP_SYNDATA_PAYLOAD (8 bytes)
-	seqNum := make([]byte, 4)
-	_, _ = rand.Read(seqNum) // crypto/rand.Read does not fail on supported platforms
-	copy(probe[8:12], seqNum) // snInitialSequenceNumber
-	binary.LittleEndian.PutUint16(probe[12:14], 1232)      // uUpStreamMtu
-	binary.LittleEndian.PutUint16(probe[14:16], 1232)      // uDownStreamMtu
+	if _, err := rand.Read(probe[8:12]); err != nil { // snInitialSequenceNumber
+		return nil, err
+	}
+	binary.LittleEndian.PutUint16(probe[12:14], 1232) // uUpStreamMtu
+	binary.LittleEndian.PutUint16(probe[14:16], 1232) // uDownStreamMtu
 
-	return probe
+	return probe, nil
 }
 
 // parseSYNACK validates an RDPUDP SYN+ACK response and extracts metadata.

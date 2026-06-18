@@ -24,7 +24,10 @@ import (
 )
 
 func TestBuildSYNProbe(t *testing.T) {
-	probe := buildSYNProbe()
+	probe, err := buildSYNProbe()
+	if err != nil {
+		t.Fatalf("buildSYNProbe returned unexpected error: %v", err)
+	}
 
 	if len(probe) != 16 {
 		t.Fatalf("expected probe length 16, got %d", len(probe))
