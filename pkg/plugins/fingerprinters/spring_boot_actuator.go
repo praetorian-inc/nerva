@@ -196,7 +196,16 @@ func (f *SpringBootActuatorHealthFingerprinter) Fingerprint(resp *http.Response,
 		return nil, nil
 	}
 
-	hasDetails := len(health.Components) > 0
+	hasVendorCT := strings.Contains(
+		strings.ToLower(resp.Header.Get("Content-Type")),
+		"vnd.spring-boot.actuator",
+	)
+	hasComponents := len(health.Components) > 0
+
+	if !hasVendorCT && !hasComponents {
+		return nil, nil
+	}
+
 	componentCount := len(health.Components)
 
 	return &FingerprintResult{
@@ -205,7 +214,7 @@ func (f *SpringBootActuatorHealthFingerprinter) Fingerprint(resp *http.Response,
 		CPEs:       []string{buildSpringBootCPE("")},
 		Metadata: map[string]any{
 			"health_status":    health.Status,
-			"has_details":      hasDetails,
+			"has_details":      hasComponents,
 			"component_count":  componentCount,
 			"detection_method": "actuator_health",
 		},

@@ -357,71 +357,52 @@ func TestSpringBootActuatorHealthFingerprinter_Fingerprint_Valid(t *testing.T) {
 	tests := []struct {
 		name               string
 		body               string
+		contentType        string
 		wantStatus         string
 		wantHasDetails     bool
 		wantComponentCount int
 	}{
 		{
-			name:               "UP status, no details",
+			name:               "UP with components (details exposed, plain JSON)",
+			contentType:        "application/json",
+			body:               `{"status": "UP", "components": {"db": {"status": "UP"}, "diskSpace": {"status": "UP"}, "redis": {"status": "UP"}}}`,
+			wantStatus:         "UP",
+			wantHasDetails:     true,
+			wantComponentCount: 3,
+		},
+		{
+			name:               "DOWN with components",
+			contentType:        "application/json",
+			body:               `{"status": "DOWN", "components": {"db": {"status": "DOWN"}, "diskSpace": {"status": "UP"}}}`,
+			wantStatus:         "DOWN",
+			wantHasDetails:     true,
+			wantComponentCount: 2,
+		},
+		{
+			name:               "vendor content-type signals Spring Boot, no components",
+			contentType:        "application/vnd.spring-boot.actuator.v3+json",
 			body:               `{"status": "UP"}`,
 			wantStatus:         "UP",
 			wantHasDetails:     false,
 			wantComponentCount: 0,
 		},
 		{
-			name:               "DOWN status",
+			name:               "vendor content-type v2 signals Spring Boot, no components",
+			contentType:        "application/vnd.spring-boot.actuator.v2+json;charset=UTF-8",
 			body:               `{"status": "DOWN"}`,
 			wantStatus:         "DOWN",
 			wantHasDetails:     false,
 			wantComponentCount: 0,
-		},
-		{
-			name:               "OUT_OF_SERVICE status",
-			body:               `{"status": "OUT_OF_SERVICE"}`,
-			wantStatus:         "OUT_OF_SERVICE",
-			wantHasDetails:     false,
-			wantComponentCount: 0,
-		},
-		{
-			name:               "UNKNOWN status",
-			body:               `{"status": "UNKNOWN"}`,
-			wantStatus:         "UNKNOWN",
-			wantHasDetails:     false,
-			wantComponentCount: 0,
-		},
-		{
-			name: "UP with components (details exposed)",
-			body: `{
-				"status": "UP",
-				"components": {
-					"db": {"status": "UP"},
-					"diskSpace": {"status": "UP"},
-					"redis": {"status": "UP"}
-				}
-			}`,
-			wantStatus:         "UP",
-			wantHasDetails:     true,
-			wantComponentCount: 3,
-		},
-		{
-			name: "DOWN with components",
-			body: `{
-				"status": "DOWN",
-				"components": {
-					"db": {"status": "DOWN"},
-					"diskSpace": {"status": "UP"}
-				}
-			}`,
-			wantStatus:         "DOWN",
-			wantHasDetails:     true,
-			wantComponentCount: 2,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			fp := &SpringBootActuatorHealthFingerprinter{}
-			resp := &http.Response{}
+			resp := &http.Response{Header: make(http.Header)}
+			if tt.contentType != "" {
+				resp.Header.Set("Content-Type", tt.contentType)
+			}
 
 			result, err := fp.Fingerprint(resp, []byte(tt.body))
 			if err != nil {
@@ -466,43 +447,91 @@ func TestSpringBootActuatorHealthFingerprinter_Fingerprint_Valid(t *testing.T) {
 
 func TestSpringBootActuatorHealthFingerprinter_Fingerprint_Invalid(t *testing.T) {
 	tests := []struct {
-		name string
-		body string
+		name        string
+		body        string
+		contentType string
 	}{
 		{
-			name: "status not in Spring Boot enum (custom value)",
-			body: `{"status": "HEALTHY"}`,
+			name:        "status not in Spring Boot enum (custom value)",
+			contentType: "application/json",
+			body:        `{"status": "HEALTHY"}`,
 		},
 		{
-			name: "status not in Spring Boot enum (lowercase)",
-			body: `{"status": "up"}`,
+			name:        "status not in Spring Boot enum (lowercase)",
+			contentType: "application/json",
+			body:        `{"status": "up"}`,
 		},
 		{
-			name: "missing status field",
-			body: `{"components": {"db": {"status": "UP"}}}`,
+			name:        "missing status field",
+			contentType: "application/json",
+			body:        `{"components": {"db": {"status": "UP"}}}`,
 		},
 		{
-			name: "empty JSON object",
-			body: `{}`,
+			name:        "empty JSON object",
+			contentType: "application/json",
+			body:        `{}`,
 		},
 		{
-			name: "not JSON",
-			body: `This is not JSON`,
+			name:        "not JSON",
+			contentType: "application/json",
+			body:        `This is not JSON`,
 		},
 		{
-			name: "empty body",
-			body: ``,
+			name:        "empty body",
+			contentType: "application/json",
+			body:        ``,
 		},
 		{
-			name: "generic service with different status format",
-			body: `{"status": "ok", "version": "1.0"}`,
+			name:        "generic service with different status format",
+			contentType: "application/json",
+			body:        `{"status": "ok", "version": "1.0"}`,
+		},
+		// Bare status with plain content-type and no components must not match
+		// (covers Consul, K8s probes, and other generic health checks).
+		{
+			name:        "bare UP status plain JSON no components (Consul/K8s false-positive)",
+			contentType: "application/json",
+			body:        `{"status": "UP"}`,
+		},
+		{
+			name:        "bare DOWN status plain JSON no components",
+			contentType: "application/json",
+			body:        `{"status": "DOWN"}`,
+		},
+		{
+			name:        "bare OUT_OF_SERVICE status plain JSON no components",
+			contentType: "application/json",
+			body:        `{"status": "OUT_OF_SERVICE"}`,
+		},
+		{
+			name:        "bare UNKNOWN status plain JSON no components",
+			contentType: "application/json",
+			body:        `{"status": "UNKNOWN"}`,
+		},
+		{
+			name: "bare UP status no content-type no components",
+			body: `{"status": "UP"}`,
+		},
+		// Corroborating-signal gate edge cases (lines 199-207 of source).
+		{
+			name:        "empty components map plain JSON does not satisfy corroborating signal",
+			contentType: "application/json",
+			body:        `{"status":"UP","components":{}}`,
+		},
+		{
+			name:        "non-enum status with components rejected before corroborating signal gate",
+			contentType: "application/json",
+			body:        `{"status":"DEGRADED","components":{"db":{"status":"UP"}}}`,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			fp := &SpringBootActuatorHealthFingerprinter{}
-			resp := &http.Response{}
+			resp := &http.Response{Header: make(http.Header)}
+			if tt.contentType != "" {
+				resp.Header.Set("Content-Type", tt.contentType)
+			}
 
 			result, err := fp.Fingerprint(resp, []byte(tt.body))
 			if err != nil {
