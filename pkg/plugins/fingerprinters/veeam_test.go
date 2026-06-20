@@ -415,6 +415,8 @@ func TestVeeamRESTFingerprinter_HeaderSanitization(t *testing.T) {
 	require.True(t, ok)
 	assert.NotContains(t, wwwAuth, "\x00")
 	assert.NotContains(t, wwwAuth, "\x1b")
+	// Sanitization must strip control bytes WITHOUT over-stripping legitimate content.
+	assert.Contains(t, wwwAuth, "Basic Realm=RestSvc", "sanitization must preserve the auth realm content")
 }
 
 // ── Probe wiring (registration sanity via interface satisfaction) ───────────────
@@ -469,6 +471,14 @@ func TestVeeamWebFingerprinter_BodyCapRejectsOversized(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, "veeam_backup_enterprise_manager_web", result.Technology)
+
+	// Boundary: exactly 2 MiB is accepted (the cap rejects only sizes OVER the limit).
+	// Guards against a future >  →  >= regression.
+	exact := append([]byte(veeamLoginPageWithVersion), []byte(strings.Repeat("A", 2*1024*1024-len(veeamLoginPageWithVersion)))...)
+	require.Equal(t, 2*1024*1024, len(exact))
+	result, err = fp.Fingerprint(resp, exact)
+	require.NoError(t, err)
+	require.NotNil(t, result, "a body of exactly 2 MiB must be accepted")
 }
 
 func TestVeeamRESTFingerprinter_BodyCapRejectsOversized(t *testing.T) {
