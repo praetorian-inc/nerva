@@ -79,7 +79,8 @@ var (
 		5986: {}, // WinRM HTTPS
 		6443: {}, // Kubernetes API server default port
 		8443: {},
-		9443: {},
+		9398: {}, // Veeam Backup Enterprise Manager legacy REST API
+		9443: {}, // Veeam Backup Enterprise Manager web UI (among others)
 	}
 
 	// serverVersionRe matches a Server header value that contains a product/version token
