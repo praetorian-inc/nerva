@@ -55,8 +55,8 @@ var (
 	// jupyterNotebookVersionRegex validates Notebook API version strings (digits and dots only).
 	jupyterNotebookVersionRegex = regexp.MustCompile(`^\d+(\.\d+)*$`)
 
-	// jupyterHubSignupFormRegex matches a form action containing "signup".
-	jupyterHubSignupFormRegex = regexp.MustCompile(`(?i)action=["'][^"']*signup`)
+	// jupyterHubSignupFormRegex matches a <form> tag with an action attribute containing "signup".
+	jupyterHubSignupFormRegex = regexp.MustCompile(`(?i)<form\b[^>]*\saction\s*=\s*["'][^"']*signup`)
 
 	// jupyterHubVersionRegex validates JupyterHub version strings (three-part semver).
 	jupyterHubVersionRegex = regexp.MustCompile(`^\d+\.\d+\.\d+$`)
@@ -265,11 +265,6 @@ func (f *JupyterLabFingerprinter) Fingerprint(resp *http.Response, body []byte) 
 	}, nil
 }
 
-// jupyterHubAPIInfoResponse represents the minimal JSON structure of the JupyterHub /hub/api/ endpoint.
-type jupyterHubAPIInfoResponse struct {
-	Version string `json:"version"`
-}
-
 // --- JupyterNotebookMisconfigFingerprinter ---
 
 // JupyterNotebookMisconfigFingerprinter detects unauthenticated access to
@@ -290,6 +285,19 @@ func (f *JupyterNotebookMisconfigFingerprinter) Fingerprint(_ *http.Response, bo
 	if err := json.Unmarshal(body, &kernels); err != nil {
 		return nil, nil
 	}
+	if kernels == nil {
+		return nil, nil
+	}
+	if len(kernels) == 0 {
+		return nil, nil
+	}
+	var first struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(kernels[0], &first); err != nil || (first.ID == "" && first.Name == "") {
+		return nil, nil
+	}
 	return &FingerprintResult{
 		Technology: "jupyter-notebook",
 		Severity:   plugins.SeverityCritical,
@@ -299,32 +307,32 @@ func (f *JupyterNotebookMisconfigFingerprinter) Fingerprint(_ *http.Response, bo
 // --- JupyterHubMisconfigFingerprinter ---
 
 // JupyterHubMisconfigFingerprinter detects unauthenticated access to the
-// JupyterHub REST API at /hub/api/. A 200 response with a version field
-// confirms JupyterHub API access without authentication.
+// JupyterHub users API at /hub/api/users. A 200 response with a JSON array
+// of user objects confirms the admin API is accessible without authentication.
 type JupyterHubMisconfigFingerprinter struct{}
 
 func (f *JupyterHubMisconfigFingerprinter) Name() string { return "jupyterhub-misconfig" }
 
-func (f *JupyterHubMisconfigFingerprinter) ProbeEndpoint() string { return "/hub/api/" }
+func (f *JupyterHubMisconfigFingerprinter) ProbeEndpoint() string { return "/hub/api/users" }
 
 func (f *JupyterHubMisconfigFingerprinter) Match(resp *http.Response) bool {
-	if resp.StatusCode != 200 {
-		return false
-	}
-	ct := resp.Header.Get("Content-Type")
-	return strings.Contains(ct, "application/json") || resp.Header.Get("X-Jupyterhub-Version") != ""
+	return resp.StatusCode == 200 && strings.Contains(resp.Header.Get("Content-Type"), "application/json")
 }
 
-func (f *JupyterHubMisconfigFingerprinter) Fingerprint(resp *http.Response, body []byte) (*FingerprintResult, error) {
-	hubHeader := resp.Header.Get("X-Jupyterhub-Version")
-	if hubHeader == "" {
-		var info jupyterHubAPIInfoResponse
-		if err := json.Unmarshal(body, &info); err != nil {
-			return nil, nil
-		}
-		if info.Version == "" || !jupyterHubVersionRegex.MatchString(info.Version) {
-			return nil, nil
-		}
+func (f *JupyterHubMisconfigFingerprinter) Fingerprint(_ *http.Response, body []byte) (*FingerprintResult, error) {
+	var users []json.RawMessage
+	if err := json.Unmarshal(body, &users); err != nil || users == nil {
+		return nil, nil
+	}
+	if len(users) == 0 {
+		return nil, nil
+	}
+	var first struct {
+		Name  string `json:"name"`
+		Admin *bool  `json:"admin"`
+	}
+	if err := json.Unmarshal(users[0], &first); err != nil || first.Name == "" {
+		return nil, nil
 	}
 	return &FingerprintResult{
 		Technology: "jupyterhub",
@@ -355,7 +363,7 @@ func (f *JupyterHubSignupFingerprinter) Fingerprint(_ *http.Response, body []byt
 	}
 	return &FingerprintResult{
 		Technology: "jupyterhub-registration",
-		Severity:   plugins.SeverityHigh,
+		Severity:   plugins.SeverityMedium,
 	}, nil
 }
 
@@ -375,12 +383,16 @@ func (f *JupyterLabMisconfigFingerprinter) Match(resp *http.Response) bool {
 }
 
 func (f *JupyterLabMisconfigFingerprinter) Fingerprint(_ *http.Response, body []byte) (*FingerprintResult, error) {
-	var settings map[string]json.RawMessage
-	if err := json.Unmarshal(body, &settings); err != nil {
+	var payload struct {
+		Settings []struct {
+			ID string `json:"id"`
+		} `json:"settings"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
 		return nil, nil
 	}
-	for k := range settings {
-		if strings.HasPrefix(k, "@jupyterlab") {
+	for _, s := range payload.Settings {
+		if strings.HasPrefix(s.ID, "@jupyterlab/") {
 			return &FingerprintResult{
 				Technology: "jupyterlab",
 				Severity:   plugins.SeverityCritical,
