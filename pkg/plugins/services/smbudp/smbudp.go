@@ -77,10 +77,10 @@ func (p *Plugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	tlsConf := &tls.Config{
+	tlsConf := &tls.Config{ //nolint:gosec // G402: InsecureSkipVerify required for scanning unknown hosts
 		NextProtos:         []string{alpnSMB},
-		InsecureSkipVerify: true, //nolint:gosec // Required for scanning unknown hosts
-		// MinVersion intentionally omitted to detect services using older TLS versions
+		InsecureSkipVerify: true,
+		MinVersion:         tls.VersionTLS13, // QUIC mandates TLS 1.3
 	}
 
 	quicConn, err := quic.DialAddr(ctx, addr, tlsConf, nil)
