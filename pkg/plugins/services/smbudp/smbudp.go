@@ -77,7 +77,7 @@ func (p *Plugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	tlsConf := &tls.Config{ //nolint:gosec // G402: InsecureSkipVerify required for scanning unknown hosts
+	tlsConf := &tls.Config{ //#nosec G402 -- InsecureSkipVerify required for scanning unknown hosts //nolint:gosec
 		NextProtos:         []string{alpnSMB},
 		InsecureSkipVerify: true,
 		MinVersion:         tls.VersionTLS13, // QUIC mandates TLS 1.3
