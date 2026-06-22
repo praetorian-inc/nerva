@@ -178,14 +178,17 @@ func parseVersionNegotiation(data []byte, sentDCID []byte) (plugins.ServiceQUIC,
 	}
 	offset += respSCIDLen
 
-	// Parse supported version list (each entry is 4 bytes)
+	// Parse supported version list (each entry is 4 bytes).
+	// Only require at least one 4-byte version; ignore unaligned trailing bytes
+	// (network/UDP padding can append extra bytes beyond the version list).
 	remaining := len(data) - offset
-	if remaining < 4 || remaining%4 != 0 {
+	if remaining < 4 {
 		return plugins.ServiceQUIC{}, false
 	}
 
 	var versions []string
-	for offset+4 <= len(data) {
+	versionEnd := offset + (remaining/4)*4
+	for offset+4 <= versionEnd {
 		v := binary.BigEndian.Uint32(data[offset : offset+4])
 		offset += 4
 

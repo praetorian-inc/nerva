@@ -200,6 +200,45 @@ func TestParseVersionNegotiation_SCIDLengthMismatch(t *testing.T) {
 	}
 }
 
+func TestParseVersionNegotiation_TrailingPadding(t *testing.T) {
+	dcid := []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08}
+
+	// Build valid VN response header
+	resp := []byte{
+		0x80,                         // Long header form
+		0x00, 0x00, 0x00, 0x00,       // Version = 0
+		0x00,                         // DCID Length = 0
+		0x08,                         // SCID Length = 8
+	}
+	resp = append(resp, dcid...)      // Echoed DCID
+
+	// Two valid versions (8 bytes)
+	v1 := make([]byte, 4)
+	binary.BigEndian.PutUint32(v1, 0x00000001) // QUICv1
+	resp = append(resp, v1...)
+
+	v2 := make([]byte, 4)
+	binary.BigEndian.PutUint32(v2, 0x6B3343CF) // QUICv2
+	resp = append(resp, v2...)
+
+	// Append 2 trailing padding bytes (simulates UDP padding)
+	resp = append(resp, 0x00, 0x00)
+
+	metadata, ok := parseVersionNegotiation(resp, dcid)
+	if !ok {
+		t.Fatal("expected true for VN response with trailing padding")
+	}
+	if len(metadata.SupportedVersions) != 2 {
+		t.Fatalf("expected 2 versions, got %d", len(metadata.SupportedVersions))
+	}
+	if metadata.SupportedVersions[0] != "QUICv1" {
+		t.Errorf("expected QUICv1, got %s", metadata.SupportedVersions[0])
+	}
+	if metadata.SupportedVersions[1] != "QUICv2" {
+		t.Errorf("expected QUICv2, got %s", metadata.SupportedVersions[1])
+	}
+}
+
 // TestPlugin_RunWithMockServer tests the full Run method using a mock QUIC VN server.
 func TestPlugin_RunWithMockServer(t *testing.T) {
 	serverAddr, err := net.ResolveUDPAddr("udp", "127.0.0.1:0")

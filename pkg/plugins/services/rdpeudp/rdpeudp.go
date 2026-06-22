@@ -99,6 +99,10 @@ func buildSYNProbe() ([]byte, error) {
 	probe := make([]byte, 16)
 
 	// RDPUDP_FEC_HEADER (8 bytes)
+	// NOTE: MS-RDPEUDP spec does not explicitly state byte order. Little-endian
+	// is used here consistent with other MS protocol conventions (SMB, MS-RPC).
+	// FreeRDP uses big-endian for these fields — if live testing shows SYN probes
+	// are not eliciting responses, switch to binary.BigEndian.
 	binary.LittleEndian.PutUint32(probe[0:4], 0xFFFFFFFF) // snSourceAck = -1 (required for SYN)
 	binary.LittleEndian.PutUint16(probe[4:6], 16)         // uReceiveWindowSize
 	binary.LittleEndian.PutUint16(probe[6:8], flagSYN)    // uFlags
@@ -126,6 +130,7 @@ func parseSYNACK(data []byte) (plugins.ServiceRDPEUDP, bool) {
 		return plugins.ServiceRDPEUDP{}, false
 	}
 
+	// See buildSYNProbe for byte-order rationale
 	flags := binary.LittleEndian.Uint16(data[6:8])
 
 	// Must have both SYN and ACK flags set

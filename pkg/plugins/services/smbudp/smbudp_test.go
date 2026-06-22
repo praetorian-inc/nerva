@@ -183,6 +183,9 @@ func TestPlugin_RunWithMockServer(t *testing.T) {
 	if meta.CertSubject == "" {
 		t.Error("expected non-empty CertSubject in metadata")
 	}
+	if meta.CertIssuer == "" {
+		t.Error("expected non-empty CertIssuer in metadata")
+	}
 	if len(meta.QUICVersions) == 0 {
 		t.Error("expected at least one QUIC version in metadata")
 	}
