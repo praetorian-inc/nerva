@@ -848,6 +848,7 @@ type Service struct {
 type ServiceHTTP struct {
 	Status              string                    `json:"status"`      // e.g. "200 OK"
 	StatusCode          int                       `json:"status_code"` // e.g. 200
+	Title               string                    `json:"title,omitempty"`
 	ResponseHeaders     http.Header               `json:"response_headers"`
 	Technologies        []string                  `json:"technologies,omitempty"`
 	CPEs                []string                  `json:"cpes,omitempty"`
@@ -859,6 +860,7 @@ func (e ServiceHTTP) Type() string { return ProtoHTTP }
 type ServiceHTTPS struct {
 	Status              string                    `json:"status"`      // e.g. "200 OK"
 	StatusCode          int                       `json:"status_code"` // e.g. 200
+	Title               string                    `json:"title,omitempty"`
 	ResponseHeaders     http.Header               `json:"response_headers"`
 	Technologies        []string                  `json:"technologies,omitempty"`
 	CPEs                []string                  `json:"cpes,omitempty"`
