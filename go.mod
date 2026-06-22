@@ -8,6 +8,7 @@ require (
 	github.com/projectdiscovery/wappalyzergo v0.2.17
 	github.com/spf13/cobra v1.5.0
 	github.com/stretchr/testify v1.11.1
+	github.com/twmb/murmur3 v1.1.8
 	golang.org/x/crypto v0.44.0
 	golang.org/x/net v0.47.0
 	golang.org/x/sync v0.19.0

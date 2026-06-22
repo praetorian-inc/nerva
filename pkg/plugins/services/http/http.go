@@ -44,6 +44,7 @@ type HTTPSPlugin struct {
 const HTTP = "http"
 const HTTPS = "https"
 const USERAGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36"
+const maxTitleLength = 512
 
 func init() {
 	wappalyzerClient, err := wappalyzer.New()
@@ -128,12 +129,18 @@ func (p *HTTPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 	defer resp.Body.Close()
 
 	baseURL := fmt.Sprintf("http://%s", conn.RemoteAddr().String())
-	technologies, cpes, fingerprintMetadata, fingerprintedTechs, fpFindings, body, _ := p.FingerprintResponse(resp, &client, baseURL, target.Host, target.Misconfigs)
+	technologies, cpes, fingerprintMetadata, fingerprintedTechs, fpFindings, title, body, _ := p.FingerprintResponse(resp, &client, baseURL, target.Host, target.Misconfigs)
 
 	payload := plugins.ServiceHTTP{
 		Status:          resp.Status,
 		StatusCode:      resp.StatusCode,
 		ResponseHeaders: resp.Header,
+	}
+	if title != "" {
+		if len(title) > maxTitleLength {
+			title = title[:maxTitleLength]
+		}
+		payload.Title = title
 	}
 	if len(technologies) > 0 {
 		payload.Technologies = technologies
@@ -223,12 +230,18 @@ func (p *HTTPSPlugin) Run(
 	defer resp.Body.Close()
 
 	baseURL := fmt.Sprintf("https://%s", conn.RemoteAddr().String())
-	technologies, cpes, fingerprintMetadata, fingerprintedTechs, fpFindings, body, _ := p.FingerprintResponse(resp, &client, baseURL, target.Host, target.Misconfigs)
+	technologies, cpes, fingerprintMetadata, fingerprintedTechs, fpFindings, title, body, _ := p.FingerprintResponse(resp, &client, baseURL, target.Host, target.Misconfigs)
 
 	payload := plugins.ServiceHTTPS{
 		Status:          resp.Status,
 		StatusCode:      resp.StatusCode,
 		ResponseHeaders: resp.Header,
+	}
+	if title != "" {
+		if len(title) > maxTitleLength {
+			title = title[:maxTitleLength]
+		}
+		payload.Title = title
 	}
 	if len(technologies) > 0 {
 		payload.Technologies = technologies
@@ -300,11 +313,11 @@ func (p *HTTPPlugin) Name() string {
 func (p *HTTPSPlugin) Name() string {
 	return HTTPS
 }
-func (p *HTTPPlugin) FingerprintResponse(resp *http.Response, client *http.Client, baseURL string, host string, misconfigs bool) ([]string, []string, map[string]map[string]any, []fingerprintedTech, []plugins.SecurityFinding, []byte, error) {
+func (p *HTTPPlugin) FingerprintResponse(resp *http.Response, client *http.Client, baseURL string, host string, misconfigs bool) ([]string, []string, map[string]map[string]any, []fingerprintedTech, []plugins.SecurityFinding, string, []byte, error) {
 	return fingerprint(resp, p.analyzer, client, baseURL, host, misconfigs)
 }
 
-func (p *HTTPSPlugin) FingerprintResponse(resp *http.Response, client *http.Client, baseURL string, host string, misconfigs bool) ([]string, []string, map[string]map[string]any, []fingerprintedTech, []plugins.SecurityFinding, []byte, error) {
+func (p *HTTPSPlugin) FingerprintResponse(resp *http.Response, client *http.Client, baseURL string, host string, misconfigs bool) ([]string, []string, map[string]map[string]any, []fingerprintedTech, []plugins.SecurityFinding, string, []byte, error) {
 	return fingerprint(resp, p.analyzer, client, baseURL, host, misconfigs)
 }
 
@@ -460,7 +473,7 @@ func processFingerprintResult(result *fingerprinters.FingerprintResult) (string,
 	return tech, result.CPEs, result.Metadata, result.Severity
 }
 
-func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *http.Client, baseURL string, host string, misconfigs bool) ([]string, []string, map[string]map[string]any, []fingerprintedTech, []plugins.SecurityFinding, []byte, error) {
+func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *http.Client, baseURL string, host string, misconfigs bool) ([]string, []string, map[string]map[string]any, []fingerprintedTech, []plugins.SecurityFinding, string, []byte, error) {
 	var technologies, cpes []string
 	var fingerprintedTechs []fingerprintedTech
 	var fpFindings []plugins.SecurityFinding
@@ -470,7 +483,7 @@ func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *ht
 	maxResponseSize := int64(10 * 1024 * 1024) // 10MB limit
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, "", nil, err
 	}
 	// Close body to release connection for reuse by active fingerprinters.
 	// Without this, the transport may not return the connection to the idle pool,
@@ -478,7 +491,10 @@ func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *ht
 	resp.Body.Close()
 
 	// Wappalyzer fingerprinting (existing)
+	// FingerprintWithInfo returns map[string]AppInfo with CPE data needed for vulnerability correlation;
+	// FingerprintWithTitle returns map[string]struct{} + title string — no single method provides both.
 	fingerprintResult := analyzer.FingerprintWithInfo(resp.Header, data)
+	_, title := analyzer.FingerprintWithTitle(resp.Header, data)
 	for tech, appInfo := range fingerprintResult {
 		technologies = append(technologies, tech)
 		if cpe := appInfo.CPE; cpe != "" {
@@ -513,8 +529,12 @@ func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *ht
 			}
 		}
 		cpes = append(cpes, resultCPEs...)
-		if metadata != nil && result.Technology != "" {
-			fingerprintMetadata[result.Technology] = metadata
+		if metadata != nil {
+			key := result.Technology
+			if key == "" {
+				key = fp.Name()
+			}
+			fingerprintMetadata[key] = metadata
 		}
 		fpFindings = append(fpFindings, result.SecurityFindings...)
 		matchedFingerprinters = append(matchedFingerprinters, fp)
@@ -553,7 +573,7 @@ func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *ht
 			}
 
 			probeBody, err := io.ReadAll(io.LimitReader(probeResp.Body, maxResponseSize))
-			probeResp.Body.Close()
+			_ = probeResp.Body.Close()
 			if err != nil {
 				continue
 			}
@@ -573,8 +593,12 @@ func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *ht
 						}
 					}
 					cpes = append(cpes, resultCPEs...)
-					if metadata != nil && result.Technology != "" {
-						fingerprintMetadata[result.Technology] = metadata
+					if metadata != nil {
+						key := result.Technology
+						if key == "" {
+							key = fpName
+						}
+						fingerprintMetadata[key] = metadata
 					}
 					fpFindings = append(fpFindings, result.SecurityFindings...)
 					matchedFingerprinters = append(matchedFingerprinters, fp)
@@ -592,5 +616,5 @@ func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *ht
 		}
 	}
 
-	return technologies, cpes, fingerprintMetadata, fingerprintedTechs, fpFindings, data, nil
+	return technologies, cpes, fingerprintMetadata, fingerprintedTechs, fpFindings, title, data, nil
 }
