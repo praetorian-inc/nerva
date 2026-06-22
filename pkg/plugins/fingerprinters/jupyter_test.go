@@ -20,6 +20,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/praetorian-inc/nerva/pkg/plugins"
 )
 
 // ─── JupyterNotebookFingerprinter ───────────────────────────────────────────
@@ -261,7 +263,7 @@ func TestJupyterHubFingerprinter_Match(t *testing.T) {
 			want:        true,
 		},
 		{
-			name:          "matches when X-JupyterHub-Version header present",
+			name:          "matches when X-Jupyterhub-Version header present",
 			contentType:   "text/plain",
 			hubVersionHdr: "3.1.0",
 			want:          true,
@@ -283,7 +285,7 @@ func TestJupyterHubFingerprinter_Match(t *testing.T) {
 			fp := &JupyterHubFingerprinter{}
 			header := http.Header{"Content-Type": []string{tt.contentType}}
 			if tt.hubVersionHdr != "" {
-				header.Set("X-JupyterHub-Version", tt.hubVersionHdr)
+				header.Set("X-Jupyterhub-Version", tt.hubVersionHdr)
 			}
 			resp := &http.Response{Header: header}
 			assert.Equal(t, tt.want, fp.Match(resp))
@@ -300,9 +302,9 @@ func TestJupyterHubFingerprinter_Fingerprint(t *testing.T) {
 		return &http.Response{StatusCode: 200, Header: h}
 	}
 
-	t.Run("positive: X-JupyterHub-Version header detected", func(t *testing.T) {
+	t.Run("positive: X-Jupyterhub-Version header detected", func(t *testing.T) {
 		fp := &JupyterHubFingerprinter{}
-		resp := htmlResp(map[string]string{"X-JupyterHub-Version": "3.1.0"})
+		resp := htmlResp(map[string]string{"X-Jupyterhub-Version": "3.1.0"})
 		body := []byte(`<html><head><title>JupyterHub</title></head></html>`)
 
 		result, err := fp.Fingerprint(resp, body)
@@ -346,7 +348,7 @@ func TestJupyterHubFingerprinter_Fingerprint(t *testing.T) {
 
 	t.Run("positive: header version takes precedence over HTML body", func(t *testing.T) {
 		fp := &JupyterHubFingerprinter{}
-		resp := htmlResp(map[string]string{"X-JupyterHub-Version": "4.0.1"})
+		resp := htmlResp(map[string]string{"X-Jupyterhub-Version": "4.0.1"})
 		body := []byte(`<html><body>jupyterhub login page</body></html>`)
 
 		result, err := fp.Fingerprint(resp, body)
@@ -359,7 +361,7 @@ func TestJupyterHubFingerprinter_Fingerprint(t *testing.T) {
 
 	t.Run("positive: header with invalid version format uses empty version", func(t *testing.T) {
 		fp := &JupyterHubFingerprinter{}
-		resp := htmlResp(map[string]string{"X-JupyterHub-Version": "3.1"})
+		resp := htmlResp(map[string]string{"X-Jupyterhub-Version": "3.1"})
 		body := []byte(`<html><body>jupyterhub</body></html>`)
 
 		result, err := fp.Fingerprint(resp, body)
@@ -718,7 +720,7 @@ func TestJupyterFingerprinters_NoSeverity(t *testing.T) {
 			StatusCode: 200,
 			Header: http.Header{
 				"Content-Type":         []string{"text/html"},
-				"X-JupyterHub-Version": []string{"3.1.0"},
+				"X-Jupyterhub-Version": []string{"3.1.0"},
 			},
 		}
 		result, err := fp.Fingerprint(resp, []byte(`<html><body>jupyterhub</body></html>`))
@@ -737,5 +739,531 @@ func TestJupyterFingerprinters_NoSeverity(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		assert.Zero(t, result.Severity)
+	})
+}
+
+// ─── JupyterNotebookMisconfigFingerprinter ───────────────────────────────────
+
+func TestJupyterNotebookMisconfigFingerprinter_Name(t *testing.T) {
+	fp := &JupyterNotebookMisconfigFingerprinter{}
+	assert.Equal(t, "jupyter-notebook-misconfig", fp.Name())
+}
+
+func TestJupyterNotebookMisconfigFingerprinter_ProbeEndpoint(t *testing.T) {
+	fp := &JupyterNotebookMisconfigFingerprinter{}
+	assert.Equal(t, "/api/kernels", fp.ProbeEndpoint())
+}
+
+func TestJupyterNotebookMisconfigFingerprinter_Match(t *testing.T) {
+	tests := []struct {
+		name        string
+		statusCode  int
+		contentType string
+		want        bool
+	}{
+		{
+			name:        "200 application/json → true",
+			statusCode:  200,
+			contentType: "application/json",
+			want:        true,
+		},
+		{
+			name:        "200 application/json with charset → true",
+			statusCode:  200,
+			contentType: "application/json; charset=utf-8",
+			want:        true,
+		},
+		{
+			name:        "403 application/json → false",
+			statusCode:  403,
+			contentType: "application/json",
+			want:        false,
+		},
+		{
+			name:        "401 application/json → false",
+			statusCode:  401,
+			contentType: "application/json",
+			want:        false,
+		},
+		{
+			name:        "200 text/html → false",
+			statusCode:  200,
+			contentType: "text/html",
+			want:        false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fp := &JupyterNotebookMisconfigFingerprinter{}
+			resp := &http.Response{
+				StatusCode: tt.statusCode,
+				Header:     http.Header{"Content-Type": []string{tt.contentType}},
+			}
+			assert.Equal(t, tt.want, fp.Match(resp))
+		})
+	}
+}
+
+func TestJupyterNotebookMisconfigFingerprinter_Fingerprint(t *testing.T) {
+	jsonResp := func() *http.Response {
+		return &http.Response{
+			StatusCode: 200,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+		}
+	}
+
+	t.Run("positive: JSON array body returns result with SeverityCritical", func(t *testing.T) {
+		fp := &JupyterNotebookMisconfigFingerprinter{}
+		body := []byte(`[{"id":"abc","name":"python3","execution_state":"idle"}]`)
+
+		result, err := fp.Fingerprint(jsonResp(), body)
+
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Equal(t, "jupyter-notebook", result.Technology)
+		assert.Equal(t, plugins.SeverityCritical, result.Severity)
+		assert.Nil(t, result.Metadata)
+		assert.Empty(t, result.CPEs)
+		assert.Empty(t, result.Version)
+	})
+
+	t.Run("positive: empty JSON array returns result", func(t *testing.T) {
+		fp := &JupyterNotebookMisconfigFingerprinter{}
+		body := []byte(`[]`)
+
+		result, err := fp.Fingerprint(jsonResp(), body)
+
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Equal(t, "jupyter-notebook", result.Technology)
+		assert.Equal(t, plugins.SeverityCritical, result.Severity)
+	})
+
+	t.Run("negative: JSON object (not array) returns nil", func(t *testing.T) {
+		fp := &JupyterNotebookMisconfigFingerprinter{}
+		body := []byte(`{"error":"Forbidden"}`)
+
+		result, err := fp.Fingerprint(jsonResp(), body)
+
+		assert.NoError(t, err)
+		assert.Nil(t, result)
+	})
+
+	t.Run("negative: invalid JSON returns nil", func(t *testing.T) {
+		fp := &JupyterNotebookMisconfigFingerprinter{}
+		body := []byte(`not json`)
+
+		result, err := fp.Fingerprint(jsonResp(), body)
+
+		assert.NoError(t, err)
+		assert.Nil(t, result)
+	})
+
+	t.Run("negative: empty body returns nil", func(t *testing.T) {
+		fp := &JupyterNotebookMisconfigFingerprinter{}
+
+		result, err := fp.Fingerprint(jsonResp(), []byte{})
+
+		assert.NoError(t, err)
+		assert.Nil(t, result)
+	})
+}
+
+// ─── JupyterHubMisconfigFingerprinter ────────────────────────────────────────
+
+func TestJupyterHubMisconfigFingerprinter_Name(t *testing.T) {
+	fp := &JupyterHubMisconfigFingerprinter{}
+	assert.Equal(t, "jupyterhub-misconfig", fp.Name())
+}
+
+func TestJupyterHubMisconfigFingerprinter_ProbeEndpoint(t *testing.T) {
+	fp := &JupyterHubMisconfigFingerprinter{}
+	assert.Equal(t, "/hub/api/", fp.ProbeEndpoint())
+}
+
+func TestJupyterHubMisconfigFingerprinter_Match(t *testing.T) {
+	tests := []struct {
+		name        string
+		statusCode  int
+		contentType string
+		hubHeader   string
+		want        bool
+	}{
+		{
+			name:        "200 application/json → true",
+			statusCode:  200,
+			contentType: "application/json",
+			want:        true,
+		},
+		{
+			name:        "403 application/json → false",
+			statusCode:  403,
+			contentType: "application/json",
+			want:        false,
+		},
+		{
+			name:        "401 application/json → false",
+			statusCode:  401,
+			contentType: "application/json",
+			want:        false,
+		},
+		{
+			name:        "200 text/html → false",
+			statusCode:  200,
+			contentType: "text/html",
+			want:        false,
+		},
+		{
+			name:        "200 with X-Jupyterhub-Version header but wrong Content-Type → true",
+			statusCode:  200,
+			contentType: "text/plain",
+			hubHeader:   "3.1.0",
+			want:        true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fp := &JupyterHubMisconfigFingerprinter{}
+			header := http.Header{"Content-Type": []string{tt.contentType}}
+			if tt.hubHeader != "" {
+				header["X-Jupyterhub-Version"] = []string{tt.hubHeader}
+			}
+			resp := &http.Response{
+				StatusCode: tt.statusCode,
+				Header:     header,
+			}
+			assert.Equal(t, tt.want, fp.Match(resp))
+		})
+	}
+}
+
+func TestJupyterHubMisconfigFingerprinter_Fingerprint(t *testing.T) {
+	jsonResp := func() *http.Response {
+		return &http.Response{
+			StatusCode: 200,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+		}
+	}
+
+	t.Run("positive: version field present returns SeverityCritical", func(t *testing.T) {
+		fp := &JupyterHubMisconfigFingerprinter{}
+		body := []byte(`{"version":"3.1.0"}`)
+
+		result, err := fp.Fingerprint(jsonResp(), body)
+
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Equal(t, "jupyterhub", result.Technology)
+		assert.Equal(t, plugins.SeverityCritical, result.Severity)
+		assert.Nil(t, result.Metadata)
+		assert.Empty(t, result.CPEs)
+		assert.Empty(t, result.Version)
+	})
+
+	t.Run("negative: no version field returns nil", func(t *testing.T) {
+		fp := &JupyterHubMisconfigFingerprinter{}
+		body := []byte(`{"status":401}`)
+
+		result, err := fp.Fingerprint(jsonResp(), body)
+
+		assert.NoError(t, err)
+		assert.Nil(t, result)
+	})
+
+	t.Run("negative: empty object returns nil", func(t *testing.T) {
+		fp := &JupyterHubMisconfigFingerprinter{}
+		body := []byte(`{}`)
+
+		result, err := fp.Fingerprint(jsonResp(), body)
+
+		assert.NoError(t, err)
+		assert.Nil(t, result)
+	})
+
+	t.Run("negative: invalid JSON returns nil", func(t *testing.T) {
+		fp := &JupyterHubMisconfigFingerprinter{}
+		body := []byte(`not json`)
+
+		result, err := fp.Fingerprint(jsonResp(), body)
+
+		assert.NoError(t, err)
+		assert.Nil(t, result)
+	})
+
+	t.Run("negative: empty body returns nil", func(t *testing.T) {
+		fp := &JupyterHubMisconfigFingerprinter{}
+
+		result, err := fp.Fingerprint(jsonResp(), []byte{})
+
+		assert.NoError(t, err)
+		assert.Nil(t, result)
+	})
+
+	t.Run("positive: X-Jupyterhub-Version header is sufficient", func(t *testing.T) {
+		fp := &JupyterHubMisconfigFingerprinter{}
+		resp := &http.Response{
+			StatusCode: 200,
+			Header: http.Header{
+				"Content-Type":         []string{"application/json"},
+				"X-Jupyterhub-Version": []string{"3.1.0"},
+			},
+		}
+		body := []byte(`{}`)
+		result, err := fp.Fingerprint(resp, body)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Equal(t, "jupyterhub", result.Technology)
+		assert.Equal(t, plugins.SeverityCritical, result.Severity)
+	})
+
+	t.Run("negative: version present but not semver without hub header returns nil", func(t *testing.T) {
+		fp := &JupyterHubMisconfigFingerprinter{}
+		resp := &http.Response{
+			StatusCode: 200,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+		}
+		body := []byte(`{"version":"1.0","status":"ok"}`)
+		result, err := fp.Fingerprint(resp, body)
+		assert.NoError(t, err)
+		assert.Nil(t, result)
+	})
+
+	t.Run("negative: empty version string returns nil", func(t *testing.T) {
+		fp := &JupyterHubMisconfigFingerprinter{}
+		resp := &http.Response{
+			StatusCode: 200,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+		}
+		body := []byte(`{"version":""}`)
+		result, err := fp.Fingerprint(resp, body)
+		assert.NoError(t, err)
+		assert.Nil(t, result)
+	})
+}
+
+// ─── JupyterHubSignupFingerprinter ───────────────────────────────────────────
+
+func TestJupyterHubSignupFingerprinter_Name(t *testing.T) {
+	fp := &JupyterHubSignupFingerprinter{}
+	assert.Equal(t, "jupyterhub-signup", fp.Name())
+}
+
+func TestJupyterHubSignupFingerprinter_ProbeEndpoint(t *testing.T) {
+	fp := &JupyterHubSignupFingerprinter{}
+	assert.Equal(t, "/hub/signup", fp.ProbeEndpoint())
+}
+
+func TestJupyterHubSignupFingerprinter_ProbeAccept(t *testing.T) {
+	fp := &JupyterHubSignupFingerprinter{}
+	assert.Equal(t, "text/html", fp.ProbeAccept())
+}
+
+func TestJupyterHubSignupFingerprinter_Match(t *testing.T) {
+	tests := []struct {
+		name        string
+		statusCode  int
+		contentType string
+		want        bool
+	}{
+		{
+			name:        "200 text/html → true",
+			statusCode:  200,
+			contentType: "text/html",
+			want:        true,
+		},
+		{
+			name:        "200 text/html with charset → true",
+			statusCode:  200,
+			contentType: "text/html; charset=utf-8",
+			want:        true,
+		},
+		{
+			name:        "403 text/html → false",
+			statusCode:  403,
+			contentType: "text/html",
+			want:        false,
+		},
+		{
+			name:        "401 text/html → false",
+			statusCode:  401,
+			contentType: "text/html",
+			want:        false,
+		},
+		{
+			name:        "200 application/json → false",
+			statusCode:  200,
+			contentType: "application/json",
+			want:        false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fp := &JupyterHubSignupFingerprinter{}
+			resp := &http.Response{
+				StatusCode: tt.statusCode,
+				Header:     http.Header{"Content-Type": []string{tt.contentType}},
+			}
+			assert.Equal(t, tt.want, fp.Match(resp))
+		})
+	}
+}
+
+func TestJupyterHubSignupFingerprinter_Fingerprint(t *testing.T) {
+	htmlResp := func() *http.Response {
+		return &http.Response{
+			StatusCode: 200,
+			Header:     http.Header{"Content-Type": []string{"text/html; charset=utf-8"}},
+		}
+	}
+
+	t.Run("positive: jupyterhub body and signup form action returns SeverityHigh", func(t *testing.T) {
+		fp := &JupyterHubSignupFingerprinter{}
+		body := []byte(`<html><body><h1>JupyterHub</h1><form action="/hub/signup" method="post"></form></body></html>`)
+
+		result, err := fp.Fingerprint(htmlResp(), body)
+
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Equal(t, "jupyterhub-registration", result.Technology)
+		assert.Equal(t, plugins.SeverityHigh, result.Severity)
+		assert.Nil(t, result.Metadata)
+	})
+
+	t.Run("negative: no jupyterhub body reference returns nil", func(t *testing.T) {
+		fp := &JupyterHubSignupFingerprinter{}
+		body := []byte(`<html><body><form action="/hub/signup" method="post"></form></body></html>`)
+
+		result, err := fp.Fingerprint(htmlResp(), body)
+
+		assert.NoError(t, err)
+		assert.Nil(t, result)
+	})
+
+	t.Run("negative: login page without signup form returns nil", func(t *testing.T) {
+		fp := &JupyterHubSignupFingerprinter{}
+		body := []byte(`<html><body><h1>JupyterHub</h1><form action="/hub/login" method="post"></form></body></html>`)
+
+		result, err := fp.Fingerprint(htmlResp(), body)
+
+		assert.NoError(t, err)
+		assert.Nil(t, result)
+	})
+
+	t.Run("negative: empty body returns nil", func(t *testing.T) {
+		fp := &JupyterHubSignupFingerprinter{}
+
+		result, err := fp.Fingerprint(htmlResp(), []byte{})
+
+		assert.NoError(t, err)
+		assert.Nil(t, result)
+	})
+}
+
+// ─── JupyterLabMisconfigFingerprinter ────────────────────────────────────────
+
+func TestJupyterLabMisconfigFingerprinter_Name(t *testing.T) {
+	fp := &JupyterLabMisconfigFingerprinter{}
+	assert.Equal(t, "jupyterlab-misconfig", fp.Name())
+}
+
+func TestJupyterLabMisconfigFingerprinter_ProbeEndpoint(t *testing.T) {
+	fp := &JupyterLabMisconfigFingerprinter{}
+	assert.Equal(t, "/lab/api/settings", fp.ProbeEndpoint())
+}
+
+func TestJupyterLabMisconfigFingerprinter_Match(t *testing.T) {
+	tests := []struct {
+		name        string
+		statusCode  int
+		contentType string
+		want        bool
+	}{
+		{
+			name:        "200 application/json → true",
+			statusCode:  200,
+			contentType: "application/json",
+			want:        true,
+		},
+		{
+			name:        "403 application/json → false",
+			statusCode:  403,
+			contentType: "application/json",
+			want:        false,
+		},
+		{
+			name:        "401 application/json → false",
+			statusCode:  401,
+			contentType: "application/json",
+			want:        false,
+		},
+		{
+			name:        "200 text/html → false",
+			statusCode:  200,
+			contentType: "text/html",
+			want:        false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fp := &JupyterLabMisconfigFingerprinter{}
+			resp := &http.Response{
+				StatusCode: tt.statusCode,
+				Header:     http.Header{"Content-Type": []string{tt.contentType}},
+			}
+			assert.Equal(t, tt.want, fp.Match(resp))
+		})
+	}
+}
+
+func TestJupyterLabMisconfigFingerprinter_Fingerprint(t *testing.T) {
+	jsonResp := func() *http.Response {
+		return &http.Response{
+			StatusCode: 200,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+		}
+	}
+
+	t.Run("positive: @jupyterlab key present returns SeverityCritical", func(t *testing.T) {
+		fp := &JupyterLabMisconfigFingerprinter{}
+		body := []byte(`{"@jupyterlab/apputils-extension:themes":{"theme":"JupyterLab Light"}}`)
+
+		result, err := fp.Fingerprint(jsonResp(), body)
+
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Equal(t, "jupyterlab", result.Technology)
+		assert.Equal(t, plugins.SeverityCritical, result.Severity)
+		assert.Nil(t, result.Metadata)
+		assert.Empty(t, result.CPEs)
+		assert.Empty(t, result.Version)
+	})
+
+	t.Run("negative: no @jupyterlab keys returns nil", func(t *testing.T) {
+		fp := &JupyterLabMisconfigFingerprinter{}
+		body := []byte(`{"foo":"bar"}`)
+
+		result, err := fp.Fingerprint(jsonResp(), body)
+
+		assert.NoError(t, err)
+		assert.Nil(t, result)
+	})
+
+	t.Run("negative: invalid JSON returns nil", func(t *testing.T) {
+		fp := &JupyterLabMisconfigFingerprinter{}
+		body := []byte(`not json`)
+
+		result, err := fp.Fingerprint(jsonResp(), body)
+
+		assert.NoError(t, err)
+		assert.Nil(t, result)
+	})
+
+	t.Run("negative: empty body returns nil", func(t *testing.T) {
+		fp := &JupyterLabMisconfigFingerprinter{}
+
+		result, err := fp.Fingerprint(jsonResp(), []byte{})
+
+		assert.NoError(t, err)
+		assert.Nil(t, result)
 	})
 }
