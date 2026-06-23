@@ -72,19 +72,32 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+
+	"github.com/praetorian-inc/nerva/pkg/plugins"
 )
 
 // anythingLLMTitleRe matches the distinctive AnythingLLM page title.
-var anythingLLMTitleRe = regexp.MustCompile(`(?i)<title[^>]*>[^<]*AnythingLLM[^<]*</title>`)
+// Requires "AnythingLLM" at the start of the title (only optional whitespace
+// before it) to avoid false positives from blog posts like "Review of AnythingLLM".
+var anythingLLMTitleRe = regexp.MustCompile(`(?i)<title[^>]*>\s*AnythingLLM[^<]*</title>`)
 
 // anythingLLMOGRe matches the AnythingLLM OpenGraph URL meta tag.
 // This is a corroborating signal — the og:url pointing to anythingllm.com.
-var anythingLLMOGRe = regexp.MustCompile(`(?i)<meta[^>]*property\s*=\s*["']og:url["'][^>]*content\s*=\s*["'][^"']*anythingllm\.com[^"']*["']`)
+// Uses alternation to handle both attribute orderings (property before content,
+// or content before property), since HTML attributes may appear in any order.
+var anythingLLMOGRe = regexp.MustCompile(`(?i)<meta\s[^>]*(?:property\s*=\s*["']og:url["'][^>]*content\s*=\s*["'][^"']*anythingllm\.com[^"']*["']|content\s*=\s*["'][^"']*anythingllm\.com[^"']*["'][^>]*property\s*=\s*["']og:url["'])`)
 
 // anythingLLMVersionExtractRe extracts the leading semver triple from the
 // "appVersion" JSON field. Capturing only the three-component numeric prefix
 // avoids pre-release or build-metadata suffixes that would fail CPE validation.
 var anythingLLMVersionExtractRe = regexp.MustCompile(`"appVersion"\s*:\s*"(\d+\.\d+\.\d+)`)
+
+// anythingLLMVersionFieldRe extracts a semver triple from the "version" JSON
+// field. Some AnythingLLM deployments report a clean semver under "version"
+// rather than "appVersion". This is used as a fallback after appVersion fails.
+// The regex matches the literal `"version"` (quote before 'v'), which is
+// distinct from `"appVersion"` (quote before 'a'), so no collision occurs.
+var anythingLLMVersionFieldRe = regexp.MustCompile(`"version"\s*:\s*"(\d+\.\d+\.\d+)`)
 
 // anythingLLMVersionValidateRe is the anchored second-stage CPE validation gate.
 // Accepts only pure semver strings (three numeric components, nothing else).
@@ -218,21 +231,35 @@ func (f *AnythingLLMFingerprinter) Fingerprint(resp *http.Response, body []byte)
 		metadata["vector_db"] = vectorDB
 	}
 
-	return &FingerprintResult{
+	result := &FingerprintResult{
 		Technology: "anythingllm",
 		Version:    version,
 		CPEs:       []string{buildAnythingLLMCPE(version)},
 		Metadata:   metadata,
-	}, nil
+	}
+
+	if detectionMethod == "active_probe" {
+		result.Severity = plugins.SeverityHigh
+	}
+
+	return result, nil
 }
 
 // extractAnythingLLMVersion extracts and validates the AnythingLLM version from
-// the "appVersion" field in the metrics JSON body. Uses a two-stage approach:
-// the extract regex captures the leading semver triple, and the validate regex
-// confirms it is pure digits before CPE emission. Returns "" when no valid
-// semver version is found.
+// the metrics JSON body. Uses a two-stage approach: the extract regex captures
+// the leading semver triple, and the validate regex confirms it is pure digits
+// before CPE emission. Returns "" when no valid semver version is found.
+//
+// The function tries "appVersion" first (the canonical field). If that is absent
+// or not a valid semver triple, it falls back to the "version" field, which some
+// deployments populate with a clean semver string instead of a git SHA.
 func extractAnythingLLMVersion(body []byte) string {
+	// Try appVersion first (the canonical field).
 	m := anythingLLMVersionExtractRe.FindSubmatch(body)
+	if len(m) < 2 {
+		// Fall back to "version" field (some deployments report semver here).
+		m = anythingLLMVersionFieldRe.FindSubmatch(body)
+	}
 	if len(m) < 2 {
 		return ""
 	}

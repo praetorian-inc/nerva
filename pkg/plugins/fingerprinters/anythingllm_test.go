@@ -20,6 +20,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/praetorian-inc/nerva/pkg/plugins"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -140,6 +141,7 @@ func TestAnythingLLMFingerprinter_Fingerprint_MetricsSignal(t *testing.T) {
 		assert.Equal(t, "multi-user", result.Metadata["mode"])
 		assert.Equal(t, "lancedb", result.Metadata["vector_db"])
 		assert.Equal(t, "/api/utils/metrics", result.Metadata["probe_path"])
+		assert.Equal(t, plugins.SeverityHigh, result.Severity)
 	})
 
 	t.Run("metrics JSON with vectorDB + mode but no appVersion yields detected with empty version", func(t *testing.T) {
@@ -216,6 +218,7 @@ func TestAnythingLLMFingerprinter_Fingerprint_MetricsSignal(t *testing.T) {
 		assert.Equal(t, "json_field", result.Metadata["detection_method"])
 		_, probePath := result.Metadata["probe_path"]
 		assert.False(t, probePath, "probe_path should not be set for json_field detection")
+		assert.Empty(t, result.Severity, "json_field detection should not have severity")
 	})
 }
 
@@ -273,6 +276,30 @@ func TestAnythingLLMFingerprinter_Fingerprint_VersionExtraction(t *testing.T) {
 
 	t.Run("no appVersion field yields empty version", func(t *testing.T) {
 		body := `{"vectorDB":"lancedb","mode":"multi-user"}`
+		result, err := fp.Fingerprint(makeResp(), []byte(body))
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Equal(t, "", result.Version)
+	})
+
+	t.Run("version field with semver and no appVersion yields version from version field", func(t *testing.T) {
+		body := `{"vectorDB":"lancedb","mode":"multi-user","version":"1.13.0"}`
+		result, err := fp.Fingerprint(makeResp(), []byte(body))
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Equal(t, "1.13.0", result.Version)
+	})
+
+	t.Run("appVersion takes priority over version field", func(t *testing.T) {
+		body := `{"vectorDB":"lancedb","mode":"multi-user","appVersion":"1.14.1","version":"1.13.0"}`
+		result, err := fp.Fingerprint(makeResp(), []byte(body))
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Equal(t, "1.14.1", result.Version)
+	})
+
+	t.Run("version field with git SHA yields empty version", func(t *testing.T) {
+		body := `{"vectorDB":"lancedb","mode":"multi-user","version":"abc123def"}`
 		result, err := fp.Fingerprint(makeResp(), []byte(body))
 		require.NoError(t, err)
 		require.NotNil(t, result)
@@ -477,6 +504,28 @@ func TestAnythingLLMHTMLFingerprinter_Fingerprint_TitleSignal(t *testing.T) {
 		require.NoError(t, err)
 		assert.Nil(t, result)
 	})
+
+	t.Run("blog post title mentioning AnythingLLM mid-title yields nil (not at title start)", func(t *testing.T) {
+		body := []byte(`<html><head><title>Review of AnythingLLM</title></head><body></body></html>`)
+		result, err := fp.Fingerprint(makeResp(200), body)
+		require.NoError(t, err)
+		assert.Nil(t, result)
+	})
+
+	t.Run("tutorial title mentioning AnythingLLM mid-title yields nil", func(t *testing.T) {
+		body := []byte(`<html><head><title>How to use AnythingLLM for your business</title></head><body></body></html>`)
+		result, err := fp.Fingerprint(makeResp(200), body)
+		require.NoError(t, err)
+		assert.Nil(t, result)
+	})
+
+	t.Run("title with reversed og:url attribute order yields detected with og_url true", func(t *testing.T) {
+		body := []byte(`<html><head><title>AnythingLLM | Your personal LLM trained on anything</title><meta content="https://anythingllm.com" property="og:url"></head><body></body></html>`)
+		result, err := fp.Fingerprint(makeResp(200), body)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Equal(t, true, result.Metadata["og_url"])
+	})
 }
 
 // ── AnythingLLMHTMLFingerprinter: Integration Match + Fingerprint round-trip ─
@@ -507,6 +556,7 @@ func TestAnythingLLMHTMLFingerprinter_Integration(t *testing.T) {
 		assert.Equal(t, true, result.Metadata["og_url"])
 		assert.NotEmpty(t, result.CPEs)
 		assert.Contains(t, result.CPEs[0], "cpe:2.3:a:mintplex-labs:anythingllm:")
+		assert.Empty(t, result.Severity, "HTML detection should not have severity")
 	})
 }
 
@@ -541,5 +591,6 @@ func TestAnythingLLMFingerprinter_Integration(t *testing.T) {
 		assert.Equal(t, "/api/utils/metrics", result.Metadata["probe_path"])
 		assert.NotEmpty(t, result.CPEs)
 		assert.Equal(t, "cpe:2.3:a:mintplex-labs:anythingllm:1.14.1:*:*:*:*:*:*:*", result.CPEs[0])
+		assert.Equal(t, plugins.SeverityHigh, result.Severity)
 	})
 }
