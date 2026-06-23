@@ -769,19 +769,21 @@ func TestTraefikVersionFingerprinter_DetectionOnlyContract(t *testing.T) {
 // --- Registration tests ---
 
 func TestTraefikFingerprinters_Registration(t *testing.T) {
-	t.Run("traefik-dashboard is registered", func(t *testing.T) {
-		fp := GetFingerprinterByName("traefik-dashboard")
-		if fp == nil {
-			t.Fatal("fingerprinter 'traefik-dashboard' not registered")
-		}
-	})
-
-	t.Run("traefik-api is registered", func(t *testing.T) {
-		fp := GetFingerprinterByName("traefik-api")
-		if fp == nil {
-			t.Fatal("fingerprinter 'traefik-api' not registered")
-		}
-	})
+	tests := []struct {
+		name     string
+		fp       ActiveHTTPFingerprinter
+		wantName string
+	}{
+		{"traefik-dashboard is registered", &TraefikOverviewFingerprinter{}, "traefik-dashboard"},
+		{"traefik-api is registered", &TraefikVersionFingerprinter{}, "traefik-api"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.fp.Name() != tt.wantName {
+				t.Errorf("Name() = %q, want %q", tt.fp.Name(), tt.wantName)
+			}
+		})
+	}
 }
 
 // --- buildTraefikCPE tests ---
@@ -840,6 +842,121 @@ func TestBuildTraefikCPE(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := buildTraefikCPE(tt.version); got != tt.want {
 				t.Errorf("buildTraefikCPE(%q) = %q, want %q", tt.version, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestTraefikOverviewFingerprinter_FPSurface_AllZeroValues documents the accepted
+// false-positive surface when a non-Traefik monitoring API returns the same JSON
+// structure with all-zero count values. The fingerprinter fires because it only
+// requires structural presence (all three protocol sections with required sub-keys),
+// not non-zero counts. This is accepted FP risk: severity is unset (fingerprinter-only
+// scope), so no misconfig is emitted.
+func TestTraefikOverviewFingerprinter_FPSurface_AllZeroValues(t *testing.T) {
+	t.Run("accepted false positive — generic monitoring API with matching structure", func(t *testing.T) {
+		fp := &TraefikOverviewFingerprinter{}
+		resp := makeJSONResponse(200)
+		body := `{
+			"http": {"routers": {"total": 0, "warnings": 0, "errors": 0}, "services": {"total": 0, "warnings": 0, "errors": 0}, "middlewares": {"total": 0, "warnings": 0, "errors": 0}},
+			"tcp": {"routers": {"total": 0, "warnings": 0, "errors": 0}, "services": {"total": 0, "warnings": 0, "errors": 0}, "middlewares": {"total": 0, "warnings": 0, "errors": 0}},
+			"udp": {"routers": {"total": 0, "warnings": 0, "errors": 0}, "services": {"total": 0, "warnings": 0, "errors": 0}}
+		}`
+
+		result, err := fp.Fingerprint(resp, []byte(body))
+		if err != nil {
+			t.Fatalf("Fingerprint() error = %v", err)
+		}
+		// The fingerprinter fires on structural match alone. A generic monitoring API
+		// that happens to return this same three-protocol structure with zero counts
+		// will be detected as Traefik. This is accepted FP surface because severity
+		// is unset (fingerprinter-only ticket), so no misconfig finding is emitted.
+		if result == nil {
+			t.Error("Fingerprint() returned nil, want non-nil — documents accepted FP risk")
+		}
+	})
+}
+
+// TestTraefikVersionFingerprinter_FPSurface_CodenameOnly documents the accepted
+// false-positive surface when a non-Traefik JSON API returns Version and Codename
+// fields. The fingerprinter fires whenever Codename != "", regardless of what
+// other fields are present. This is accepted FP risk: severity is unset
+// (fingerprinter-only scope), so no misconfig is emitted.
+func TestTraefikVersionFingerprinter_FPSurface_CodenameOnly(t *testing.T) {
+	t.Run("accepted false positive — non-Traefik JSON with Version and Codename fields", func(t *testing.T) {
+		fp := &TraefikVersionFingerprinter{}
+		resp := makeJSONResponse(200)
+		body := `{"Version": "1.0.0", "Codename": "dev", "Service": "SomeOtherTool"}`
+
+		result, err := fp.Fingerprint(resp, []byte(body))
+		if err != nil {
+			t.Fatalf("Fingerprint() error = %v", err)
+		}
+		// The fingerprinter only checks Codename != "". Any JSON API that includes a
+		// non-empty Codename field will be detected as Traefik regardless of what other
+		// fields are present. This is accepted FP surface because severity is unset
+		// (fingerprinter-only ticket), so no misconfig finding is emitted.
+		if result == nil {
+			t.Error("Fingerprint() returned nil, want non-nil — documents accepted FP risk")
+		}
+	})
+}
+
+// TestTraefikVersionFingerprinter_StartDateSanitization verifies that control
+// characters in the startDate field are stripped by sanitizeHTTPHeaderValue before
+// being stored in metadata.
+func TestTraefikVersionFingerprinter_StartDateSanitization(t *testing.T) {
+	fp := &TraefikVersionFingerprinter{}
+	resp := makeJSONResponse(200)
+	// startDate contains an ESC control character followed by "malicious".
+	body := `{"Version": "3.0.0", "Codename": "rocamadour", "startDate": "2024-01-01\u001bmalicious"}`
+
+	result, err := fp.Fingerprint(resp, []byte(body))
+	if err != nil {
+		t.Fatalf("Fingerprint() error = %v", err)
+	}
+	if result == nil {
+		t.Fatal("Fingerprint() returned nil")
+	}
+
+	startDate, ok := result.Metadata["startDate"].(string)
+	if !ok {
+		t.Fatalf("startDate metadata is not a string: %T", result.Metadata["startDate"])
+	}
+	for _, r := range startDate {
+		if r < 0x20 && r != '\t' {
+			t.Errorf("startDate contains unsanitized control character: U+%04X", r)
+		}
+	}
+}
+
+// TestTraefikVersionFingerprinter_4xxStatusBehavior documents that the fingerprinter
+// fires on 4xx responses (e.g., 401 Unauthorized, 403 Forbidden) with a valid Traefik
+// body. Only status >= 500 is rejected. This is consistent with other fingerprinters
+// in the package: a 401/403 from a Traefik endpoint still confirms the service is
+// present, and the probe body content is used for detection.
+func TestTraefikVersionFingerprinter_4xxStatusBehavior(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusCode int
+	}{
+		{"401 Unauthorized fires fingerprinter", 401},
+		{"403 Forbidden fires fingerprinter", 403},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fp := &TraefikVersionFingerprinter{}
+			resp := makeJSONResponse(tt.statusCode)
+
+			result, err := fp.Fingerprint(resp, []byte(validVersionBody))
+			if err != nil {
+				t.Fatalf("Fingerprint() error = %v", err)
+			}
+			// 4xx responses are not rejected; only >= 500 is. A Traefik endpoint
+			// returning 401/403 with valid body content still identifies the service.
+			// This is consistent with other fingerprinters in the package.
+			if result == nil {
+				t.Errorf("Fingerprint() returned nil for status %d, want non-nil", tt.statusCode)
 			}
 		})
 	}

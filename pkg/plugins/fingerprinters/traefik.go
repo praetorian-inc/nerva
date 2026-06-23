@@ -55,11 +55,20 @@ import (
 // TraefikOverviewFingerprinter detects Traefik via the /api/overview endpoint.
 // The overview returns a JSON document listing router, service, and middleware
 // counts for http, tcp, and udp protocols — a structure unique to Traefik.
+//
+// Technology name: "traefik-dashboard" identifies exposure of the Traefik
+// dashboard API (/api/overview). This is a distinct exposure surface from the
+// version endpoint: the dashboard API reveals live routing topology.
 type TraefikOverviewFingerprinter struct{}
 
 // TraefikVersionFingerprinter detects Traefik via the /api/version endpoint.
 // The version endpoint returns JSON with Version and Codename fields; the
 // Codename field is unique to Traefik release naming.
+//
+// Technology name: "traefik-api" identifies exposure of the Traefik management
+// API (/api/version). Two separate technology names are intentional: "traefik-dashboard"
+// and "traefik-api" represent different exposure surfaces — dashboard API access
+// vs. version/management API access — and may be configured independently.
 type TraefikVersionFingerprinter struct{}
 
 // traefikProtocolSection represents a single protocol's count block in /api/overview.
