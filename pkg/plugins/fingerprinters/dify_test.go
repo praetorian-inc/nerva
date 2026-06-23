@@ -705,7 +705,7 @@ func TestDifySetupFingerprinter_Fingerprint_SetupSignal(t *testing.T) {
 // ── DifySetupFingerprinter: Severity ──────────────────────────────────────────
 
 func TestDifySetupFingerprinter_Severity(t *testing.T) {
-	t.Run("setup detection (step=finished) has SeverityHigh", func(t *testing.T) {
+	t.Run("setup detection (step=finished) has empty severity", func(t *testing.T) {
 		fp := &DifySetupFingerprinter{}
 		resp := &http.Response{
 			StatusCode: 200,
@@ -716,7 +716,7 @@ func TestDifySetupFingerprinter_Severity(t *testing.T) {
 		result, err := fp.Fingerprint(resp, []byte(`{"step":"finished","setup_at":"2024-01-15T10:30:00.000Z"}`))
 		require.NoError(t, err)
 		require.NotNil(t, result)
-		assert.Equal(t, plugins.SeverityHigh, result.Severity)
+		assert.Equal(t, plugins.Severity(""), result.Severity)
 	})
 
 	t.Run("setup detection (step=not_started) has SeverityHigh and SecurityFindings[0].Severity == SeverityHigh", func(t *testing.T) {
@@ -755,7 +755,7 @@ func TestDifySetupFingerprinter_Integration(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, result)
 
-		assert.Equal(t, "dify", result.Technology)
+		assert.Equal(t, "dify-setup", result.Technology)
 		assert.Equal(t, "LangGenius", result.Metadata["vendor"])
 		assert.Equal(t, "Dify", result.Metadata["product"])
 		assert.Equal(t, "active_probe", result.Metadata["detection_method"])

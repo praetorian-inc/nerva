@@ -295,7 +295,7 @@ func (f *DifySetupFingerprinter) Fingerprint(resp *http.Response, body []byte) (
 	step := string(m[1])
 
 	result := &FingerprintResult{
-		Technology: "dify",
+		Technology: "dify-setup",
 		Version:    "",
 		CPEs:       []string{buildDifyCPE("")},
 		Metadata: map[string]any{
@@ -305,10 +305,10 @@ func (f *DifySetupFingerprinter) Fingerprint(resp *http.Response, body []byte) (
 			"probe_path":       "/console/api/setup",
 			"setup_step":       step,
 		},
-		Severity: plugins.SeverityHigh,
 	}
 
 	if step == "not_started" {
+		result.Severity = plugins.SeverityHigh
 		result.SecurityFindings = []plugins.SecurityFinding{{
 			ID:          "dify-setup-not-started",
 			Severity:    plugins.SeverityHigh,
