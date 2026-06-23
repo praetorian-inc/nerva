@@ -71,8 +71,12 @@ var magicInfoVersionBodyRegex = regexp.MustCompile(
 
 // magicInfoServerVersionRegex extracts a build-number version from the Server header.
 // Matches a trailing token like "MagicInfo Premium Server/21.1050".
+// The gap between "MagicInfo" and the slash is capped at 20 characters to prevent
+// matching through unrelated server components such as "Apache-Coyote/1.1", where
+// the unbounded [^/]* would consume " Server Apache-Coyote" and then capture "1.1"
+// as if it were a MagicINFO version.
 var magicInfoServerVersionRegex = regexp.MustCompile(
-	`(?i)MagicInfo[^/]*/(\d+\.\d+)`,
+	`(?i)MagicInfo[^/]{0,20}/(\d+\.\d+)`,
 )
 
 // magicInfoVersionValidateRegex is the anchored second-stage validation gate.

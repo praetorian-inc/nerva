@@ -279,6 +279,11 @@ func TestSamsungMagicINFOFingerprinter_Fingerprint_VersionFromServerHeader(t *te
 			serverHdr:   "MagicInfo Server",
 			wantVersion: "",
 		},
+		{
+			name:        "Apache-Coyote version after MagicInfo must not be captured",
+			serverHdr:   "MagicInfo Server Apache-Coyote/1.1",
+			wantVersion: "",
+		},
 	}
 
 	for _, tt := range tests {
