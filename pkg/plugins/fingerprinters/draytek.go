@@ -75,7 +75,7 @@ var draytekModelExtractPattern = regexp.MustCompile(`(?i)\b(Vigor\s?(?:LTE\s?)?\
 
 // draytekFirmwareContextPattern extracts firmware version preceded by firmware context keywords.
 // Matches: fwVersion=4.4.5.3, fw_ver: 1.5.1, FwVer:"4.4.5", firmware: 4.4.5.3,
-//          firmware version 4.4.5.3
+//          firmware 4.4.5.3, firmware version 4.4.5.3
 //
 // The trailing `(?:["\s,}<]|$)` ensures the version ends at a JSON/config/HTML delimiter,
 // preventing partial matches on version-like strings in other contexts.

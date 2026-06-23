@@ -286,13 +286,11 @@ func TestDrayTekVigorFingerprinter_Fingerprint(t *testing.T) {
 			wantResult: false,
 		},
 		{
-			name:       "uses vigor_firmware CPE for unknown model (fallback)",
+			name:       "detects Vigor3910 with model-specific CPE",
 			statusCode: 200,
 			headers: http.Header{
 				"Content-Type": []string{"text/html"},
 			},
-			// This case cannot produce unknown model since detection requires model match,
-			// but we test the CPE builder separately; here we test the minimum detection case.
 			body:          `<html><body>DrayTek Vigor3910 Router</body></html>`,
 			wantResult:    true,
 			wantCPEPrefix: "cpe:2.3:o:draytek:vigor3910_firmware:",
