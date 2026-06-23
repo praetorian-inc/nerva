@@ -65,8 +65,6 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
-
-	"github.com/praetorian-inc/nerva/pkg/plugins"
 )
 
 // langfuseTitleRe matches Langfuse page titles. Requires either:
@@ -120,18 +118,17 @@ func (f *LangfuseFingerprinter) ProbeAccept() string {
 
 // Match returns true when the response is a candidate for Langfuse active probe detection.
 //
-// Fast-path: path == "/api/public/health" always matches (probe response).
-// Fallback: Content-Type contains "application/json".
-// 5xx and sub-200 responses are rejected immediately.
+// Fast-path: path == "/api/public/health" always matches for 2xx–5xx (degraded
+// instances may return 503 with valid health JSON).
+// Fallback: Content-Type contains "application/json" for 2xx–4xx.
 func (f *LangfuseFingerprinter) Match(resp *http.Response) bool {
-	if resp.StatusCode < 200 || resp.StatusCode >= 500 {
-		return false
-	}
-
-	// Fast-path: active probe response from /api/public/health always matches.
 	if resp.Request != nil && resp.Request.URL != nil &&
 		resp.Request.URL.Path == "/api/public/health" {
-		return true
+		return resp.StatusCode >= 200 && resp.StatusCode < 600
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 500 {
+		return false
 	}
 
 	ct := strings.ToLower(resp.Header.Get("Content-Type"))
@@ -140,17 +137,16 @@ func (f *LangfuseFingerprinter) Match(resp *http.Response) bool {
 
 // Fingerprint performs full Langfuse active probe detection and metadata extraction.
 //
-// Gate: rejects status < 200 or >= 500 and bodies larger than 2 MiB.
+// Gate: rejects status < 200 or >= 600 and bodies larger than 2 MiB.
+// Allows 5xx responses because degraded instances may return 503 with valid
+// health JSON on /api/public/health.
 //
 // Detection requires BOTH of the following:
-//  1. Body contains both "version" and "status" JSON keys.
-//  2. Response path is exactly "/api/public/health".
-//
-// If both conditions are met, the instance is detected with detection_method
-// "active_probe" and SeverityHigh.
+//  1. Response path is exactly "/api/public/health".
+//  2. Body contains both "version" and "status" JSON keys.
 func (f *LangfuseFingerprinter) Fingerprint(resp *http.Response, body []byte) (*FingerprintResult, error) {
-	// Gate 1: status filter.
-	if resp.StatusCode < 200 || resp.StatusCode >= 500 {
+	// Gate 1: status filter — allow 5xx for degraded health endpoints.
+	if resp.StatusCode < 200 || resp.StatusCode >= 600 {
 		return nil, nil
 	}
 
@@ -159,14 +155,14 @@ func (f *LangfuseFingerprinter) Fingerprint(resp *http.Response, body []byte) (*
 		return nil, nil
 	}
 
-	// Signal: body must contain BOTH "version" AND "status" JSON keys.
-	if !bytes.Contains(body, []byte(`"version"`)) || !bytes.Contains(body, []byte(`"status"`)) {
+	// Gate 3: path check first (O(1)) before body scan (O(N)).
+	if resp.Request == nil || resp.Request.URL == nil ||
+		resp.Request.URL.Path != "/api/public/health" {
 		return nil, nil
 	}
 
-	// Path check: must be exactly /api/public/health.
-	if resp.Request == nil || resp.Request.URL == nil ||
-		resp.Request.URL.Path != "/api/public/health" {
+	// Signal: body must contain BOTH "version" AND "status" JSON keys.
+	if !bytes.Contains(body, []byte(`"version"`)) || !bytes.Contains(body, []byte(`"status"`)) {
 		return nil, nil
 	}
 
@@ -195,7 +191,6 @@ func (f *LangfuseFingerprinter) Fingerprint(resp *http.Response, body []byte) (*
 		Version:    version,
 		CPEs:       []string{buildLangfuseCPE(version)},
 		Metadata:   metadata,
-		Severity:   plugins.SeverityHigh,
 	}, nil
 }
 

@@ -20,7 +20,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/praetorian-inc/nerva/pkg/plugins"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -126,6 +125,12 @@ func TestLangfuseFingerprinter_Match(t *testing.T) {
 			contentType: "application/json",
 			want:        false,
 		},
+		{
+			name:        "503 /api/public/health path returns true (degraded instance)",
+			statusCode:  503,
+			requestPath: "/api/public/health",
+			want:        true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -155,7 +160,7 @@ func TestLangfuseFingerprinter_Match(t *testing.T) {
 func TestLangfuseFingerprinter_Fingerprint_HealthSignal(t *testing.T) {
 	fp := &LangfuseFingerprinter{}
 
-	t.Run("full health JSON at /api/public/health yields detected with version, active_probe, SeverityHigh", func(t *testing.T) {
+	t.Run("full health JSON at /api/public/health yields detected with version and active_probe", func(t *testing.T) {
 		resp := &http.Response{
 			StatusCode: 200,
 			Header:     make(http.Header),
@@ -171,10 +176,9 @@ func TestLangfuseFingerprinter_Fingerprint_HealthSignal(t *testing.T) {
 		assert.Equal(t, "langfuse", result.Technology)
 		assert.Equal(t, "3.194.1", result.Version)
 		assert.Equal(t, "active_probe", result.Metadata["detection_method"])
-		assert.Equal(t, plugins.SeverityHigh, result.Severity)
 	})
 
-	t.Run("health with Database not available status at /api/public/health yields detected with health_status", func(t *testing.T) {
+	t.Run("503 health with Database not available status at /api/public/health yields detected", func(t *testing.T) {
 		body := []byte(`{"status":"Database not available","version":"3.194.1"}`)
 		resp := &http.Response{
 			StatusCode: 503,
@@ -185,10 +189,11 @@ func TestLangfuseFingerprinter_Fingerprint_HealthSignal(t *testing.T) {
 		}
 		resp.Header.Set("Content-Type", "application/json")
 
-		// Note: 503 is < 500 threshold but >= 500 — should reject
 		result, err := fp.Fingerprint(resp, body)
 		require.NoError(t, err)
-		assert.Nil(t, result, "503 is a server error, should be rejected")
+		require.NotNil(t, result)
+		assert.Equal(t, "3.194.1", result.Version)
+		assert.Equal(t, "Database not available", result.Metadata["health_status"])
 	})
 
 	t.Run("health with unhealthy 200 response at /api/public/health yields detected with health_status", func(t *testing.T) {
@@ -322,8 +327,8 @@ func TestLangfuseFingerprinter_Fingerprint_NegativeCases(t *testing.T) {
 			path:       "/api/public/health",
 		},
 		{
-			name:       "500 with valid health body returns nil",
-			statusCode: 500,
+			name:       "100 informational with valid health body returns nil",
+			statusCode: 100,
 			body:       []byte(realisticHealthBody),
 			path:       "/api/public/health",
 		},
@@ -593,7 +598,6 @@ func TestLangfuseFingerprinter_Integration(t *testing.T) {
 		assert.Equal(t, "active_probe", result.Metadata["detection_method"])
 		assert.Equal(t, "/api/public/health", result.Metadata["probe_path"])
 		assert.Equal(t, "OK", result.Metadata["health_status"])
-		assert.Equal(t, plugins.SeverityHigh, result.Severity)
 		assert.Equal(t, []string{"cpe:2.3:a:langfuse:langfuse:3.194.1:*:*:*:*:*:*:*"}, result.CPEs)
 	})
 }
