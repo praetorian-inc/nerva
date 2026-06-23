@@ -102,7 +102,7 @@ var jsFrameworkSignatures = []jsFrameworkSignature{
 	},
 	{
 		techName:    "nuxtjs",
-		vendor:      "nuxt",
+		vendor:      "nuxtjs",
 		product:     "nuxt.js",
 		byteSignals: [][]byte{[]byte("__NUXT__"), []byte("/_nuxt/")},
 	},
@@ -119,13 +119,13 @@ var jsFrameworkSignatures = []jsFrameworkSignature{
 	{
 		techName:     "vuejs",
 		vendor:       "vuejs",
-		product:      "vue.js",
+		product:      "vue",
 		byteSignals:  [][]byte{[]byte("__VUE__")},
 		regexSignals: []*regexp.Regexp{vueDataAttrRegex},
 	},
 	{
 		techName:     "angular",
-		vendor:       "google",
+		vendor:       "angular",
 		product:      "angular",
 		byteSignals:  [][]byte{[]byte(`ng-version="`)},
 		versionRegex: angularVersionRegex,
@@ -139,8 +139,6 @@ var jsFrameworkSignatures = []jsFrameworkSignature{
 	},
 	{
 		techName:    "shopify",
-		vendor:      "shopify",
-		product:     "shopify",
 		byteSignals: [][]byte{[]byte("cdn.shopify.com"), []byte("Shopify.shop")},
 	},
 	{
@@ -174,7 +172,11 @@ func (f *jsFrameworkFingerprinter) Name() string {
 // JS framework markers only appear in HTML pages; non-HTML responses (JSON,
 // images, etc.) are skipped without reading the body.
 func (f *jsFrameworkFingerprinter) Match(resp *http.Response) bool {
-	return strings.Contains(resp.Header.Get("Content-Type"), "text/html")
+	if resp == nil {
+		return false
+	}
+	ct := strings.ToLower(resp.Header.Get("Content-Type"))
+	return strings.Contains(ct, "text/html")
 }
 
 // Fingerprint scans the HTML body for framework-specific signals.
@@ -196,9 +198,8 @@ func (f *jsFrameworkFingerprinter) Fingerprint(_ *http.Response, body []byte) (*
 
 	// Check regex signals if not already confirmed by a byte hit.
 	if !detected {
-		bodyStr := string(body)
 		for _, re := range f.sig.regexSignals {
-			if re.MatchString(bodyStr) {
+			if re.Match(body) {
 				detected = true
 				break
 			}

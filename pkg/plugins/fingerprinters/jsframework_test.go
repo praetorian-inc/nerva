@@ -62,6 +62,7 @@ func TestJSFrameworkFingerprinter_Match_AcceptsHTML(t *testing.T) {
 	}{
 		{"text/html", "text/html", true},
 		{"text/html with charset", "text/html; charset=utf-8", true},
+		{"mixed-case text/html", "Text/HTML; Charset=UTF-8", true},
 		{"application/json", "application/json", false},
 		{"image/png", "image/png", false},
 		{"empty content-type", "", false},
@@ -152,7 +153,7 @@ func TestJSFrameworkFingerprinter_Fingerprint_NuxtJS(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, "nuxtjs", result.Technology)
-	assert.Contains(t, result.CPEs[0], "cpe:2.3:a:nuxt:nuxt.js:")
+	assert.Contains(t, result.CPEs[0], "cpe:2.3:a:nuxtjs:nuxt.js:")
 }
 
 func TestJSFrameworkFingerprinter_Fingerprint_React_DataReactRoot(t *testing.T) {
@@ -212,7 +213,7 @@ window.__VUE__ = true;
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, "vuejs", result.Technology)
-	assert.Contains(t, result.CPEs[0], "cpe:2.3:a:vuejs:vue.js:")
+	assert.Contains(t, result.CPEs[0], "cpe:2.3:a:vuejs:vue:")
 }
 
 func TestJSFrameworkFingerprinter_Fingerprint_VueJS_DataVAttr(t *testing.T) {
@@ -251,7 +252,7 @@ func TestJSFrameworkFingerprinter_Fingerprint_Angular_WithVersion(t *testing.T) 
 	require.NotNil(t, result)
 	assert.Equal(t, "angular", result.Technology)
 	assert.Equal(t, "17.3.5", result.Version)
-	assert.Equal(t, "cpe:2.3:a:google:angular:17.3.5:*:*:*:*:*:*:*", result.CPEs[0])
+	assert.Equal(t, "cpe:2.3:a:angular:angular:17.3.5:*:*:*:*:*:*:*", result.CPEs[0])
 }
 
 func TestJSFrameworkFingerprinter_Fingerprint_Angular_NoVersion(t *testing.T) {
@@ -268,7 +269,7 @@ func TestJSFrameworkFingerprinter_Fingerprint_Angular_NoVersion(t *testing.T) {
 	assert.Equal(t, "angular", result.Technology)
 	assert.Equal(t, "", result.Version)
 	// CPE version should default to "*"
-	assert.Equal(t, "cpe:2.3:a:google:angular:*:*:*:*:*:*:*:*", result.CPEs[0])
+	assert.Equal(t, "cpe:2.3:a:angular:angular:*:*:*:*:*:*:*:*", result.CPEs[0])
 }
 
 func TestJSFrameworkFingerprinter_Fingerprint_Svelte_GlobalVar(t *testing.T) {
@@ -326,7 +327,7 @@ func TestJSFrameworkFingerprinter_Fingerprint_Shopify(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, "shopify", result.Technology)
-	assert.Contains(t, result.CPEs[0], "cpe:2.3:a:shopify:shopify:")
+	assert.Empty(t, result.CPEs)
 }
 
 func TestJSFrameworkFingerprinter_Fingerprint_GTM(t *testing.T) {
@@ -442,8 +443,8 @@ func TestJSFrameworkFingerprinter_FalsePositive_GTM_DataLayerOnly(t *testing.T) 
 // ---------------------------------------------------------------------------
 
 func TestBuildJSFrameworkCPE_WithVersion(t *testing.T) {
-	cpe := buildJSFrameworkCPE("google", "angular", "17.3.5")
-	assert.Equal(t, "cpe:2.3:a:google:angular:17.3.5:*:*:*:*:*:*:*", cpe)
+	cpe := buildJSFrameworkCPE("angular", "angular", "17.3.5")
+	assert.Equal(t, "cpe:2.3:a:angular:angular:17.3.5:*:*:*:*:*:*:*", cpe)
 }
 
 func TestBuildJSFrameworkCPE_NoVersion(t *testing.T) {
