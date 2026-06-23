@@ -157,9 +157,19 @@ func (f *TraefikOverviewFingerprinter) Fingerprint(resp *http.Response, body []b
 		return nil, nil
 	}
 
-	// Each protocol section must contain all three sub-keys (routers, services, middlewares).
-	if !hasAllSections(overview.HTTP) || !hasAllSections(overview.TCP) || !hasAllSections(overview.UDP) {
+	// HTTP and TCP require all three sub-keys (routers, services, middlewares).
+	// UDP has no middleware support in Traefik, so only routers and services are required.
+	if !hasAllSections(overview.HTTP) || !hasAllSections(overview.TCP) {
 		return nil, nil
+	}
+	if overview.UDP.Routers == nil || overview.UDP.Services == nil {
+		return nil, nil
+	}
+
+	// For UDP, middlewares may be nil (Traefik doesn't support UDP middlewares).
+	udpMiddlewares := 0
+	if overview.UDP.Middlewares != nil {
+		udpMiddlewares = overview.UDP.Middlewares.Total
 	}
 
 	return &FingerprintResult{
@@ -175,7 +185,7 @@ func (f *TraefikOverviewFingerprinter) Fingerprint(resp *http.Response, body []b
 			"tcp_middlewares":  overview.TCP.Middlewares.Total,
 			"udp_routers":      overview.UDP.Routers.Total,
 			"udp_services":     overview.UDP.Services.Total,
-			"udp_middlewares":  overview.UDP.Middlewares.Total,
+			"udp_middlewares":  udpMiddlewares,
 			"detection_method": "api_overview",
 		},
 	}, nil
@@ -227,11 +237,14 @@ func (f *TraefikVersionFingerprinter) Fingerprint(resp *http.Response, body []by
 		return nil, nil
 	}
 
-	// Extract and validate version for CPE. An absent or non-semver version
-	// uses a wildcard CPE; detection still fires because Codename is present.
+	// Extract and validate version for CPE. Strip a leading v/V prefix (Traefik's
+	// /api/version endpoint returns versions like "v3.2.0"). An absent or non-semver
+	// version uses a wildcard CPE; detection still fires because Codename is present.
 	version := ""
-	if !strings.ContainsAny(ver.Version, ":*?") && traefikVersionRegex.MatchString(ver.Version) {
-		version = ver.Version
+	rawVersion := strings.TrimPrefix(ver.Version, "v")
+	rawVersion = strings.TrimPrefix(rawVersion, "V")
+	if !strings.ContainsAny(rawVersion, ":*?") && traefikVersionRegex.MatchString(rawVersion) {
+		version = rawVersion
 	}
 
 	metadata := map[string]any{

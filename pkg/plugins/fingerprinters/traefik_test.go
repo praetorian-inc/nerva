@@ -21,6 +21,8 @@ import (
 )
 
 // validOverviewBody is a representative /api/overview response with all three protocols.
+// The UDP section omits "middlewares" because Traefik does not support UDP middlewares;
+// real /api/overview responses do not include that key for the udp section.
 const validOverviewBody = `{
 	"http": {
 		"routers": {"total": 5, "warnings": 0, "errors": 0},
@@ -34,14 +36,14 @@ const validOverviewBody = `{
 	},
 	"udp": {
 		"routers": {"total": 0, "warnings": 0, "errors": 0},
-		"services": {"total": 0, "warnings": 0, "errors": 0},
-		"middlewares": {"total": 0, "warnings": 0, "errors": 0}
+		"services": {"total": 0, "warnings": 0, "errors": 0}
 	}
 }`
 
 // validVersionBody is a representative /api/version response.
+// Traefik's /api/version endpoint returns versions with a "v" prefix (e.g., "v2.6.0").
 const validVersionBody = `{
-	"Version": "2.6.0",
+	"Version": "v2.6.0",
 	"Codename": "rocamadour",
 	"startDate": "2021-08-16T16:44:35.000000000Z",
 	"pilotEnabled": true
@@ -165,6 +167,45 @@ func TestTraefikOverviewFingerprinter_Fingerprint_Valid(t *testing.T) {
 		}
 	})
 
+	t.Run("valid overview with UDP middlewares present is still accepted", func(t *testing.T) {
+		// Older or future Traefik versions might include udp.middlewares.
+		// The fingerprinter must not reject such responses.
+		fp := &TraefikOverviewFingerprinter{}
+		resp := makeJSONResponse(200)
+		body := `{
+			"http": {
+				"routers": {"total": 5, "warnings": 0, "errors": 0},
+				"services": {"total": 3, "warnings": 0, "errors": 0},
+				"middlewares": {"total": 2, "warnings": 0, "errors": 0}
+			},
+			"tcp": {
+				"routers": {"total": 0, "warnings": 0, "errors": 0},
+				"services": {"total": 0, "warnings": 0, "errors": 0},
+				"middlewares": {"total": 0, "warnings": 0, "errors": 0}
+			},
+			"udp": {
+				"routers": {"total": 0, "warnings": 0, "errors": 0},
+				"services": {"total": 0, "warnings": 0, "errors": 0},
+				"middlewares": {"total": 0, "warnings": 0, "errors": 0}
+			}
+		}`
+
+		result, err := fp.Fingerprint(resp, []byte(body))
+		if err != nil {
+			t.Fatalf("Fingerprint() error = %v", err)
+		}
+		if result == nil {
+			t.Fatal("Fingerprint() returned nil, want result")
+		}
+		if result.Technology != "traefik-dashboard" {
+			t.Errorf("Technology = %q, want %q", result.Technology, "traefik-dashboard")
+		}
+		// udp_middlewares must be present in metadata, value 0.
+		if v, ok := result.Metadata["udp_middlewares"].(int); !ok || v != 0 {
+			t.Errorf("udp_middlewares = %v, want 0", result.Metadata["udp_middlewares"])
+		}
+	})
+
 	t.Run("valid overview with non-zero counts reflects counts in metadata", func(t *testing.T) {
 		fp := &TraefikOverviewFingerprinter{}
 		resp := makeJSONResponse(200)
@@ -181,8 +222,7 @@ func TestTraefikOverviewFingerprinter_Fingerprint_Valid(t *testing.T) {
 			},
 			"udp": {
 				"routers": {"total": 1, "warnings": 0, "errors": 0},
-				"services": {"total": 1, "warnings": 0, "errors": 0},
-				"middlewares": {"total": 0, "warnings": 0, "errors": 0}
+				"services": {"total": 1, "warnings": 0, "errors": 0}
 			}
 		}`
 
@@ -229,7 +269,25 @@ func TestTraefikOverviewFingerprinter_Fingerprint_Invalid(t *testing.T) {
 			body: `{
 				"http": {"services": {"total": 3, "warnings": 0, "errors": 0}, "middlewares": {"total": 2, "warnings": 0, "errors": 0}},
 				"tcp": {"routers": {"total": 0, "warnings": 0, "errors": 0}, "services": {"total": 0, "warnings": 0, "errors": 0}, "middlewares": {"total": 0, "warnings": 0, "errors": 0}},
-				"udp": {"routers": {"total": 0, "warnings": 0, "errors": 0}, "services": {"total": 0, "warnings": 0, "errors": 0}, "middlewares": {"total": 0, "warnings": 0, "errors": 0}}
+				"udp": {"routers": {"total": 0, "warnings": 0, "errors": 0}, "services": {"total": 0, "warnings": 0, "errors": 0}}
+			}`,
+		},
+		{
+			name:       "UDP missing routers sub-key",
+			statusCode: 200,
+			body: `{
+				"http": {"routers": {"total": 5, "warnings": 0, "errors": 0}, "services": {"total": 3, "warnings": 0, "errors": 0}, "middlewares": {"total": 2, "warnings": 0, "errors": 0}},
+				"tcp": {"routers": {"total": 0, "warnings": 0, "errors": 0}, "services": {"total": 0, "warnings": 0, "errors": 0}, "middlewares": {"total": 0, "warnings": 0, "errors": 0}},
+				"udp": {"services": {"total": 0, "warnings": 0, "errors": 0}}
+			}`,
+		},
+		{
+			name:       "UDP missing services sub-key",
+			statusCode: 200,
+			body: `{
+				"http": {"routers": {"total": 5, "warnings": 0, "errors": 0}, "services": {"total": 3, "warnings": 0, "errors": 0}, "middlewares": {"total": 2, "warnings": 0, "errors": 0}},
+				"tcp": {"routers": {"total": 0, "warnings": 0, "errors": 0}, "services": {"total": 0, "warnings": 0, "errors": 0}, "middlewares": {"total": 0, "warnings": 0, "errors": 0}},
+				"udp": {"routers": {"total": 0, "warnings": 0, "errors": 0}}
 			}`,
 		},
 		{
@@ -424,6 +482,48 @@ func TestTraefikVersionFingerprinter_Fingerprint_Valid(t *testing.T) {
 			t.Errorf("Version = %q, want %q", result.Version, "2.6.0")
 		}
 		wantCPE := "cpe:2.3:a:traefik:traefik:2.6.0:*:*:*:*:*:*:*"
+		if len(result.CPEs) != 1 || result.CPEs[0] != wantCPE {
+			t.Errorf("CPEs = %v, want [%s]", result.CPEs, wantCPE)
+		}
+	})
+
+	t.Run("v-prefix version is stripped before CPE validation", func(t *testing.T) {
+		fp := &TraefikVersionFingerprinter{}
+		resp := makeJSONResponse(200)
+		body := `{"Version": "v3.2.0", "Codename": "rocamadour"}`
+
+		result, err := fp.Fingerprint(resp, []byte(body))
+		if err != nil {
+			t.Fatalf("Fingerprint() error = %v", err)
+		}
+		if result == nil {
+			t.Fatal("Fingerprint() returned nil, want result")
+		}
+		if result.Version != "3.2.0" {
+			t.Errorf("Version = %q, want %q", result.Version, "3.2.0")
+		}
+		wantCPE := "cpe:2.3:a:traefik:traefik:3.2.0:*:*:*:*:*:*:*"
+		if len(result.CPEs) != 1 || result.CPEs[0] != wantCPE {
+			t.Errorf("CPEs = %v, want [%s]", result.CPEs, wantCPE)
+		}
+	})
+
+	t.Run("V-prefix (uppercase) version is stripped before CPE validation", func(t *testing.T) {
+		fp := &TraefikVersionFingerprinter{}
+		resp := makeJSONResponse(200)
+		body := `{"Version": "V2.10.4", "Codename": "banon"}`
+
+		result, err := fp.Fingerprint(resp, []byte(body))
+		if err != nil {
+			t.Fatalf("Fingerprint() error = %v", err)
+		}
+		if result == nil {
+			t.Fatal("Fingerprint() returned nil, want result")
+		}
+		if result.Version != "2.10.4" {
+			t.Errorf("Version = %q, want %q", result.Version, "2.10.4")
+		}
+		wantCPE := "cpe:2.3:a:traefik:traefik:2.10.4:*:*:*:*:*:*:*"
 		if len(result.CPEs) != 1 || result.CPEs[0] != wantCPE {
 			t.Errorf("CPEs = %v, want [%s]", result.CPEs, wantCPE)
 		}
@@ -725,6 +825,13 @@ func TestBuildTraefikCPE(t *testing.T) {
 		{
 			name:    "version with question mark metacharacter uses wildcard",
 			version: "2.6.?",
+			want:    "cpe:2.3:a:traefik:traefik:*:*:*:*:*:*:*:*",
+		},
+		{
+			// buildTraefikCPE receives the pre-stripped version from Fingerprint;
+			// a v-prefix passed directly still fails the regex and uses wildcard.
+			name:    "v-prefix version not accepted by buildTraefikCPE directly",
+			version: "v3.2.0",
 			want:    "cpe:2.3:a:traefik:traefik:*:*:*:*:*:*:*:*",
 		},
 	}
