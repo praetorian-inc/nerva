@@ -74,12 +74,13 @@ var draytekModelPattern = regexp.MustCompile(`(?i)\bVigor\s?(?:LTE\s?)?\d{3,4}[A
 var draytekModelExtractPattern = regexp.MustCompile(`(?i)\b(Vigor\s?(?:LTE\s?)?\d{3,4}[A-Za-z]{0,3})\b`)
 
 // draytekFirmwareContextPattern extracts firmware version preceded by firmware context keywords.
-// Matches: fwVersion=4.4.5.3, fw_ver: 1.5.1, FwVer:"4.4.5", firmware: 4.4.5.3
+// Matches: fwVersion=4.4.5.3, fw_ver: 1.5.1, FwVer:"4.4.5", firmware: 4.4.5.3,
+//          firmware version 4.4.5.3
 //
 // The trailing `(?:["\s,}<]|$)` ensures the version ends at a JSON/config/HTML delimiter,
 // preventing partial matches on version-like strings in other contexts.
 var draytekFirmwareContextPattern = regexp.MustCompile(
-	`(?i)(?:fwVersion|fw_ver|firmware|FwVer)["\s:=]*["\s]*(\d+\.\d+\.\d+(?:\.\d+)?)(?:["\s,}<]|$)`,
+	`(?i)(?:fwVersion|fw_ver|firmware(?:\s+version)?|FwVer)["\s:=]*["\s]*(\d+\.\d+\.\d+(?:\.\d+)?)(?:["\s,}<]|$)`,
 )
 
 // draytekVersionValidRegex validates extracted version strings before CPE use.
@@ -94,6 +95,13 @@ func (f *DrayTekVigorFingerprinter) Name() string {
 
 func (f *DrayTekVigorFingerprinter) ProbeEndpoint() string {
 	return "/weblogin.htm"
+}
+
+// ProbeAccept returns the Accept header for the active probe.
+// /weblogin.htm serves HTML; requesting text/html avoids 406 from devices
+// that respect content negotiation.
+func (f *DrayTekVigorFingerprinter) ProbeAccept() string {
+	return "text/html"
 }
 
 // Match is a fast pre-filter. Accepts responses with text/html content-type

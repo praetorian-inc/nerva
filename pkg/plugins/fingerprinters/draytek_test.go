@@ -37,6 +37,13 @@ func TestDrayTekVigorFingerprinter_ProbeEndpoint(t *testing.T) {
 	}
 }
 
+func TestDrayTekVigorFingerprinter_ProbeAccept(t *testing.T) {
+	f := &DrayTekVigorFingerprinter{}
+	if accept := f.ProbeAccept(); accept != "text/html" {
+		t.Errorf("ProbeAccept() = %q, expected %q", accept, "text/html")
+	}
+}
+
 func TestDrayTekVigorFingerprinter_Match(t *testing.T) {
 	f := &DrayTekVigorFingerprinter{}
 
@@ -399,6 +406,11 @@ func TestExtractDrayTekVersion(t *testing.T) {
 			want:  "4.4.5",
 		},
 		{
+			name:  "firmware version two-word format",
+			input: `firmware version 4.4.5.3`,
+			want:  "4.4.5.3",
+		},
+		{
 			name:  "FwVer context keyword",
 			input: `FwVer:"4.4.5"`,
 			want:  "4.4.5",
@@ -601,8 +613,8 @@ func TestDrayTekVigorFingerprinter_DetectionOnlyContract(t *testing.T) {
 func TestDrayTekVigorFingerprinter_CPEInjectionGuard(t *testing.T) {
 	f := &DrayTekVigorFingerprinter{}
 
-	// Body with brand + model that contains CPE metacharacters after the model.
-	// The model regex should NOT capture the metacharacters.
+	// End-to-end sanity check: normal input should produce structurally valid CPE.
+	// Valid CPE 2.3 format has exactly 12 colons.
 	resp := &http.Response{
 		StatusCode: 200,
 		Header:     http.Header{"Content-Type": []string{"text/html"}},
