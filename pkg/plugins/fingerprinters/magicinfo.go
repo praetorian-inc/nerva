@@ -93,12 +93,10 @@ var magicInfoTitleRegex = regexp.MustCompile(
 	`(?i)<title[^>]{0,100}>[^<]{0,200}magicinfo[^<]{0,200}</title>`,
 )
 
-// magicInfoBodyBrandRegex matches the canonical "MagicINFO" or "magicinfo" brand
-// in the body (not just the /MagicInfo/ path).
-// Word boundaries prevent matching "magicinfo" inside URL path segments like
-// "/MagicInfo/" echoed in error pages (note: \b matches between "/" and "M"
-// since "/" is not a word character, so path-echo false positives must be
-// addressed at the corroboration level — see Fingerprint for the title requirement).
+// magicInfoBodyBrandRegex matches the MagicINFO brand name in the response body.
+// Note: \b matches between '/' and 'M' since '/' is not a word character, so
+// path-echo false positives (e.g., '/MagicInfo/' in error pages) are prevented
+// by the title requirement in Fingerprint, not by this regex alone.
 var magicInfoBodyBrandRegex = regexp.MustCompile(`(?i)\bmagicinfo\b`)
 
 const magicInfoVersionMaxLen = 20
