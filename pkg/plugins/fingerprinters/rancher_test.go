@@ -149,6 +149,19 @@ func TestRancherFingerprinter_Fingerprint_PrimeTrue(t *testing.T) {
 	assert.Contains(t, result.CPEs, "cpe:2.3:a:suse:rancher:2.9.1:*:*:*:*:*:*:*")
 }
 
+func TestRancherFingerprinter_Fingerprint_PrimeNativeBool(t *testing.T) {
+	fp := &RancherFingerprinter{}
+	resp := newRespWithPath(200, "application/json", "/rancherversion")
+
+	// Future-proofing: if RancherPrime is ever emitted as a native JSON boolean (no
+	// surrounding quotes), the rancher_prime metadata must still resolve.
+	result, err := fp.Fingerprint(resp, []byte(`{"Version":"v2.9.1","GitCommit":"deadbeef","RancherPrime":true}`))
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, true, result.Metadata["rancher_prime"])
+	assert.Equal(t, "2.9.1", result.Version)
+}
+
 func TestRancherFingerprinter_Fingerprint_Prerelease(t *testing.T) {
 	fp := &RancherFingerprinter{}
 	resp := newRespWithPath(200, "application/json", "/rancherversion")

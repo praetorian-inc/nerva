@@ -85,8 +85,11 @@ var rancherVersionExtractRegex = regexp.MustCompile(`"Version"\s*:\s*"v?([0-9]+\
 // a version is emitted into a CPE.
 var rancherVersionValidateRegex = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.\-]+)?$`)
 
-// rancherPrimeExtractRegex captures the RancherPrime flag ("true"/"false" string).
-var rancherPrimeExtractRegex = regexp.MustCompile(`"RancherPrime"\s*:\s*"(true|false)"`)
+// rancherPrimeExtractRegex captures the RancherPrime flag. Rancher currently serializes
+// it as a quoted string ("true"/"false"), but the surrounding quotes are optional here so
+// the metadata still resolves if a future release emits it as a native JSON boolean. The
+// trailing \b anchors the token so it cannot over-match (e.g. a value of "truthy").
+var rancherPrimeExtractRegex = regexp.MustCompile(`"RancherPrime"\s*:\s*"?(true|false)\b`)
 
 // rancherGitCommitExtractRegex captures the GitCommit hash for metadata enrichment.
 var rancherGitCommitExtractRegex = regexp.MustCompile(`"GitCommit"\s*:\s*"([0-9a-f]{7,40})"`)
