@@ -151,6 +151,10 @@ func (f *SCCMManagementPointFingerprinter) ProbeEndpoint() string {
 	return "/sms_mp/.sms_aut?mplist"
 }
 
+func (f *SCCMManagementPointFingerprinter) ProbeAccept() string {
+	return "*/*"
+}
+
 func (f *SCCMManagementPointFingerprinter) Match(resp *http.Response) bool {
 	// Trigger on IIS
 	return strings.Contains(resp.Header.Get("Server"), "Microsoft-IIS")

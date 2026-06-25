@@ -36,6 +36,10 @@ func (f *WSUSFingerprinter) Name() string { return "wsus" }
 
 func (f *WSUSFingerprinter) ProbeEndpoint() string { return "/ClientWebService/client.asmx" }
 
+func (f *WSUSFingerprinter) ProbeAccept() string {
+	return "*/*"
+}
+
 func (f *WSUSFingerprinter) Match(resp *http.Response) bool {
 	// IIS is enough to let Nerva probe for WSUS
 	return strings.Contains(resp.Header.Get("Server"), "Microsoft-IIS")

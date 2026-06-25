@@ -30,6 +30,10 @@ func (f *ADCSWebEnrollmentFingerprinter) Name() string { return "adcs-web-enroll
 
 func (f *ADCSWebEnrollmentFingerprinter) ProbeEndpoint() string { return "/certsrv/" }
 
+func (f *ADCSWebEnrollmentFingerprinter) ProbeAccept() string {
+	return "*/*"
+}
+
 func (f *ADCSWebEnrollmentFingerprinter) Match(resp *http.Response) bool {
 	// If we are on IIS, as well as behind auth,
 	// it is very safe to probe for ADCS

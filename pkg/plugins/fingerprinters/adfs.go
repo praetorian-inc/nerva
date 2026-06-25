@@ -37,6 +37,10 @@ func (f *ADFSFingerprinter) Name() string { return "adfs" }
 
 func (f *ADFSFingerprinter) ProbeEndpoint() string { return "/adfs/ls" }
 
+func (f *ADFSFingerprinter) ProbeAccept() string {
+	return "*/*"
+}
+
 func (f *ADFSFingerprinter) Match(resp *http.Response) bool {
 	// HTTPAPI is enough to valid a probe for ADFS
 	return strings.Contains(resp.Header.Get("Server"), "Microsoft-HTTPAPI")
