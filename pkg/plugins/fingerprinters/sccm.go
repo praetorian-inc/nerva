@@ -13,7 +13,8 @@
 // limitations under the License.
 
 // This probe is called SCCM despite Microsoft having
-// renamed SSCM now tree times
+// renamed SCCM now tree times.
+// SCCM itself has more parts than the management point, however I have not found a quick way of verifying those compnents without authentication.
 
 package fingerprinters
 
@@ -27,8 +28,6 @@ import (
 
 func init() {
 	Register(&SCCMManagementPointFingerprinter{})
-	Register(&SCCMDistributionPointFingerprinter{})
-	Register(&SCCMAdminServiceFingerprinter{})
 }
 
 func buildSCCMCPEs(rel, site string) []string {
@@ -242,80 +241,4 @@ func (f *SCCMManagementPointFingerprinter) Fingerprint(resp *http.Response, body
 		CPEs:       buildSCCMCPEs(rel, siteVersion),
 		Metadata:   meta,
 	}, nil
-}
-
-// --- Distribution Point -------------------------------------------------------
-
-// SCCMDistributionPointFingerprinter detects an SCCM distribution point by the
-// SMS_DP_SMSPKG$ directory.
-type SCCMDistributionPointFingerprinter struct{}
-
-func (f *SCCMDistributionPointFingerprinter) Name() string { return "sccm-dp" }
-
-func (f *SCCMDistributionPointFingerprinter) ProbeEndpoint() string {
-	return "/SMS_DP_SMSPKG$/"
-}
-
-func (f *SCCMDistributionPointFingerprinter) Match(resp *http.Response) bool {
-	// Trigger on IIS
-	return strings.Contains(resp.Header.Get("Server"), "Microsoft-IIS")
-}
-
-func (f *SCCMDistributionPointFingerprinter) Fingerprint(resp *http.Response, body []byte) (*FingerprintResult, error) {
-	// If the endpoint /SMS_DP_SMSPKG$/ returns IIS,
-	// as well as requires auth, assume SCCM DP
-	wwwAuth := resp.Header.Get("WWW-Authenticate")
-	if (resp.StatusCode == 401 || resp.StatusCode == 403) &&
-		(strings.Contains(wwwAuth, "NTLM") || strings.Contains(wwwAuth, "Negotiate")) {
-		if strings.Contains(resp.Header.Get("Server"), "Microsoft-IIS") {
-			return &FingerprintResult{
-				Technology: "sccm-dp",
-				CPEs:       buildSCCMCPEs("*", ""),
-				Metadata: map[string]any{
-					"vendor":  "Microsoft",
-					"product": "System Center Configuration Manager (SCCM) - Distribution Point",
-				},
-			}, nil
-		}
-	}
-
-	return nil, nil
-}
-
-// --- Site Server / SMS Provider (AdminService) --------------------------------
-
-// SCCMAdminServiceFingerprinter detects the SMS Provider AdminService REST API,
-// which runs on the site server.
-type SCCMAdminServiceFingerprinter struct{}
-
-func (f *SCCMAdminServiceFingerprinter) Name() string { return "sccm-adminservice" }
-
-func (f *SCCMAdminServiceFingerprinter) ProbeEndpoint() string {
-	return "/AdminService/v1.0/$metadata"
-}
-
-func (f *SCCMAdminServiceFingerprinter) Match(resp *http.Response) bool {
-	// Trigger on IIS
-	return strings.Contains(resp.Header.Get("Server"), "Microsoft-IIS")
-}
-
-func (f *SCCMAdminServiceFingerprinter) Fingerprint(resp *http.Response, body []byte) (*FingerprintResult, error) {
-	// /AdminService/v1.0/$metadata is SCCM-specific.
-	// 401 means the dir exists but needs auth. (default)
-	// 200 means anonymous OData is exposed.
-	// else =  negative
-	if resp.StatusCode == http.StatusUnauthorized ||
-		(resp.StatusCode == http.StatusOK && (strings.Contains(string(body), "Edmx") || strings.Contains(string(body), "edmx"))) {
-		return &FingerprintResult{
-			Technology: "sccm-adminservice",
-			Version:    "",
-			CPEs:       buildSCCMCPEs("*", ""),
-			Metadata: map[string]any{
-				"vendor":  "Microsoft",
-				"product": "System Center Configuration Manager (SCCM) - Site Server",
-			},
-		}, nil
-	}
-
-	return nil, nil
 }
