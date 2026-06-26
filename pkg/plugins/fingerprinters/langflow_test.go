@@ -215,8 +215,8 @@ func TestLangflowFingerprinter_Fingerprint_Positive(t *testing.T) {
 	})
 
 	t.Run("Langflow Base package variant is detected", func(t *testing.T) {
-		// langflowPackageMarker is `"Langflow` (no closing quote), so "Langflow Base"
-		// contains that prefix and is detected as a Langflow instance.
+		// langflowPackageFieldRe matches `"package"\s*:\s*"Langflow`, so "Langflow Base"
+		// satisfies the regex and is detected as a Langflow instance.
 		resp := makeLangflowResp(200, "application/json", "/api/v1/version")
 		body := []byte(`{"version":"1.6.0","main_version":"1.6.0","package":"Langflow Base"}`)
 
@@ -228,8 +228,8 @@ func TestLangflowFingerprinter_Fingerprint_Positive(t *testing.T) {
 	})
 
 	t.Run("Langflow Nightly package variant is detected", func(t *testing.T) {
-		// langflowPackageMarker is `"Langflow` (no closing quote), so "Langflow Nightly"
-		// contains that prefix and is detected as a Langflow instance.
+		// langflowPackageFieldRe matches `"package"\s*:\s*"Langflow`, so "Langflow Nightly"
+		// satisfies the regex and is detected as a Langflow instance.
 		resp := makeLangflowResp(200, "application/json", "/api/v1/version")
 		body := []byte(`{"version":"1.7.0","main_version":"1.7.0","package":"Langflow Nightly"}`)
 
@@ -319,6 +319,15 @@ func TestLangflowFingerprinter_Fingerprint_Negative(t *testing.T) {
 			statusCode:  200,
 			requestPath: "/api/v1/version",
 			body:        []byte(`{"version":"3.1.2"}`),
+		},
+		{
+			// langflowPackageFieldRe requires `"package"` as the key. A body where
+			// "Langflow" appears only in a message field — with no "package" key —
+			// must not be detected as Langflow.
+			name:        "Langflow in message field but no package key returns nil",
+			statusCode:  200,
+			requestPath: "/api/v1/version",
+			body:        []byte(`{"message":"Langflow unavailable","version":"1.0.0","main_version":"1.0.0"}`),
 		},
 	}
 

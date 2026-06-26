@@ -52,7 +52,6 @@ cpe:2.3:a:langflow:langflow:{version}:*:*:*:*:*:*:*
 package fingerprinters
 
 import (
-	"bytes"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -77,12 +76,12 @@ var langflowVersionValidateRe = regexp.MustCompile(`^\d+\.\d+\.\d+$`)
 // Allows optional whitespace around the product name and is case-insensitive.
 var langflowTitleRe = regexp.MustCompile(`(?i)<title>\s*Langflow\s*</title>`)
 
-// langflowPackageMarker matches the JSON package field present in all Langflow
-// /api/v1/version responses. The trailing quote is intentionally omitted so that
+// langflowPackageFieldRe matches the "package" key-value pair present in all
+// Langflow /api/v1/version responses, anchoring detection to the JSON field name
+// rather than the value alone. The trailing quote is intentionally omitted so that
 // all Langflow package name variants are matched: "Langflow", "Langflow Base",
-// "Langflow Nightly", "Langflow Base Nightly", etc. The leading quote prevents
-// false matches on bare "Langflow" occurrences in prose text.
-var langflowPackageMarker = []byte(`"Langflow`)
+// "Langflow Nightly", "Langflow Base Nightly", etc.
+var langflowPackageFieldRe = regexp.MustCompile(`"package"\s*:\s*"Langflow`)
 
 // LangflowFingerprinter detects Langflow instances via the unauthenticated /api/v1/version endpoint.
 // Implements ActiveHTTPFingerprinter + AcceptHeaderProvider.
@@ -154,7 +153,7 @@ func (f *LangflowFingerprinter) Fingerprint(resp *http.Response, body []byte) (*
 		return nil, nil
 	}
 
-	if !bytes.Contains(body, langflowPackageMarker) {
+	if !langflowPackageFieldRe.Match(body) {
 		return nil, nil
 	}
 

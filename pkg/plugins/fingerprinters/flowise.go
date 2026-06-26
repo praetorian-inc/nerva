@@ -199,7 +199,13 @@ func (f *FlowiseFingerprinter) Fingerprint(resp *http.Response, body []byte) (*F
 	}
 
 	// Version extraction with two-stage validation.
+	// Reject bodies where the version value is not a valid semver string
+	// (e.g. {"version":"dev"}). A wildcard-CPE result on a generic JSON API
+	// that happens to serve /api/v1/version would be a false positive.
 	version := extractFlowiseVersion(body)
+	if version == "" {
+		return nil, nil
+	}
 
 	metadata := map[string]any{
 		"vendor":           "FlowiseAI",
