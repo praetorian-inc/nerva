@@ -264,6 +264,7 @@ func TestWinRMStatusCodeEdgeCases(t *testing.T) {
 		name       string
 		statusCode int
 	}{
+		{"405 Method Not Allowed", 405},
 		{"403 Forbidden", 403},
 		{"400 Bad Request", 400},
 		{"302 Redirect", 302},

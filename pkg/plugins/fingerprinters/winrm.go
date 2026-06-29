@@ -88,7 +88,7 @@ func (f *WinRMFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fin
 		Metadata:   metadata,
 	}
 
-	if resp.StatusCode/100 == 2 || resp.StatusCode == 405 {
+	if resp.StatusCode/100 == 2 {
 		result.Severity = plugins.SeverityCritical
 		result.SecurityFindings = []plugins.SecurityFinding{
 			{
