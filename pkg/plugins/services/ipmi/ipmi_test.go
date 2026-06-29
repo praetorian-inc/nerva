@@ -120,8 +120,8 @@ func (m *mockUDPConn) SetWriteDeadline(t time.Time) error {
 }
 
 // buildAuthCapabilitiesResponse constructs a 29-byte Get Channel Auth
-// Capabilities response with the given auth type bitmap and auth status byte.
-// Offsets follow the IPMI 2.0 spec (Table 22-15).
+// Capabilities response with the given auth type bitmap, auth status byte,
+// and extended capabilities byte. Offsets follow the IPMI 2.0 spec (Table 22-15).
 //
 //	[0-3]  RMCP header: 06 00 FF 07
 //	[4]    Auth type: 00
@@ -134,8 +134,9 @@ func (m *mockUDPConn) SetWriteDeadline(t time.Time) error {
 //	[21]   Channel number
 //	[22]   Auth type support bitmap
 //	[23]   Auth status
-//	[24-28] OEM ID, OEM Aux, Checksum
-func buildAuthCapabilitiesResponse(authTypes, authStatus byte) []byte {
+//	[24]   Extended capabilities (bit 1 = IPMIv2 supported)
+//	[25-28] OEM ID, OEM Aux, Checksum
+func buildAuthCapabilitiesResponse(authTypes, authStatus, extCap byte) []byte {
 	resp := make([]byte, 29)
 	// RMCP header
 	resp[0] = 0x06
@@ -153,7 +154,9 @@ func buildAuthCapabilitiesResponse(authTypes, authStatus byte) []byte {
 	resp[22] = authTypes
 	// Auth status
 	resp[23] = authStatus
-	// OEM ID, OEM Aux, Checksum (bytes 24-28) — left as zero
+	// Extended capabilities
+	resp[24] = extCap
+	// OEM ID, OEM Aux, Checksum (bytes 25-28) — left as zero
 	return resp
 }
 
@@ -483,11 +486,11 @@ func TestIPMIServiceMetadata(t *testing.T) {
 }
 
 // TestIPMICipherZeroAndAnonymousLogin verifies that when both anonymous login
-// (authStatus=0x0C: bits 2+3 set) and cipher zero are accepted, Run() with
+// (authStatus bit 0 set) and cipher zero are accepted, Run() with
 // Misconfigs=true produces 3 findings and sets AnonymousAccess=true.
 func TestIPMICipherZeroAndAnonymousLogin(t *testing.T) {
-	// authStatus=0x0C: bit2 (anonymous login) + bit3 (IPMIv2) both set
-	authResp := buildAuthCapabilitiesResponse(0x14, 0x0C)
+	// authStatus=0x01: bit 0 (anonymous login); extCap=0x02: bit 1 (IPMIv2)
+	authResp := buildAuthCapabilitiesResponse(0x14, 0x01, 0x02)
 	cipherResp := buildCipherZeroResponse(0x00)
 
 	mockConn := &mockUDPConn{
@@ -530,8 +533,8 @@ func TestIPMICipherZeroAndAnonymousLogin(t *testing.T) {
 // TestIPMICipherZeroOnly verifies that when cipher zero is accepted but
 // anonymous login is not set, Run() produces 2 findings (exposed + cipher-zero).
 func TestIPMICipherZeroOnly(t *testing.T) {
-	// authStatus=0x08: only IPMIv2 bit set, no anonymous login
-	authResp := buildAuthCapabilitiesResponse(0x14, 0x08)
+	// authStatus=0x00: no anonymous login; extCap=0x02: bit 1 (IPMIv2)
+	authResp := buildAuthCapabilitiesResponse(0x14, 0x00, 0x02)
 	cipherResp := buildCipherZeroResponse(0x00)
 
 	mockConn := &mockUDPConn{
@@ -574,7 +577,7 @@ func TestIPMICipherZeroOnly(t *testing.T) {
 // TestIPMICipherZeroRejected verifies that when the BMC rejects cipher zero
 // (status != 0x00), Run() produces only 1 finding (exposed).
 func TestIPMICipherZeroRejected(t *testing.T) {
-	authResp := buildAuthCapabilitiesResponse(0x14, 0x08)
+	authResp := buildAuthCapabilitiesResponse(0x14, 0x00, 0x02)
 	cipherResp := buildCipherZeroResponse(0x01) // non-zero status = rejected
 
 	mockConn := &mockUDPConn{
@@ -607,8 +610,8 @@ func TestIPMICipherZeroRejected(t *testing.T) {
 // no cipher zero response is returned (EOF), Run() produces 2 findings and
 // sets AnonymousAccess=true.
 func TestIPMIAnonymousLoginOnly(t *testing.T) {
-	// authStatus=0x04: anonymous login bit set, no cipher zero response
-	authResp := buildAuthCapabilitiesResponse(0x14, 0x04)
+	// authStatus=0x01: bit 0 (anonymous login); extCap=0x00: no IPMIv2
+	authResp := buildAuthCapabilitiesResponse(0x14, 0x01, 0x00)
 
 	mockConn := &mockUDPConn{
 		responses: [][]byte{authResp}, // no second response → probeCipherZero gets EOF
@@ -652,15 +655,16 @@ func TestIPMIAnonymousLoginOnly(t *testing.T) {
 // response lengths and auth field values.
 func TestParseAuthCapabilities(t *testing.T) {
 	tests := []struct {
-		name          string
-		response      []byte
-		wantNil       bool
-		wantAuthTypes byte
-		wantAuthStatus byte
+		name            string
+		response        []byte
+		wantNil         bool
+		wantAuthTypes   byte
+		wantAuthStatus  byte
+		wantExtCap      byte
 	}{
 		{
 			name:     "too short — returns nil",
-			response: make([]byte, 23), // one byte short of minimum (24)
+			response: make([]byte, 24), // one byte short of minimum (25)
 			wantNil:  true,
 		},
 		{
@@ -674,31 +678,35 @@ func TestParseAuthCapabilities(t *testing.T) {
 		},
 		{
 			name:           "MD5 only — no anonymous, no IPMIv2",
-			response:       buildAuthCapabilitiesResponse(0x04, 0x00),
+			response:       buildAuthCapabilitiesResponse(0x04, 0x00, 0x00),
 			wantNil:        false,
 			wantAuthTypes:  0x04,
 			wantAuthStatus: 0x00,
+			wantExtCap:     0x00,
 		},
 		{
-			name:           "anonymous login bit set",
-			response:       buildAuthCapabilitiesResponse(0x00, 0x04),
+			name:           "anonymous login bit set (bit 0)",
+			response:       buildAuthCapabilitiesResponse(0x00, 0x01, 0x00),
 			wantNil:        false,
 			wantAuthTypes:  0x00,
-			wantAuthStatus: 0x04,
+			wantAuthStatus: 0x01,
+			wantExtCap:     0x00,
 		},
 		{
-			name:           "IPMIv2 bit set",
-			response:       buildAuthCapabilitiesResponse(0x00, 0x08),
+			name:           "IPMIv2 extended capability bit set (extCap bit 1)",
+			response:       buildAuthCapabilitiesResponse(0x00, 0x00, 0x02),
 			wantNil:        false,
 			wantAuthTypes:  0x00,
-			wantAuthStatus: 0x08,
+			wantAuthStatus: 0x00,
+			wantExtCap:     0x02,
 		},
 		{
-			name:           "both anonymous and IPMIv2",
-			response:       buildAuthCapabilitiesResponse(0x14, 0x0C),
+			name:           "both anonymous login and IPMIv2",
+			response:       buildAuthCapabilitiesResponse(0x14, 0x01, 0x02),
 			wantNil:        false,
 			wantAuthTypes:  0x14,
-			wantAuthStatus: 0x0C,
+			wantAuthStatus: 0x01,
+			wantExtCap:     0x02,
 		},
 	}
 
@@ -720,6 +728,9 @@ func TestParseAuthCapabilities(t *testing.T) {
 			if caps.AuthStatus != tc.wantAuthStatus {
 				t.Errorf("AuthStatus: want 0x%02X, got 0x%02X", tc.wantAuthStatus, caps.AuthStatus)
 			}
+			if caps.ExtCapabilities != tc.wantExtCap {
+				t.Errorf("ExtCapabilities: want 0x%02X, got 0x%02X", tc.wantExtCap, caps.ExtCapabilities)
+			}
 		})
 	}
 }
@@ -728,7 +739,7 @@ func TestParseAuthCapabilities(t *testing.T) {
 // realistic 52-byte Open Session Response that includes algorithm payloads, and that
 // Run() still produces the ipmi-cipher-zero finding when Misconfigs=true.
 func TestIPMICipherZeroFullResponse(t *testing.T) {
-	authResp := buildAuthCapabilitiesResponse(0x14, 0x08)
+	authResp := buildAuthCapabilitiesResponse(0x14, 0x00, 0x02)
 
 	// Full 52-byte Open Session Response with algorithm payloads.
 	fullCipherResp := []byte{
@@ -786,9 +797,9 @@ func TestIPMICipherZeroFullResponse(t *testing.T) {
 // TestIPMIMetadataEnrichment verifies that ServiceIPMI fields are correctly
 // populated and round-trip through the service's Raw JSON metadata.
 func TestIPMIMetadataEnrichment(t *testing.T) {
-	// authStatus=0x0C: anonymous login (bit2) + IPMIv2 (bit3)
+	// authStatus=0x01: bit 0 (anonymous login); extCap=0x02: bit 1 (IPMIv2)
 	// authTypes=0x14: MD5 (bit2) + straight_key (bit4)
-	authResp := buildAuthCapabilitiesResponse(0x14, 0x0C)
+	authResp := buildAuthCapabilitiesResponse(0x14, 0x01, 0x02)
 	cipherResp := buildCipherZeroResponse(0x00) // cipher zero accepted
 
 	mockConn := &mockUDPConn{
@@ -799,7 +810,7 @@ func TestIPMIMetadataEnrichment(t *testing.T) {
 	target := plugins.Target{
 		Address:    netip.MustParseAddrPort("127.0.0.1:623"),
 		Host:       "127.0.0.1",
-		Misconfigs: false,
+		Misconfigs: true,
 	}
 
 	service, err := plugin.Run(mockConn, 5*time.Second, target)

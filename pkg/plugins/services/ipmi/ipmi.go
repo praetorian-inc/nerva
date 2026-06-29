@@ -101,12 +101,13 @@ var cipherZeroPacket = []byte{
 
 // Response byte offsets for Get Channel Auth Capabilities response.
 const (
-	authCapabilitiesMinLen   = 24
+	authCapabilitiesMinLen   = 25
 	offsetCompletionCode     = 20
 	offsetAuthTypeSupport    = 22
 	offsetAuthStatus         = 23
-	authStatusAnonymousLogin = 0x04
-	authStatusIPMIv2Extended = 0x08
+	authStatusAnonymousLogin = 0x01
+	offsetExtCapabilities    = 24
+	extCapIPMIv2             = 0x02
 )
 
 // Response byte offsets for RMCP+ Open Session Response.
@@ -119,6 +120,7 @@ const (
 type authCapabilities struct {
 	AuthTypeSupport byte
 	AuthStatus      byte
+	ExtCapabilities byte
 }
 
 // IPMIPlugin detects IPMI BMC interfaces.
@@ -172,6 +174,7 @@ func parseAuthCapabilities(response []byte) *authCapabilities {
 	return &authCapabilities{
 		AuthTypeSupport: response[offsetAuthTypeSupport],
 		AuthStatus:      response[offsetAuthStatus],
+		ExtCapabilities: response[offsetExtCapabilities],
 	}
 }
 
@@ -215,7 +218,7 @@ func probeCipherZero(conn net.Conn, timeout time.Duration) bool {
 		return false
 	}
 
-	buf := make([]byte, 64)
+	buf := make([]byte, 128)
 	n, err := conn.Read(buf)
 	if err != nil {
 		return false
@@ -252,11 +255,13 @@ func (p *IPMIPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 
 	if caps != nil {
 		payload.AuthTypes = buildAuthTypeList(caps)
-		payload.IPMIv2 = caps.AuthStatus&authStatusIPMIv2Extended != 0
+		payload.IPMIv2 = caps.ExtCapabilities&extCapIPMIv2 != 0
 		payload.AnonymousLogin = caps.AuthStatus&authStatusAnonymousLogin != 0
 	}
 
-	payload.CipherZero = probeCipherZero(conn, timeout)
+	if target.Misconfigs {
+		payload.CipherZero = probeCipherZero(conn, timeout)
+	}
 
 	service := plugins.CreateServiceFrom(target, payload, false, "", plugins.UDP)
 
@@ -289,13 +294,13 @@ func ipmiExposedFinding() plugins.SecurityFinding {
 }
 
 // ipmiAnonymousLoginFinding returns a SecurityFinding for an IPMI service that
-// allows anonymous login (auth status bit 2 set).
+// allows anonymous login (auth status bit 0 set).
 func ipmiAnonymousLoginFinding() plugins.SecurityFinding {
 	return plugins.SecurityFinding{
 		ID:          "ipmi-anonymous-login",
 		Severity:    plugins.SeverityCritical,
 		Description: "IPMI BMC permits anonymous login — no credentials required for management access",
-		Evidence:    "Auth status byte indicates anonymous login enabled (bit 2 set)",
+		Evidence:    "Auth status byte indicates anonymous login enabled (bit 0 set)",
 	}
 }
 
