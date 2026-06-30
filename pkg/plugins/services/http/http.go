@@ -62,6 +62,7 @@ var (
 		4567: {},
 		5000: {},
 		5985: {}, // WinRM HTTP
+		7001: {}, // Samsung MagicINFO 9 Server (also Oracle WebLogic — disambiguated in fingerprinter)
 		8000: {},
 		8001: {},
 		8080: {},
@@ -537,11 +538,6 @@ func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *ht
 			}
 			fingerprintMetadata[key] = metadata
 		}
-		// Named-technology findings flow through fingerprintedTechs.customFindings; only
-		// add to fpFindings for anonymous (no Technology) results to avoid duplication.
-		if result.Technology == "" {
-			fpFindings = append(fpFindings, result.SecurityFindings...)
-		}
 		matchedFingerprinters = append(matchedFingerprinters, fp)
 	}
 
@@ -604,11 +600,6 @@ func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *ht
 							key = fpName
 						}
 						fingerprintMetadata[key] = metadata
-					}
-					// Named-technology findings flow through fingerprintedTechs.customFindings; only
-					// add to fpFindings for anonymous (no Technology) results to avoid duplication.
-					if result.Technology == "" {
-						fpFindings = append(fpFindings, result.SecurityFindings...)
 					}
 					matchedFingerprinters = append(matchedFingerprinters, fp)
 				}

@@ -1867,7 +1867,12 @@ type ServiceFirebird struct {
 
 func (e ServiceFirebird) Type() string { return ProtoFirebird }
 
-type ServiceIPMI struct{}
+type ServiceIPMI struct {
+	AuthTypes      []string `json:"auth_types,omitempty"`
+	AnonymousLogin bool     `json:"anonymous_login,omitempty"`
+	IPMIv2         bool     `json:"ipmi_v2,omitempty"`
+	CipherZero     bool     `json:"cipher_zero,omitempty"`
+}
 
 func (e ServiceIPMI) Type() string { return ProtoIPMI }
 
