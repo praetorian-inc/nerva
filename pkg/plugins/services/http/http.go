@@ -537,6 +537,8 @@ func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *ht
 			}
 			fingerprintMetadata[key] = metadata
 		}
+		// Named-technology findings flow through fingerprintedTechs.customFindings; only
+		// add to fpFindings for anonymous (no Technology) results to avoid duplication.
 		if result.Technology == "" {
 			fpFindings = append(fpFindings, result.SecurityFindings...)
 		}
@@ -603,6 +605,8 @@ func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *ht
 						}
 						fingerprintMetadata[key] = metadata
 					}
+					// Named-technology findings flow through fingerprintedTechs.customFindings; only
+					// add to fpFindings for anonymous (no Technology) results to avoid duplication.
 					if result.Technology == "" {
 						fpFindings = append(fpFindings, result.SecurityFindings...)
 					}

@@ -161,7 +161,7 @@ func (f *VaultFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fin
 		result.SecurityFindings = []plugins.SecurityFinding{{
 			ID:          "vault-unsealed-anonymous",
 			Severity:    plugins.SeverityCritical,
-			Description: "Vault unsealed with anonymous API access — stored secrets are readable",
+			Description: "Vault unsealed and health endpoint accessible without authentication",
 			Evidence:    fmt.Sprintf("Vault %s reports initialized=true, sealed=false via /v1/sys/health", health.Version),
 		}}
 	}

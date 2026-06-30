@@ -321,6 +321,9 @@ func TestVaultUnsealedAnonymous(t *testing.T) {
 	if result.SecurityFindings[0].Severity != plugins.SeverityCritical {
 		t.Errorf("Finding Severity = %q, want %q", result.SecurityFindings[0].Severity, plugins.SeverityCritical)
 	}
+	if result.SecurityFindings[0].Evidence != "Vault 1.12.3 reports initialized=true, sealed=false via /v1/sys/health" {
+		t.Errorf("Evidence = %q", result.SecurityFindings[0].Evidence)
+	}
 }
 
 func TestVaultUninitialized(t *testing.T) {
@@ -344,6 +347,9 @@ func TestVaultUninitialized(t *testing.T) {
 	if result.SecurityFindings[0].ID != "vault-uninitialized" {
 		t.Errorf("Finding ID = %q, want %q", result.SecurityFindings[0].ID, "vault-uninitialized")
 	}
+	if result.SecurityFindings[0].Evidence != "Vault 1.12.3 reports initialized=false via /v1/sys/health" {
+		t.Errorf("Evidence = %q", result.SecurityFindings[0].Evidence)
+	}
 }
 
 func TestVaultSealedNoFindings(t *testing.T) {
@@ -363,6 +369,32 @@ func TestVaultSealedNoFindings(t *testing.T) {
 	}
 	if len(result.SecurityFindings) != 0 {
 		t.Errorf("SecurityFindings count = %d, want 0", len(result.SecurityFindings))
+	}
+}
+
+func TestVaultUninitializedUnsealed(t *testing.T) {
+	fp := &VaultFingerprinter{}
+	body := []byte(`{"initialized": false, "sealed": false, "version": "1.12.3"}`)
+	resp := &http.Response{Header: make(http.Header)}
+
+	result, err := fp.Fingerprint(resp, body)
+	if err != nil {
+		t.Fatalf("Fingerprint() error = %v", err)
+	}
+	if result == nil {
+		t.Fatal("Fingerprint() returned nil")
+	}
+	if result.Severity != plugins.SeverityMedium {
+		t.Errorf("Severity = %q, want %q", result.Severity, plugins.SeverityMedium)
+	}
+	if len(result.SecurityFindings) != 1 {
+		t.Fatalf("SecurityFindings count = %d, want 1", len(result.SecurityFindings))
+	}
+	if result.SecurityFindings[0].ID != "vault-uninitialized" {
+		t.Errorf("Finding ID = %q, want %q", result.SecurityFindings[0].ID, "vault-uninitialized")
+	}
+	if result.SecurityFindings[0].Evidence != "Vault 1.12.3 reports initialized=false via /v1/sys/health" {
+		t.Errorf("Evidence = %q, want match", result.SecurityFindings[0].Evidence)
 	}
 }
 

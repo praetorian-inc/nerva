@@ -13,10 +13,11 @@
 // limitations under the License.
 
 // Package main implements mock HashiCorp Vault HTTP servers for integration testing.
-// Three listeners are started:
-//   - Port 8200: Unsealed Vault (initialized=true, sealed=false)
-//   - Port 8201: Sealed Vault   (initialized=true, sealed=true)
-//   - Port 8202: Generic HTTP   (no Vault indicators, Server: nginx/1.24.0)
+// Four listeners are started:
+//   - Port 8200: Unsealed Vault      (initialized=true, sealed=false)
+//   - Port 8201: Sealed Vault        (initialized=true, sealed=true)
+//   - Port 8202: Generic HTTP        (no Vault indicators, Server: nginx/1.24.0)
+//   - Port 8203: Uninitialized Vault (initialized=false, sealed=true)
 package main
 
 import (
@@ -46,7 +47,7 @@ func vaultHealthHandler(initialized, sealed bool) http.HandlerFunc {
 		initializedStr, sealedStr, vaultVersion,
 	)
 	return func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("[port %s] %s %s from %s", r.Host, r.Method, r.URL.Path, r.RemoteAddr)
+		log.Printf("[port %q] %s %q from %s", r.Host, r.Method, r.URL.Path, r.RemoteAddr)
 		if r.URL.Path != "/v1/sys/health" {
 			http.Error(w, "Forbidden", http.StatusForbidden)
 			return
@@ -58,7 +59,7 @@ func vaultHealthHandler(initialized, sealed bool) http.HandlerFunc {
 }
 
 func genericHandler(w http.ResponseWriter, r *http.Request) {
-	log.Printf("[port 8202] %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
+	log.Printf("[port 8202] %s %q from %s", r.Method, r.URL.Path, r.RemoteAddr)
 	w.Header().Set("Server", "nginx/1.24.0")
 	w.Header().Set("Content-Type", "text/plain")
 	fmt.Fprint(w, "OK")
@@ -89,9 +90,13 @@ func main() {
 	genericMux := http.NewServeMux()
 	genericMux.HandleFunc("/", genericHandler)
 
+	uninitMux := http.NewServeMux()
+	uninitMux.HandleFunc("/", vaultHealthHandler(false, true))
+
 	s1 := startServer(":8200", unsealedMux)
 	s2 := startServer(":8201", sealedMux)
 	s3 := startServer(":8202", genericMux)
+	s4 := startServer(":8203", uninitMux)
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
@@ -102,7 +107,7 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	for _, srv := range []*http.Server{s1, s2, s3} {
+	for _, srv := range []*http.Server{s1, s2, s3, s4} {
 		if err := srv.Shutdown(ctx); err != nil {
 			log.Printf("Shutdown error: %v", err)
 		}

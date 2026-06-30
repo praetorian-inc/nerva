@@ -1,5 +1,5 @@
 # Vault mock server for integration testing
-FROM golang:1.21-alpine AS builder
+FROM golang:1.21.13-alpine3.20 AS builder
 
 WORKDIR /app
 
@@ -18,7 +18,7 @@ RUN addgroup -S app && adduser -S -G app app
 # Copy the binary from builder
 COPY --from=builder /app/vault-mock /usr/local/bin/
 
-EXPOSE 8200 8201 8202
+EXPOSE 8200 8201 8202 8203
 
 USER app
 
