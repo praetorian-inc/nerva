@@ -62,6 +62,7 @@ var (
 		4567: {},
 		5000: {},
 		5985: {}, // WinRM HTTP
+		7001: {}, // Samsung MagicINFO 9 Server (also Oracle WebLogic — disambiguated in fingerprinter)
 		8000: {},
 		8001: {},
 		8080: {},
