@@ -537,7 +537,9 @@ func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *ht
 			}
 			fingerprintMetadata[key] = metadata
 		}
-		fpFindings = append(fpFindings, result.SecurityFindings...)
+		if result.Technology == "" {
+			fpFindings = append(fpFindings, result.SecurityFindings...)
+		}
 		matchedFingerprinters = append(matchedFingerprinters, fp)
 	}
 
@@ -601,7 +603,9 @@ func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *ht
 						}
 						fingerprintMetadata[key] = metadata
 					}
-					fpFindings = append(fpFindings, result.SecurityFindings...)
+					if result.Technology == "" {
+						fpFindings = append(fpFindings, result.SecurityFindings...)
+					}
 					matchedFingerprinters = append(matchedFingerprinters, fp)
 				}
 			}

@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/praetorian-inc/nerva/pkg/plugins"
 )
 
 func TestVaultFingerprinter_Name(t *testing.T) {
@@ -293,6 +294,75 @@ func TestBuildVaultCPE(t *testing.T) {
 				t.Errorf("buildVaultCPE() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestVaultUnsealedAnonymous(t *testing.T) {
+	fp := &VaultFingerprinter{}
+	body := []byte(`{"initialized": true, "sealed": false, "version": "1.12.3"}`)
+	resp := &http.Response{Header: make(http.Header)}
+
+	result, err := fp.Fingerprint(resp, body)
+	if err != nil {
+		t.Fatalf("Fingerprint() error = %v", err)
+	}
+	if result == nil {
+		t.Fatal("Fingerprint() returned nil")
+	}
+	if result.Severity != plugins.SeverityCritical {
+		t.Errorf("Severity = %q, want %q", result.Severity, plugins.SeverityCritical)
+	}
+	if len(result.SecurityFindings) != 1 {
+		t.Fatalf("SecurityFindings count = %d, want 1", len(result.SecurityFindings))
+	}
+	if result.SecurityFindings[0].ID != "vault-unsealed-anonymous" {
+		t.Errorf("Finding ID = %q, want %q", result.SecurityFindings[0].ID, "vault-unsealed-anonymous")
+	}
+	if result.SecurityFindings[0].Severity != plugins.SeverityCritical {
+		t.Errorf("Finding Severity = %q, want %q", result.SecurityFindings[0].Severity, plugins.SeverityCritical)
+	}
+}
+
+func TestVaultUninitialized(t *testing.T) {
+	fp := &VaultFingerprinter{}
+	body := []byte(`{"initialized": false, "sealed": true, "version": "1.12.3"}`)
+	resp := &http.Response{Header: make(http.Header)}
+
+	result, err := fp.Fingerprint(resp, body)
+	if err != nil {
+		t.Fatalf("Fingerprint() error = %v", err)
+	}
+	if result == nil {
+		t.Fatal("Fingerprint() returned nil")
+	}
+	if result.Severity != plugins.SeverityMedium {
+		t.Errorf("Severity = %q, want %q", result.Severity, plugins.SeverityMedium)
+	}
+	if len(result.SecurityFindings) != 1 {
+		t.Fatalf("SecurityFindings count = %d, want 1", len(result.SecurityFindings))
+	}
+	if result.SecurityFindings[0].ID != "vault-uninitialized" {
+		t.Errorf("Finding ID = %q, want %q", result.SecurityFindings[0].ID, "vault-uninitialized")
+	}
+}
+
+func TestVaultSealedNoFindings(t *testing.T) {
+	fp := &VaultFingerprinter{}
+	body := []byte(`{"initialized": true, "sealed": true, "version": "1.15.0"}`)
+	resp := &http.Response{Header: make(http.Header)}
+
+	result, err := fp.Fingerprint(resp, body)
+	if err != nil {
+		t.Fatalf("Fingerprint() error = %v", err)
+	}
+	if result == nil {
+		t.Fatal("Fingerprint() returned nil")
+	}
+	if result.Severity != plugins.SeverityMedium {
+		t.Errorf("Severity = %q, want %q", result.Severity, plugins.SeverityMedium)
+	}
+	if len(result.SecurityFindings) != 0 {
+		t.Errorf("SecurityFindings count = %d, want 0", len(result.SecurityFindings))
 	}
 }
 
