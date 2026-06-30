@@ -40,8 +40,11 @@ Port Configuration:
 package fingerprinters
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
+
+	"github.com/praetorian-inc/nerva/pkg/plugins"
 )
 
 // WinRMFingerprinter detects WinRM instances via Microsoft-HTTPAPI header on /wsman endpoint
@@ -79,11 +82,33 @@ func (f *WinRMFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fin
 		metadata["server"] = server
 	}
 
-	return &FingerprintResult{
+	result := &FingerprintResult{
 		Technology: "winrm",
 		CPEs:       []string{buildWinRMCPE()},
 		Metadata:   metadata,
-	}, nil
+	}
+
+	if resp.StatusCode/100 == 2 {
+		result.Severity = plugins.SeverityCritical
+		result.SecurityFindings = []plugins.SecurityFinding{
+			{
+				ID:          "winrm-no-auth",
+				Severity:    plugins.SeverityCritical,
+				Description: "WinRM endpoint accessible without authentication — enables remote command execution",
+				Evidence:    fmt.Sprintf("WinRM /wsman endpoint returned HTTP %d without requiring credentials", resp.StatusCode),
+			},
+		}
+		if resp.TLS == nil {
+			result.SecurityFindings = append(result.SecurityFindings, plugins.SecurityFinding{
+				ID:          "winrm-cleartext",
+				Severity:    plugins.SeverityMedium,
+				Description: "WinRM running over HTTP instead of HTTPS — credentials and commands transmitted in cleartext",
+				Evidence:    "WinRM detected on unencrypted HTTP connection",
+			})
+		}
+	}
+
+	return result, nil
 }
 
 func buildWinRMCPE() string {

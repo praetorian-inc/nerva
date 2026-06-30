@@ -15,9 +15,11 @@
 package fingerprinters
 
 import (
+	"crypto/tls"
 	"net/http"
 	"testing"
 
+	"github.com/praetorian-inc/nerva/pkg/plugins"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -170,6 +172,121 @@ func TestBuildWinRMCPE(t *testing.T) {
 	got := buildWinRMCPE()
 	want := "cpe:2.3:a:microsoft:windows_remote_management:*:*:*:*:*:*:*:*"
 	assert.Equal(t, want, got)
+}
+
+func TestWinRMNoAuth(t *testing.T) {
+	fp := &WinRMFingerprinter{}
+	resp := &http.Response{
+		StatusCode: 200,
+		Header:     make(http.Header),
+	}
+	resp.Header.Set("Server", "Microsoft-HTTPAPI/2.0")
+
+	result, err := fp.Fingerprint(resp, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	assert.Equal(t, plugins.SeverityCritical, result.Severity)
+	require.Len(t, result.SecurityFindings, 2)
+	assert.Equal(t, "winrm-no-auth", result.SecurityFindings[0].ID)
+	assert.Equal(t, plugins.SeverityCritical, result.SecurityFindings[0].Severity)
+	assert.Contains(t, result.SecurityFindings[0].Evidence, "200")
+	assert.Equal(t, "winrm-cleartext", result.SecurityFindings[1].ID)
+	assert.Equal(t, plugins.SeverityMedium, result.SecurityFindings[1].Severity)
+
+	authRequired, ok := result.Metadata["auth_required"].(bool)
+	assert.True(t, ok)
+	assert.False(t, authRequired)
+}
+
+func TestWinRMNoAuthTLS(t *testing.T) {
+	fp := &WinRMFingerprinter{}
+	resp := &http.Response{
+		StatusCode: 200,
+		Header:     make(http.Header),
+		TLS:        &tls.ConnectionState{},
+	}
+	resp.Header.Set("Server", "Microsoft-HTTPAPI/2.0")
+
+	result, err := fp.Fingerprint(resp, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	assert.Equal(t, plugins.SeverityCritical, result.Severity)
+	require.Len(t, result.SecurityFindings, 1)
+	assert.Equal(t, "winrm-no-auth", result.SecurityFindings[0].ID)
+	assert.Equal(t, plugins.SeverityCritical, result.SecurityFindings[0].Severity)
+}
+
+func TestWinRMAuthRequired(t *testing.T) {
+	fp := &WinRMFingerprinter{}
+	resp := &http.Response{
+		StatusCode: 401,
+		Header:     make(http.Header),
+	}
+	resp.Header.Set("Server", "Microsoft-HTTPAPI/2.0")
+
+	result, err := fp.Fingerprint(resp, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	assert.Equal(t, plugins.Severity(""), result.Severity)
+	assert.Empty(t, result.SecurityFindings)
+
+	authRequired, ok := result.Metadata["auth_required"].(bool)
+	assert.True(t, ok)
+	assert.True(t, authRequired)
+}
+
+func TestWinRMAuthRequiredTLS(t *testing.T) {
+	fp := &WinRMFingerprinter{}
+	resp := &http.Response{
+		StatusCode: 401,
+		Header:     make(http.Header),
+		TLS:        &tls.ConnectionState{},
+	}
+	resp.Header.Set("Server", "Microsoft-HTTPAPI/2.0")
+
+	result, err := fp.Fingerprint(resp, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	assert.Equal(t, plugins.Severity(""), result.Severity)
+	assert.Empty(t, result.SecurityFindings)
+
+	authRequired, ok := result.Metadata["auth_required"].(bool)
+	assert.True(t, ok)
+	assert.True(t, authRequired)
+}
+
+func TestWinRMStatusCodeEdgeCases(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusCode int
+	}{
+		{"405 Method Not Allowed", 405},
+		{"403 Forbidden", 403},
+		{"400 Bad Request", 400},
+		{"302 Redirect", 302},
+		{"500 Internal Server Error", 500},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fp := &WinRMFingerprinter{}
+			resp := &http.Response{
+				StatusCode: tt.statusCode,
+				Header: http.Header{
+					"Server": []string{"Microsoft-HTTPAPI/2.0"},
+				},
+			}
+			result, err := fp.Fingerprint(resp, nil)
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			assert.Empty(t, result.Severity, "status %d should not set severity", tt.statusCode)
+			assert.Empty(t, result.SecurityFindings, "status %d should not produce findings", tt.statusCode)
+		})
+	}
 }
 
 func TestWinRMFingerprinter_Integration(t *testing.T) {
