@@ -38,7 +38,7 @@ func (f *ADFSFingerprinter) Name() string { return "adfs" }
 func (f *ADFSFingerprinter) ProbeEndpoint() string { return "/adfs/ls" }
 
 func (f *ADFSFingerprinter) ProbeAccept() string {
-	return "*/*"
+	return "text/html"
 }
 
 func (f *ADFSFingerprinter) Match(resp *http.Response) bool {

@@ -13,8 +13,8 @@
 // limitations under the License.
 
 // This probe is called SCCM despite Microsoft having
-// renamed SCCM now tree times.
-// SCCM itself has more parts than the management point, however I have not found a quick way of verifying those compnents without authentication.
+// renamed SCCM now three times.
+// SCCM itself has more parts than the management point, however I have not found a quick way of verifying those components without authentication.
 
 package fingerprinters
 

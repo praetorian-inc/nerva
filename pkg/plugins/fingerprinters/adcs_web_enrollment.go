@@ -19,7 +19,7 @@ import (
 	"strings"
 )
 
-// ADFSFingerprinter detects Active Directory Federation Services (ADFS) via the /certsrv endpoint.
+// ADCSWebEnrollmentFingerprinter detects Active Directory Certificate Services (ADCS) Web Enrollment via the /certsrv endpoint.
 type ADCSWebEnrollmentFingerprinter struct{}
 
 func init() {
@@ -37,10 +37,10 @@ func (f *ADCSWebEnrollmentFingerprinter) ProbeAccept() string {
 func (f *ADCSWebEnrollmentFingerprinter) Match(resp *http.Response) bool {
 	// If we are on IIS, as well as behind auth,
 	// it is very safe to probe for ADCS
-	wwwAuth := resp.Header.Get("WWW-Authenticate")
+	wwwAuth := strings.ToLower(resp.Header.Get("WWW-Authenticate"))
 	if (resp.StatusCode == 401 || resp.StatusCode == 403) &&
-		(strings.Contains(wwwAuth, "NTLM") || strings.Contains(wwwAuth, "Negotiate")) {
-		if strings.Contains(resp.Header.Get("Server"), "Microsoft-IIS") {
+		(strings.Contains(wwwAuth, "ntlm") || strings.Contains(wwwAuth, "negotiate")) {
+		if strings.Contains(strings.ToLower(resp.Header.Get("Server")), "microsoft-iis") {
 			return true
 		}
 	}
@@ -52,10 +52,10 @@ func (f *ADCSWebEnrollmentFingerprinter) Fingerprint(resp *http.Response, body [
 	// Check again if in this response from /certsrv,
 	// we are still on IIS and behind auth
 
-	wwwAuth := resp.Header.Get("WWW-Authenticate")
+	wwwAuth := strings.ToLower(resp.Header.Get("WWW-Authenticate"))
 	if (resp.StatusCode == 401 || resp.StatusCode == 403) &&
-		(strings.Contains(wwwAuth, "NTLM") || strings.Contains(wwwAuth, "Negotiate")) {
-		if strings.Contains(resp.Header.Get("Server"), "Microsoft-IIS") {
+		(strings.Contains(wwwAuth, "ntlm") || strings.Contains(wwwAuth, "negotiate")) {
+		if strings.Contains(strings.ToLower(resp.Header.Get("Server")), "microsoft-iis") {
 			return &FingerprintResult{
 				Technology: "adcs-web-enrollment",
 				CPEs:       buildADCSCPEs(),
