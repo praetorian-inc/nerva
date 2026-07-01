@@ -190,6 +190,9 @@ func (p *HTTPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 	if target.Deep {
 		deepClient := &http.Client{
 			Timeout: timeout,
+			Transport: &http.Transport{
+				DisableKeepAlives: true,
+			},
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
 				return http.ErrUseLastResponse
 			},
@@ -304,7 +307,8 @@ func (p *HTTPSPlugin) Run(
 		deepClient := &http.Client{
 			Timeout: timeout,
 			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //#nosec G402 -- scanner must probe targets regardless of cert validity
+				DisableKeepAlives: true,
+				TLSClientConfig:   &tls.Config{InsecureSkipVerify: true, ServerName: target.Host}, //#nosec G402 -- scanner must probe targets regardless of cert validity
 			},
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
 				return http.ErrUseLastResponse

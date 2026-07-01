@@ -71,14 +71,21 @@ func (f *AdminPathFingerprinter) DeepProbe(client *http.Client, baseURL, host st
 	// Canary probe: if the server responds 200/302 to a nonsense path, it's a
 	// catch-all and all admin path findings would be false positives.
 	canary := adminPathEntry{path: "/nerva-fp-canary-404", technology: "canary", slug: "canary", description: "canary"}
-	if finding := probeAdminPath(client, baseURL, host, canary); finding != nil {
+	finding, err := probeAdminPath(client, baseURL, host, canary)
+	if err != nil {
+		return nil
+	}
+	if finding != nil {
 		return nil
 	}
 
 	var findings []plugins.SecurityFinding
 
 	for _, entry := range adminPaths {
-		finding := probeAdminPath(client, baseURL, host, entry)
+		finding, err := probeAdminPath(client, baseURL, host, entry)
+		if err != nil {
+			return findings
+		}
 		if finding != nil {
 			findings = append(findings, *finding)
 		}
@@ -89,12 +96,13 @@ func (f *AdminPathFingerprinter) DeepProbe(client *http.Client, baseURL, host st
 
 // probeAdminPath makes a single GET request to baseURL+entry.path and returns
 // a SecurityFinding if the response status is 200 or 302. Returns nil for all
-// other status codes (404, 403, 5xx, etc.).
-func probeAdminPath(client *http.Client, baseURL, host string, entry adminPathEntry) *plugins.SecurityFinding {
+// other status codes (404, 403, 5xx, etc.). Returns a non-nil error on network
+// failure so callers can distinguish "no match" from "host unreachable".
+func probeAdminPath(client *http.Client, baseURL, host string, entry adminPathEntry) (*plugins.SecurityFinding, error) {
 	url := baseURL + entry.path
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 
 	req.Header.Set("User-Agent", adminPathUserAgent)
@@ -104,14 +112,14 @@ func probeAdminPath(client *http.Client, baseURL, host string, entry adminPathEn
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	defer resp.Body.Close()
 	// Drain body to allow connection reuse without leaking resources.
 	_, _ = io.ReadAll(io.LimitReader(resp.Body, 4096))
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusFound {
-		return nil
+		return nil, nil
 	}
 
 	evidence := fmt.Sprintf("path: %s | status: %s", entry.path, resp.Status)
@@ -129,5 +137,5 @@ func probeAdminPath(client *http.Client, baseURL, host string, entry adminPathEn
 		Severity:    plugins.SeverityInfo,
 		Description: fmt.Sprintf("%s accessible at %s", entry.description, entry.path),
 		Evidence:    evidence,
-	}
+	}, nil
 }
