@@ -46,7 +46,7 @@ var versionPatterns = []struct {
 	{"vsftpd", regexp.MustCompile(`\(vsFTPd\s+([0-9.]+)\)`)},
 	{"ProFTPD", regexp.MustCompile(`ProFTPD\s+([0-9.]+[a-z]?)\s+Server`)},
 	{"Pure-FTPd", regexp.MustCompile(`(?i)Pure-?FTPd\s+([0-9.]+)`)},
-	{"FileZilla", regexp.MustCompile(`FileZilla Server version\s+([0-9.]+)`)},
+	{"FileZilla", regexp.MustCompile(`FileZilla Server(?:\s+version)?\s+([0-9.]+)`)},
 	{"Microsoft IIS", regexp.MustCompile(`Microsoft FTP Service\s*\(Version\s+([0-9.]+)\)`)},
 	{"wu-ftpd", regexp.MustCompile(`Version wu-([0-9.-]+)`)},
 	{"Generic", regexp.MustCompile(`Version\s+([0-9.]+)`)},

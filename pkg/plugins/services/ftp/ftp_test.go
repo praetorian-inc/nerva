@@ -223,6 +223,8 @@ func TestExtractFTPVersion(t *testing.T) {
 		// FileZilla
 		{"FileZilla 0.9.60", "220 FileZilla Server version 0.9.60\r\n", "FileZilla", "0.9.60"},
 		{"FileZilla 1.5.0", "220 Welcome, FileZilla Server version 1.5.0\r\n", "FileZilla", "1.5.0"},
+		{"FileZilla 1.9.4 modern", "220-FileZilla Server 1.9.4\r\n", "FileZilla", "1.9.4"},
+		{"FileZilla 1.6.1 modern", "220 FileZilla Server 1.6.1\r\n", "FileZilla", "1.6.1"},
 
 		// Microsoft IIS FTP
 		{"IIS FTP 5.0", "220 Microsoft FTP Service (Version 5.0)\r\n", "Microsoft IIS", "5.0"},
