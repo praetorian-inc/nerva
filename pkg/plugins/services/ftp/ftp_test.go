@@ -137,7 +137,7 @@ func TestIsFTPBanner(t *testing.T) {
 		{"ProFTPD on port 21", "220 ProFTPD 1.3.3a Server (Debian)\r\n", 21, true, "high"},
 		{"Microsoft FTP on port 21", "220 Microsoft FTP Service\r\n", 21, true, "high"},
 		{"Pure-FTPd on port 21", "220 Welcome to Pure-FTPd 1.0.36\r\n", 21, true, "high"},
-		{"FileZilla on port 21", "220 FileZilla Server version 0.9.60\r\n", 21, true, "low"}, // No FTP keyword, falls back to port heuristic
+		{"FileZilla on port 21", "220 FileZilla Server version 0.9.60\r\n", 21, true, "high"},
 		{"wu-ftpd on port 21", "220 FTP server (Version wu-2.6.2-5) ready.\r\n", 21, true, "high"},
 		{"Generic FTP on port 21", "220 FTP Server ready\r\n", 21, true, "high"},
 		{"FTP lowercase on port 21", "220 ftp server ready\r\n", 21, true, "high"},
@@ -146,9 +146,10 @@ func TestIsFTPBanner(t *testing.T) {
 
 		// MEDIUM confidence - Non-standard port + FTP keyword
 		{"FTP on port 2121", "220 (vsFTPd 3.0.3)\r\n", 2121, true, "medium"},
+		{"FileZilla on port 2121", "220-FileZilla Server 1.9.4\r\n", 2121, true, "medium"},
 		{"FTP on port 8021", "220 ProFTPD Server ready\r\n", 8021, true, "medium"},
 		{"FTP on port 2221", "220 FTP Server ready\r\n", 2221, true, "medium"},
-		{"FileZilla on port 9999", "220 FileZilla Server version 1.0.0\r\n", 9999, false, ""}, // No FTP keyword, non-standard port = reject
+		{"FileZilla on port 9999", "220 FileZilla Server version 1.0.0\r\n", 9999, true, "medium"},
 
 		// LOW confidence - Port 21 + No keyword (heuristic fallback)
 		{"Generic 220 on port 21", "220 Server ready\r\n", 21, true, "low"},

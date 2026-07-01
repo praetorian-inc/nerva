@@ -31,9 +31,9 @@ const (
 	FTPWelcomeResponseRe = `^220[- ]` // FTP 220 response code (service ready)
 )
 
-// FTP keyword whitelist pattern - matches FTP, FTPD, "FTP server", "FTP service" (case-insensitive)
+// FTP keyword whitelist pattern - matches FTP, FTPD, "FTP server", "FTP service", or "FileZilla" (case-insensitive)
 // This is the core of the whitelist approach to prevent SMTP false positives (PR #44 fix)
-var ftpKeywordPattern = regexp.MustCompile(`(?i)(ftpd?|ftp\s+(server|service))`)
+var ftpKeywordPattern = regexp.MustCompile(`(?i)(ftpd?|ftp\s+(server|service)|filezilla)`)
 
 // ftpWelcomePattern matches FTP 220 welcome responses
 var ftpWelcomePattern = regexp.MustCompile(FTPWelcomeResponseRe)
