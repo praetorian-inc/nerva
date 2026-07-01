@@ -22,8 +22,8 @@ import (
 // Strings which are present in the response
 // from ProbeEndpoint()
 var adfsBodyStrings = []string{
-	"adfs/portal/css",    // HTML CSS ressource
-	"adfs/portal/images", // HTML icon ressource
+	"adfs/portal/css",    // HTML CSS resource
+	"adfs/portal/images", // HTML icon resource
 }
 
 // ADFSFingerprinter detects Active Directory Federation Services (ADFS) via the common /adfs/ls endpoint.
@@ -43,7 +43,7 @@ func (f *ADFSFingerprinter) ProbeAccept() string {
 
 func (f *ADFSFingerprinter) Match(resp *http.Response) bool {
 	// HTTPAPI is enough to valid a probe for ADFS
-	return strings.Contains(resp.Header.Get("Server"), "Microsoft-HTTPAPI")
+	return strings.Contains(strings.ToLower(resp.Header.Get("Server")), "microsoft-httpapi")
 }
 
 func (f *ADFSFingerprinter) Fingerprint(resp *http.Response, body []byte) (*FingerprintResult, error) {
