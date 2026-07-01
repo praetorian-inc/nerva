@@ -37,6 +37,9 @@ type cliConfig struct {
 	// Security misconfiguration detection
 	misconfigs bool
 
+	// Deep probing (admin paths, login detection)
+	deep bool
+
 	// Proxy
 	proxy     string
 	proxyAuth string

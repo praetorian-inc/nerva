@@ -76,6 +76,26 @@ type MisconfigHTTPFingerprinter interface {
 	CheckMisconfigs(client *http.Client, baseURL, host string) []plugins.SecurityFinding
 }
 
+// DeepHTTPFingerprinter extends HTTPFingerprinter with probes that are only
+// executed when --deep is enabled. These fingerprinters make additional HTTP
+// requests beyond standard detection (e.g., admin path discovery).
+type DeepHTTPFingerprinter interface {
+	HTTPFingerprinter
+	DeepProbe(client *http.Client, baseURL, host string) []plugins.SecurityFinding
+}
+
+// RunDeepProbes executes DeepHTTPFingerprinter.DeepProbe on all registered
+// fingerprinters that implement the interface.
+func RunDeepProbes(client *http.Client, baseURL, host string) []plugins.SecurityFinding {
+	var findings []plugins.SecurityFinding
+	for _, fp := range httpFingerprinters {
+		if dfp, ok := fp.(DeepHTTPFingerprinter); ok {
+			findings = append(findings, dfp.DeepProbe(client, baseURL, host)...)
+		}
+	}
+	return findings
+}
+
 var httpFingerprinters []HTTPFingerprinter
 
 // Register adds a fingerprinter to the registry

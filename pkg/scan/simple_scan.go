@@ -278,6 +278,7 @@ func simplePluginRunner(
 	}
 
 	target.Misconfigs = config.Misconfigs
+	target.Deep = config.Deep
 	result, err := plugin.Run(conn, config.DefaultTimeout, target)
 
 	// Log probe completion.

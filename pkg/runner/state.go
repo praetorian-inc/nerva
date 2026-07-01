@@ -53,6 +53,7 @@ type StateConfig struct {
 	ProxyAuth   string  `json:"proxy_auth,omitempty"`
 	DNSOrder    string  `json:"dns_order,omitempty"`
 	Misconfigs  bool    `json:"misconfigs,omitempty"`
+	Deep        bool    `json:"deep,omitempty"`
 }
 
 // StateTargets tracks target progress

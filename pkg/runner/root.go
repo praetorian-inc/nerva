@@ -120,6 +120,9 @@ func runScan(cmd *cobra.Command, args []string) error {
 		if !config.misconfigs {
 			config.misconfigs = state.Config.Misconfigs
 		}
+		if !config.deep {
+			config.deep = state.Config.Deep
+		}
 	} else {
 		// Read targets from input
 		var err error
@@ -260,6 +263,7 @@ func buildState(config cliConfig, targets []plugins.Target, completedTargets []s
 			ProxyAuth:   config.proxyAuth,
 			DNSOrder:    config.dnsOrder,
 			Misconfigs:  config.misconfigs,
+			Deep:        config.deep,
 		},
 		Targets: StateTargets{
 			OriginalCount: originalCount,
@@ -294,6 +298,7 @@ func init() {
 	// Resume support
 	rootCmd.PersistentFlags().IntVar(&config.autoSave, "auto-save", 0, "auto-save interval (number of targets)")
 	rootCmd.PersistentFlags().BoolVar(&config.misconfigs, "misconfigs", false, "enable security misconfiguration detection")
+	rootCmd.PersistentFlags().BoolVar(&config.deep, "deep", false, "enable deep probing (admin paths, login detection)")
 
 	rootCmd.PersistentFlags().StringVar(&config.proxy, "proxy", "", "proxy URL (e.g. socks5://127.0.0.1:1080)")
 	rootCmd.PersistentFlags().StringVar(&config.proxyAuth, "proxy-auth", "", "socks5 proxy authentication (username:password)")

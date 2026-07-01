@@ -114,6 +114,7 @@ func SCTPScan(ctx context.Context, targets []plugins.Target, config Config) ([]p
 		default:
 		}
 		target.Misconfigs = config.Misconfigs
+		target.Deep = config.Deep
 		result, err := safeScanTarget(target, func() (*plugins.Service, error) {
 			return config.SCTPScanTarget(target)
 		})
@@ -137,6 +138,7 @@ func UDPScan(ctx context.Context, targets []plugins.Target, config Config) ([]pl
 		default:
 		}
 		target.Misconfigs = config.Misconfigs
+		target.Deep = config.Deep
 		result, err := safeScanTarget(target, func() (*plugins.Service, error) {
 			return config.UDPScanTarget(target)
 		})

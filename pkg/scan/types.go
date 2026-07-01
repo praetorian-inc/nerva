@@ -56,5 +56,8 @@ type Config struct {
 	// Enable security misconfiguration detection
 	Misconfigs bool
 
+	// Enable deep probing (admin paths, login detection)
+	Deep bool
+
 	OnProgress ProgressCallback
 }

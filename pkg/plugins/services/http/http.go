@@ -17,6 +17,7 @@ package http
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -186,6 +187,15 @@ func (p *HTTPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 			service.SecurityFindings = append(service.SecurityFindings, *finding)
 		}
 	}
+	if target.Deep {
+		deepClient := &http.Client{
+			Timeout: timeout,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		}
+		service.SecurityFindings = append(service.SecurityFindings, fingerprinters.RunDeepProbes(deepClient, baseURL, target.Host)...)
+	}
 	return service, nil
 }
 
@@ -289,6 +299,18 @@ func (p *HTTPSPlugin) Run(
 				service.SecurityFindings = append(service.SecurityFindings, *finding)
 			}
 		}
+	}
+	if target.Deep {
+		deepClient := &http.Client{
+			Timeout: timeout,
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //#nosec G402 -- scanner must probe targets regardless of cert validity
+			},
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		}
+		service.SecurityFindings = append(service.SecurityFindings, fingerprinters.RunDeepProbes(deepClient, baseURL, target.Host)...)
 	}
 	return service, nil
 }
