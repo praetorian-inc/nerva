@@ -141,13 +141,32 @@ func (f *VaultFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fin
 		metadata["cluster_name"] = health.ClusterName
 	}
 
-	return &FingerprintResult{
+	result := &FingerprintResult{
 		Technology: "vault",
 		Version:    health.Version,
 		CPEs:       []string{buildVaultCPE(health.Version)},
 		Metadata:   metadata,
 		Severity:   plugins.SeverityMedium,
-	}, nil
+	}
+
+	if !*health.Initialized {
+		result.SecurityFindings = []plugins.SecurityFinding{{
+			ID:          "vault-uninitialized",
+			Severity:    plugins.SeverityMedium,
+			Description: "Vault instance not initialized — can be claimed by first init request",
+			Evidence:    fmt.Sprintf("Vault %s reports initialized=false via /v1/sys/health", health.Version),
+		}}
+	} else if !*health.Sealed {
+		result.Severity = plugins.SeverityCritical
+		result.SecurityFindings = []plugins.SecurityFinding{{
+			ID:          "vault-unsealed-anonymous",
+			Severity:    plugins.SeverityCritical,
+			Description: "Vault unsealed and health endpoint accessible without authentication",
+			Evidence:    fmt.Sprintf("Vault %s reports initialized=true, sealed=false via /v1/sys/health", health.Version),
+		}}
+	}
+
+	return result, nil
 }
 
 func buildVaultCPE(version string) string {
