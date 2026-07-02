@@ -753,6 +753,20 @@ func TestIsTrailingSlashRedirect(t *testing.T) {
 			statusCode: 301,
 			location:   "https://host/cgi-bin/home.tcl/",
 			reqPath:    "/cgi-bin/home.tcl",
+			want:       true,
+		},
+		{
+			name:       "absolute URL with different path",
+			statusCode: 301,
+			location:   "https://host/other/path/",
+			reqPath:    "/cgi-bin/home.tcl",
+			want:       false,
+		},
+		{
+			name:       "absolute URL trailing-slash redirect with query params",
+			statusCode: 301,
+			location:   "https://host/cgi-bin/home.tcl/?s=1",
+			reqPath:    "/cgi-bin/home.tcl",
 			want:       false,
 		},
 		{

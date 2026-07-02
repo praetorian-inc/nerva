@@ -17,6 +17,7 @@ package fingerprinters
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 )
@@ -231,5 +232,9 @@ func isTrailingSlashRedirect(resp *http.Response) bool {
 	if location == "" {
 		return false
 	}
-	return location == resp.Request.URL.Path+"/"
+	parsed, err := url.Parse(location)
+	if err != nil {
+		return false
+	}
+	return parsed.RawQuery == "" && parsed.Path == resp.Request.URL.Path+"/"
 }
