@@ -19,6 +19,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -41,10 +42,11 @@ func TestZyxelFingerprinter_Match(t *testing.T) {
 	f := &ZyxelFingerprinter{}
 
 	tests := []struct {
-		name       string
-		statusCode int
-		headers    http.Header
-		want       bool
+		name        string
+		statusCode  int
+		headers     http.Header
+		requestPath string
+		want        bool
 	}{
 		{
 			name:       "accepts redirect to /ztp/cgi-bin/",
@@ -103,6 +105,15 @@ func TestZyxelFingerprinter_Match(t *testing.T) {
 			},
 			want: false,
 		},
+		{
+			name:        "rejects trailing-slash redirect to /weblogin.cgi/ (SPA routing)",
+			statusCode:  301,
+			requestPath: "/weblogin.cgi",
+			headers: http.Header{
+				"Location": []string{"/weblogin.cgi/"},
+			},
+			want: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -110,6 +121,9 @@ func TestZyxelFingerprinter_Match(t *testing.T) {
 			resp := &http.Response{
 				StatusCode: tt.statusCode,
 				Header:     tt.headers,
+			}
+			if tt.requestPath != "" {
+				resp.Request = &http.Request{URL: &url.URL{Path: tt.requestPath}}
 			}
 			if got := f.Match(resp); got != tt.want {
 				t.Errorf("Match() = %v, want %v", got, tt.want)
@@ -122,15 +136,16 @@ func TestZyxelFingerprinter_Fingerprint(t *testing.T) {
 	f := &ZyxelFingerprinter{}
 
 	tests := []struct {
-		name           string
-		statusCode     int
-		headers        http.Header
-		body           string
-		wantResult     bool
-		wantTech       string
-		wantVersion    string
-		wantCPEPrefix  string
-		wantModel      string
+		name          string
+		statusCode    int
+		headers       http.Header
+		body          string
+		requestPath   string
+		wantResult    bool
+		wantTech      string
+		wantVersion   string
+		wantCPEPrefix string
+		wantModel     string
 	}{
 		{
 			name:       "detects ZTP handler in body (standalone signal)",
@@ -341,6 +356,16 @@ func TestZyxelFingerprinter_Fingerprint(t *testing.T) {
 			wantTech:      "zyxel-firewall",
 			wantCPEPrefix: "cpe:2.3:o:zyxel:zld_firmware:",
 		},
+		{
+			name:        "does NOT detect trailing-slash redirect to /weblogin.cgi/ (SPA false positive prevention)",
+			statusCode:  301,
+			requestPath: "/weblogin.cgi",
+			headers: http.Header{
+				"Location": []string{"/weblogin.cgi/"},
+			},
+			body:       "",
+			wantResult: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -348,6 +373,9 @@ func TestZyxelFingerprinter_Fingerprint(t *testing.T) {
 			resp := &http.Response{
 				StatusCode: tt.statusCode,
 				Header:     tt.headers,
+			}
+			if tt.requestPath != "" {
+				resp.Request = &http.Request{URL: &url.URL{Path: tt.requestPath}}
 			}
 			result, err := f.Fingerprint(resp, []byte(tt.body))
 

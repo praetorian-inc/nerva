@@ -149,7 +149,9 @@ func (f *ZyxelFingerprinter) Match(resp *http.Response) bool {
 	location := resp.Header.Get("Location")
 	if location != "" {
 		if strings.Contains(location, "/ztp/cgi-bin/") || strings.Contains(location, "/weblogin.cgi") {
-			return true
+			if !isTrailingSlashRedirect(resp) {
+				return true
+			}
 		}
 	}
 
@@ -178,8 +180,8 @@ func (f *ZyxelFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fin
 	ztpInBody := strings.Contains(bodyStr, "/ztp/cgi-bin/handler")
 
 	// Signal 2 (standalone): Redirect to Zyxel-specific paths.
-	redirectToZTP := strings.Contains(location, "/ztp/cgi-bin/")
-	redirectToWeblogin := strings.Contains(location, "/weblogin.cgi")
+	redirectToZTP := strings.Contains(location, "/ztp/cgi-bin/") && !isTrailingSlashRedirect(resp)
+	redirectToWeblogin := strings.Contains(location, "/weblogin.cgi") && !isTrailingSlashRedirect(resp)
 
 	// Signal 3 (corroborated): Zyxel brand + model identifier in body.
 	// Brand alone is insufficient — it appears on comparison pages and news sites.

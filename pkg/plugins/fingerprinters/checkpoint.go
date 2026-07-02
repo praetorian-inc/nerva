@@ -148,7 +148,9 @@ func isCheckPointHeader(resp *http.Response) bool {
 	}
 	location := strings.ToLower(resp.Header.Get("Location"))
 	if strings.Contains(location, "/cgi-bin/home.tcl") || strings.Contains(location, "/sslvpn/") {
-		return true
+		if !isTrailingSlashRedirect(resp) {
+			return true
+		}
 	}
 	for _, cookie := range resp.Header.Values("Set-Cookie") {
 		cookieLower := strings.ToLower(cookie)
@@ -212,4 +214,22 @@ func buildCheckPointCPE(version string) string {
 	// Normalize version for CPE: R81.20 -> r81.20 (CPE uses lowercase)
 	cpeVersion := strings.ToLower(version)
 	return fmt.Sprintf("cpe:2.3:o:checkpoint:gaia:%s:*:*:*:*:*:*:*", cpeVersion)
+}
+
+// isTrailingSlashRedirect returns true when a 3xx response has a Location
+// header that is the request path with a trailing slash appended. SPA
+// frameworks (Express, Ghost, etc.) use this pattern for path normalization;
+// it should not be treated as a technology-specific redirect signal.
+func isTrailingSlashRedirect(resp *http.Response) bool {
+	if resp.StatusCode < 300 || resp.StatusCode >= 400 {
+		return false
+	}
+	if resp.Request == nil || resp.Request.URL == nil {
+		return false
+	}
+	location := resp.Header.Get("Location")
+	if location == "" {
+		return false
+	}
+	return location == resp.Request.URL.Path+"/"
 }

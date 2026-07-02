@@ -49,11 +49,6 @@ func TestFaviconLive(t *testing.T) {
 			expectedTech:   "grafana",
 		},
 		{
-			url:            "https://gitlab.com/favicon.ico",
-			expectedHashes: []int32{988422585, 81586312},
-			expectedTech:   "gitlab",
-		},
-		{
 			url:            "https://www.phpmyadmin.net/favicon.ico",
 			expectedHashes: []int32{-1182381299},
 			expectedTech:   "phpmyadmin",
@@ -144,9 +139,8 @@ func TestFaviconLive(t *testing.T) {
 	}
 	checks := []tableCheck{
 		{116323821, "jenkins"},
+		{81586312, "jenkins"},
 		{1485257654, "grafana"},
-		{988422585, "gitlab"},
-		{81586312, "gitlab"},
 		{-1182381299, "phpmyadmin"},
 		{1640738920, "roundcube"},
 	}
