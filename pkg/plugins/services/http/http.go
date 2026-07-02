@@ -17,6 +17,7 @@ package http
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -542,7 +543,22 @@ func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *ht
 	}
 
 	// Active fingerprinters (probe specific endpoints)
+	// Create a fresh HTTP client with a standard transport for active probes.
+	// The original client uses a conn-pinned DialContext that breaks if the
+	// server closed the connection after the initial request (see #340).
+	var probeClient *http.Client
+
 	if client != nil && baseURL != "" {
+		probeTransport := &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		}
+		probeClient = &http.Client{
+			Timeout:       client.Timeout,
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+			Transport:     probeTransport,
+		}
+		defer probeTransport.CloseIdleConnections()
+
 		for fpName, endpoint := range fingerprinters.GetProbeEndpoints() {
 			// Don't re-probe "/"
 			if endpoint == "" || endpoint == "/" {
@@ -568,7 +584,7 @@ func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *ht
 				probeReq.Host = host
 			}
 
-			probeResp, err := client.Do(probeReq)
+			probeResp, err := probeClient.Do(probeReq)
 			if err != nil {
 				continue
 			}
@@ -608,10 +624,10 @@ func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *ht
 	}
 
 	// MisconfigHTTPFingerprinter phase: call CheckMisconfigs on matched fingerprinters
-	if misconfigs && client != nil && baseURL != "" {
+	if misconfigs && probeClient != nil && baseURL != "" {
 		for _, fp := range matchedFingerprinters {
 			if mfp, ok := fp.(fingerprinters.MisconfigHTTPFingerprinter); ok {
-				fpFindings = append(fpFindings, mfp.CheckMisconfigs(client, baseURL, host)...)
+				fpFindings = append(fpFindings, mfp.CheckMisconfigs(probeClient, baseURL, host)...)
 			}
 		}
 	}
