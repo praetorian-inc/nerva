@@ -468,11 +468,20 @@ func TestAMQPAnonymousAccessFinding(t *testing.T) {
 }
 
 // TestAMQPDefaultCredsRejected verifies that no finding is generated when the server
-// responds with Connection.Close (credentials rejected).
+// responds with Connection.Close (credentials rejected). The target address is a
+// closed ephemeral port (guaranteed nothing is listening), so probeDefaultCredentials'
+// dial also fails, avoiding flakes on machines running a local broker on 5672.
 func TestAMQPDefaultCredsRejected(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	addr := ln.Addr().(*net.TCPAddr)
+	ln.Close()
+
 	plugin := &AMQPPlugin{}
 	target := plugins.Target{
-		Address:    netip.MustParseAddrPort("127.0.0.1:5672"),
+		Address:    netip.MustParseAddrPort(addr.String()),
 		Host:       "127.0.0.1",
 		Misconfigs: true,
 	}

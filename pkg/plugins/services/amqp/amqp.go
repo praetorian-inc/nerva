@@ -266,9 +266,17 @@ func trySASLAuth(conn net.Conn, timeout time.Duration, saslResponse []byte) bool
 
 	// Validate Connection.Tune response:
 	//   frame-type must be 0x01 (Method)
+	//   channel must be 0x0000
+	//   payload-size must be plausible and consistent with response length
+	//   frame-end marker must be 0xCE
 	//   class-id at bytes 7-8 must be 0x000A (10 = Connection)
 	//   method-id at bytes 9-10 must be 0x001E (30 = Tune)
-	if response[0] != FrameTypeMethod {
+	if response[0] != FrameTypeMethod || binary.BigEndian.Uint16(response[1:3]) != 0 {
+		return false
+	}
+	payloadSize := binary.BigEndian.Uint32(response[3:7])
+	frameLen := uint64(7) + uint64(payloadSize) + 1
+	if payloadSize < 4 || frameLen > uint64(len(response)) || response[7+int(payloadSize)] != FrameEnd {
 		return false
 	}
 	classID := binary.BigEndian.Uint16(response[7:9])
