@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   release:
-    uses: praetorian-inc/public-workflows/.github/workflows/go-release.yml@0c602372f3d0d038912dd08e159ecc83954a4995  # v2.9.3
+    uses: praetorian-inc/public-workflows/.github/workflows/go-release.yml@33495156a75eaa4e8f97dd7f8c29c1d371e50688  # v2.14.1
     permissions:
       contents: write
       packages: write
@@ -17,6 +17,12 @@ jobs:
       attestations: write
     with:
       release-mode: auto-tag-from-main
+      # Reviewer-less environment satisfying the repo's OIDC sub-claim customization
+      # (include_claim_keys lists "environment": an environment-less job with
+      # id-token: write fails at job preparation). Do NOT add required reviewers:
+      # auto-tag mode releases on every main merge, and the tag is pushed before
+      # this gate — see the environment input docs in go-release.yml.
+      environment: release
     # Auto-tag every merge to main as the praetorian-ci-version-bumper App (a
     # creation-only bypass actor on the org Protected Version Tags ruleset), then
     # build + publish via GoReleaser using this repo's local .goreleaser.yaml.
