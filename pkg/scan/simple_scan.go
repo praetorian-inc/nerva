@@ -278,6 +278,7 @@ func simplePluginRunner(
 	}
 
 	target.Misconfigs = config.Misconfigs
+	target.Dialer = config
 	result, err := plugin.Run(conn, config.DefaultTimeout, target)
 
 	// Log probe completion.
