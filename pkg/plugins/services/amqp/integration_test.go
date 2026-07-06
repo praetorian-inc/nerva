@@ -197,3 +197,51 @@ func TestAMQPIntegrationDefaultCreds(t *testing.T) {
 	t.Logf("SecurityFinding: id=%s severity=%s evidence=%s", finding.ID, finding.Severity, finding.Evidence)
 }
 
+// TestAMQPIntegrationAnonymousAccessRejected verifies that a default RabbitMQ broker
+// (which requires guest/guest credentials) does not report anonymous access when
+// Misconfigs is true. The amqp-default-creds finding may still fire via the
+// probeDefaultCredentials fallback, but amqp-anonymous-access must not.
+func TestAMQPIntegrationAnonymousAccessRejected(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping Docker integration test in short mode")
+	}
+
+	pool, err := dockertest.NewPool("")
+	if err != nil {
+		t.Fatalf("Could not connect to Docker: %v", err)
+	}
+
+	resource, addr := startRabbitMQContainer(t, pool)
+	defer pool.Purge(resource) //nolint:errcheck
+
+	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	if err != nil {
+		t.Fatalf("Failed to connect to RabbitMQ server: %v", err)
+	}
+	defer conn.Close()
+
+	target := plugins.Target{
+		Address:    resolveAddrPort(t, addr),
+		Misconfigs: true,
+	}
+
+	plugin := &AMQPPlugin{}
+	service, err := plugin.Run(conn, 5*time.Second, target)
+	if err != nil {
+		t.Fatalf("Plugin Run returned error: %v", err)
+	}
+	if service == nil {
+		t.Fatal("Plugin Run returned nil service (AMQP not detected)")
+	}
+
+	if service.AnonymousAccess {
+		t.Error("Expected AnonymousAccess to be false for default RabbitMQ (requires guest/guest)")
+	}
+
+	for _, finding := range service.SecurityFindings {
+		if finding.ID == "amqp-anonymous-access" {
+			t.Errorf("Did not expect amqp-anonymous-access finding on default RabbitMQ, got: %+v", finding)
+		}
+	}
+}
+
