@@ -128,19 +128,19 @@ func TestGraphiteFingerprinter_Fingerprint(t *testing.T) {
 			name:        "valid 3-component version",
 			body:        "1.1.10\n",
 			wantVersion: "1.1.10",
-			wantCPE:     "cpe:2.3:a:graphiteproject:graphite:1.1.10:*:*:*:*:*:*:*",
+			wantCPE:     "cpe:2.3:a:graphite_project:graphite:1.1.10:*:*:*:*:*:*:*",
 		},
 		{
 			name:        "valid 2-component version",
 			body:        "1.1\n",
 			wantVersion: "1.1",
-			wantCPE:     "cpe:2.3:a:graphiteproject:graphite:1.1:*:*:*:*:*:*:*",
+			wantCPE:     "cpe:2.3:a:graphite_project:graphite:1.1:*:*:*:*:*:*:*",
 		},
 		{
 			name:        "version with leading/trailing whitespace",
 			body:        "  1.5.0  \n",
 			wantVersion: "1.5.0",
-			wantCPE:     "cpe:2.3:a:graphiteproject:graphite:1.5.0:*:*:*:*:*:*:*",
+			wantCPE:     "cpe:2.3:a:graphite_project:graphite:1.5.0:*:*:*:*:*:*:*",
 		},
 		{
 			name:    "empty body",
@@ -181,7 +181,7 @@ func TestGraphiteFingerprinter_Fingerprint(t *testing.T) {
 			name:        "body exactly 49 chars → passes length guard",
 			body:        "1234567890123456789012345.12345678901234567890123",
 			wantVersion: "1234567890123456789012345.12345678901234567890123",
-			wantCPE:     "cpe:2.3:a:graphiteproject:graphite:1234567890123456789012345.12345678901234567890123:*:*:*:*:*:*:*",
+			wantCPE:     "cpe:2.3:a:graphite_project:graphite:1234567890123456789012345.12345678901234567890123:*:*:*:*:*:*:*",
 		},
 		{
 			name:    "colon in body → rejected by regex before CPE guard",
@@ -258,17 +258,17 @@ func TestBuildGraphiteCPE(t *testing.T) {
 		{
 			name:     "with version",
 			version:  "1.1.10",
-			expected: "cpe:2.3:a:graphiteproject:graphite:1.1.10:*:*:*:*:*:*:*",
+			expected: "cpe:2.3:a:graphite_project:graphite:1.1.10:*:*:*:*:*:*:*",
 		},
 		{
 			name:     "empty version → wildcard",
 			version:  "",
-			expected: "cpe:2.3:a:graphiteproject:graphite:*:*:*:*:*:*:*:*",
+			expected: "cpe:2.3:a:graphite_project:graphite:*:*:*:*:*:*:*:*",
 		},
 		{
 			name:     "two-component version",
 			version:  "1.5",
-			expected: "cpe:2.3:a:graphiteproject:graphite:1.5:*:*:*:*:*:*:*",
+			expected: "cpe:2.3:a:graphite_project:graphite:1.5:*:*:*:*:*:*:*",
 		},
 	}
 
@@ -297,7 +297,7 @@ func TestGraphiteFingerprinter_Integration(t *testing.T) {
 	require.NotNil(t, result)
 	assert.Equal(t, "graphite", result.Technology)
 	assert.Equal(t, "1.1.10", result.Version)
-	assert.Contains(t, result.CPEs, "cpe:2.3:a:graphiteproject:graphite:1.1.10:*:*:*:*:*:*:*")
+	assert.Contains(t, result.CPEs, "cpe:2.3:a:graphite_project:graphite:1.1.10:*:*:*:*:*:*:*")
 }
 
 func TestGraphiteFingerprinter_Integration_NonGraphite(t *testing.T) {

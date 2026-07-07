@@ -27,7 +27,7 @@ Package fingerprinters provides HTTP fingerprinting for Graphite Web.
 
 # CPE
 
-cpe:2.3:a:graphiteproject:graphite:{version}:*:*:*:*:*:*:*
+cpe:2.3:a:graphite_project:graphite:{version}:*:*:*:*:*:*:*
 */
 package fingerprinters
 
@@ -114,7 +114,7 @@ func (f *GraphiteFingerprinter) Fingerprint(resp *http.Response, body []byte) (*
 // When version is empty, a wildcard CPE is emitted to support asset inventory.
 func buildGraphiteCPE(version string) string {
 	if version == "" {
-		return "cpe:2.3:a:graphiteproject:graphite:*:*:*:*:*:*:*:*"
+		return "cpe:2.3:a:graphite_project:graphite:*:*:*:*:*:*:*:*"
 	}
-	return fmt.Sprintf("cpe:2.3:a:graphiteproject:graphite:%s:*:*:*:*:*:*:*", version)
+	return fmt.Sprintf("cpe:2.3:a:graphite_project:graphite:%s:*:*:*:*:*:*:*", version)
 }
