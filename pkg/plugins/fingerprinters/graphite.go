@@ -61,6 +61,13 @@ func (f *GraphiteFingerprinter) ProbeEndpoint() string {
 	return "/version"
 }
 
+// ProbeAccept requests text/html explicitly, since graphite-web's /version
+// endpoint returns text/html and content-negotiating proxies could otherwise
+// alter the response if the engine's default Accept header were used.
+func (f *GraphiteFingerprinter) ProbeAccept() string {
+	return "text/html"
+}
+
 // Match returns true when the response is a 200 with a text/html content type.
 func (f *GraphiteFingerprinter) Match(resp *http.Response) bool {
 	if resp.StatusCode != http.StatusOK {

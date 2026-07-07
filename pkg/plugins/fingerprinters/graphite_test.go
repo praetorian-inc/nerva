@@ -35,6 +35,11 @@ func TestGraphiteFingerprinter_ProbeEndpoint(t *testing.T) {
 	assert.Equal(t, "/version", fp.ProbeEndpoint())
 }
 
+func TestGraphiteFingerprinter_ProbeAccept(t *testing.T) {
+	fp := &GraphiteFingerprinter{}
+	assert.Equal(t, "text/html", fp.ProbeAccept())
+}
+
 // ── Match ─────────────────────────────────────────────────────────────────────
 
 func TestGraphiteFingerprinter_Match(t *testing.T) {
