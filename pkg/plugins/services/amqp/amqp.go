@@ -15,6 +15,7 @@
 package amqp
 
 import (
+	"crypto/tls"
 	"encoding/binary"
 	"fmt"
 	"net"
@@ -215,8 +216,8 @@ func parseServerProperties(data []byte) (product, version, platform string) {
 	return product, version, platform
 }
 
-// checkDefaultCredentials sends an AMQP Connection.StartOk frame with SASL PLAIN
-// guest/guest credentials on the already-open conn (after DetectAMQP consumed the
+// trySASLAuth sends an AMQP Connection.StartOk frame with the given SASL PLAIN
+// response bytes on the already-open conn (after DetectAMQP consumed the
 // Connection.Start frame). It returns true if the server responds with
 // Connection.Tune (class 10, method 30), indicating the credentials were accepted.
 //
@@ -224,24 +225,23 @@ func parseServerProperties(data []byte) (product, version, platform string) {
 // (class 10, method 20) is not expected and not handled. A broker that uses multi-step
 // SASL for PLAIN authentication would be reported as "not vulnerable" (false negative).
 // No known AMQP 0-9-1 broker exhibits this behavior.
-func checkDefaultCredentials(conn net.Conn, timeout time.Duration) bool {
-	// SASL PLAIN response: NUL + username + NUL + password
-	saslResponse := []byte("\x00guest\x00guest") // 12 bytes
-
+func trySASLAuth(conn net.Conn, timeout time.Duration, saslResponse []byte) bool {
 	// Build Connection.StartOk payload:
 	//   class-id (2)       = 0x000A (10)
 	//   method-id (2)      = 0x000B (11)
 	//   client-properties (4) = 0x00000000 (empty table)
 	//   mechanism: short string "PLAIN" (1-byte length + 5 bytes)
-	//   response: long string (4-byte length + 12 bytes)
+	//   response: long string (4-byte length + len(saslResponse) bytes)
 	//   locale: short string "en_US" (1-byte length + 5 bytes)
 	payload := []byte{
 		0x00, 0x0A, // class-id: 10 (Connection)
 		0x00, 0x0B, // method-id: 11 (StartOk)
 		0x00, 0x00, 0x00, 0x00, // client-properties: empty table
 		0x05, 'P', 'L', 'A', 'I', 'N', // mechanism: "PLAIN" (short string)
-		0x00, 0x00, 0x00, 0x0C, // response length: 12
 	}
+	responseLen := make([]byte, 4)
+	binary.BigEndian.PutUint32(responseLen, uint32(len(saslResponse))) // #nosec G115 -- saslResponse is locally constructed (a few bytes); cannot overflow uint32
+	payload = append(payload, responseLen...)
 	payload = append(payload, saslResponse...)
 	payload = append(payload, 0x05, 'e', 'n', '_', 'U', 'S') // locale: "en_US"
 
@@ -266,14 +266,28 @@ func checkDefaultCredentials(conn net.Conn, timeout time.Duration) bool {
 
 	// Validate Connection.Tune response:
 	//   frame-type must be 0x01 (Method)
+	//   channel must be 0x0000
+	//   payload-size must be plausible and consistent with response length
+	//   frame-end marker must be 0xCE
 	//   class-id at bytes 7-8 must be 0x000A (10 = Connection)
 	//   method-id at bytes 9-10 must be 0x001E (30 = Tune)
-	if response[0] != FrameTypeMethod {
+	if response[0] != FrameTypeMethod || binary.BigEndian.Uint16(response[1:3]) != 0 {
+		return false
+	}
+	payloadSize := binary.BigEndian.Uint32(response[3:7])
+	frameLen := uint64(7) + uint64(payloadSize) + 1
+	if payloadSize < 4 || frameLen > uint64(len(response)) || response[7+int(payloadSize)] != FrameEnd {
 		return false
 	}
 	classID := binary.BigEndian.Uint16(response[7:9])
 	methodID := binary.BigEndian.Uint16(response[9:11])
 	return classID == ConnectionClass && methodID == ConnectionTune
+}
+
+// checkDefaultCredentials sends SASL PLAIN guest/guest credentials on the
+// already-open conn. It returns true if the server accepts them.
+func checkDefaultCredentials(conn net.Conn, timeout time.Duration) bool {
+	return trySASLAuth(conn, timeout, []byte("\x00guest\x00guest"))
 }
 
 // amqpDefaultCredsFinding returns a SecurityFinding for AMQP default guest/guest credentials.
@@ -288,6 +302,46 @@ func amqpDefaultCredsFinding(product string) plugins.SecurityFinding {
 		Description: "AMQP service accepts default guest/guest credentials",
 		Evidence:    evidence,
 	}
+}
+
+// amqpAnonymousAccessFinding returns a SecurityFinding for AMQP anonymous access
+// (SASL PLAIN authentication accepted with no credentials).
+func amqpAnonymousAccessFinding(product string) plugins.SecurityFinding {
+	evidence := "SASL PLAIN authentication succeeded without credentials"
+	if product != "" {
+		evidence = fmt.Sprintf("SASL PLAIN authentication succeeded without credentials on %s", product)
+	}
+	return plugins.SecurityFinding{
+		ID:          "amqp-anonymous-access",
+		Severity:    plugins.SeverityHigh,
+		Description: "AMQP service allows anonymous access without credentials",
+		Evidence:    evidence,
+	}
+}
+
+// probeDefaultCredentials opens a new connection to target, performs the AMQP
+// handshake, and checks for guest/guest default credentials. It is used as a
+// fallback when the anonymous access check on the original connection fails.
+func probeDefaultCredentials(target plugins.Target, timeout time.Duration, useTLS bool) bool {
+	var conn net.Conn
+	var err error
+
+	if useTLS {
+		conn, err = tls.DialWithDialer(&net.Dialer{Timeout: timeout}, "tcp", target.Address.String(), &tls.Config{InsecureSkipVerify: true}) // #nosec G402 -- scanner probing untrusted targets; cert validation would prevent detection
+	} else {
+		conn, err = net.DialTimeout("tcp", target.Address.String(), timeout)
+	}
+	if err != nil {
+		return false
+	}
+	defer conn.Close()
+
+	_, _, _, detected, err := DetectAMQP(conn, timeout)
+	if err != nil || !detected {
+		return false
+	}
+
+	return checkDefaultCredentials(conn, timeout)
 }
 
 // DetectAMQP performs AMQP protocol detection
@@ -362,7 +416,10 @@ func (p *AMQPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 
 	service := plugins.CreateServiceFrom(target, payload, false, version, plugins.TCP)
 	if target.Misconfigs {
-		if checkDefaultCredentials(conn, timeout) {
+		if trySASLAuth(conn, timeout, []byte("\x00\x00")) {
+			service.AnonymousAccess = true
+			service.SecurityFindings = []plugins.SecurityFinding{amqpAnonymousAccessFinding(product)}
+		} else if probeDefaultCredentials(target, timeout, false) {
 			service.SecurityFindings = []plugins.SecurityFinding{amqpDefaultCredsFinding(product)}
 		}
 	}
@@ -411,7 +468,10 @@ func (p *TLSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 
 	service := plugins.CreateServiceFrom(target, payload, true, version, plugins.TCP)
 	if target.Misconfigs {
-		if checkDefaultCredentials(conn, timeout) {
+		if trySASLAuth(conn, timeout, []byte("\x00\x00")) {
+			service.AnonymousAccess = true
+			service.SecurityFindings = []plugins.SecurityFinding{amqpAnonymousAccessFinding(product)}
+		} else if probeDefaultCredentials(target, timeout, true) {
 			service.SecurityFindings = []plugins.SecurityFinding{amqpDefaultCredsFinding(product)}
 		}
 		service.SecurityFindings = append(service.SecurityFindings, plugins.CheckTLS(conn)...)
