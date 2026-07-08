@@ -179,7 +179,7 @@ func (f *CaddyFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fin
 	hasServerHeaderSignal := strings.HasPrefix(serverLower, "caddy") || serverLower == "caddy"
 
 	// SECONDARY: Admin API JSON body contains Caddy config structure.
-	hasAdminAPISignal := isCaddyAdminAPI(body)
+	hasAdminAPISignal := isCaddyAdminAPI(body, resp.Header.Get("Content-Type"))
 
 	// TERTIARY: Body contains "caddy" + corroborating marker.
 	hasBodyBrand := strings.Contains(bodyLower, "caddy") &&
@@ -312,7 +312,13 @@ func buildCaddyCPE(version string) string {
 // response. The /config/ endpoint returns a JSON object with a top-level
 // "apps" key containing a nested object. This is a strong distinguishing
 // signal because no other common web service returns this exact structure.
-func isCaddyAdminAPI(body []byte) bool {
+//
+// The Content-Type gate rejects HTML pages (e.g. Grafana) that contain
+// "apps":{} in inline JavaScript — those responses are not JSON.
+func isCaddyAdminAPI(body []byte, contentType string) bool {
+	if !strings.Contains(strings.ToLower(contentType), "application/json") {
+		return false
+	}
 	return caddyAdminAPIRegex.Match(body)
 }
 

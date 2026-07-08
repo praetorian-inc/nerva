@@ -100,6 +100,7 @@ func faviconMMH3Hash(data []byte) int32 {
 var faviconHashes = map[int32]string{
 	// CI / DevOps
 	116323821:   "jenkins",
+	81586312:    "jenkins",
 	-1073467747: "sonarqube",
 	1279514273:  "harbor",
 
@@ -114,8 +115,6 @@ var faviconHashes = map[int32]string{
 	602508764:   "airflow",
 
 	// Version control / project management
-	988422585:  "gitlab",
-	81586312:   "gitlab",
 	-266008933: "jira",
 
 	// Collaboration

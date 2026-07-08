@@ -310,6 +310,12 @@ func TestFlowiseFingerprinter_Fingerprint_Negative(t *testing.T) {
 			requestPath: "/api/v1/version",
 			body:        []byte(`{"status":"ok"}`),
 		},
+		{
+			name:        "Gitea /api/v1/version response with git_hash returns nil",
+			statusCode:  200,
+			requestPath: "/api/v1/version",
+			body:        []byte(`{"version":"1.22.6","git_hash":"abc123"}`),
+		},
 	}
 
 	for _, tt := range tests {
@@ -320,6 +326,21 @@ func TestFlowiseFingerprinter_Fingerprint_Negative(t *testing.T) {
 			assert.Nil(t, result)
 		})
 	}
+}
+
+func TestFlowiseFingerprinter_Fingerprint_GiteaHeaderExclusion(t *testing.T) {
+	fp := &FlowiseFingerprinter{}
+
+	t.Run("X-Gitea-Version header excludes Flowise detection", func(t *testing.T) {
+		resp := makeFlowiseResp(200, "application/json", "/api/v1/version")
+		resp.Header.Set("X-Gitea-Version", "1.22.6")
+		body := []byte(`{"version":"1.22.6"}`)
+
+		result, err := fp.Fingerprint(resp, body)
+		require.NoError(t, err)
+		assert.Nil(t, result)
+	})
+
 }
 
 // ── Fingerprint: FlowiseHTMLFingerprinter negative tests ──────────────────────

@@ -117,6 +117,7 @@ func TestCaddyFingerprinter_Fingerprint_Valid(t *testing.T) {
 		server              string
 		body                string
 		probePath           string
+		contentType         string
 		wantVersion         string
 		wantCPE             string
 		wantDetection       string
@@ -152,6 +153,7 @@ func TestCaddyFingerprinter_Fingerprint_Valid(t *testing.T) {
 			statusCode:        200,
 			server:            "Caddy",
 			body:              `{"apps":{"http":{"servers":{"srv0":{"listen":[":443"]}}},"tls":{"automation":{}}},"admin":{"listen":"localhost:2019"}}`,
+			contentType:       "application/json",
 			wantDetection:     "admin_api",
 			wantAdminAPIKey:   true,
 			wantAdminAPIValue: true,
@@ -172,6 +174,7 @@ func TestCaddyFingerprinter_Fingerprint_Valid(t *testing.T) {
 			statusCode:        200,
 			server:            "Caddy",
 			probePath:         "/config/",
+			contentType:       "application/json",
 			body:              `{"apps":{"http":{},"tls":{"automation":{}}}}`,
 			wantDetection:     "active_probe",
 			wantAdminAPIKey:   true,
@@ -185,6 +188,7 @@ func TestCaddyFingerprinter_Fingerprint_Valid(t *testing.T) {
 			statusCode:          200,
 			server:              "Caddy",
 			body:                `{"apps":{"caddy:*:malicious":{}}}`,
+			contentType:         "application/json",
 			wantDetection:       "admin_api",
 			wantAdminAPIKey:     true,
 			wantAdminAPIValue:   true,
@@ -196,6 +200,7 @@ func TestCaddyFingerprinter_Fingerprint_Valid(t *testing.T) {
 			statusCode:          200,
 			server:              "Caddy/2.7.6",
 			body:                `{"apps":{"http":{"servers":{"srv0":{"routes":[{"match":[{"path":[":*:"]}]}]}}}}}`,
+			contentType:         "application/json",
 			wantVersion:         "2.7.6",
 			wantCPE:             "cpe:2.3:a:caddyserver:caddy:2.7.6:*:*:*:*:*:*:*",
 			wantDetection:       "admin_api",
@@ -215,6 +220,9 @@ func TestCaddyFingerprinter_Fingerprint_Valid(t *testing.T) {
 			}
 			if tt.server != "" {
 				resp.Header.Set("Server", tt.server)
+			}
+			if tt.contentType != "" {
+				resp.Header.Set("Content-Type", tt.contentType)
 			}
 			if tt.probePath != "" {
 				resp.Request = &http.Request{URL: &url.URL{Path: tt.probePath}}
@@ -316,6 +324,12 @@ func TestCaddyFingerprinter_Fingerprint_Invalid(t *testing.T) {
 			statusCode: 200,
 			server:     "",
 			body:       `<html><body>caddyserver was here</body></html>`,
+		},
+		{
+			name:       "Admin API body with no Content-Type header (no server header) — rejected because CT is not JSON",
+			statusCode: 200,
+			server:     "",
+			body:       `{"apps":{"http":{"servers":{}}}}`,
 		},
 	}
 
@@ -492,50 +506,70 @@ func TestSanitizeCaddyHeaderValue(t *testing.T) {
 
 func TestIsCaddyAdminAPI(t *testing.T) {
 	tests := []struct {
-		name string
-		body string
-		want bool
+		name        string
+		body        string
+		contentType string
+		want        bool
 	}{
 		{
-			name: "Caddy admin API response with apps key",
-			body: `{"apps":{"http":{"servers":{"srv0":{}}}}}`,
-			want: true,
+			name:        "Caddy admin API response with apps key",
+			body:        `{"apps":{"http":{"servers":{"srv0":{}}}}}`,
+			contentType: "application/json",
+			want:        true,
 		},
 		{
-			name: "Caddy admin API with whitespace around colon",
-			body: `{"apps" : {"http":{}}}`,
-			want: true,
+			name:        "Caddy admin API with whitespace around colon",
+			body:        `{"apps" : {"http":{}}}`,
+			contentType: "application/json",
+			want:        true,
 		},
 		{
-			name: "Caddy admin API minimal",
-			body: `{"apps":{}}`,
-			want: true,
+			name:        "Caddy admin API minimal",
+			body:        `{"apps":{}}`,
+			contentType: "application/json",
+			want:        true,
 		},
 		{
-			name: "Generic JSON without apps key",
-			body: `{"status":"ok","version":"1.0"}`,
-			want: false,
+			name:        "Generic JSON without apps key",
+			body:        `{"status":"ok","version":"1.0"}`,
+			contentType: "",
+			want:        false,
 		},
 		{
-			name: "HTML body",
-			body: `<html><body>Hello</body></html>`,
-			want: false,
+			name:        "HTML body",
+			body:        `<html><body>Hello</body></html>`,
+			contentType: "",
+			want:        false,
 		},
 		{
-			name: "Empty body",
-			body: ``,
-			want: false,
+			name:        "Empty body",
+			body:        ``,
+			contentType: "",
+			want:        false,
 		},
 		{
-			name: "JSON with apps as string value (not object)",
-			body: `{"apps":"none"}`,
-			want: false,
+			name:        "JSON with apps as string value (not object)",
+			body:        `{"apps":"none"}`,
+			contentType: "",
+			want:        false,
+		},
+		{
+			name:        "Caddy admin API body rejected when Content-Type is text/html",
+			body:        `{"apps":{"http":{"servers":{"srv0":{}}}}}`,
+			contentType: "text/html",
+			want:        false,
+		},
+		{
+			name:        "Grafana HTML with apps key in JavaScript rejected",
+			body:        `<html><script>{"apps":{"explore":{}}}</script></html>`,
+			contentType: "text/html; charset=utf-8",
+			want:        false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, isCaddyAdminAPI([]byte(tt.body)))
+			assert.Equal(t, tt.want, isCaddyAdminAPI([]byte(tt.body), tt.contentType))
 		})
 	}
 }

@@ -16,6 +16,7 @@ package fingerprinters
 
 import (
 	"net/http"
+	"net/url"
 	"testing"
 )
 
@@ -37,10 +38,11 @@ func TestCheckPointFingerprinter_Match(t *testing.T) {
 	f := &CheckPointFingerprinter{}
 
 	tests := []struct {
-		name       string
-		statusCode int
-		headers    http.Header
-		want       bool
+		name        string
+		statusCode  int
+		headers     http.Header
+		requestPath string
+		want        bool
 	}{
 		{
 			name:       "matches with Check Point Server header",
@@ -118,6 +120,15 @@ func TestCheckPointFingerprinter_Match(t *testing.T) {
 			headers:    http.Header{},
 			want:       false,
 		},
+		{
+			name:        "does not match trailing-slash redirect to /cgi-bin/home.tcl/",
+			statusCode:  301,
+			requestPath: "/cgi-bin/home.tcl",
+			headers: http.Header{
+				"Location": []string{"/cgi-bin/home.tcl/"},
+			},
+			want: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -125,6 +136,9 @@ func TestCheckPointFingerprinter_Match(t *testing.T) {
 			resp := &http.Response{
 				StatusCode: tt.statusCode,
 				Header:     tt.headers,
+			}
+			if tt.requestPath != "" {
+				resp.Request = &http.Request{URL: &url.URL{Path: tt.requestPath}}
 			}
 			if got := f.Match(resp); got != tt.want {
 				t.Errorf("Match() = %v, want %v", got, tt.want)
@@ -141,6 +155,7 @@ func TestCheckPointFingerprinter_Fingerprint(t *testing.T) {
 		statusCode    int
 		headers       http.Header
 		body          string
+		requestPath   string
 		wantResult    bool
 		wantTech      string
 		wantVersion   string
@@ -256,6 +271,16 @@ func TestCheckPointFingerprinter_Fingerprint(t *testing.T) {
 			wantTech:    "checkpoint-gateway",
 			wantVersion: "R81.10",
 		},
+		{
+			name:        "does not detect trailing-slash redirect (SPA routing)",
+			statusCode:  301,
+			requestPath: "/cgi-bin/home.tcl",
+			headers: http.Header{
+				"Location": []string{"/cgi-bin/home.tcl/"},
+			},
+			body:       "",
+			wantResult: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -263,6 +288,9 @@ func TestCheckPointFingerprinter_Fingerprint(t *testing.T) {
 			resp := &http.Response{
 				StatusCode: tt.statusCode,
 				Header:     tt.headers,
+			}
+			if tt.requestPath != "" {
+				resp.Request = &http.Request{URL: &url.URL{Path: tt.requestPath}}
 			}
 			result, err := f.Fingerprint(resp, []byte(tt.body))
 
@@ -694,5 +722,95 @@ func TestCheckPointFingerprinter_ActiveInterface(t *testing.T) {
 	// Verify probe endpoint is set
 	if endpoint := f.ProbeEndpoint(); endpoint == "" {
 		t.Error("ProbeEndpoint() returned empty string, expected /cgi-bin/home.tcl")
+	}
+}
+
+func TestIsTrailingSlashRedirect(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusCode int
+		location   string
+		reqPath    string
+		nilReq     bool
+		want       bool
+	}{
+		{
+			name:       "canonical trailing-slash redirect",
+			statusCode: 301,
+			location:   "/cgi-bin/home.tcl/",
+			reqPath:    "/cgi-bin/home.tcl",
+			want:       true,
+		},
+		{
+			name:       "location with query params is not a simple slash append",
+			statusCode: 301,
+			location:   "/cgi-bin/home.tcl/?s=1",
+			reqPath:    "/cgi-bin/home.tcl",
+			want:       false,
+		},
+		{
+			name:       "absolute URL in Location header",
+			statusCode: 301,
+			location:   "https://host/cgi-bin/home.tcl/",
+			reqPath:    "/cgi-bin/home.tcl",
+			want:       true,
+		},
+		{
+			name:       "absolute URL with different path",
+			statusCode: 301,
+			location:   "https://host/other/path/",
+			reqPath:    "/cgi-bin/home.tcl",
+			want:       false,
+		},
+		{
+			name:       "absolute URL trailing-slash redirect with query params",
+			statusCode: 301,
+			location:   "https://host/cgi-bin/home.tcl/?s=1",
+			reqPath:    "/cgi-bin/home.tcl",
+			want:       false,
+		},
+		{
+			name:       "nil request returns false",
+			statusCode: 301,
+			location:   "/cgi-bin/home.tcl/",
+			nilReq:     true,
+			want:       false,
+		},
+		{
+			name:       "non-redirect status code returns false",
+			statusCode: 200,
+			location:   "/cgi-bin/home.tcl/",
+			reqPath:    "/cgi-bin/home.tcl",
+			want:       false,
+		},
+		{
+			name:       "302 redirect with trailing slash",
+			statusCode: 302,
+			location:   "/weblogin.cgi/",
+			reqPath:    "/weblogin.cgi",
+			want:       true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := &http.Response{
+				StatusCode: tt.statusCode,
+				Header:     make(http.Header),
+			}
+			if tt.location != "" {
+				resp.Header.Set("Location", tt.location)
+			}
+			if !tt.nilReq {
+				resp.Request = &http.Request{
+					URL: &url.URL{Path: tt.reqPath},
+				}
+			}
+
+			got := isTrailingSlashRedirect(resp)
+			if got != tt.want {
+				t.Errorf("isTrailingSlashRedirect() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }

@@ -102,6 +102,12 @@ var flowiseVersionMarker = []byte(`"version"`)
 // detections on Langflow deployments.
 var flowisePackageMarker = []byte(`"package"`)
 
+// flowiseGiteaHashMarker is the Gitea exclusion marker. Gitea's /api/v1/version
+// returns {"version":"1.x.y","git_hash":"..."} on the same path as Flowise.
+// Rejecting bodies that contain this field prevents false-positive Flowise
+// detections on Gitea deployments.
+var flowiseGiteaHashMarker = []byte(`"git_hash"`)
+
 // FlowiseFingerprinter detects Flowise instances via the /api/v1/version endpoint.
 // Implements ActiveHTTPFingerprinter + AcceptHeaderProvider.
 type FlowiseFingerprinter struct{}
@@ -195,6 +201,15 @@ func (f *FlowiseFingerprinter) Fingerprint(resp *http.Response, body []byte) (*F
 	// Langflow exclusion: reject bodies containing the "package" key.
 	// Langflow returns {"package":"Langflow",...} on the same endpoint.
 	if bytes.Contains(body, flowisePackageMarker) {
+		return nil, nil
+	}
+
+	// Gitea exclusion: Gitea's /api/v1/version returns the same JSON shape.
+	// Check body marker (some versions include "git_hash") and header.
+	if bytes.Contains(body, flowiseGiteaHashMarker) {
+		return nil, nil
+	}
+	if resp.Header.Get("X-Gitea-Version") != "" {
 		return nil, nil
 	}
 
