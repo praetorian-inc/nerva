@@ -131,7 +131,7 @@ func (p *HTTPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 	defer resp.Body.Close()
 
 	baseURL := fmt.Sprintf("http://%s", conn.RemoteAddr().String())
-	technologies, cpes, fingerprintMetadata, fingerprintedTechs, fpFindings, title, body, _ := p.FingerprintResponse(resp, &client, baseURL, target.Host, target.Misconfigs)
+	technologies, cpes, fingerprintMetadata, fingerprintedTechs, fpFindings, title, body, _ := p.FingerprintResponse(resp, &client, baseURL, target.Host, target.Misconfigs, target)
 
 	payload := plugins.ServiceHTTP{
 		Status:          resp.Status,
@@ -232,7 +232,7 @@ func (p *HTTPSPlugin) Run(
 	defer resp.Body.Close()
 
 	baseURL := fmt.Sprintf("https://%s", conn.RemoteAddr().String())
-	technologies, cpes, fingerprintMetadata, fingerprintedTechs, fpFindings, title, body, _ := p.FingerprintResponse(resp, &client, baseURL, target.Host, target.Misconfigs)
+	technologies, cpes, fingerprintMetadata, fingerprintedTechs, fpFindings, title, body, _ := p.FingerprintResponse(resp, &client, baseURL, target.Host, target.Misconfigs, target)
 
 	payload := plugins.ServiceHTTPS{
 		Status:          resp.Status,
@@ -315,12 +315,12 @@ func (p *HTTPPlugin) Name() string {
 func (p *HTTPSPlugin) Name() string {
 	return HTTPS
 }
-func (p *HTTPPlugin) FingerprintResponse(resp *http.Response, client *http.Client, baseURL string, host string, misconfigs bool) ([]string, []string, map[string]map[string]any, []fingerprintedTech, []plugins.SecurityFinding, string, []byte, error) {
-	return fingerprint(resp, p.analyzer, client, baseURL, host, misconfigs)
+func (p *HTTPPlugin) FingerprintResponse(resp *http.Response, client *http.Client, baseURL string, host string, misconfigs bool, target plugins.Target) ([]string, []string, map[string]map[string]any, []fingerprintedTech, []plugins.SecurityFinding, string, []byte, error) {
+	return fingerprint(resp, p.analyzer, client, baseURL, host, misconfigs, target)
 }
 
-func (p *HTTPSPlugin) FingerprintResponse(resp *http.Response, client *http.Client, baseURL string, host string, misconfigs bool) ([]string, []string, map[string]map[string]any, []fingerprintedTech, []plugins.SecurityFinding, string, []byte, error) {
-	return fingerprint(resp, p.analyzer, client, baseURL, host, misconfigs)
+func (p *HTTPSPlugin) FingerprintResponse(resp *http.Response, client *http.Client, baseURL string, host string, misconfigs bool, target plugins.Target) ([]string, []string, map[string]map[string]any, []fingerprintedTech, []plugins.SecurityFinding, string, []byte, error) {
+	return fingerprint(resp, p.analyzer, client, baseURL, host, misconfigs, target)
 }
 
 // formatTechnologyWithVersion returns a technology string with version appended if present.
@@ -475,7 +475,7 @@ func processFingerprintResult(result *fingerprinters.FingerprintResult) (string,
 	return tech, result.CPEs, result.Metadata, result.Severity
 }
 
-func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *http.Client, baseURL string, host string, misconfigs bool) ([]string, []string, map[string]map[string]any, []fingerprintedTech, []plugins.SecurityFinding, string, []byte, error) {
+func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *http.Client, baseURL string, host string, misconfigs bool, target plugins.Target) ([]string, []string, map[string]map[string]any, []fingerprintedTech, []plugins.SecurityFinding, string, []byte, error) {
 	var technologies, cpes []string
 	var fingerprintedTechs []fingerprintedTech
 	var fpFindings []plugins.SecurityFinding
@@ -541,8 +541,41 @@ func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *ht
 		matchedFingerprinters = append(matchedFingerprinters, fp)
 	}
 
+	// Build probeClient for active fingerprinting probes.
+	// If a Dialer is available, create a fresh transport that dials new connections
+	// through the scanner core (respecting proxy, rate limits, SNI, host limits).
+	// For HTTPS the Dialer already completes the TLS handshake, so we use
+	// DialTLSContext to prevent the transport from doing a second handshake.
+	// Fall back to the original conn-pinned client when no Dialer is present.
+	var probeClient *http.Client
+	if client != nil && baseURL != "" && target.Dialer != nil {
+		isHTTPS := strings.HasPrefix(baseURL, "https")
+		var probeTransport *http.Transport
+		if isHTTPS {
+			probeTransport = &http.Transport{
+				DialTLSContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+					return target.Dialer.DialTLS(target)
+				},
+			}
+		} else {
+			probeTransport = &http.Transport{
+				DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+					return target.Dialer.DialTCP(target)
+				},
+			}
+		}
+		probeClient = &http.Client{
+			Timeout:       client.Timeout,
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+			Transport:     probeTransport,
+		}
+		defer probeTransport.CloseIdleConnections()
+	} else {
+		probeClient = client
+	}
+
 	// Active fingerprinters (probe specific endpoints)
-	if client != nil && baseURL != "" {
+	if probeClient != nil && baseURL != "" {
 		for fpName, endpoint := range fingerprinters.GetProbeEndpoints() {
 			// Don't re-probe "/"
 			if endpoint == "" || endpoint == "/" {
@@ -568,7 +601,7 @@ func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *ht
 				probeReq.Host = host
 			}
 
-			probeResp, err := client.Do(probeReq)
+			probeResp, err := probeClient.Do(probeReq)
 			if err != nil {
 				continue
 			}
@@ -608,10 +641,10 @@ func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *ht
 	}
 
 	// MisconfigHTTPFingerprinter phase: call CheckMisconfigs on matched fingerprinters
-	if misconfigs && client != nil && baseURL != "" {
+	if misconfigs && probeClient != nil && baseURL != "" {
 		for _, fp := range matchedFingerprinters {
 			if mfp, ok := fp.(fingerprinters.MisconfigHTTPFingerprinter); ok {
-				fpFindings = append(fpFindings, mfp.CheckMisconfigs(client, baseURL, host)...)
+				fpFindings = append(fpFindings, mfp.CheckMisconfigs(probeClient, baseURL, host)...)
 			}
 		}
 	}

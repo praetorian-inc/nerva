@@ -15,6 +15,7 @@
 package scan
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"log"
@@ -22,6 +23,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"golang.org/x/time/rate"
 
 	"github.com/praetorian-inc/nerva/pkg/plugins"
 )
@@ -42,6 +45,44 @@ var sortedTCPTLSPlugins = make([]plugins.Plugin, 0)
 var sortedUDPPlugins = make([]plugins.Plugin, 0)
 var sortedSCTPPlugins = make([]plugins.Plugin, 0)
 var tlsConfig = tls.Config{} //nolint:gosec
+
+// rateLimitedDialer wraps Config with an optional rate limiter so that
+// plugin-initiated connections (e.g., HTTP active probes) respect the same
+// throughput constraints as scanner-initiated connections.
+//
+// NOTE: We intentionally do not incorporate the host limiter here. The host
+// limiter uses semaphore acquire/release semantics and processTarget in pool.go
+// already holds the host semaphore for the entire duration of a target scan.
+// Active probes happen within that scope, so they are already bounded by the
+// host limit. Adding another acquire inside the dialer would risk deadlock
+// because the worker already holds its semaphore slot.
+//
+// The rate limiter is a token-bucket and has no such issue; each probe
+// connection should consume a token to throttle total throughput.
+type rateLimitedDialer struct {
+	config      *Config
+	rateLimiter *rate.Limiter // may be nil
+}
+
+func (d *rateLimitedDialer) DialTCP(target plugins.Target) (net.Conn, error) {
+	if d.rateLimiter != nil {
+		// Use background context; the plugin's own timeout on the http.Client
+		// will handle cancellation at the request level.
+		if err := d.rateLimiter.Wait(context.Background()); err != nil {
+			return nil, err
+		}
+	}
+	return d.config.DialTCP(target)
+}
+
+func (d *rateLimitedDialer) DialTLS(target plugins.Target) (net.Conn, error) {
+	if d.rateLimiter != nil {
+		if err := d.rateLimiter.Wait(context.Background()); err != nil {
+			return nil, err
+		}
+	}
+	return d.config.DialTLS(target)
+}
 
 func init() {
 	setupPlugins()
@@ -278,6 +319,10 @@ func simplePluginRunner(
 	}
 
 	target.Misconfigs = config.Misconfigs
+	target.Dialer = &rateLimitedDialer{
+		config:      config,
+		rateLimiter: config.ProbeRateLimiter,
+	}
 	result, err := plugin.Run(conn, config.DefaultTimeout, target)
 
 	// Log probe completion.

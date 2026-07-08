@@ -16,6 +16,8 @@ package scan
 
 import (
 	"time"
+
+	"golang.org/x/time/rate"
 )
 
 type Config struct {
@@ -57,4 +59,10 @@ type Config struct {
 	Misconfigs bool
 
 	OnProgress ProgressCallback
+
+	// ProbeRateLimiter throttles plugin-initiated probe connections (e.g., HTTP
+	// active probes) so they respect the same throughput ceiling as
+	// scanner-initiated connections. Set by ScanTargets from the pool's rate
+	// limiter when RateLimit > 0. Nil means unlimited.
+	ProbeRateLimiter *rate.Limiter `json:"-"`
 }

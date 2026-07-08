@@ -179,6 +179,10 @@ func ScanTargets(ctx context.Context, targets []plugins.Target, config Config) (
 	if config.OnProgress != nil {
 		pool.WithProgress(config.OnProgress)
 	}
+	// Propagate the pool's rate limiter into the config so that plugin-initiated
+	// probe connections (e.g., HTTP active probes via target.Dialer) respect the
+	// same throughput ceiling as scanner-initiated connections.
+	config.ProbeRateLimiter = pool.rateLimiter
 	fn := func(target plugins.Target) ([]plugins.Service, error) {
 		results, err := config.SimpleScanTarget(target)
 		if err != nil {

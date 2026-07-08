@@ -815,10 +815,18 @@ func CreateServiceFrom(target Target, m Metadata, tls bool, version string, tran
 	return &service
 }
 
+// Dialer allows plugins to request new connections that respect proxy,
+// rate limiting, and host connection limits from the scanner core.
+type Dialer interface {
+	DialTCP(target Target) (net.Conn, error)
+	DialTLS(target Target) (net.Conn, error)
+}
+
 type Target struct {
 	Address    netip.AddrPort
 	Host       string
-	Misconfigs bool // when true, plugins should populate SecurityFindings
+	Misconfigs bool   // when true, plugins should populate SecurityFindings
+	Dialer     Dialer `json:"-"` // optional; set by scanner core
 }
 
 type Plugin interface {
