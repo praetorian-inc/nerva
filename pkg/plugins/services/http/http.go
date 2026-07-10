@@ -554,13 +554,13 @@ func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *ht
 		if isHTTPS {
 			probeTransport = &http.Transport{
 				DialTLSContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-					return target.Dialer.DialTLS(target)
+					return target.Dialer.DialTLS(ctx, target)
 				},
 			}
 		} else {
 			probeTransport = &http.Transport{
 				DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-					return target.Dialer.DialTCP(target)
+					return target.Dialer.DialTCP(ctx, target)
 				},
 			}
 		}

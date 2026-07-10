@@ -64,20 +64,18 @@ type rateLimitedDialer struct {
 	rateLimiter *rate.Limiter // may be nil
 }
 
-func (d *rateLimitedDialer) DialTCP(target plugins.Target) (net.Conn, error) {
+func (d *rateLimitedDialer) DialTCP(ctx context.Context, target plugins.Target) (net.Conn, error) {
 	if d.rateLimiter != nil {
-		// Use background context; the plugin's own timeout on the http.Client
-		// will handle cancellation at the request level.
-		if err := d.rateLimiter.Wait(context.Background()); err != nil {
+		if err := d.rateLimiter.Wait(ctx); err != nil {
 			return nil, err
 		}
 	}
 	return d.config.DialTCP(target)
 }
 
-func (d *rateLimitedDialer) DialTLS(target plugins.Target) (net.Conn, error) {
+func (d *rateLimitedDialer) DialTLS(ctx context.Context, target plugins.Target) (net.Conn, error) {
 	if d.rateLimiter != nil {
-		if err := d.rateLimiter.Wait(context.Background()); err != nil {
+		if err := d.rateLimiter.Wait(ctx); err != nil {
 			return nil, err
 		}
 	}

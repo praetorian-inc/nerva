@@ -15,6 +15,7 @@
 package plugins
 
 import (
+	"context"
 	"encoding/json"
 	"net"
 	"net/http"
@@ -818,8 +819,8 @@ func CreateServiceFrom(target Target, m Metadata, tls bool, version string, tran
 // Dialer allows plugins to request new connections that respect proxy,
 // rate limiting, and host connection limits from the scanner core.
 type Dialer interface {
-	DialTCP(target Target) (net.Conn, error)
-	DialTLS(target Target) (net.Conn, error)
+	DialTCP(ctx context.Context, target Target) (net.Conn, error)
+	DialTLS(ctx context.Context, target Target) (net.Conn, error)
 }
 
 type Target struct {
