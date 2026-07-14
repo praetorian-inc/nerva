@@ -335,11 +335,11 @@ func parseSOCKS5UDPPacket(packet []byte) (*net.UDPAddr, []byte, error) {
 		if len(packet) < i+domainLen {
 			return nil, nil, fmt.Errorf("truncated domain in SOCKS5 UDP header")
 		}
-		ips, err := net.LookupIP(string(packet[i : i+domainLen]))
-		if err != nil || len(ips) == 0 {
-			return nil, nil, fmt.Errorf("failed to resolve domain in SOCKS5 UDP header: %w", err)
-		}
-		ip = ips[0]
+		// Do not resolve the domain here: the only production caller
+		// (socks5UDPConn.Read) discards the address and only needs the
+		// payload. A blocking DNS lookup on the receive path would stall
+		// Read and, worse, cause valid datagrams to be silently dropped
+		// when the domain is only resolvable through the proxy (socks5h).
 		i += domainLen
 	default:
 		return nil, nil, fmt.Errorf("unsupported address type %d in SOCKS5 UDP header", atyp)
