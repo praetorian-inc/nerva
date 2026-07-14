@@ -25,7 +25,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"sync"
 	"time"
 
 	"golang.org/x/net/proxy"
@@ -50,7 +49,6 @@ type ProxyDialer struct {
 	timeout        time.Duration
 	dnsOrder       string
 	verbose        bool
-	udpWarnOnce    sync.Once
 	parsedProxyURL *url.URL
 	baseDialer     *net.Dialer
 }
@@ -234,35 +232,34 @@ func (pd *ProxyDialer) DialTLS(host string, port uint16, tlsConfig *tls.Config) 
 }
 
 // DialUDP dials a UDP connection through the proxy.
-// Note: UDP through SOCKS5 has limitations. A warning is logged once per ProxyDialer instance.
+//
+// HTTP/HTTPS proxies cannot relay UDP (they only tunnel TCP via CONNECT), so
+// this requires a socks5/socks5h proxy. Unlike DialTCP/DialTLS, this does not
+// go through golang.org/x/net/proxy: that package's SOCKS5 client only
+// implements the CONNECT command and rejects any non-TCP network before ever
+// contacting the proxy (see golang.org/x/net/internal/socks.validateTarget),
+// so it can never succeed here regardless of what the proxy supports.
+// dialSOCKS5UDP performs the UDP ASSOCIATE handshake directly instead.
 func (pd *ProxyDialer) DialUDP(host string, port uint16) (net.Conn, error) {
-	// Log UDP limitation warning once per instance
-	pd.udpWarnOnce.Do(func() {
-		if pd.verbose {
-			log.Println("Warning: UDP through SOCKS5 proxy has limited support. Not all SOCKS5 servers support UDP.")
-		}
-	})
-
 	addr := net.JoinHostPort(host, fmt.Sprintf("%d", port))
 
-	proxyDialer, err := proxy.FromURL(pd.parsedProxyURL, pd.baseDialer)
-	if err != nil {
-		// Sanitize proxy URL in error message to avoid credential leakage
-		return nil, fmt.Errorf("failed to create proxy dialer for %s: %w", sanitizeProxyURL(pd.proxyURL), err)
+	scheme := strings.ToLower(pd.parsedProxyURL.Scheme)
+	if scheme != "socks5" {
+		return nil, fmt.Errorf("UDP scanning requires a socks5 proxy, got scheme %q (HTTP/HTTPS proxies cannot relay UDP)", scheme)
 	}
 
-	var conn net.Conn
-	// Try ContextDialer first (supports UDP)
-	if cd, ok := proxyDialer.(proxy.ContextDialer); ok {
-		conn, err = cd.DialContext(context.Background(), "udp", addr)
-	} else {
-		conn, err = proxyDialer.Dial("udp", addr)
+	var user, pass string
+	if pd.parsedProxyURL.User != nil {
+		user = pd.parsedProxyURL.User.Username()
+		pass, _ = pd.parsedProxyURL.User.Password()
 	}
+
+	conn, err := dialSOCKS5UDP(context.Background(), pd.baseDialer, pd.parsedProxyURL.Host, user, pass, pd.timeout, addr)
 
 	if err != nil && pd.dnsOrder == "pl" && host != "" {
 		// Proxy dial failed, fallback to local resolution
 		if pd.verbose {
-			log.Printf("proxy dial failed, falling back to local DNS resolution for %s\n", addr)
+			log.Printf("proxy UDP ASSOCIATE failed (%v), falling back to local DNS resolution for %s\n", err, addr)
 		}
 		return resolveLocalFallback(host, port, "udp", pd.baseDialer)
 	}
