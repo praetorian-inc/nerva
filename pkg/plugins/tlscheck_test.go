@@ -307,19 +307,19 @@ func TestCheckWeakTLSVersion(t *testing.T) {
 		wantDescHint string
 	}{
 		{
-			name:         "TLS 1.0 produces High finding with BEAST reference",
+			name:         "TLS 1.0 produces Medium finding with BEAST reference",
 			version:      tls.VersionTLS10,
 			wantNil:      false,
 			wantID:       "tls-weak-version",
-			wantSeverity: SeverityHigh,
+			wantSeverity: SeverityMedium,
 			wantDescHint: "BEAST",
 		},
 		{
-			name:         "TLS 1.1 produces Medium finding with RFC 8996 reference",
+			name:         "TLS 1.1 produces Low finding with RFC 8996 reference",
 			version:      tls.VersionTLS11,
 			wantNil:      false,
 			wantID:       "tls-weak-version",
-			wantSeverity: SeverityMedium,
+			wantSeverity: SeverityLow,
 			wantDescHint: "RFC 8996",
 		},
 		{
@@ -379,8 +379,8 @@ func TestCheckExpiredCert(t *testing.T) {
 		if got.ID != "tls-certificate-expired" {
 			t.Errorf("finding.ID = %q, want %q", got.ID, "tls-certificate-expired")
 		}
-		if got.Severity != SeverityMedium {
-			t.Errorf("finding.Severity = %q, want %q", got.Severity, SeverityMedium)
+		if got.Severity != SeverityLow {
+			t.Errorf("finding.Severity = %q, want %q", got.Severity, SeverityLow)
 		}
 		if !strings.Contains(got.Evidence, "days_since_expiry") {
 			t.Errorf("finding.Evidence = %q, want it to contain %q", got.Evidence, "days_since_expiry")

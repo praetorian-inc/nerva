@@ -152,7 +152,7 @@ func (f *VaultFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fin
 	if !*health.Initialized {
 		result.SecurityFindings = []plugins.SecurityFinding{{
 			ID:          "vault-uninitialized",
-			Severity:    plugins.SeverityMedium,
+			Severity:    plugins.SeverityHigh,
 			Description: "Vault instance not initialized — can be claimed by first init request",
 			Evidence:    fmt.Sprintf("Vault %s reports initialized=false via /v1/sys/health", health.Version),
 		}}

@@ -47,7 +47,7 @@ func TestCheckMissingSecurityHeaders_AllMissing(t *testing.T) {
 
 	hsts := findFinding(findings, "http-missing-hsts")
 	assert.NotNil(t, hsts)
-	assert.Equal(t, plugins.SeverityMedium, hsts.Severity)
+	assert.Equal(t, plugins.SeverityLow, hsts.Severity)
 	assert.Equal(t, "header not present: Strict-Transport-Security", hsts.Evidence)
 
 	csp := findFinding(findings, "http-missing-csp")
@@ -650,8 +650,8 @@ func TestHTTPPlugin_CORSWildcardCredentials_Live(t *testing.T) {
 	if finding == nil {
 		t.Fatalf("expected http-cors-wildcard-credentials finding, got findings: %v", service.SecurityFindings)
 	}
-	if finding.Severity != plugins.SeverityMedium {
-		t.Errorf("http-cors-wildcard-credentials severity = %q, want %q", finding.Severity, plugins.SeverityMedium)
+	if finding.Severity != plugins.SeverityLow {
+		t.Errorf("http-cors-wildcard-credentials severity = %q, want %q", finding.Severity, plugins.SeverityLow)
 	}
 }
 

@@ -345,7 +345,7 @@ func checkMissingSecurityHeaders(headers http.Header, checkHSTS bool) []plugins.
 	if checkHSTS && headers.Get("Strict-Transport-Security") == "" {
 		findings = append(findings, plugins.SecurityFinding{
 			ID:          "http-missing-hsts",
-			Severity:    plugins.SeverityMedium,
+			Severity:    plugins.SeverityLow,
 			Description: "HTTP response missing Strict-Transport-Security header",
 			Evidence:    "header not present: Strict-Transport-Security",
 		})
@@ -381,7 +381,7 @@ func checkCORSWildcard(headers http.Header) *plugins.SecurityFinding {
 	if strings.EqualFold(headers.Get("Access-Control-Allow-Credentials"), "true") {
 		return &plugins.SecurityFinding{
 			ID:          "http-cors-wildcard-credentials",
-			Severity:    plugins.SeverityMedium,
+			Severity:    plugins.SeverityLow,
 			Description: "Server sends CORS wildcard with Access-Control-Allow-Credentials: true; browsers reject this combination per the Fetch spec, but it signals a server misconfiguration",
 			Evidence:    "Access-Control-Allow-Origin: * | Access-Control-Allow-Credentials: true",
 		}

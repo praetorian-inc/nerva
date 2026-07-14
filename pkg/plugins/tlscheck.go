@@ -83,14 +83,14 @@ func checkWeakTLSVersion(version uint16) *SecurityFinding {
 	case tls.VersionTLS10:
 		return &SecurityFinding{
 			ID:          "tls-weak-version",
-			Severity:    SeverityHigh,
+			Severity:    SeverityMedium,
 			Description: "Server negotiated TLS 1.0, which has known vulnerabilities (BEAST, POODLE)",
 			Evidence:    "negotiated_version=" + TLSVersionName(version),
 		}
 	case tls.VersionTLS11:
 		return &SecurityFinding{
 			ID:          "tls-weak-version",
-			Severity:    SeverityMedium,
+			Severity:    SeverityLow,
 			Description: "Server negotiated TLS 1.1, which is deprecated (RFC 8996)",
 			Evidence:    "negotiated_version=" + TLSVersionName(version),
 		}
@@ -107,7 +107,7 @@ func checkExpiredCert(cert *x509.Certificate) *SecurityFinding {
 	daysSince := int(now.Sub(cert.NotAfter).Hours() / 24)
 	return &SecurityFinding{
 		ID:          "tls-certificate-expired",
-		Severity:    SeverityMedium,
+		Severity:    SeverityLow,
 		Description: "TLS certificate has expired, indicating an abandoned or unmaintained service",
 		Evidence:    fmt.Sprintf("subject=%q, expired=%s, days_since_expiry=%d", cert.Subject.CommonName, cert.NotAfter.UTC().Format("2006-01-02"), daysSince),
 	}
