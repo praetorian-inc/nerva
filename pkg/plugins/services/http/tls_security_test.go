@@ -232,11 +232,11 @@ func TestCheckWeakTLS(t *testing.T) {
 		wantEvidHint string // substring expected in Evidence
 	}{
 		{
-			name:         "TLS 1.0 returns Medium finding",
+			name:         "TLS 1.0 returns Low finding",
 			version:      tls.VersionTLS10,
 			wantNil:      false,
 			wantID:       "tls-weak-version-10",
-			wantSeverity: plugins.SeverityMedium,
+			wantSeverity: plugins.SeverityLow,
 			wantDescHint: "BEAST",
 			wantEvidHint: "TLS 1.0",
 		},
@@ -341,7 +341,7 @@ func findSecurityFinding(service *plugins.Service, id string) *plugins.SecurityF
 }
 
 // TestHTTPSPlugin_WeakTLS10 verifies that HTTPSPlugin.Run() produces a
-// tls-weak-version-10 finding with severity Medium when the server negotiates TLS 1.0.
+// tls-weak-version-10 finding with severity Low when the server negotiates TLS 1.0.
 func TestHTTPSPlugin_WeakTLS10(t *testing.T) {
 	cert := generateSelfSignedCert(t)
 	service := runHTTPSPluginAgainstTLSServer(t, cert, tls.VersionTLS10, true)
@@ -354,8 +354,8 @@ func TestHTTPSPlugin_WeakTLS10(t *testing.T) {
 	if finding == nil {
 		t.Fatalf("expected tls-weak-version-10 finding in SecurityFindings, got: %v", service.SecurityFindings)
 	}
-	if finding.Severity != plugins.SeverityMedium {
-		t.Errorf("finding.Severity = %q, want %q", finding.Severity, plugins.SeverityMedium)
+	if finding.Severity != plugins.SeverityLow {
+		t.Errorf("finding.Severity = %q, want %q", finding.Severity, plugins.SeverityLow)
 	}
 	if !strings.Contains(finding.Evidence, "TLS 1.0") {
 		t.Errorf("finding.Evidence = %q, want it to contain %q", finding.Evidence, "TLS 1.0")
@@ -581,7 +581,6 @@ func TestHTTPSPlugin_WeakTLS_Live(t *testing.T) {
 		t.Skip("skipping docker test in short mode")
 	}
 
-	sevMedium := plugins.SeverityMedium
 	sevLow := plugins.SeverityLow
 
 	tests := []struct {
@@ -592,10 +591,10 @@ func TestHTTPSPlugin_WeakTLS_Live(t *testing.T) {
 		wantEvidence string
 	}{
 		{
-			name:         "TLS 1.0 returns Medium finding",
+			name:         "TLS 1.0 returns Low finding",
 			tlsFlag:      "-tls1",
 			tlsVersion:   tls.VersionTLS10,
-			wantSeverity: &sevMedium,
+			wantSeverity: &sevLow,
 			wantEvidence: "TLS 1.0",
 		},
 		{

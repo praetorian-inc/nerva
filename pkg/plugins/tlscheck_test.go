@@ -307,11 +307,11 @@ func TestCheckWeakTLSVersion(t *testing.T) {
 		wantDescHint string
 	}{
 		{
-			name:         "TLS 1.0 produces Medium finding with BEAST reference",
+			name:         "TLS 1.0 produces Low finding with BEAST reference",
 			version:      tls.VersionTLS10,
 			wantNil:      false,
 			wantID:       "tls-weak-version-10",
-			wantSeverity: SeverityMedium,
+			wantSeverity: SeverityLow,
 			wantDescHint: "BEAST",
 		},
 		{

@@ -98,7 +98,7 @@ var findingCatalog = map[string]FindingMeta{
 	// ── TLS findings ─────────────────────────────────────────────────────
 	"tls-weak-version-10": {
 		Title:          "TLS 1.0 Supported",
-		Severity:       SeverityMedium,
+		Severity:       SeverityLow,
 		Impact:         "TLS 1.0 has known cryptographic weaknesses (BEAST, POODLE) that can allow an attacker to decrypt traffic under specific conditions.",
 		Recommendation: "Disable TLS 1.0 and 1.1 on the server. Configure a minimum protocol version of TLS 1.2 with strong cipher suites.",
 		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:N/A:N",
