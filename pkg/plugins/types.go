@@ -57,6 +57,7 @@ type SecurityFinding struct {
 	Description    string   `json:"description"`
 	Impact         string   `json:"impact,omitempty"`
 	Recommendation string   `json:"recommendation,omitempty"`
+	CVSS           string   `json:"cvss,omitempty"`
 	Evidence       string   `json:"evidence,omitempty"`
 }
 

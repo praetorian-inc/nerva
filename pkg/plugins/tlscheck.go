@@ -82,14 +82,14 @@ func checkWeakTLSVersion(version uint16) *SecurityFinding {
 	switch version {
 	case tls.VersionTLS10:
 		return &SecurityFinding{
-			ID:          "tls-weak-version",
+			ID:          "tls-weak-version-10",
 			Severity:    SeverityMedium,
 			Description: "Server negotiated TLS 1.0, which has known vulnerabilities (BEAST, POODLE)",
 			Evidence:    "negotiated_version=" + TLSVersionName(version),
 		}
 	case tls.VersionTLS11:
 		return &SecurityFinding{
-			ID:          "tls-weak-version",
+			ID:          "tls-weak-version-11",
 			Severity:    SeverityLow,
 			Description: "Server negotiated TLS 1.1, which is deprecated (RFC 8996)",
 			Evidence:    "negotiated_version=" + TLSVersionName(version),

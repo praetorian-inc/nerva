@@ -143,7 +143,7 @@ func TestCheckCORSWildcard_WildcardWithCredentials(t *testing.T) {
 
 	assert.NotNil(t, finding)
 	assert.Equal(t, "http-cors-wildcard-credentials", finding.ID)
-	assert.Equal(t, plugins.SeverityMedium, finding.Severity)
+	assert.Equal(t, plugins.SeverityLow, finding.Severity)
 }
 
 func TestCheckCORSWildcard_WildcardWithCredentialsFalse(t *testing.T) {
@@ -381,7 +381,7 @@ func TestCheckCORSWildcard_WildcardWithCredentialsCaseInsensitive(t *testing.T) 
 
 	assert.NotNil(t, finding)
 	assert.Equal(t, "http-cors-wildcard-credentials", finding.ID)
-	assert.Equal(t, plugins.SeverityMedium, finding.Severity)
+	assert.Equal(t, plugins.SeverityLow, finding.Severity)
 }
 
 // ---------------------------------------------------------------------------

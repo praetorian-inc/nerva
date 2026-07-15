@@ -36,96 +36,100 @@ var findingCatalog = map[string]FindingMeta{
 		Severity:       SeverityLow,
 		Impact:         "Without HSTS, browsers may connect over plaintext HTTP, exposing session tokens and credentials to network attackers via protocol downgrade or man-in-the-middle attacks.",
 		Recommendation: "Configure the Strict-Transport-Security response header with a minimum max-age of 31536000 (one year) and include the includeSubDomains directive.",
-		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:U/C:L/VI:N/VA:N",
+		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:U/C:L/I:N/A:N",
 	},
 	"http-missing-csp": {
 		Title:          "Missing Content-Security-Policy",
 		Severity:       SeverityLow,
 		Impact:         "Without CSP, the application relies solely on output encoding to prevent cross-site scripting. A single encoding miss allows full XSS exploitation with no browser-level mitigation.",
 		Recommendation: "Deploy a Content-Security-Policy header that restricts script sources. Start with a report-only policy to identify violations before enforcing.",
-		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:U/C:L/VI:N/VA:N",
+		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:U/C:L/I:N/A:N",
 	},
 	"http-missing-x-frame-options": {
 		Title:          "Missing X-Frame-Options",
 		Severity:       SeverityLow,
 		Impact:         "Without framing protections, an attacker can embed the application in a malicious page and trick users into performing unintended actions via clickjacking.",
 		Recommendation: "Set the X-Frame-Options header to DENY or SAMEORIGIN. For modern browsers, also use the frame-ancestors directive in Content-Security-Policy.",
-		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:N/VI:L/VA:N",
+		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:N/I:L/A:N",
 	},
 	"http-cors-wildcard": {
 		Title:          "Permissive CORS Policy",
 		Severity:       SeverityMedium,
 		Impact:         "A wildcard Access-Control-Allow-Origin header allows any website to read cross-origin responses, potentially exposing sensitive data to unauthorized origins.",
 		Recommendation: "Replace the wildcard origin with an explicit allowlist of trusted origins. Validate the Origin header server-side before reflecting it.",
-		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:L/VI:N/VA:N",
+		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:L/I:N/A:N",
 	},
 	"http-cors-wildcard-credentials": {
 		Title:          "CORS Wildcard with Credentials Flag",
 		Severity:       SeverityLow,
 		Impact:         "The server returns Access-Control-Allow-Origin: * alongside Access-Control-Allow-Credentials: true. Browsers reject this combination per the Fetch specification, but it signals a server-side misconfiguration that may mask deeper CORS logic errors.",
 		Recommendation: "Remove the wildcard origin or the credentials flag. If credentialed cross-origin requests are needed, reflect a validated origin from an allowlist.",
-		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:U/C:N/VI:N/VA:N",
+		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:U/C:N/I:N/A:N",
 	},
 	"http-server-version": {
 		Title:          "Server Version Disclosure",
 		Severity:       SeverityInfo,
 		Impact:         "Exposing the server software and version in HTTP headers helps attackers fingerprint the technology stack and identify known vulnerabilities.",
 		Recommendation: "Configure the web server to suppress or genericize the Server header. For example, set server_tokens off in Nginx or ServerTokens Prod in Apache.",
-		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/VI:N/VA:N",
+		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:N",
 	},
 	"http-directory-listing": {
 		Title:          "Directory Listing Enabled",
 		Severity:       SeverityLow,
 		Impact:         "Auto-generated directory listings expose file names, directory structure, and potentially sensitive files such as configuration backups or source code.",
 		Recommendation: "Disable automatic directory listing in the web server configuration. Ensure sensitive files are not stored in web-accessible directories.",
-		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/VI:N/VA:N",
+		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N",
 	},
 	"http-cleartext": {
 		Title:          "Cleartext HTTP Service",
 		Severity:       SeverityLow,
 		Impact:         "Cleartext HTTP exposes all transmitted data, including credentials and session tokens, to passive network eavesdropping.",
 		Recommendation: "Enable TLS on all HTTP endpoints and redirect plaintext requests to HTTPS.",
-		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/VI:N/VA:N",
+		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N",
 	},
 	"http-cleartext-form": {
 		Title:          "Login Form Served Over Cleartext HTTP",
 		Severity:       SeverityMedium,
 		Impact:         "Credentials submitted through forms served over unencrypted HTTP are transmitted in plaintext, enabling network-level credential interception.",
 		Recommendation: "Serve all pages containing login or sensitive forms exclusively over HTTPS with HSTS.",
-		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:U/C:H/VI:N/VA:N",
+		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:U/C:H/I:N/A:N",
 	},
 
 	// ── TLS findings ─────────────────────────────────────────────────────
-	"tls-weak-version": {
-		// Catalog uses TLS 1.0 severity (medium) as default; TLS 1.1 findings
-		// have their severity set inline and the catalog will override to medium.
-		// Both are acceptable since the Enrich() always applies catalog severity.
-		Title:          "Weak TLS Version Supported",
+	"tls-weak-version-10": {
+		Title:          "TLS 1.0 Supported",
 		Severity:       SeverityMedium,
-		Impact:         "TLS 1.0 has known cryptographic weaknesses (BEAST, POODLE) that can allow an attacker to decrypt traffic under specific conditions. TLS 1.1 is deprecated per RFC 8996.",
+		Impact:         "TLS 1.0 has known cryptographic weaknesses (BEAST, POODLE) that can allow an attacker to decrypt traffic under specific conditions.",
 		Recommendation: "Disable TLS 1.0 and 1.1 on the server. Configure a minimum protocol version of TLS 1.2 with strong cipher suites.",
-		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/VI:N/VA:N",
+		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:N/A:N",
+	},
+	"tls-weak-version-11": {
+		Title:          "TLS 1.1 Supported",
+		Severity:       SeverityLow,
+		Impact:         "TLS 1.1 is deprecated per RFC 8996. While no practical attacks are widely exploited, continued support signals outdated configuration and may violate compliance requirements.",
+		Recommendation: "Disable TLS 1.1 and configure a minimum protocol version of TLS 1.2.",
+		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N",
 	},
 	"tls-certificate-expired": {
 		Title:          "Expired TLS Certificate",
 		Severity:       SeverityLow,
 		Impact:         "An expired TLS certificate causes browser trust warnings and may indicate an abandoned or unmaintained service. It does not directly enable decryption but degrades user trust and signals poor security hygiene.",
 		Recommendation: "Renew the TLS certificate and implement automated certificate management (e.g., ACME/Let's Encrypt) to prevent future expiration.",
-		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:U/C:N/VI:L/VA:N",
+		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:U/C:N/I:L/A:N",
 	},
 	"tls-self-signed": {
 		Title:          "Self-Signed TLS Certificate",
 		Severity:       SeverityInfo,
 		Impact:         "A self-signed certificate cannot be validated against a trusted CA, making it impossible for clients to verify the server's identity without manual trust configuration.",
 		Recommendation: "Replace self-signed certificates with certificates issued by a trusted Certificate Authority for production services.",
-		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:U/C:N/VI:N/VA:N",
+		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:U/C:N/I:N/A:N",
 	},
 	"tls-weak-key": {
 		Title:          "Weak TLS Certificate Key",
 		Severity:       SeverityMedium,
 		Impact:         "Cryptographic keys below recommended minimum sizes (RSA 2048, EC 256) may be factored or broken with current or near-future computing resources, compromising all traffic encrypted with the certificate.",
 		Recommendation: "Generate a new key pair meeting current NIST minimums: RSA 2048+ bits or ECDSA P-256+. Reissue the certificate with the new key.",
-		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/VI:N/VA:N",
+		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:N/A:N",
 	},
 
 	// ── SSH findings ─────────────────────────────────────────────────────
@@ -134,28 +138,28 @@ var findingCatalog = map[string]FindingMeta{
 		Severity:       SeverityLow,
 		Impact:         "Weak ciphers such as arcfour and 3des-cbc have known cryptographic weaknesses that could allow traffic decryption under certain conditions.",
 		Recommendation: "Remove weak ciphers from the SSH server configuration. Restrict to modern algorithms such as chacha20-poly1305 and aes256-gcm.",
-		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/VI:N/VA:N",
+		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N",
 	},
 	"ssh-weak-kex": {
 		Title:          "SSH Weak Key Exchange Algorithms",
 		Severity:       SeverityLow,
 		Impact:         "Weak key exchange algorithms like diffie-hellman-group1-sha1 use small group sizes vulnerable to precomputation attacks.",
 		Recommendation: "Configure the SSH server to use curve25519-sha256 or diffie-hellman-group16-sha512 as the preferred key exchange algorithms.",
-		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/VI:N/VA:N",
+		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N",
 	},
 	"ssh-weak-mac": {
 		Title:          "SSH Weak MAC Algorithms",
 		Severity:       SeverityLow,
 		Impact:         "Weak MAC algorithms such as hmac-md5 and hmac-sha1-96 have reduced collision resistance, potentially allowing message integrity bypass.",
 		Recommendation: "Restrict MAC algorithms to hmac-sha2-256-etm or hmac-sha2-512-etm.",
-		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:N/VI:L/VA:N",
+		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:N/I:L/A:N",
 	},
 	"ssh-password-auth": {
 		Title:          "SSH Password Authentication Enabled",
 		Severity:       SeverityLow,
 		Impact:         "Password authentication allows brute-force attacks against user accounts. Combined with weak or reused passwords, this can lead to unauthorized access.",
 		Recommendation: "Disable password authentication and enforce public key or certificate-based authentication in the SSH server configuration.",
-		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/VI:N/VA:N",
+		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N",
 	},
 
 	// ── SNMP ─────────────────────────────────────────────────────────────
@@ -164,7 +168,7 @@ var findingCatalog = map[string]FindingMeta{
 		Severity:       SeverityHigh,
 		Impact:         "The default 'public' community string provides unauthenticated read access to system information including hostnames, interfaces, routing tables, and installed software. Write-community access may also be available.",
 		Recommendation: "Change the SNMP community string to a non-default value. Migrate to SNMPv3 with authentication and encryption. Restrict SNMP access to management networks via firewall rules.",
-		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/VI:N/VA:N",
+		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N",
 	},
 
 	// ── FTP ──────────────────────────────────────────────────────────────
@@ -173,7 +177,7 @@ var findingCatalog = map[string]FindingMeta{
 		Severity:       SeverityLow,
 		Impact:         "FTP transmits all data including credentials in cleartext, enabling passive network eavesdropping of authentication material and file contents.",
 		Recommendation: "Replace FTP with SFTP or FTPS. If FTP must remain, restrict access to trusted networks and enforce strong credentials.",
-		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/VI:N/VA:N",
+		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N",
 	},
 
 	// ── Vault ────────────────────────────────────────────────────────────
@@ -182,14 +186,14 @@ var findingCatalog = map[string]FindingMeta{
 		Severity:       SeverityHigh,
 		Impact:         "An uninitialized Vault instance can be claimed by the first entity that sends an init request, granting full administrative control over the secrets engine.",
 		Recommendation: "Initialize the Vault instance immediately through a trusted administrative channel. Restrict network access to the Vault API during initialization.",
-		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/VI:H/VA:N",
+		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N",
 	},
 	"vault-unsealed-anonymous": {
 		Title:          "HashiCorp Vault Unsealed Without Authentication",
 		Severity:       SeverityCritical,
 		Impact:         "The Vault instance is unsealed and its health endpoint is accessible without authentication, indicating the secrets engine may be reachable by unauthenticated users.",
 		Recommendation: "Restrict network access to the Vault instance immediately. Review Vault ACL policies and audit logs for unauthorized access. Consider re-sealing and rotating all stored secrets.",
-		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/VI:H/VA:H",
+		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
 	},
 
 	// ── Database findings ────────────────────────────────────────────────
@@ -205,13 +209,13 @@ var findingCatalog = map[string]FindingMeta{
 		Impact:         "Unauthenticated access to MongoDB allows attackers to read, modify, or delete all databases and collections, potentially exfiltrating sensitive data.",
 		Recommendation: "Enable MongoDB authentication and authorization. Bind to localhost or trusted interfaces and enforce access controls via SCRAM or x.509 authentication.",
 	},
-	"postgresql-trust-auth": {
+	"postgresql-no-auth": {
 		Title:          "PostgreSQL Trust Authentication",
 		Severity:       SeverityHigh,
 		Impact:         "Trust authentication accepts all connections without credentials, granting full database access to any network-reachable client.",
 		Recommendation: "Replace trust authentication with scram-sha-256 in pg_hba.conf. Restrict listen addresses to trusted network interfaces.",
 	},
-	"mysql-empty-password": {
+	"mysql-no-auth": {
 		Title:          "MySQL Empty Root Password",
 		Severity:       SeverityHigh,
 		Impact:         "An empty root password allows any network-reachable client to gain full administrative access to all databases and stored data.",
@@ -251,31 +255,31 @@ var findingCatalog = map[string]FindingMeta{
 	},
 
 	// ── Container and orchestration ──────────────────────────────────────
-	"docker-api-unauthenticated": {
+	"docker-unauth-api": {
 		Title:          "Docker API Accessible Without Authentication",
 		Severity:       SeverityCritical,
 		Impact:         "An unauthenticated Docker API allows attackers to create privileged containers, mount the host filesystem, and achieve full host compromise.",
 		Recommendation: "Restrict Docker API access to Unix sockets or TLS-authenticated endpoints. Never expose the Docker API to untrusted networks without mTLS.",
 	},
-	"docker-registry-no-auth": {
-		Title:          "Docker Registry Accessible Without Authentication",
+	"docker-registry-unauthenticated-catalog": {
+		Title:          "Docker Registry Unauthenticated Catalog Access",
 		Severity:       SeverityHigh,
 		Impact:         "An unauthenticated Docker registry allows attackers to pull proprietary images, push malicious images, or overwrite existing tags with backdoored versions.",
 		Recommendation: "Enable authentication on the Docker registry. Use token-based authentication or integrate with an identity provider.",
 	},
-	"portainer-no-auth": {
-		Title:          "Portainer Accessible Without Authentication",
+	"portainer-setup-exposed": {
+		Title:          "Portainer Setup Wizard Exposed",
 		Severity:       SeverityCritical,
 		Impact:         "Unauthenticated Portainer access grants full container management capabilities, allowing attackers to deploy, modify, or destroy containers and access sensitive environment variables.",
 		Recommendation: "Configure Portainer with strong authentication immediately. Restrict network access to the management interface to trusted administrators.",
 	},
-	"jenkins-no-auth": {
-		Title:          "Jenkins Accessible Without Authentication",
+	"jenkins-script-console": {
+		Title:          "Jenkins Script Console Exposed",
 		Severity:       SeverityHigh,
 		Impact:         "Unauthenticated Jenkins access allows attackers to view build configurations, access credentials stored in Jenkins, and execute arbitrary code via build pipelines.",
 		Recommendation: "Enable Jenkins security and configure authentication. Disable anonymous read access and restrict script console access to administrators.",
 	},
-	"minio-default-credentials": {
+	"minio-exposed": {
 		Title:          "MinIO Default Credentials",
 		Severity:       SeverityCritical,
 		Impact:         "Default MinIO credentials (minioadmin:minioadmin) grant full administrative access to all buckets and stored objects, allowing data exfiltration or destruction.",
@@ -283,8 +287,8 @@ var findingCatalog = map[string]FindingMeta{
 	},
 
 	// ── Message queues and streaming ─────────────────────────────────────
-	"kafka-no-auth": {
-		Title:          "Kafka Accessible Without Authentication",
+	"kafka-no-sasl": {
+		Title:          "Kafka Without SASL Authentication",
 		Severity:       SeverityHigh,
 		Impact:         "Unauthenticated Kafka access allows attackers to consume messages, produce to topics, and enumerate cluster metadata, potentially exposing sensitive event data.",
 		Recommendation: "Enable SASL authentication and TLS encryption on Kafka brokers. Configure ACLs to restrict topic access to authorized clients.",
@@ -295,7 +299,13 @@ var findingCatalog = map[string]FindingMeta{
 		Impact:         "Unauthenticated NATS access allows attackers to subscribe to subjects, publish messages, and potentially disrupt message routing across the system.",
 		Recommendation: "Enable NATS authentication using tokens, NKeys, or credentials. Configure authorization rules to restrict subject access.",
 	},
-	"amqp-default-credentials": {
+	"nats-no-tls": {
+		Title:          "NATS Without TLS",
+		Severity:       SeverityLow,
+		Impact:         "NATS without TLS transmits messages and credentials in cleartext.",
+		Recommendation: "Enable TLS on the NATS server.",
+	},
+	"amqp-default-creds": {
 		Title:          "AMQP Default Credentials",
 		Severity:       SeverityHigh,
 		Impact:         "Default AMQP credentials (guest:guest) grant access to message queues, allowing attackers to consume, publish, or purge messages and access management APIs.",
@@ -309,15 +319,15 @@ var findingCatalog = map[string]FindingMeta{
 	},
 
 	// ── gRPC ─────────────────────────────────────────────────────────────
-	"grpc-reflection-enabled": {
-		Title:          "gRPC Reflection Enabled",
+	"grpc-reflection-exposed": {
+		Title:          "gRPC Reflection Exposed",
 		Severity:       SeverityInfo,
 		Impact:         "gRPC server reflection exposes the full service definition, including method signatures and message types, aiding reconnaissance of the API surface.",
 		Recommendation: "Disable gRPC reflection in production deployments. If reflection is needed for internal tooling, restrict access via network controls.",
 	},
 
 	// ── Remote access ────────────────────────────────────────────────────
-	"rdp-no-nla": {
+	"rdp-nla-disabled": {
 		Title:          "RDP Network Level Authentication Disabled",
 		Severity:       SeverityMedium,
 		Impact:         "Without NLA, an attacker can reach the RDP login screen without pre-authentication, enabling brute-force attacks and exposing the server to pre-authentication vulnerabilities.",
@@ -325,6 +335,12 @@ var findingCatalog = map[string]FindingMeta{
 	},
 	"rdp-deprecated-encryption": {
 		Title:          "RDP Deprecated Encryption",
+		Severity:       SeverityLow,
+		Impact:         "RDP Standard Security encryption uses RC4 with weak key derivation, which may allow traffic decryption under certain conditions.",
+		Recommendation: "Configure the RDP server to require Enhanced RDP Security (TLS/NLA) and disable Standard RDP Security encryption.",
+	},
+	"rdp-eol-os": {
+		Title:          "RDP End-of-Life Operating System",
 		Severity:       SeverityLow,
 		Impact:         "RDP Standard Security encryption uses RC4 with weak key derivation, which may allow traffic decryption under certain conditions.",
 		Recommendation: "Configure the RDP server to require Enhanced RDP Security (TLS/NLA) and disable Standard RDP Security encryption.",
@@ -341,8 +357,8 @@ var findingCatalog = map[string]FindingMeta{
 		Impact:         "Telnet transmits all data including credentials in cleartext, enabling passive network eavesdropping.",
 		Recommendation: "Replace Telnet with SSH for remote administration. Disable the Telnet service on all production systems.",
 	},
-	"x11-no-auth": {
-		Title:          "X11 Accessible Without Authentication",
+	"x11-unauth-access": {
+		Title:          "X11 Unauthenticated Access",
 		Severity:       SeverityHigh,
 		Impact:         "Unauthenticated X11 access allows attackers to capture keystrokes, take screenshots, and inject input events on the target display.",
 		Recommendation: "Disable X11 TCP listening or restrict access via xhost and MIT-MAGIC-COOKIE authentication. Use SSH X11 forwarding instead.",
@@ -359,27 +375,27 @@ var findingCatalog = map[string]FindingMeta{
 		Impact:         "An exposed AnyDesk service increases the attack surface for unauthorized remote access, especially if default or weak credentials are configured.",
 		Recommendation: "Restrict AnyDesk access to trusted networks. Configure strong passwords and enable two-factor authentication.",
 	},
-	"pptp-cleartext": {
+	"pptp-insecure": {
 		Title:          "PPTP VPN Service",
 		Severity:       SeverityMedium,
 		Impact:         "PPTP uses MS-CHAPv2 authentication, which has known weaknesses allowing offline credential recovery. The protocol's encryption can be broken in practice.",
 		Recommendation: "Replace PPTP with a modern VPN protocol such as IKEv2/IPsec, WireGuard, or OpenVPN. Disable PPTP on the server.",
 	},
-	"openvpn-mgmt-no-auth": {
-		Title:          "OpenVPN Management Interface Without Authentication",
+	"openvpn-management-exposed": {
+		Title:          "OpenVPN Management Interface Exposed",
 		Severity:       SeverityHigh,
 		Impact:         "An unauthenticated OpenVPN management interface allows attackers to disconnect clients, modify configurations, and potentially extract certificates or keys.",
 		Recommendation: "Restrict the OpenVPN management interface to localhost. If remote management is required, enable password authentication and use SSH tunneling.",
 	},
 
 	// ── Windows protocols ────────────────────────────────────────────────
-	"winrm-no-tls": {
-		Title:          "WinRM Without TLS",
+	"winrm-cleartext": {
+		Title:          "WinRM Cleartext Communication",
 		Severity:       SeverityMedium,
 		Impact:         "WinRM without TLS transmits authentication tokens and command output in cleartext, enabling credential interception by network attackers.",
 		Recommendation: "Configure WinRM to use HTTPS (port 5986) with a valid TLS certificate. Disable the HTTP listener (port 5985) in production.",
 	},
-	"winrm-basic-auth": {
+	"winrm-no-auth": {
 		Title:          "WinRM Basic Authentication Enabled",
 		Severity:       SeverityMedium,
 		Impact:         "Basic authentication sends credentials in base64 encoding (not encryption), making them trivially recoverable by network attackers without TLS.",
@@ -411,23 +427,23 @@ var findingCatalog = map[string]FindingMeta{
 	},
 
 	// ── Kerberos ─────────────────────────────────────────────────────────
-	"kerberos-rc4": {
-		Title:          "Kerberos RC4 Encryption Supported",
-		Severity:       SeverityLow,
-		Impact:         "RC4 (ARCFOUR) encryption in Kerberos is considered weak and enables Kerberoasting attacks with faster offline cracking of service account passwords.",
-		Recommendation: "Disable RC4 encryption for Kerberos. Configure AES128 and AES256 as the supported encryption types in Active Directory.",
-	},
-	"kerberos-des": {
-		Title:          "Kerberos DES Encryption Supported",
+	"kerberos-weak-etypes": {
+		Title:          "Kerberos Weak Encryption Types Supported",
 		Severity:       SeverityMedium,
-		Impact:         "DES encryption is cryptographically broken and can be cracked in near real-time, allowing ticket forgery and credential compromise.",
-		Recommendation: "Disable DES encryption for Kerberos. Configure AES128 and AES256 as the minimum encryption types.",
+		Impact:         "Weak encryption types (RC4, DES) in Kerberos enable Kerberoasting attacks with faster offline cracking and potential ticket forgery.",
+		Recommendation: "Disable RC4 and DES encryption for Kerberos. Configure AES128 and AES256 as the minimum supported encryption types in Active Directory.",
 	},
 	"kerberos-preauth-not-required": {
 		Title:          "Kerberos Pre-Authentication Not Required",
 		Severity:       SeverityHigh,
 		Impact:         "Accounts without pre-authentication required are vulnerable to AS-REP roasting, allowing offline brute-force of the account's password.",
 		Recommendation: "Enable Kerberos pre-authentication on all user accounts. Audit accounts with the DONT_REQUIRE_PREAUTH flag set.",
+	},
+	"kerberos-internet-exposed": {
+		Title:          "Kerberos Service Internet Exposed",
+		Severity:       SeverityMedium,
+		Impact:         "Kerberos exposed to the internet enables remote ticket attacks and domain enumeration.",
+		Recommendation: "Restrict Kerberos to internal networks. Block ports 88/464 at the perimeter.",
 	},
 
 	// ── Email protocols ──────────────────────────────────────────────────
@@ -455,6 +471,12 @@ var findingCatalog = map[string]FindingMeta{
 		Impact:         "The SMTP VRFY command allows attackers to enumerate valid email addresses on the server, aiding targeted phishing or brute-force attacks.",
 		Recommendation: "Disable the VRFY command in the SMTP server configuration to prevent user enumeration.",
 	},
+	"smtp-no-auth": {
+		Title:          "SMTP Accessible Without Authentication",
+		Severity:       SeverityHigh,
+		Impact:         "Unauthenticated SMTP access may allow mail relay or user enumeration.",
+		Recommendation: "Require SMTP authentication for all operations.",
+	},
 	"pop3-cleartext": {
 		Title:          "Cleartext POP3 Service",
 		Severity:       SeverityLow,
@@ -475,14 +497,14 @@ var findingCatalog = map[string]FindingMeta{
 		Impact:         "The Java Debug Wire Protocol allows unauthenticated remote code execution by attaching a debugger and invoking arbitrary methods.",
 		Recommendation: "Remove JDWP from production JVM arguments. If debugging is required, bind to localhost only and use SSH tunneling for remote access.",
 	},
-	"dify-debug-mode": {
-		Title:          "Dify Debug Mode Enabled",
+	"dify-setup-not-started": {
+		Title:          "Dify Setup Not Started",
 		Severity:       SeverityHigh,
 		Impact:         "Debug mode may expose detailed error messages, stack traces, and internal application state to unauthenticated users.",
 		Recommendation: "Disable debug mode in production by setting the appropriate environment variable. Ensure error details are not exposed to end users.",
 	},
-	"gradio-no-auth": {
-		Title:          "Gradio Interface Without Authentication",
+	"gradio-unauthenticated-interface": {
+		Title:          "Gradio Unauthenticated Interface",
 		Severity:       SeverityMedium,
 		Impact:         "An unauthenticated Gradio interface allows anyone to interact with the underlying ML model, potentially submitting malicious inputs or accessing sensitive outputs.",
 		Recommendation: "Enable Gradio authentication using the auth parameter. Restrict network access to the Gradio interface.",
@@ -501,22 +523,22 @@ var findingCatalog = map[string]FindingMeta{
 		Impact:         "IPMI cipher zero bypasses authentication entirely, allowing any network-reachable attacker to gain full administrative control of the BMC.",
 		Recommendation: "Disable cipher zero on the BMC. Update BMC firmware and restrict IPMI access to a dedicated management network.",
 	},
-	"ipmi-anonymous": {
-		Title:          "IPMI Anonymous Authentication",
+	"ipmi-anonymous-login": {
+		Title:          "IPMI Anonymous Login",
 		Severity:       SeverityHigh,
 		Impact:         "Anonymous IPMI authentication allows unauthenticated access to hardware management functions, including power control and console access.",
 		Recommendation: "Disable anonymous authentication on the BMC. Require strong credentials for all IPMI access.",
 	},
 
 	// ── ICS/SCADA protocols ──────────────────────────────────────────────
-	"s7comm-no-auth": {
-		Title:          "S7comm PLC Accessible Without Authentication",
+	"s7comm-no-protection": {
+		Title:          "S7comm PLC No Access Protection",
 		Severity:       SeverityHigh,
 		Impact:         "Unauthenticated S7comm access allows attackers to read and write PLC memory, start/stop the CPU, and alter industrial control processes.",
 		Recommendation: "Enable S7comm access protection at the highest practical level. Isolate PLCs on dedicated OT networks with firewall rules restricting access.",
 	},
-	"s7comm-auth-bypass": {
-		Title:          "S7comm PLC Authentication Bypass",
+	"s7comm-read-only": {
+		Title:          "S7comm PLC Read-Only Access",
 		Severity:       SeverityCritical,
 		Impact:         "A Siemens S7comm authentication bypass allows attackers to fully control the PLC regardless of configured access protection levels.",
 		Recommendation: "Apply firmware updates that address the authentication bypass. Isolate affected PLCs behind network segmentation and monitor for unauthorized access.",
@@ -539,50 +561,50 @@ var findingCatalog = map[string]FindingMeta{
 		Impact:         "Unauthenticated BACnet access allows attackers to read and modify building automation parameters such as HVAC setpoints, alarms, and access controls.",
 		Recommendation: "Isolate BACnet devices on a dedicated network segment. Deploy BACnet-aware firewalls and restrict access to authorized management stations.",
 	},
-	"opcua-no-auth": {
-		Title:          "OPC UA Accessible Without Authentication",
+	"opcua-no-security": {
+		Title:          "OPC UA No Security Configured",
 		Severity:       SeverityHigh,
 		Impact:         "Unauthenticated OPC UA access allows attackers to browse the address space, read process data, and potentially write to control variables.",
 		Recommendation: "Configure OPC UA servers to require authentication with Security Mode Sign or SignAndEncrypt. Disable the Anonymous user token policy.",
 	},
-	"opcua-security-none": {
-		Title:          "OPC UA Security Mode None",
+	"opcua-weak-security": {
+		Title:          "OPC UA Weak Security Mode",
 		Severity:       SeverityMedium,
 		Impact:         "OPC UA Security Mode None transmits all data without signing or encryption, enabling eavesdropping and message tampering.",
 		Recommendation: "Remove SecurityMode None from the OPC UA server endpoint configuration. Require Sign or SignAndEncrypt for all connections.",
 	},
 
 	// ── Version control ──────────────────────────────────────────────────
-	"svn-no-auth": {
-		Title:          "SVN Repository Accessible Without Authentication",
+	"svn-source-code-exposed": {
+		Title:          "SVN Source Code Exposed",
 		Severity:       SeverityHigh,
 		Impact:         "Unauthenticated SVN access allows attackers to checkout the full repository history, potentially exposing source code, credentials, and internal documentation.",
 		Recommendation: "Enable SVN authentication and restrict anonymous read access. Use svnserve with SASL or Apache mod_authz_svn for access control.",
 	},
-	"git-repo-exposed": {
-		Title:          "Git Repository Exposed",
+	"git-source-code-exposed": {
+		Title:          "Git Source Code Exposed",
 		Severity:       SeverityHigh,
 		Impact:         "An exposed Git repository allows attackers to clone the full commit history, potentially revealing source code, credentials, and sensitive configuration data.",
 		Recommendation: "Restrict access to the Git daemon or HTTP endpoint. Require authentication for repository access and audit for exposed .git directories.",
 	},
 
 	// ── Streaming ────────────────────────────────────────────────────────
-	"rtsp-no-auth": {
-		Title:          "RTSP Stream Accessible Without Authentication",
+	"rtsp-unauthenticated-stream": {
+		Title:          "RTSP Unauthenticated Stream",
 		Severity:       SeverityMedium,
 		Impact:         "Unauthenticated RTSP access allows attackers to view live camera feeds, potentially compromising physical security and privacy.",
 		Recommendation: "Enable authentication on the RTSP server. Restrict access to authorized clients and isolate cameras on a dedicated network segment.",
 	},
-	"rtmp-no-auth": {
-		Title:          "RTMP Stream Accessible Without Authentication",
+	"rtmp-unauthenticated-stream": {
+		Title:          "RTMP Unauthenticated Stream",
 		Severity:       SeverityMedium,
 		Impact:         "Unauthenticated RTMP access allows attackers to view or inject content into live media streams.",
 		Recommendation: "Enable authentication on the RTMP server. Restrict publishing and playback to authorized clients.",
 	},
 
 	// ── Miscellaneous services ───────────────────────────────────────────
-	"cups-exposed": {
-		Title:          "CUPS Printing Service Exposed",
+	"cups-remote-access": {
+		Title:          "CUPS Remote Access Enabled",
 		Severity:       SeverityLow,
 		Impact:         "An exposed CUPS service may allow remote print job submission or information disclosure about the print infrastructure.",
 		Recommendation: "Restrict CUPS web interface and IPP access to localhost or trusted networks. Configure access controls in cupsd.conf.",
@@ -593,13 +615,13 @@ var findingCatalog = map[string]FindingMeta{
 		Impact:         "Cleartext IRC transmits messages and authentication credentials without encryption, enabling passive interception.",
 		Recommendation: "Enable TLS on the IRC server and redirect plaintext connections. Require SASL authentication over TLS.",
 	},
-	"irc-no-auth": {
-		Title:          "IRC Server No Authentication Required",
+	"irc-unauthenticated": {
+		Title:          "IRC Server Unauthenticated Access",
 		Severity:       SeverityLow,
 		Impact:         "An IRC server without authentication allows anonymous participation, which may be exploited for command-and-control communication or spam.",
 		Recommendation: "Require SASL or NickServ authentication on the IRC server. Restrict connections to authorized users.",
 	},
-	"ntp-monlist-enabled": {
+	"ntp-monlist": {
 		Title:          "NTP Monlist Enabled",
 		Severity:       SeverityMedium,
 		Impact:         "The NTP monlist command can be abused for amplification DDoS attacks, as responses are significantly larger than requests.",
@@ -613,25 +635,25 @@ var findingCatalog = map[string]FindingMeta{
 	},
 
 	// ── LLM and AI services ─────────────────────────────────────────────
-	"ollama-no-auth": {
+	"ollama-unauthenticated-api": {
 		Title:          "Ollama LLM API Accessible Without Authentication",
 		Severity:       SeverityHigh,
 		Impact:         "Unauthenticated access to the Ollama API allows attackers to run LLM inference, consume GPU resources, and potentially extract model data or training artifacts.",
 		Recommendation: "Deploy Ollama behind an authenticating reverse proxy. Restrict API access to trusted networks and authorized clients.",
 	},
-	"open-webui-exposed": {
-		Title:          "Open WebUI Exposed",
+	"open-webui-unauthenticated-api": {
+		Title:          "Open WebUI Unauthenticated API",
 		Severity:       SeverityMedium,
 		Impact:         "An exposed Open WebUI instance may allow unauthenticated interaction with connected LLM backends, potentially consuming resources or accessing sensitive prompts.",
 		Recommendation: "Restrict Open WebUI access to trusted networks. Enable authentication and disable public access.",
 	},
-	"open-webui-signup-enabled": {
-		Title:          "Open WebUI Signup Enabled",
+	"open-webui-onboarding-exposed": {
+		Title:          "Open WebUI Onboarding Exposed",
 		Severity:       SeverityHigh,
 		Impact:         "Open self-registration allows anyone to create accounts and access connected LLM services, potentially consuming resources or accessing sensitive data.",
 		Recommendation: "Disable self-registration in Open WebUI settings. Use invite-only or LDAP/OIDC-based enrollment.",
 	},
-	"localai-no-auth": {
+	"localai-unauthenticated-api": {
 		Title:          "LocalAI API Accessible Without Authentication",
 		Severity:       SeverityHigh,
 		Impact:         "Unauthenticated LocalAI access allows attackers to run inference, consume GPU resources, and potentially access loaded models.",
@@ -643,7 +665,7 @@ var findingCatalog = map[string]FindingMeta{
 		Impact:         "Open self-registration allows anyone to create accounts and interact with configured LLM providers, potentially consuming API credits or accessing sensitive data.",
 		Recommendation: "Disable self-registration in LibreChat configuration. Restrict access to invited users or integrate with an identity provider.",
 	},
-	"librechat-no-auth": {
+	"librechat-unauthenticated": {
 		Title:          "LibreChat Accessible Without Authentication",
 		Severity:       SeverityHigh,
 		Impact:         "Unauthenticated LibreChat access allows anyone to interact with connected LLM providers, consuming API credits and potentially accessing conversation history.",
@@ -667,6 +689,9 @@ func (f *SecurityFinding) Enrich() {
 	}
 	if f.Recommendation == "" {
 		f.Recommendation = meta.Recommendation
+	}
+	if f.CVSS == "" && meta.CVSS != "" {
+		f.CVSS = meta.CVSS
 	}
 	// Apply catalog severity - the catalog is the authoritative source.
 	f.Severity = meta.Severity

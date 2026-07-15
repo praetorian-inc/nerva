@@ -310,7 +310,7 @@ func TestCheckWeakTLSVersion(t *testing.T) {
 			name:         "TLS 1.0 produces Medium finding with BEAST reference",
 			version:      tls.VersionTLS10,
 			wantNil:      false,
-			wantID:       "tls-weak-version",
+			wantID:       "tls-weak-version-10",
 			wantSeverity: SeverityMedium,
 			wantDescHint: "BEAST",
 		},
@@ -318,7 +318,7 @@ func TestCheckWeakTLSVersion(t *testing.T) {
 			name:         "TLS 1.1 produces Low finding with RFC 8996 reference",
 			version:      tls.VersionTLS11,
 			wantNil:      false,
-			wantID:       "tls-weak-version",
+			wantID:       "tls-weak-version-11",
 			wantSeverity: SeverityLow,
 			wantDescHint: "RFC 8996",
 		},
@@ -720,8 +720,8 @@ func TestCheckTLS_Integration(t *testing.T) {
 		for _, f := range findings {
 			ids[f.ID] = true
 		}
-		if !ids["tls-weak-version"] {
-			t.Errorf("expected tls-weak-version finding in: %+v", findings)
+		if !ids["tls-weak-version-10"] {
+			t.Errorf("expected tls-weak-version-10 finding in: %+v", findings)
 		}
 		if !ids["tls-self-signed"] {
 			t.Errorf("expected tls-self-signed finding in: %+v", findings)
@@ -742,8 +742,8 @@ func TestCheckTLS_Integration(t *testing.T) {
 		for _, f := range findings {
 			ids[f.ID] = true
 		}
-		if !ids["tls-weak-version"] {
-			t.Errorf("expected tls-weak-version finding in: %+v", findings)
+		if !ids["tls-weak-version-11"] {
+			t.Errorf("expected tls-weak-version-11 finding in: %+v", findings)
 		}
 		if !ids["tls-self-signed"] {
 			t.Errorf("expected tls-self-signed finding in: %+v", findings)

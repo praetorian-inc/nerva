@@ -371,8 +371,8 @@ func checkMissingSecurityHeaders(headers http.Header, checkHSTS bool) []plugins.
 }
 
 // checkCORSWildcard returns a SecurityFinding when Access-Control-Allow-Origin is set to "*".
-// Severity is elevated to Medium when Access-Control-Allow-Credentials is also "true",
-// since browsers reject this combination per the Fetch spec.
+// The credentials variant is Low since browsers reject the wildcard+credentials combination
+// per the Fetch spec; it signals a misconfiguration rather than an exploitable flaw.
 func checkCORSWildcard(headers http.Header) *plugins.SecurityFinding {
 	origin := headers.Get("Access-Control-Allow-Origin")
 	if origin != "*" {
