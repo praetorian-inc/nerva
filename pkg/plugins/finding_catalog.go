@@ -190,7 +190,7 @@ var findingCatalog = map[string]FindingMeta{
 	},
 	"vault-unsealed-anonymous": {
 		Title:          "HashiCorp Vault Unsealed Without Authentication",
-		Severity:       SeverityCritical,
+		Severity:       SeverityHigh,
 		Impact:         "The Vault instance is unsealed and its health endpoint is accessible without authentication, indicating the secrets engine may be reachable by unauthenticated users.",
 		Recommendation: "Restrict network access to the Vault instance immediately. Review Vault ACL policies and audit logs for unauthorized access. Consider re-sealing and rotating all stored secrets.",
 		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
@@ -257,7 +257,7 @@ var findingCatalog = map[string]FindingMeta{
 	// ── Container and orchestration ──────────────────────────────────────
 	"docker-unauth-api": {
 		Title:          "Docker API Accessible Without Authentication",
-		Severity:       SeverityCritical,
+		Severity:       SeverityHigh,
 		Impact:         "An unauthenticated Docker API allows attackers to create privileged containers, mount the host filesystem, and achieve full host compromise.",
 		Recommendation: "Restrict Docker API access to Unix sockets or TLS-authenticated endpoints. Never expose the Docker API to untrusted networks without mTLS.",
 	},
@@ -269,7 +269,7 @@ var findingCatalog = map[string]FindingMeta{
 	},
 	"portainer-setup-exposed": {
 		Title:          "Portainer Setup Wizard Exposed",
-		Severity:       SeverityCritical,
+		Severity:       SeverityHigh,
 		Impact:         "Unauthenticated Portainer access grants full container management capabilities, allowing attackers to deploy, modify, or destroy containers and access sensitive environment variables.",
 		Recommendation: "Configure Portainer with strong authentication immediately. Restrict network access to the management interface to trusted administrators.",
 	},
@@ -281,7 +281,7 @@ var findingCatalog = map[string]FindingMeta{
 	},
 	"minio-exposed": {
 		Title:          "MinIO Default Credentials",
-		Severity:       SeverityCritical,
+		Severity:       SeverityHigh,
 		Impact:         "Default MinIO credentials (minioadmin:minioadmin) grant full administrative access to all buckets and stored objects, allowing data exfiltration or destruction.",
 		Recommendation: "Change the default access key and secret key immediately. Use IAM policies to enforce least-privilege access to buckets.",
 	},
@@ -493,7 +493,7 @@ var findingCatalog = map[string]FindingMeta{
 	// ── Debug and management ─────────────────────────────────────────────
 	"jdwp-exposed": {
 		Title:          "JDWP Debug Port Exposed",
-		Severity:       SeverityCritical,
+		Severity:       SeverityHigh,
 		Impact:         "The Java Debug Wire Protocol allows unauthenticated remote code execution by attaching a debugger and invoking arbitrary methods.",
 		Recommendation: "Remove JDWP from production JVM arguments. If debugging is required, bind to localhost only and use SSH tunneling for remote access.",
 	},
@@ -519,7 +519,7 @@ var findingCatalog = map[string]FindingMeta{
 	},
 	"ipmi-cipher-zero": {
 		Title:          "IPMI Cipher Zero Enabled",
-		Severity:       SeverityCritical,
+		Severity:       SeverityHigh,
 		Impact:         "IPMI cipher zero bypasses authentication entirely, allowing any network-reachable attacker to gain full administrative control of the BMC.",
 		Recommendation: "Disable cipher zero on the BMC. Update BMC firmware and restrict IPMI access to a dedicated management network.",
 	},
@@ -539,7 +539,7 @@ var findingCatalog = map[string]FindingMeta{
 	},
 	"s7comm-read-only": {
 		Title:          "S7comm PLC Read-Only Access",
-		Severity:       SeverityCritical,
+		Severity:       SeverityHigh,
 		Impact:         "A Siemens S7comm authentication bypass allows attackers to fully control the PLC regardless of configured access protection levels.",
 		Recommendation: "Apply firmware updates that address the authentication bypass. Isolate affected PLCs behind network segmentation and monitor for unauthorized access.",
 	},
