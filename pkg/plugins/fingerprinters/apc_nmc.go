@@ -79,6 +79,11 @@ func (f *APCNMCFingerprinter) ProbeEndpoint() string {
 	return "/logon.htm"
 }
 
+// ProbeAccept returns the Accept header value to use for the probe request.
+func (f *APCNMCFingerprinter) ProbeAccept() string {
+	return "text/html"
+}
+
 // Match is a fast pre-filter. Accepts status 200-499 with a text/html
 // Content-Type (case-insensitive). Rejects 5xx server errors.
 func (f *APCNMCFingerprinter) Match(resp *http.Response) bool {
@@ -115,7 +120,7 @@ func (f *APCNMCFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fi
 	// the first value.
 	hasAPCCookie := false
 	for _, cookie := range resp.Header["Set-Cookie"] {
-		if strings.Contains(cookie, "C0=apc") {
+		if strings.Contains(strings.ToLower(cookie), "c0=apc") {
 			hasAPCCookie = true
 			break
 		}

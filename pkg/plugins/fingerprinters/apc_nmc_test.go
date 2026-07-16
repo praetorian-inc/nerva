@@ -151,6 +151,24 @@ func TestAPCNMCFingerprinter_Fingerprint_Valid(t *testing.T) {
 				`APC Management Web Server. This is an APC device.` +
 				`</body></html>`,
 		},
+		{
+			name:       "cookie corroborated with C0=apc in second Set-Cookie header",
+			statusCode: 200,
+			headers: http.Header{
+				"Content-Type": []string{"text/html"},
+				"Set-Cookie":   []string{"session=xyz123; path=/", "C0=apc; path=/"},
+			},
+			body: `<html><body>Welcome to the APC device management portal.</body></html>`,
+		},
+		{
+			name:       "cookie corroborated with uppercase C0=APC",
+			statusCode: 200,
+			headers: http.Header{
+				"Content-Type": []string{"text/html"},
+				"Set-Cookie":   []string{"C0=APC; path=/"},
+			},
+			body: `<html><body>Welcome to the APC device management portal.</body></html>`,
+		},
 	}
 
 	for _, tt := range tests {
