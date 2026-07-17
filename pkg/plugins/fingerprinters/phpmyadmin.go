@@ -54,7 +54,7 @@ shared across phpmyadmin.css.php, get_scripts.js.php, and messages.php:
 version number directly, but often still links the shared CSS asset, so
 version extraction can still succeed there.
 
-Extracted versions are validated against a strict `MAJOR.MINOR[.PATCH]`
+Extracted versions are validated against a strict `MAJOR.MINOR[.PATCH[.SUB]]`
 pattern and rejected if they contain CPE metacharacters (`:`, `*`, `?`).
 
 # CPE Format
@@ -86,11 +86,11 @@ var (
 	// also be followed by "&", a quote, whitespace, or end-of-string, so a
 	// trailing non-digit/dot suffix like "5.38abc" is rejected rather than
 	// silently truncated to "5.38".
-	phpMyAdminAssetVersionRegex = regexp.MustCompile(`(?:phpmyadmin\.css\.php|get_scripts\.js\.php|messages\.php)\?(?:[^"'\s]*&(?:amp;)?)?v=(\d+\.\d+(?:\.\d+)?)(?:[&"'\s]|$)`)
+	phpMyAdminAssetVersionRegex = regexp.MustCompile(`(?:phpmyadmin\.css\.php|get_scripts\.js\.php|messages\.php)\?(?:[^"'\s]*&(?:amp;)?)?v=(\d+\.\d+(?:\.\d+){0,2})(?:[&"'\s>]|$)`)
 
 	// phpMyAdminVersionRegex validates that an extracted version is safe to
-	// embed in a CPE. Accepts: "5.2", "5.2.1".
-	phpMyAdminVersionRegex = regexp.MustCompile(`^\d+\.\d+(?:\.\d+)?$`)
+	// embed in a CPE. Accepts: "5.2", "5.2.1", "4.9.0.1".
+	phpMyAdminVersionRegex = regexp.MustCompile(`^\d+\.\d+(?:\.\d+){0,2}$`)
 )
 
 // PhpMyAdminFingerprinter detects phpMyAdmin at the default /phpmyadmin/ path.

@@ -231,6 +231,33 @@ func TestPhpMyAdminFingerprinter_Fingerprint(t *testing.T) {
 			wantSource:  "asset_url",
 		},
 		{
+			name: "4-component version from asset URL",
+			body: `<html><head><title>phpMyAdmin</title>
+<link rel="stylesheet" href="phpmyadmin.css.php?v=4.9.0.1">
+</head><body></body></html>`,
+			wantVersion: "4.9.0.1",
+			wantCPE:     "cpe:2.3:a:phpmyadmin:phpmyadmin:4.9.0.1:*:*:*:*:*:*:*",
+			wantMethod:  "title",
+			wantSource:  "asset_url",
+		},
+		{
+			name: "asset URL in unquoted HTML attribute terminated by >",
+			body: `<html><head><title>phpMyAdmin</title>
+<link rel=stylesheet href=phpmyadmin.css.php?v=5.2.1>
+</head><body></body></html>`,
+			wantVersion: "5.2.1",
+			wantCPE:     "cpe:2.3:a:phpmyadmin:phpmyadmin:5.2.1:*:*:*:*:*:*:*",
+			wantMethod:  "title",
+			wantSource:  "asset_url",
+		},
+		{
+			name:        "5-component version rejected",
+			body:        `<html><head><title>phpMyAdmin</title><link href="messages.php?v=4.9.0.1.2"></head><body></body></html>`,
+			wantVersion: "",
+			wantCPE:     "cpe:2.3:a:phpmyadmin:phpmyadmin:*:*:*:*:*:*:*:*",
+			wantMethod:  "title",
+		},
+		{
 			name:        "version validation rejects invalid format",
 			body:        `<html><head><title>phpMyAdmin</title><link href="messages.php?v=notaversion"></head><body></body></html>`,
 			wantVersion: "",
@@ -385,6 +412,7 @@ func TestBuildPhpMyAdminCPE(t *testing.T) {
 		{name: "with version", version: "5.2.1", expected: "cpe:2.3:a:phpmyadmin:phpmyadmin:5.2.1:*:*:*:*:*:*:*"},
 		{name: "empty version → wildcard", version: "", expected: "cpe:2.3:a:phpmyadmin:phpmyadmin:*:*:*:*:*:*:*:*"},
 		{name: "two-component version", version: "5.2", expected: "cpe:2.3:a:phpmyadmin:phpmyadmin:5.2:*:*:*:*:*:*:*"},
+		{name: "four-component version", version: "4.9.0.1", expected: "cpe:2.3:a:phpmyadmin:phpmyadmin:4.9.0.1:*:*:*:*:*:*:*"},
 	}
 
 	for _, tt := range tests {
