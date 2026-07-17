@@ -83,6 +83,12 @@ func TestWebminFingerprinter_Match(t *testing.T) {
 			server:     "MiniServ/2.104",
 			want:       false,
 		},
+		{
+			name:       "Server MiniServProxy without text/html returns false",
+			statusCode: 200,
+			server:     "MiniServProxy/1.0",
+			want:       false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -240,6 +246,12 @@ func TestWebminFingerprinter_Fingerprint_Invalid(t *testing.T) {
 			server:     "MiniServ/2.104",
 			body:       webminLoginBody,
 		},
+		{
+			name:       "Server header MiniServProxy (prefix match, not MiniServ) rejected",
+			statusCode: 200,
+			server:     "MiniServProxy/1.0",
+			body:       `<html><body>Proxy landing page</body></html>`,
+		},
 	}
 
 	for _, tt := range tests {
@@ -327,6 +339,24 @@ func TestBuildWebminCPE(t *testing.T) {
 			name:    "webmin without version uses wildcard",
 			product: "webmin",
 			version: "",
+			want:    "cpe:2.3:a:webmin:webmin:*:*:*:*:*:*:*:*",
+		},
+		{
+			name:    "version containing colon uses wildcard",
+			product: "webmin",
+			version: "2.104:injected",
+			want:    "cpe:2.3:a:webmin:webmin:*:*:*:*:*:*:*:*",
+		},
+		{
+			name:    "version containing asterisk uses wildcard",
+			product: "webmin",
+			version: "2.104*",
+			want:    "cpe:2.3:a:webmin:webmin:*:*:*:*:*:*:*:*",
+		},
+		{
+			name:    "version containing question mark uses wildcard",
+			product: "webmin",
+			version: "2.10?",
 			want:    "cpe:2.3:a:webmin:webmin:*:*:*:*:*:*:*:*",
 		},
 	}

@@ -61,7 +61,7 @@ func init() {
 
 // webminServerPattern matches the MiniServ Server header value, case-insensitively.
 // Precompiled to avoid per-call allocation.
-var webminServerPattern = regexp.MustCompile(`(?i)^miniserv`)
+var webminServerPattern = regexp.MustCompile(`(?i)^miniserv\b`)
 
 // webminVersionPattern extracts the version from a Server header value.
 // Matches "MiniServ/2.104". Requires end-of-string or whitespace after the
@@ -174,7 +174,7 @@ func buildWebminResult(product, version, serverHeader string) *FingerprintResult
 // metacharacters (":", "*") in the version string.
 func buildWebminCPE(product, version string) string {
 	v := version
-	if v == "" || strings.ContainsAny(v, ":*") {
+	if v == "" || strings.ContainsAny(v, ":*?") {
 		v = "*"
 	}
 	return fmt.Sprintf("cpe:2.3:a:webmin:%s:%s:*:*:*:*:*:*:*", product, v)
