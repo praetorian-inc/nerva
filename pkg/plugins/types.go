@@ -158,6 +158,8 @@ const (
 	ProtoOpenVPN           = "openvpn"
 	ProtoOpenVPNManagement = "openvpn-management"
 	ProtoOracle            = "oracle"
+	ProtoOracleOAM         = "oracle_oam"
+	ProtoOracleOIM         = "oracle_oim"
 	ProtoPCOM              = "pcom"
 	ProtoPFCP              = "pfcp"
 	ProtoPinecone          = "pinecone"
@@ -462,6 +464,14 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoOracle:
 		var p ServiceOracle
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoOracleOAM:
+		var p ServiceOracleOAM
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoOracleOIM:
+		var p ServiceOracleOIM
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoOMRONFINS:
@@ -1498,6 +1508,20 @@ type ServiceOracle struct {
 }
 
 func (e ServiceOracle) Type() string { return ProtoOracle }
+
+type ServiceOracleOAM struct {
+	OpenSSO bool     `json:"opensso,omitempty"` // legacy 11g endpoint present
+	CPEs    []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceOracleOAM) Type() string { return ProtoOracleOAM }
+
+type ServiceOracleOIM struct {
+	Legacy bool     `json:"legacy,omitempty"` // 11g xlWebApp
+	CPEs   []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceOracleOIM) Type() string { return ProtoOracleOIM }
 
 type ServicePCOM struct {
 	Model     string   `json:"model,omitempty"`
