@@ -158,6 +158,7 @@ const (
 	ProtoOpenVPN           = "openvpn"
 	ProtoOpenVPNManagement = "openvpn-management"
 	ProtoOracle            = "oracle"
+	ProtoOracleORDS        = "oracle_ords"
 	ProtoPCOM              = "pcom"
 	ProtoPFCP              = "pfcp"
 	ProtoPinecone          = "pinecone"
@@ -462,6 +463,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoOracle:
 		var p ServiceOracle
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoOracleORDS:
+		var p ServiceOracleORDS
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoOMRONFINS:
@@ -1498,6 +1503,14 @@ type ServiceOracle struct {
 }
 
 func (e ServiceOracle) Type() string { return ProtoOracle }
+
+type ServiceOracleORDS struct {
+	APEX      bool     `json:"apex,omitempty"`
+	AICapable bool     `json:"ai_capable,omitempty"` // ORDS is the common carrier for Select AI / Vector Search / OML REST
+	CPEs      []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceOracleORDS) Type() string { return ProtoOracleORDS }
 
 type ServicePCOM struct {
 	Model     string   `json:"model,omitempty"`
