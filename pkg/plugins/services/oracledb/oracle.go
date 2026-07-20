@@ -308,42 +308,40 @@ func majorVersion(dotted string) int {
 	return n
 }
 
-// normalizeCPEVersion maps a decoded dotted Oracle version onto the form NVD
-// uses in its oracle:database CPEs, so that emitted CPEs actually match:
-//   - Modern releases (major >= 18) use a letter suffix: 18 -> "18c",
-//     19 -> "19c", 21 -> "21c", and 23 -> "23ai". A full dotted version like
-//     "19.0.0.0.0" would NOT match NVD.
-//   - Legacy releases strip trailing ".0" components (e.g. 12.1.0.2.0 ->
-//     "12.1.0.2", 11.2.0.4.0 -> "11.2.0.4").
-//
-// The full decoded version is preserved in the service Version/metadata field;
-// only the CPE version component is normalized here.
-func normalizeCPEVersion(version string) string {
+// canonicalizeCPEVersion canonicalizes a decoded dotted Oracle version into the
+// NUMERIC form used by NVD CVE applicability. CVE applicability keys off numeric
+// version RANGES (versionStartIncluding/versionEndExcluding), so the numeric
+// dotted version must be preserved: mapping to a named form like "19c" or "23ai"
+// would break range matching. Trailing all-zero components are trimmed down to a
+// four-component major.minor.patch.interim form so that, e.g., "12.1.0.2.0" ->
+// "12.1.0.2" and "19.0.0.0.0" -> "19.0.0.0". No letter suffixes are ever
+// produced. The full decoded version is preserved separately in the service
+// Version/metadata field.
+func canonicalizeCPEVersion(version string) string {
 	if version == "" {
 		return ""
 	}
-	major := majorVersion(version)
-	if major >= 18 {
-		if major == 23 {
-			return "23ai"
-		}
-		return fmt.Sprintf("%dc", major)
-	}
 	parts := strings.Split(version, ".")
-	for len(parts) > 1 && parts[len(parts)-1] == "0" {
+	for len(parts) > 4 && parts[len(parts)-1] == "0" {
 		parts = parts[:len(parts)-1]
 	}
 	return strings.Join(parts, ".")
 }
 
-// oracleCPE builds a CPE 2.3 string for the Oracle Database, using the
-// NVD-normalized version when known and a wildcard otherwise.
-func oracleCPE(version string) string {
-	v := normalizeCPEVersion(version)
+// oracleCPEs builds the CPE 2.3 strings for an Oracle Database instance. Real
+// Oracle DB CVEs key predominantly to the "database_server" product (521 CVEs on
+// NVD vs 66 on "database"), so CPEs are emitted on BOTH products to maximize CVE
+// matching. The numeric canonicalized version is used (so NVD numeric version
+// ranges match); a wildcard is used when the version is unknown.
+func oracleCPEs(version string) []string {
+	v := canonicalizeCPEVersion(version)
 	if v == "" {
 		v = "*"
 	}
-	return fmt.Sprintf("cpe:2.3:a:oracle:database:%s:*:*:*:*:*:*:*", v)
+	return []string{
+		fmt.Sprintf("cpe:2.3:a:oracle:database_server:%s:*:*:*:*:*:*:*", v),
+		fmt.Sprintf("cpe:2.3:a:oracle:database:%s:*:*:*:*:*:*:*", v),
+	}
 }
 
 // parseInfo builds the human-readable Info map from a TNS response. It is
@@ -409,7 +407,7 @@ func (p *ORACLEPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.
 	payload := plugins.ServiceOracle{
 		Info:    fmt.Sprintf("%s", parseInfo(response)),
 		Version: version,
-		CPEs:    []string{oracleCPE(version)},
+		CPEs:    oracleCPEs(version),
 	}
 	// Best-effort AI-capability inference. Modern listeners suppress VSNNUM so a
 	// version is usually unavailable; in practice this mainly fires on legacy
