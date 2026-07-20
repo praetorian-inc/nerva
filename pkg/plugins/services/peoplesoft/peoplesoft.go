@@ -47,7 +47,13 @@ Version (best-effort):
   version is parsed from the body via regex. Otherwise the version is "".
 
 CPE Format:
-  cpe:2.3:a:oracle:peoplesoft_enterprise:<ver-or-*>:*:*:*:*:*:*:*
+  The version parsed from /PSEMHUB/hub is a PeopleTools version, not a
+  PeopleSoft Enterprise application version, so it is not stamped onto the
+  application CPE. The plugin always emits:
+    cpe:2.3:a:oracle:peoplesoft_enterprise:*:*:*:*:*:*:*:*
+  and, when a PeopleTools version is found, additionally:
+    cpe:2.3:a:oracle:peoplesoft_enterprise_peopletools:<ver>:*:*:*:*:*:*:*
+  (the product NVD uses for PeopleTools CVEs).
 
 Default Ports:
   - 8000 is the classic PeopleSoft PIA HTTP port (PortPriority for the TCP variant)
@@ -110,13 +116,18 @@ func createHTTPClient(conn net.Conn, timeout time.Duration) *http.Client {
 	}
 }
 
-// doGet performs a GET request with the nerva User-Agent header.
-func doGet(client *http.Client, url string) (*http.Response, error) {
+// doGet performs a GET request with the nerva User-Agent header. When host is
+// non-empty it is set as the HTTP Host header so name-based virtual hosts are
+// reached (the connection is still dialed by IP via the client's transport).
+func doGet(client *http.Client, url string, host string) (*http.Response, error) {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("User-Agent", "nerva/1.0")
+	if host != "" {
+		req.Host = host
+	}
 	return client.Do(req)
 }
 
@@ -210,8 +221,8 @@ func evaluatePeopleSoft(evs []psEvidence) (title string, psToken bool, detected 
 
 // fetchPeopleToolsVersion issues a best-effort request to the PSEMHUB hub and
 // parses a PeopleTools version, returning "" when unavailable.
-func fetchPeopleToolsVersion(client *http.Client, baseURL string) string {
-	resp, err := doGet(client, baseURL+"/PSEMHUB/hub")
+func fetchPeopleToolsVersion(client *http.Client, baseURL string, host string) string {
+	resp, err := doGet(client, baseURL+"/PSEMHUB/hub", host)
 	if err != nil {
 		return ""
 	}
@@ -225,11 +236,11 @@ func fetchPeopleToolsVersion(client *http.Client, baseURL string) string {
 
 // detectPeopleSoft fetches the PeopleSoft probe paths and evaluates the
 // collected evidence, then best-effort resolves the PeopleTools version.
-func detectPeopleSoft(client *http.Client, baseURL string) (title string, psToken bool, version string, detected bool) {
+func detectPeopleSoft(client *http.Client, baseURL string, host string) (title string, psToken bool, version string, detected bool) {
 	paths := []string{"/", "/psp/ps/?cmd=login", "/psc/ps/"}
 	var evs []psEvidence
 	for _, p := range paths {
-		resp, err := doGet(client, baseURL+p)
+		resp, err := doGet(client, baseURL+p, host)
 		if err != nil {
 			// Non-fatal: continue with whatever other evidence we can gather.
 			continue
@@ -246,19 +257,25 @@ func detectPeopleSoft(client *http.Client, baseURL string) (title string, psToke
 
 	title, psToken, detected = evaluatePeopleSoft(evs)
 	if detected {
-		version = fetchPeopleToolsVersion(client, baseURL)
+		version = fetchPeopleToolsVersion(client, baseURL, host)
 	}
 	return title, psToken, version, detected
 }
 
-// buildPeopleSoftCPE returns the CPE for PeopleSoft Enterprise (version wildcard
-// when the exact PeopleTools version is not exposed).
-func buildPeopleSoftCPE(version string) string {
-	v := version
-	if v == "" {
-		v = "*"
+// buildPeopleSoftCPEs returns the CPE list for a detected PeopleSoft host.
+//
+// The version parsed from /PSEMHUB/hub is a PeopleTools version, NOT a
+// PeopleSoft Enterprise application version, so it must not be stamped onto the
+// peoplesoft_enterprise CPE. We therefore always emit the application CPE with a
+// wildcard version, and when a PeopleTools version is known we additionally emit
+// the peoplesoft_enterprise_peopletools CPE (the product NVD uses for
+// PeopleTools CVEs) carrying that version.
+func buildPeopleSoftCPEs(version string) []string {
+	cpes := []string{"cpe:2.3:a:oracle:peoplesoft_enterprise:*:*:*:*:*:*:*:*"}
+	if version != "" {
+		cpes = append(cpes, fmt.Sprintf("cpe:2.3:a:oracle:peoplesoft_enterprise_peopletools:%s:*:*:*:*:*:*:*", version))
 	}
-	return fmt.Sprintf("cpe:2.3:a:oracle:peoplesoft_enterprise:%s:*:*:*:*:*:*:*", v)
+	return cpes
 }
 
 func peopleSoftFinding() plugins.SecurityFinding {
@@ -274,14 +291,14 @@ func (p *PeopleSoftPlugin) Run(conn net.Conn, timeout time.Duration, target plug
 	client := createHTTPClient(conn, timeout)
 	baseURL := fmt.Sprintf("http://%s", conn.RemoteAddr().String())
 
-	_, psToken, version, detected := detectPeopleSoft(client, baseURL)
+	_, psToken, version, detected := detectPeopleSoft(client, baseURL, target.Host)
 	if !detected {
 		return nil, nil
 	}
 
 	payload := plugins.ServicePeopleSoft{
 		PSToken: psToken,
-		CPEs:    []string{buildPeopleSoftCPE(version)},
+		CPEs:    buildPeopleSoftCPEs(version),
 	}
 	service := plugins.CreateServiceFrom(target, payload, false, version, plugins.TCP)
 	if target.Misconfigs {
@@ -294,20 +311,20 @@ func (p *PeopleSoftPlugin) Run(conn net.Conn, timeout time.Duration, target plug
 func (p *PeopleSoftPlugin) PortPriority(port uint16) bool { return port == DefaultPeopleSoftPort }
 func (p *PeopleSoftPlugin) Name() string                  { return PeopleSoft }
 func (p *PeopleSoftPlugin) Type() plugins.Protocol        { return plugins.TCP }
-func (p *PeopleSoftPlugin) Priority() int                 { return 100 }
+func (p *PeopleSoftPlugin) Priority() int                 { return -1 } // Runs before generic HTTP so it can claim PeopleSoft on shared ports (e.g. 8000)
 
 func (p *PeopleSoftTLSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
 	client := createHTTPClient(conn, timeout)
 	baseURL := fmt.Sprintf("http://%s", conn.RemoteAddr().String())
 
-	_, psToken, version, detected := detectPeopleSoft(client, baseURL)
+	_, psToken, version, detected := detectPeopleSoft(client, baseURL, target.Host)
 	if !detected {
 		return nil, nil
 	}
 
 	payload := plugins.ServicePeopleSoft{
 		PSToken: psToken,
-		CPEs:    []string{buildPeopleSoftCPE(version)},
+		CPEs:    buildPeopleSoftCPEs(version),
 	}
 	service := plugins.CreateServiceFrom(target, payload, true, version, plugins.TCPTLS)
 	if target.Misconfigs {
@@ -321,4 +338,4 @@ func (p *PeopleSoftTLSPlugin) Run(conn net.Conn, timeout time.Duration, target p
 func (p *PeopleSoftTLSPlugin) PortPriority(port uint16) bool { return port == 443 }
 func (p *PeopleSoftTLSPlugin) Name() string                  { return PeopleSoft }
 func (p *PeopleSoftTLSPlugin) Type() plugins.Protocol        { return plugins.TCPTLS }
-func (p *PeopleSoftTLSPlugin) Priority() int                 { return 100 }
+func (p *PeopleSoftTLSPlugin) Priority() int                 { return -1 } // Runs before generic HTTPS so it can claim PeopleSoft on shared ports (e.g. 443)
