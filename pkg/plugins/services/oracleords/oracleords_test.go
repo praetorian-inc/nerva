@@ -164,99 +164,130 @@ func TestBuildORDSCPEs(t *testing.T) {
 
 func TestEvaluateORDS(t *testing.T) {
 	tests := []struct {
-		name            string
-		evidence        []ordsEvidence
-		expectedVersion string
-		expectedAPEX    bool
-		expectedDetect  bool
+		name              string
+		evidence          []ordsEvidence
+		expectedVersion   string
+		expectedAPEX      bool
+		expectedDetect    bool
+		expectedAnonymous bool
 	}{
 		{
 			name: "Server header with version",
 			evidence: []ordsEvidence{
 				{path: "/ords/", statusCode: http.StatusOK, server: "Oracle-REST-Data-Services/24.1.0"},
 			},
-			expectedVersion: "24.1.0",
-			expectedAPEX:    false,
-			expectedDetect:  true,
+			expectedVersion:   "24.1.0",
+			expectedAPEX:      false,
+			expectedDetect:    true,
+			expectedAnonymous: true,
 		},
 		{
 			name: "APEX header signal",
 			evidence: []ordsEvidence{
 				{path: "/", statusCode: http.StatusOK, hasAPEXHeader: true},
 			},
-			expectedVersion: "",
-			expectedAPEX:    true,
-			expectedDetect:  true,
+			expectedVersion:   "",
+			expectedAPEX:      true,
+			expectedDetect:    true,
+			expectedAnonymous: true,
 		},
 		{
 			name: "ORDS header signal",
 			evidence: []ordsEvidence{
 				{path: "/", statusCode: http.StatusOK, hasORDSHeader: true},
 			},
-			expectedVersion: "",
-			expectedAPEX:    false,
-			expectedDetect:  true,
+			expectedVersion:   "",
+			expectedAPEX:      false,
+			expectedDetect:    true,
+			expectedAnonymous: true,
 		},
 		{
 			name: "ords path with Jetty and non-404 status",
 			evidence: []ordsEvidence{
 				{path: "/ords/", statusCode: http.StatusOK, server: "Jetty(12.0.1)"},
 			},
-			expectedVersion: "",
-			expectedAPEX:    false,
-			expectedDetect:  true,
+			expectedVersion:   "",
+			expectedAPEX:      false,
+			expectedDetect:    true,
+			expectedAnonymous: true,
 		},
 		{
 			name: "ords path 404 with bare Jetty does not trigger",
 			evidence: []ordsEvidence{
 				{path: "/ords/", statusCode: http.StatusNotFound, server: "Jetty(12.0.1)"},
 			},
-			expectedVersion: "",
-			expectedAPEX:    false,
-			expectedDetect:  false,
+			expectedVersion:   "",
+			expectedAPEX:      false,
+			expectedDetect:    false,
+			expectedAnonymous: false,
 		},
 		{
 			name: "bare Jetty on root path does not trigger",
 			evidence: []ordsEvidence{
 				{path: "/", statusCode: http.StatusOK, server: "Jetty(12.0.1)"},
 			},
-			expectedVersion: "",
-			expectedAPEX:    false,
-			expectedDetect:  false,
+			expectedVersion:   "",
+			expectedAPEX:      false,
+			expectedDetect:    false,
+			expectedAnonymous: false,
 		},
 		{
 			name: "body APEX marker on root path does not flag APEX",
 			evidence: []ordsEvidence{
 				{path: "/", statusCode: http.StatusOK, server: "Oracle-REST-Data-Services/24.1.0", body: "apex resources at /i/"},
 			},
-			expectedVersion: "24.1.0",
-			expectedAPEX:    false,
-			expectedDetect:  true,
+			expectedVersion:   "24.1.0",
+			expectedAPEX:      false,
+			expectedDetect:    true,
+			expectedAnonymous: true,
 		},
 		{
 			name: "body APEX marker on /ords path flags APEX",
 			evidence: []ordsEvidence{
 				{path: "/ords/", statusCode: http.StatusOK, server: "Oracle-REST-Data-Services/24.1.0", body: "apex resources at /i/"},
 			},
-			expectedVersion: "24.1.0",
-			expectedAPEX:    true,
-			expectedDetect:  true,
+			expectedVersion:   "24.1.0",
+			expectedAPEX:      true,
+			expectedDetect:    true,
+			expectedAnonymous: true,
 		},
 		{
-			name:            "no evidence",
-			evidence:        []ordsEvidence{},
-			expectedVersion: "",
-			expectedAPEX:    false,
-			expectedDetect:  false,
+			name:              "no evidence",
+			evidence:          []ordsEvidence{},
+			expectedVersion:   "",
+			expectedAPEX:      false,
+			expectedDetect:    false,
+			expectedAnonymous: false,
+		},
+		{
+			name: "401 response carrying ORDS Server header is detected but not anonymous",
+			evidence: []ordsEvidence{
+				{path: "/ords/", statusCode: http.StatusUnauthorized, server: "Oracle-REST-Data-Services/24.1.0"},
+			},
+			expectedVersion:   "24.1.0",
+			expectedAPEX:      false,
+			expectedDetect:    true,
+			expectedAnonymous: false,
+		},
+		{
+			name: "403 response carrying ORDS/APEX headers is detected but not anonymous",
+			evidence: []ordsEvidence{
+				{path: "/", statusCode: http.StatusForbidden, hasORDSHeader: true},
+			},
+			expectedVersion:   "",
+			expectedAPEX:      false,
+			expectedDetect:    true,
+			expectedAnonymous: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			version, apex, detected := evaluateORDS(tt.evidence)
+			version, apex, detected, anonymous := evaluateORDS(tt.evidence)
 			assert.Equal(t, tt.expectedVersion, version)
 			assert.Equal(t, tt.expectedAPEX, apex)
 			assert.Equal(t, tt.expectedDetect, detected)
+			assert.Equal(t, tt.expectedAnonymous, anonymous)
 		})
 	}
 }
@@ -565,6 +596,44 @@ func TestORDSSecurityFindings(t *testing.T) {
 
 		require.NoError(t, err)
 		require.NotNil(t, service)
+
+		assert.False(t, service.AnonymousAccess)
+		assert.Empty(t, service.SecurityFindings)
+	})
+
+	t.Run("401 auth-challenge with ORDS evidence and Misconfigs=true yields no finding", func(t *testing.T) {
+		// ORDS is identified via the Server header, but the response is an
+		// auth challenge (401), so the surface is detected but must NOT be
+		// flagged as anonymously accessible, even with Misconfigs=true.
+		authChallengeHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Server", "Oracle-REST-Data-Services/24.1.0")
+			switch r.URL.Path {
+			case "/ords/":
+				w.WriteHeader(http.StatusUnauthorized)
+				fmt.Fprintf(w, "Authentication required")
+			default:
+				w.WriteHeader(http.StatusNotFound)
+			}
+		})
+		server := httptest.NewServer(authChallengeHandler)
+		defer server.Close()
+
+		addr := parseTestServerAddr(t, server.URL)
+		conn, err := net.DialTimeout("tcp", strings.TrimPrefix(server.URL, "http://"), 5*time.Second)
+		require.NoError(t, err)
+		defer conn.Close()
+
+		target := plugins.Target{
+			Host:       addr.Addr().String(),
+			Address:    addr,
+			Misconfigs: true,
+		}
+
+		plugin := &ORDSPlugin{}
+		service, err := plugin.Run(conn, 5*time.Second, target)
+
+		require.NoError(t, err)
+		require.NotNil(t, service, "ORDS should still be detected from the Server header")
 
 		assert.False(t, service.AnonymousAccess)
 		assert.Empty(t, service.SecurityFindings)
