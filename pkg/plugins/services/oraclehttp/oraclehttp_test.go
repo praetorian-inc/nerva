@@ -161,6 +161,16 @@ func TestParseOHSVersion(t *testing.T) {
 			expected: "7.0",
 		},
 		{
+			name:     "Oracle-Application-Server-11g generation-suffixed banner",
+			server:   "Oracle-Application-Server-11g/11.1.1.0.0 Oracle-HTTP-Server",
+			expected: "11.1.1.0.0",
+		},
+		{
+			name:     "Oracle-Application-Server-10g generation-suffixed banner",
+			server:   "Oracle-Application-Server-10g/9.0.4.0.0",
+			expected: "9.0.4.0.0",
+		},
+		{
 			name:     "version stripped from header",
 			server:   "Oracle-HTTP-Server",
 			expected: "",
@@ -313,6 +323,47 @@ func TestOHSPlugin_Run_PositiveOracleHTTPServer(t *testing.T) {
 	assert.Equal(t, "2.4.52", service.Version)
 	require.Len(t, ohsService.CPEs, 1)
 	assert.Equal(t, "cpe:2.3:a:oracle:http_server:2.4.52:*:*:*:*:*:*:*", ohsService.CPEs[0])
+}
+
+// TestOHSPlugin_Run_PositiveGenerationSuffixedOASBanner verifies the fix for
+// generation-suffixed Oracle Application Server banners (e.g.
+// "Oracle-Application-Server-11g/11.1.1.0.0"), which previously yielded no
+// version because the "-11g" suffix broke the version regex.
+func TestOHSPlugin_Run_PositiveGenerationSuffixedOASBanner(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Server", "Oracle-Application-Server-11g/11.1.1.0.0 Oracle-HTTP-Server")
+		switch r.URL.Path {
+		case "/":
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprintf(w, "hello")
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	addr := parseTestServerAddr(t, server.URL)
+	conn, err := net.DialTimeout("tcp", strings.TrimPrefix(server.URL, "http://"), 5*time.Second)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	target := plugins.Target{
+		Host:    addr.Addr().String(),
+		Address: addr,
+	}
+
+	plugin := &OHSPlugin{}
+	service, err := plugin.Run(conn, 5*time.Second, target)
+
+	require.NoError(t, err)
+	require.NotNil(t, service)
+
+	var ohsService plugins.ServiceOracleHTTPServer
+	err = json.Unmarshal(service.Raw, &ohsService)
+	require.NoError(t, err, "failed to unmarshal service payload")
+	assert.Equal(t, "11.1.1.0.0", service.Version)
+	require.Len(t, ohsService.CPEs, 1)
+	assert.Equal(t, "cpe:2.3:a:oracle:http_server:11.1.1.0.0:*:*:*:*:*:*:*", ohsService.CPEs[0])
 }
 
 func TestOHSPlugin_Run_PositiveIPlanet(t *testing.T) {
