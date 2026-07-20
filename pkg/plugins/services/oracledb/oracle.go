@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"math/big"
 	"net"
 	"regexp"
 	"strconv"
@@ -121,6 +120,23 @@ func checkForOracle(host string, port string) []byte {
 		"(DESCRIPTION=(CONNECT_DATA=(SERVICE_NAME=non-abc-existent-ser-vice-123-a-a-bc-asdf)(CID=(PROGRAM=sqlplus)" +
 			"(HOST=__jdbc__)(USER=)))(ADDRESS=(PROTOCOL=tcp)(HOST=" + host + ")(PORT=" + port + ")))",
 	)
+	return buildTNSConnect(connectData)
+}
+
+// versionQuery builds a TNS Connect packet whose CONNECT_DATA carries the
+// listener version command. It reuses the same Connect-packet construction as
+// checkForOracle; only the CONNECT_DATA payload differs.
+func versionQuery(host string, port string) []byte {
+	connectData := []byte(
+		"(DESCRIPTION=(CONNECT_DATA=(COMMAND=version))" +
+			"(ADDRESS=(PROTOCOL=tcp)(HOST=" + host + ")(PORT=" + port + ")))",
+	)
+	return buildTNSConnect(connectData)
+}
+
+// buildTNSConnect wraps the given CONNECT_DATA payload in the fixed TNS
+// Connect-packet header/body shared by every probe in this plugin.
+func buildTNSConnect(connectData []byte) []byte {
 	tnsHeaderPktLen := [2]byte{}
 	binary.BigEndian.PutUint16(tnsHeaderPktLen[:], uint16(len(connectData)+58))
 	tnsHeaderPktCkSm := [2]byte{0x00, 0x00} // This is left empty
@@ -215,16 +231,107 @@ func isOracleDBRunning(response []byte) bool {
 	return bytes.Index(response, beginPattern) > 0
 }
 
+// looksLikeOracleTNS is an additive detection heuristic for hardened 18c/19c+
+// listeners that suppress VSNNUM and reply with an error stack (or a version
+// banner) instead of the classic (DESCRIPTION=(TMP=)(VSNNUM= refuse packet that
+// isOracleDBRunning keys off of. It only ever broadens detection, so it cannot
+// regress the existing behavior.
+func looksLikeOracleTNS(response []byte) bool {
+	markers := [][]byte{
+		[]byte("VSNNUM="),
+		[]byte("(DESCRIPTION="),
+		[]byte("TNSLSNR"),
+		[]byte("ERROR_STACK"),
+		[]byte("(ERR="),
+	}
+	for _, m := range markers {
+		if bytes.Contains(response, m) {
+			return true
+		}
+	}
+	return false
+}
+
+var (
+	vsnnumRe        = regexp.MustCompile(`VSNNUM=(\d+)`)
+	errCodeRe       = regexp.MustCompile(`ERR=(\d+)`)
+	bannerVersionRe = regexp.MustCompile(`Version\s+(\d+(?:\.\d+)+)`)
+	dottedVersionRe = regexp.MustCompile(`(\d+\.\d+\.\d+(?:\.\d+)*)`)
+)
+
+// extractVSNNUM pulls the decimal VSNNUM field out of a TNS response, if present.
+func extractVSNNUM(response []byte) (uint32, bool) {
+	m := vsnnumRe.FindSubmatch(response)
+	if m == nil {
+		return 0, false
+	}
+	v, err := strconv.ParseUint(string(m[1]), 10, 32)
+	if err != nil || v == 0 {
+		return 0, false
+	}
+	return uint32(v), true
+}
+
+// decodeVSNNUM decodes the Oracle VSNNUM bitfield into dotted version form.
+// e.g. 318767104 -> "19.0.0.0.0", 202375680 -> "12.1.0.2.0". Returns "" for 0.
+func decodeVSNNUM(n uint32) string {
+	if n == 0 {
+		return ""
+	}
+	major := n >> 24
+	minor := (n >> 20) & 0x0F
+	patch := (n >> 12) & 0xFF
+	interim := (n >> 8) & 0x0F
+	release := n & 0xFF
+	return fmt.Sprintf("%d.%d.%d.%d.%d", major, minor, patch, interim, release)
+}
+
+// extractBannerVersion regexes a dotted version out of a listener banner such as
+// "TNSLSNR for Linux: Version 19.0.0.0.0" or "Oracle TNS Listener 11.2.0.x".
+func extractBannerVersion(response []byte) string {
+	if m := bannerVersionRe.FindSubmatch(response); m != nil {
+		return string(m[1])
+	}
+	if m := dottedVersionRe.FindSubmatch(response); m != nil {
+		return string(m[1])
+	}
+	return ""
+}
+
+// majorVersion returns the leading integer component of a dotted version string.
+func majorVersion(dotted string) int {
+	if dotted == "" {
+		return 0
+	}
+	n, _ := strconv.Atoi(strings.SplitN(dotted, ".", 2)[0])
+	return n
+}
+
+// oracleCPE builds a CPE 2.3 string for the Oracle Database, using the decoded
+// version when known and a wildcard otherwise.
+func oracleCPE(version string) string {
+	v := version
+	if v == "" {
+		v = "*"
+	}
+	return fmt.Sprintf("cpe:2.3:a:oracle:database:%s:*:*:*:*:*:*:*", v)
+}
+
+// parseInfo builds the human-readable Info map from a TNS response. It is
+// panic-safe: fields that are absent (e.g. on hardened listeners that suppress
+// VSNNUM) are simply omitted.
 func parseInfo(response []byte) map[string]any {
-	refuseData := response[12:]
-	code := regexp.MustCompile(`[0-9]+`).FindAllStringSubmatch(string(refuseData), 2)
-	VSNNum := code[0][0]
-	ErrCode := code[1][0]
-	VsNum, _ := strconv.Atoi(VSNNum)
-	version := big.NewInt(int64(VsNum)).Bytes()
-	split := strconv.FormatInt(int64(version[1]), 16)
-	versionStr := fmt.Sprintf("%d.%c.%c.%d.%d", version[0], split[0], split[1], version[2], version[3])
-	return map[string]any{"Oracle TNS Listener Version": versionStr, "VSNNUM": VSNNum, "ERROR_CODE": ErrCode}
+	info := map[string]any{}
+	if n, ok := extractVSNNUM(response); ok {
+		info["VSNNUM"] = strconv.FormatUint(uint64(n), 10)
+		if dotted := decodeVSNNUM(n); dotted != "" {
+			info["Oracle TNS Listener Version"] = dotted
+		}
+	}
+	if m := errCodeRe.FindSubmatch(response); m != nil {
+		info["ERROR_CODE"] = string(m[1])
+	}
+	return info
 }
 
 func (p *ORACLEPlugin) PortPriority(port uint16) bool {
@@ -251,14 +358,42 @@ func (p *ORACLEPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.
 		return nil, nil
 	}
 
-	if isOracleDBRunning(response) {
-		oracleInfo := fmt.Sprintf("%s", parseInfo(response))
-		payload := plugins.ServiceOracle{
-			Info: oracleInfo,
-		}
-		return plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP), nil
+	// Confirm it is an Oracle TNS listener. isOracleDBRunning is the original
+	// (unchanged) VSNNUM refuse-packet check; looksLikeOracleTNS additionally
+	// recognizes hardened 18c/19c+ listeners that reply with an error stack.
+	if !isOracleDBRunning(response) && !looksLikeOracleTNS(response) {
+		return nil, nil
 	}
-	return nil, nil
+
+	// Decode the version: prefer the VSNNUM bitfield, then a banner string.
+	version := ""
+	if n, ok := extractVSNNUM(response); ok {
+		version = decodeVSNNUM(n)
+	}
+	if version == "" {
+		version = extractBannerVersion(response)
+	}
+
+	// Graceful degradation: when VSNNUM is suppressed, make one best-effort
+	// COMMAND=version query for a human banner. Any failure (closed connection,
+	// TCPS/TLS-wrapped listener, timeout) is ignored so detection never regresses.
+	if version == "" {
+		if vResp, vErr := utils.SendRecv(conn, versionQuery(ip, port), timeout); vErr == nil && len(vResp) > 0 {
+			version = extractBannerVersion(vResp)
+		}
+	}
+
+	payload := plugins.ServiceOracle{
+		Info:    fmt.Sprintf("%s", parseInfo(response)),
+		Version: version,
+		CPEs:    []string{oracleCPE(version)},
+	}
+	if majorVersion(version) >= 23 {
+		payload.AICapable = true
+		payload.Note = "Oracle AI Database (23ai/26ai) - AI Vector Search / Select AI capable (inferred from version, not confirmed)"
+	}
+
+	return plugins.CreateServiceFrom(target, payload, false, version, plugins.TCP), nil
 }
 
 func (p *ORACLEPlugin) Priority() int {

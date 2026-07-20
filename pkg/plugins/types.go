@@ -1494,7 +1494,11 @@ type ServiceLwM2M struct {
 func (e ServiceLwM2M) Type() string { return ProtoLwM2M }
 
 type ServiceOracle struct {
-	Info string `json:"info"`
+	Info      string   `json:"info"`
+	Version   string   `json:"version,omitempty"`
+	AICapable bool     `json:"ai_capable,omitempty"` // major version >= 23 (Oracle AI Database 23ai/26ai)
+	Note      string   `json:"note,omitempty"`
+	CPEs      []string `json:"cpes,omitempty"`
 }
 
 func (e ServiceOracle) Type() string { return ProtoOracle }
