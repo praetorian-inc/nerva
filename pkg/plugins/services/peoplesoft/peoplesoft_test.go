@@ -207,27 +207,32 @@ func TestParsePeopleToolsVersion(t *testing.T) {
 	}
 }
 
-func TestBuildPeopleSoftCPE(t *testing.T) {
+func TestBuildPeopleSoftCPEs(t *testing.T) {
 	tests := []struct {
 		name     string
 		version  string
-		expected string
+		expected []string
 	}{
 		{
-			name:     "with version",
-			version:  "8.60.12",
-			expected: "cpe:2.3:a:oracle:peoplesoft_enterprise:8.60.12:*:*:*:*:*:*:*",
+			name:    "with PeopleTools version: app CPE stays wildcard, peopletools CPE carries version",
+			version: "8.60.12",
+			expected: []string{
+				"cpe:2.3:a:oracle:peoplesoft_enterprise:*:*:*:*:*:*:*:*",
+				"cpe:2.3:a:oracle:peoplesoft_enterprise_peopletools:8.60.12:*:*:*:*:*:*:*",
+			},
 		},
 		{
-			name:     "empty version",
-			version:  "",
-			expected: "cpe:2.3:a:oracle:peoplesoft_enterprise:*:*:*:*:*:*:*:*",
+			name:    "empty version: only the wildcard app CPE is emitted",
+			version: "",
+			expected: []string{
+				"cpe:2.3:a:oracle:peoplesoft_enterprise:*:*:*:*:*:*:*:*",
+			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := buildPeopleSoftCPE(tt.version)
+			result := buildPeopleSoftCPEs(tt.version)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
@@ -420,6 +425,44 @@ func TestPeopleSoftPlugin_Run_PositiveViaTitleOnly(t *testing.T) {
 	assert.Equal(t, "cpe:2.3:a:oracle:peoplesoft_enterprise:*:*:*:*:*:*:*:*", psService.CPEs[0])
 }
 
+func TestPeopleSoftPlugin_Run_PositiveWithPeopleToolsVersion(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/":
+			w.Header().Set("Content-Type", "text/html")
+			fmt.Fprintf(w, `<html><head><title>Oracle PeopleSoft Sign-in</title></head></html>`)
+		case "/PSEMHUB/hub":
+			fmt.Fprintf(w, "Registered Hosts Summary ... PeopleTools 8.60.12 ...")
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	addr := parseTestServerAddr(t, server.URL)
+	conn, err := net.DialTimeout("tcp", strings.TrimPrefix(server.URL, "http://"), 5*time.Second)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	target := plugins.Target{
+		Host:    addr.Addr().String(),
+		Address: addr,
+	}
+
+	plugin := &PeopleSoftPlugin{}
+	service, err := plugin.Run(conn, 5*time.Second, target)
+
+	require.NoError(t, err)
+	require.NotNil(t, service)
+
+	var psService plugins.ServicePeopleSoft
+	err = json.Unmarshal(service.Raw, &psService)
+	require.NoError(t, err, "failed to unmarshal service payload")
+	require.Len(t, psService.CPEs, 2)
+	assert.Contains(t, psService.CPEs, "cpe:2.3:a:oracle:peoplesoft_enterprise:*:*:*:*:*:*:*:*")
+	assert.Contains(t, psService.CPEs, "cpe:2.3:a:oracle:peoplesoft_enterprise_peopletools:8.60.12:*:*:*:*:*:*:*")
+}
+
 func TestPeopleSoftPlugin_Run_Negative(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -453,7 +496,7 @@ func TestPeopleSoftPlugin_Metadata(t *testing.T) {
 	plugin := &PeopleSoftPlugin{}
 	assert.Equal(t, PeopleSoft, plugin.Name())
 	assert.Equal(t, plugins.TCP, plugin.Type())
-	assert.Equal(t, 100, plugin.Priority())
+	assert.Equal(t, -1, plugin.Priority())
 	assert.True(t, plugin.PortPriority(8000))
 	assert.False(t, plugin.PortPriority(443))
 	assert.False(t, plugin.PortPriority(80))
@@ -498,7 +541,7 @@ func TestPeopleSoftTLSPlugin_Metadata(t *testing.T) {
 	plugin := &PeopleSoftTLSPlugin{}
 	assert.Equal(t, PeopleSoft, plugin.Name())
 	assert.Equal(t, plugins.TCPTLS, plugin.Type())
-	assert.Equal(t, 100, plugin.Priority())
+	assert.Equal(t, -1, plugin.Priority())
 	assert.True(t, plugin.PortPriority(443))
 	assert.False(t, plugin.PortPriority(8000))
 }
