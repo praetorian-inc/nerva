@@ -18,6 +18,7 @@ import (
 	"io"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -25,6 +26,12 @@ import (
 
 // TestAdminerFingerprinter_LiveDocker exercises AdminerFingerprinter against a
 // live Adminer 4.8.1 container.
+//
+// The Docker image adminer:4.8.1 serves the login page at "/" (not
+// /adminer.php), so this test probes "/" to get a real response body. The
+// path-based active probing (/adminer.php, /adminer/) is the engine's
+// responsibility, not the fingerprinter's; this test validates detection
+// logic against authentic Adminer HTML.
 //
 // Expects: docker run -d --name adminer-test -p 18080:8080 adminer:4.8.1
 func TestAdminerFingerprinter_LiveDocker(t *testing.T) {
@@ -34,7 +41,8 @@ func TestAdminerFingerprinter_LiveDocker(t *testing.T) {
 
 	baseURL := "http://localhost:18080"
 
-	resp, err := http.Get(baseURL + "/")
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(baseURL + "/")
 	if err != nil {
 		t.Skipf("Adminer not available at %s: %v", baseURL, err)
 	}

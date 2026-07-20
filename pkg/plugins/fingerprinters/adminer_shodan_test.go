@@ -172,10 +172,6 @@ var shodanVectors = []struct {
 // for real-world Adminer/AdminerEvo deployments. No Shodan API calls or
 // external network requests are made; all responses are embedded fixtures.
 func TestAdminerFingerprinter_ShodanVectors(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping Shodan validation vectors in short mode")
-	}
-
 	fp := &AdminerFingerprinter{}
 
 	for _, tt := range shodanVectors {
@@ -205,10 +201,6 @@ func TestAdminerFingerprinter_ShodanVectors(t *testing.T) {
 // Shodan-representative fixtures, since both fingerprinters call the shared
 // fingerprintAdminer logic.
 func TestAdminerDirFingerprinter_ShodanVectors(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping Shodan validation vectors in short mode")
-	}
-
 	fp := &AdminerDirFingerprinter{}
 
 	for _, tt := range shodanVectors {
