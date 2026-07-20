@@ -225,6 +225,24 @@ func TestEvaluateORDS(t *testing.T) {
 			expectedDetect:  false,
 		},
 		{
+			name: "body APEX marker on root path does not flag APEX",
+			evidence: []ordsEvidence{
+				{path: "/", statusCode: http.StatusOK, server: "Oracle-REST-Data-Services/24.1.0", body: "apex resources at /i/"},
+			},
+			expectedVersion: "24.1.0",
+			expectedAPEX:    false,
+			expectedDetect:  true,
+		},
+		{
+			name: "body APEX marker on /ords path flags APEX",
+			evidence: []ordsEvidence{
+				{path: "/ords/", statusCode: http.StatusOK, server: "Oracle-REST-Data-Services/24.1.0", body: "apex resources at /i/"},
+			},
+			expectedVersion: "24.1.0",
+			expectedAPEX:    true,
+			expectedDetect:  true,
+		},
+		{
 			name:            "no evidence",
 			evidence:        []ordsEvidence{},
 			expectedVersion: "",
@@ -327,6 +345,81 @@ func TestORDSPlugin_Run_PositiveViaAPEXHeader(t *testing.T) {
 	assert.Contains(t, ordsService.CPEs, "cpe:2.3:a:oracle:application_express:*:*:*:*:*:*:*:*")
 }
 
+func TestORDSPlugin_Run_RootBodyAPEXWordDoesNotFlagAPEX(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// ORDS is detected via the Server header; the root body happens to
+		// mention "apex"/"/i/" but that must NOT flag APEX since it is not
+		// served under an /ords-prefixed path.
+		w.Header().Set("Server", "Oracle-REST-Data-Services/24.1.0")
+		switch r.URL.Path {
+		case "/":
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprintf(w, `<html><body>see /i/ apex-unrelated content</body></html>`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	addr := parseTestServerAddr(t, server.URL)
+	conn, err := net.DialTimeout("tcp", strings.TrimPrefix(server.URL, "http://"), 5*time.Second)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	target := plugins.Target{
+		Host:    addr.Addr().String(),
+		Address: addr,
+	}
+
+	plugin := &ORDSPlugin{}
+	service, err := plugin.Run(conn, 5*time.Second, target)
+
+	require.NoError(t, err)
+	require.NotNil(t, service)
+
+	var ordsService plugins.ServiceOracleORDS
+	err = json.Unmarshal(service.Raw, &ordsService)
+	require.NoError(t, err, "failed to unmarshal service payload")
+	assert.False(t, ordsService.APEX)
+	assert.NotContains(t, ordsService.CPEs, "cpe:2.3:a:oracle:application_express:*:*:*:*:*:*:*:*")
+}
+
+func TestORDSPlugin_Run_OrdsPathBodyAPEXFlagsAPEX(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Server", "Oracle-REST-Data-Services/24.1.0")
+		switch r.URL.Path {
+		case "/ords/":
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprintf(w, `<html><body>APEX Application Builder f?p=100:1</body></html>`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	addr := parseTestServerAddr(t, server.URL)
+	conn, err := net.DialTimeout("tcp", strings.TrimPrefix(server.URL, "http://"), 5*time.Second)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	target := plugins.Target{
+		Host:    addr.Addr().String(),
+		Address: addr,
+	}
+
+	plugin := &ORDSPlugin{}
+	service, err := plugin.Run(conn, 5*time.Second, target)
+
+	require.NoError(t, err)
+	require.NotNil(t, service)
+
+	var ordsService plugins.ServiceOracleORDS
+	err = json.Unmarshal(service.Raw, &ordsService)
+	require.NoError(t, err, "failed to unmarshal service payload")
+	assert.True(t, ordsService.APEX)
+	assert.Contains(t, ordsService.CPEs, "cpe:2.3:a:oracle:application_express:*:*:*:*:*:*:*:*")
+}
+
 func TestORDSPlugin_Run_BareJettyDoesNotTrigger(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Server", "Jetty(12.0.1)")
@@ -362,7 +455,7 @@ func TestORDSPlugin_Metadata(t *testing.T) {
 	plugin := &ORDSPlugin{}
 	assert.Equal(t, OracleORDS, plugin.Name())
 	assert.Equal(t, plugins.TCP, plugin.Type())
-	assert.Equal(t, 100, plugin.Priority())
+	assert.Equal(t, -1, plugin.Priority())
 	assert.True(t, plugin.PortPriority(8080))
 	assert.False(t, plugin.PortPriority(8443))
 	assert.False(t, plugin.PortPriority(80))
@@ -408,7 +501,7 @@ func TestORDSTLSPlugin_Metadata(t *testing.T) {
 	plugin := &ORDSTLSPlugin{}
 	assert.Equal(t, OracleORDS, plugin.Name())
 	assert.Equal(t, plugins.TCPTLS, plugin.Type())
-	assert.Equal(t, 100, plugin.Priority())
+	assert.Equal(t, -1, plugin.Priority())
 	assert.True(t, plugin.PortPriority(8443))
 	assert.False(t, plugin.PortPriority(8080))
 }
