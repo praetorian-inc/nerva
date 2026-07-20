@@ -143,9 +143,9 @@ func TestHasOAMMarker(t *testing.T) {
 			expected: true,
 		},
 		{
-			name:     "contains /oam/ path",
+			name:     "bare /oam/ path alone is not a marker (self-referential probe path)",
 			s:        "/oam/pages/login.jsp",
-			expected: true,
+			expected: false,
 		},
 		{
 			name:     "contains obrareq token",
@@ -193,12 +193,20 @@ func TestEvaluateOAM(t *testing.T) {
 			expectedDetect:  true,
 		},
 		{
-			name: "obrareq.cgi redirect to OAM marker location",
+			name: "obrareq.cgi redirect to location carrying an Oracle Access Manager marker",
+			evidence: []oamEvidence{
+				{path: "/oam/server/obrareq.cgi", statusCode: http.StatusFound, location: "/access/login.jsp?realm=Oracle Access Manager"},
+			},
+			expectedOpenSSO: false,
+			expectedDetect:  true,
+		},
+		{
+			name: "obrareq.cgi redirect to a bare /oam/ location without a marker is not sufficient",
 			evidence: []oamEvidence{
 				{path: "/oam/server/obrareq.cgi", statusCode: http.StatusFound, location: "/oam/pages/login.jsp"},
 			},
 			expectedOpenSSO: false,
-			expectedDetect:  true,
+			expectedDetect:  false,
 		},
 		{
 			name: "obrareq.cgi 200 body with OAM marker",
@@ -363,9 +371,17 @@ func TestEvaluateOIM(t *testing.T) {
 			expectedDetect: true,
 		},
 		{
-			name: "governance path responds non-404",
+			name: "governance path responds non-404 without an Oracle marker does not trigger",
 			evidence: []oimEvidence{
 				{path: "/iam/governance/", statusCode: http.StatusOK, body: "governance console"},
+			},
+			expectedLegacy: false,
+			expectedDetect: false,
+		},
+		{
+			name: "governance path responds non-404 WITH an Oracle marker triggers",
+			evidence: []oimEvidence{
+				{path: "/iam/governance/", statusCode: http.StatusOK, body: `<html><head><title>System Administration</title></head></html>`},
 			},
 			expectedLegacy: false,
 			expectedDetect: true,
@@ -534,7 +550,7 @@ func TestOAMPlugin_Metadata(t *testing.T) {
 	plugin := &OAMPlugin{}
 	assert.Equal(t, OracleOAM, plugin.Name())
 	assert.Equal(t, plugins.TCP, plugin.Type())
-	assert.Equal(t, 100, plugin.Priority())
+	assert.Equal(t, -1, plugin.Priority())
 	assert.True(t, plugin.PortPriority(14100))
 	assert.False(t, plugin.PortPriority(443))
 	assert.False(t, plugin.PortPriority(80))
@@ -580,7 +596,7 @@ func TestOAMTLSPlugin_Metadata(t *testing.T) {
 	plugin := &OAMTLSPlugin{}
 	assert.Equal(t, OracleOAM, plugin.Name())
 	assert.Equal(t, plugins.TCPTLS, plugin.Type())
-	assert.Equal(t, 100, plugin.Priority())
+	assert.Equal(t, -1, plugin.Priority())
 	assert.True(t, plugin.PortPriority(443))
 	assert.False(t, plugin.PortPriority(14100))
 }
@@ -693,7 +709,7 @@ func TestOIMPlugin_Metadata(t *testing.T) {
 	plugin := &OIMPlugin{}
 	assert.Equal(t, OracleOIM, plugin.Name())
 	assert.Equal(t, plugins.TCP, plugin.Type())
-	assert.Equal(t, 100, plugin.Priority())
+	assert.Equal(t, -1, plugin.Priority())
 	assert.True(t, plugin.PortPriority(14000))
 	assert.False(t, plugin.PortPriority(443))
 	assert.False(t, plugin.PortPriority(80))
@@ -738,7 +754,7 @@ func TestOIMTLSPlugin_Metadata(t *testing.T) {
 	plugin := &OIMTLSPlugin{}
 	assert.Equal(t, OracleOIM, plugin.Name())
 	assert.Equal(t, plugins.TCPTLS, plugin.Type())
-	assert.Equal(t, 100, plugin.Priority())
+	assert.Equal(t, -1, plugin.Priority())
 	assert.True(t, plugin.PortPriority(443))
 	assert.False(t, plugin.PortPriority(14000))
 }
