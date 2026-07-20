@@ -132,14 +132,14 @@ func TestBodyHasPeopleSoftMarker(t *testing.T) {
 			expected: true,
 		},
 		{
-			name:     "contains /psp/ path reference",
+			name:     "bare /psp/ path reference is not a genuine marker",
 			body:     `<a href="/psp/ps/?cmd=login">Login</a>`,
-			expected: true,
+			expected: false,
 		},
 		{
-			name:     "contains /psc/ path reference",
+			name:     "bare /psc/ path reference is not a genuine marker",
 			body:     `<a href="/psc/ps/">Content</a>`,
-			expected: true,
+			expected: false,
 		},
 		{
 			name:     "contains PS_TOKEN reference",
@@ -490,6 +490,39 @@ func TestPeopleSoftPlugin_Run_Negative(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Nil(t, service)
+}
+
+// TestPeopleSoftPlugin_Run_PathReflectionDoesNotTrigger verifies the fix for
+// the false positive where a catch-all app that echoes the requested URL back
+// in a non-404 response body was misidentified as PeopleSoft merely because
+// the /psp/ and /psc/ path tokens (which the plugin itself probes) appeared in
+// the body. Without a genuine PeopleSoft marker (PeopleSoft/PeopleTools string
+// or PS_TOKEN) and without the PS_TOKEN cookie or sign-in title, Run must
+// return nil even though both /psp/ and /psc/ respond non-404.
+func TestPeopleSoftPlugin_Run_PathReflectionDoesNotTrigger(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Catch-all: echo the requested path back in the body for any path,
+		// with no PeopleSoft-specific marker and no PS_TOKEN cookie.
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintf(w, `<html><body>You requested: %s</body></html>`, r.URL.Path)
+	}))
+	defer server.Close()
+
+	addr := parseTestServerAddr(t, server.URL)
+	conn, err := net.DialTimeout("tcp", strings.TrimPrefix(server.URL, "http://"), 5*time.Second)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	target := plugins.Target{
+		Host:    addr.Addr().String(),
+		Address: addr,
+	}
+
+	plugin := &PeopleSoftPlugin{}
+	service, err := plugin.Run(conn, 5*time.Second, target)
+
+	require.NoError(t, err)
+	assert.Nil(t, service, "path-reflecting catch-all with no genuine PeopleSoft marker must not be detected as PeopleSoft")
 }
 
 func TestPeopleSoftPlugin_Metadata(t *testing.T) {
