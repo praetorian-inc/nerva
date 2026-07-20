@@ -151,6 +151,11 @@ func parseORDSVersion(server string) string {
 	return ""
 }
 
+// is2xx reports whether an HTTP status code indicates a successful response.
+func is2xx(statusCode int) bool {
+	return statusCode >= 200 && statusCode < 300
+}
+
 // bodyHasAPEX reports whether a response body carries APEX static/app references.
 func bodyHasAPEX(body string) bool {
 	if strings.Contains(strings.ToLower(body), "apex") {
@@ -160,12 +165,21 @@ func bodyHasAPEX(body string) bool {
 }
 
 // evaluateORDS inspects collected responses and decides whether the host is
-// ORDS, returning the parsed version and whether APEX is present.
-func evaluateORDS(evs []ordsEvidence) (version string, apex bool, detected bool) {
+// ORDS, returning the parsed version, whether APEX is present, whether ORDS was
+// detected, and whether the ORDS surface is anonymously accessible. anonymous is
+// true only when an ORDS-identifying response actually SUCCEEDED (2xx): a service
+// that is identified solely from an auth-challenge response (401/403 carrying an
+// ORDS Server header or ORDS headers) is detected but is NOT anonymous access.
+func evaluateORDS(evs []ordsEvidence) (version string, apex bool, detected bool, anonymous bool) {
 	for _, ev := range evs {
+		// ordsSignal tracks whether THIS response identified ORDS, so that the
+		// anonymous-access decision can be gated on its status code.
+		ordsSignal := false
+
 		// Strong signal: ORDS Server header (also yields version).
 		if strings.Contains(ev.server, "Oracle-REST-Data-Services") {
 			detected = true
+			ordsSignal = true
 			if v := parseORDSVersion(ev.server); v != "" && version == "" {
 				version = v
 			}
@@ -174,6 +188,7 @@ func evaluateORDS(evs []ordsEvidence) (version string, apex bool, detected bool)
 		// Strong signal: ORDS/APEX response headers.
 		if ev.hasORDSHeader || ev.hasAPEXHeader {
 			detected = true
+			ordsSignal = true
 		}
 
 		// Strong signal: /ords path responds (non-404) and looks like ORDS/APEX.
@@ -181,7 +196,15 @@ func evaluateORDS(evs []ordsEvidence) (version string, apex bool, detected bool)
 		if strings.HasPrefix(ev.path, "/ords") && ev.statusCode != http.StatusNotFound {
 			if strings.Contains(ev.server, "Jetty(") || bodyHasAPEX(ev.body) {
 				detected = true
+				ordsSignal = true
 			}
+		}
+
+		// Anonymous access requires an ORDS-identifying response that actually
+		// succeeded (2xx). An ORDS surface that only answers with an auth
+		// challenge (e.g. 401/403) is detected but not anonymously accessible.
+		if ordsSignal && is2xx(ev.statusCode) {
+			anonymous = true
 		}
 
 		// APEX flag. The header signal is authoritative and unconditional.
@@ -195,11 +218,11 @@ func evaluateORDS(evs []ordsEvidence) (version string, apex bool, detected bool)
 			apex = true
 		}
 	}
-	return version, apex, detected
+	return version, apex, detected, anonymous
 }
 
 // detectORDS fetches the ORDS probe paths and evaluates the collected evidence.
-func detectORDS(client *http.Client, baseURL string, host string) (version string, apex bool, detected bool) {
+func detectORDS(client *http.Client, baseURL string, host string) (version string, apex bool, detected bool, anonymous bool) {
 	paths := []string{"/ords/", "/ords/_/landing", "/"}
 	var evs []ordsEvidence
 	for _, p := range paths {
@@ -250,7 +273,7 @@ func (p *ORDSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 	client := createHTTPClient(conn, timeout)
 	baseURL := fmt.Sprintf("http://%s", conn.RemoteAddr().String())
 
-	version, apex, detected := detectORDS(client, baseURL, target.Host)
+	version, apex, detected, anonymous := detectORDS(client, baseURL, target.Host)
 	if !detected {
 		return nil, nil
 	}
@@ -263,7 +286,10 @@ func (p *ORDSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 		CPEs:      buildORDSCPEs(version, apex),
 	}
 	service := plugins.CreateServiceFrom(target, payload, false, version, plugins.TCP)
-	if target.Misconfigs {
+	// Only flag anonymous access / the exposure finding when ORDS actually served
+	// a successful (2xx) response; an auth-challenge-only surface is detected but
+	// is not anonymously accessible.
+	if target.Misconfigs && anonymous {
 		service.AnonymousAccess = true
 		service.SecurityFindings = append(service.SecurityFindings, ordsFinding())
 	}
@@ -279,7 +305,7 @@ func (p *ORDSTLSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins
 	client := createHTTPClient(conn, timeout)
 	baseURL := fmt.Sprintf("http://%s", conn.RemoteAddr().String())
 
-	version, apex, detected := detectORDS(client, baseURL, target.Host)
+	version, apex, detected, anonymous := detectORDS(client, baseURL, target.Host)
 	if !detected {
 		return nil, nil
 	}
@@ -291,8 +317,13 @@ func (p *ORDSTLSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins
 	}
 	service := plugins.CreateServiceFrom(target, payload, true, version, plugins.TCPTLS)
 	if target.Misconfigs {
-		service.AnonymousAccess = true
-		service.SecurityFindings = append(service.SecurityFindings, ordsFinding())
+		// Only flag anonymous access / the exposure finding on a successful (2xx)
+		// ORDS response; an auth-challenge-only surface is detected but not
+		// anonymously accessible. TLS findings are unrelated and always collected.
+		if anonymous {
+			service.AnonymousAccess = true
+			service.SecurityFindings = append(service.SecurityFindings, ordsFinding())
+		}
 		service.SecurityFindings = append(service.SecurityFindings, plugins.CheckTLS(conn)...)
 	}
 	return service, nil
