@@ -48,9 +48,14 @@ Version:
   Degrades to "" when the version has been stripped from the header.
 
 CPE Format:
-  cpe:2.3:a:oracle:http_server:<ver-or-*>:*:*:*:*:*:*:*
-  and, for the iPlanet / Sun / Netscape lineage, additionally:
-  cpe:2.3:a:oracle:iplanet_web_server:*:*:*:*:*:*:*:*
+  For Oracle HTTP Server / Oracle Application Server (the version is an
+  http_server version):
+    cpe:2.3:a:oracle:http_server:<ver-or-*>:*:*:*:*:*:*:*
+  For the iPlanet / Sun / Netscape lineage (the version belongs to the iPlanet
+  product, not http_server), the version is stamped onto iplanet_web_server and
+  the http_server CPE is left unversioned as a coarse family marker:
+    cpe:2.3:a:oracle:http_server:*:*:*:*:*:*:*:*
+    cpe:2.3:a:oracle:iplanet_web_server:<ver-or-*>:*:*:*:*:*:*:*
 
 Default Ports:
   - 7777 is the classic Oracle HTTP Server port (PortPriority for the TCP variant)
@@ -132,13 +137,18 @@ func createHTTPClient(conn net.Conn, timeout time.Duration) *http.Client {
 	}
 }
 
-// doGet performs a GET request with the nerva User-Agent header.
-func doGet(client *http.Client, url string) (*http.Response, error) {
+// doGet performs a GET request with the nerva User-Agent header. When host is
+// non-empty it is set as the HTTP Host header so name-based virtual hosts are
+// reached (the connection is still dialed by IP via the client's transport).
+func doGet(client *http.Client, url string, host string) (*http.Response, error) {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("User-Agent", "nerva/1.0")
+	if host != "" {
+		req.Host = host
+	}
 	return client.Do(req)
 }
 
@@ -183,40 +193,56 @@ func ohsVendor(server string) string {
 	return "Oracle"
 }
 
-// buildOHSCPEs returns the CPE list for Oracle HTTP Server (always) and the
-// iPlanet web server (for the iPlanet / Sun / Netscape lineage).
+// buildOHSCPEs returns the CPE list for a detected Oracle HTTP Server family host.
+//
+// The version token in a Server header belongs to the specific product named in
+// that header. For the iPlanet / Sun / Netscape lineage that product is
+// iplanet_web_server, NOT http_server, so the version must be stamped onto the
+// iplanet_web_server CPE and the http_server CPE is left unversioned (a coarse
+// family marker only). For an actual Oracle-HTTP-Server / Oracle-Application-
+// Server, the version is an http_server version and is stamped there.
 func buildOHSCPEs(version string, iplanet bool) []string {
 	v := version
 	if v == "" {
 		v = "*"
 	}
-	cpes := []string{fmt.Sprintf("cpe:2.3:a:oracle:http_server:%s:*:*:*:*:*:*:*", v)}
 	if iplanet {
-		cpes = append(cpes, "cpe:2.3:a:oracle:iplanet_web_server:*:*:*:*:*:*:*:*")
+		return []string{
+			"cpe:2.3:a:oracle:http_server:*:*:*:*:*:*:*:*",
+			fmt.Sprintf("cpe:2.3:a:oracle:iplanet_web_server:%s:*:*:*:*:*:*:*", v),
+		}
 	}
-	return cpes
+	return []string{fmt.Sprintf("cpe:2.3:a:oracle:http_server:%s:*:*:*:*:*:*:*", v)}
+}
+
+// isSuccessStatus reports whether an HTTP status code is a 2xx success.
+func isSuccessStatus(code int) bool {
+	return code >= 200 && code < 300
 }
 
 // detectOHS fetches "/" and inspects the Server header (and Fusion Middleware
 // DMS headers). Returns the raw Server header, parsed version, whether the host
 // is in the iPlanet lineage, whether Fusion Middleware DMS headers are present,
-// and whether the host was detected.
-func detectOHS(client *http.Client, baseURL string) (server string, version string, iplanet bool, fusion bool, detected bool) {
-	resp, err := doGet(client, baseURL+"/")
+// the root response status code, and whether the host was detected. Detection
+// works on any status; the status code is threaded out so callers can gate
+// anonymous-access reporting on a 2xx response.
+func detectOHS(client *http.Client, baseURL string, host string) (server string, version string, iplanet bool, fusion bool, statusCode int, detected bool) {
+	resp, err := doGet(client, baseURL+"/", host)
 	if err != nil {
-		return "", "", false, false, false
+		return "", "", false, false, 0, false
 	}
 	defer func() { _ = resp.Body.Close() }()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseSize))
 
+	statusCode = resp.StatusCode
 	server = resp.Header.Get("Server")
 	fusion = resp.Header.Get("X-ORACLE-DMS-ECID") != "" || resp.Header.Get("X-ORACLE-DMS-RID") != ""
 	if !matchesOHSServer(server) {
-		return server, "", false, fusion, false
+		return server, "", false, fusion, statusCode, false
 	}
 	version = parseOHSVersion(server)
 	iplanet = isIPlanetLineage(server)
-	return server, version, iplanet, fusion, true
+	return server, version, iplanet, fusion, statusCode, true
 }
 
 func ohsFinding() plugins.SecurityFinding {
@@ -232,7 +258,7 @@ func (p *OHSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 	client := createHTTPClient(conn, timeout)
 	baseURL := fmt.Sprintf("http://%s", conn.RemoteAddr().String())
 
-	server, version, iplanet, fusion, detected := detectOHS(client, baseURL)
+	server, version, iplanet, fusion, statusCode, detected := detectOHS(client, baseURL, target.Host)
 	if !detected {
 		return nil, nil
 	}
@@ -244,7 +270,9 @@ func (p *OHSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 		CPEs:             buildOHSCPEs(version, iplanet),
 	}
 	service := plugins.CreateServiceFrom(target, payload, false, version, plugins.TCP)
-	if target.Misconfigs {
+	// A Server header on a 401/403 is not anonymous access: only report
+	// anonymous access / the finding when the root response is a 2xx success.
+	if target.Misconfigs && isSuccessStatus(statusCode) {
 		service.AnonymousAccess = true
 		service.SecurityFindings = append(service.SecurityFindings, ohsFinding())
 	}
@@ -254,13 +282,13 @@ func (p *OHSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 func (p *OHSPlugin) PortPriority(port uint16) bool { return port == DefaultOHSPort }
 func (p *OHSPlugin) Name() string                  { return OracleHTTPServer }
 func (p *OHSPlugin) Type() plugins.Protocol        { return plugins.TCP }
-func (p *OHSPlugin) Priority() int                 { return 100 }
+func (p *OHSPlugin) Priority() int                 { return -1 } // Runs before generic HTTP so it can claim OHS on shared ports
 
 func (p *OHSTLSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
 	client := createHTTPClient(conn, timeout)
 	baseURL := fmt.Sprintf("http://%s", conn.RemoteAddr().String())
 
-	server, version, iplanet, fusion, detected := detectOHS(client, baseURL)
+	server, version, iplanet, fusion, statusCode, detected := detectOHS(client, baseURL, target.Host)
 	if !detected {
 		return nil, nil
 	}
@@ -273,8 +301,12 @@ func (p *OHSTLSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.
 	}
 	service := plugins.CreateServiceFrom(target, payload, true, version, plugins.TCPTLS)
 	if target.Misconfigs {
-		service.AnonymousAccess = true
-		service.SecurityFindings = append(service.SecurityFindings, ohsFinding())
+		// A Server header on a 401/403 is not anonymous access: only report
+		// anonymous access / the finding when the root response is a 2xx success.
+		if isSuccessStatus(statusCode) {
+			service.AnonymousAccess = true
+			service.SecurityFindings = append(service.SecurityFindings, ohsFinding())
+		}
 		service.SecurityFindings = append(service.SecurityFindings, plugins.CheckTLS(conn)...)
 	}
 	return service, nil
@@ -286,4 +318,4 @@ func (p *OHSTLSPlugin) PortPriority(port uint16) bool {
 }
 func (p *OHSTLSPlugin) Name() string           { return OracleHTTPServer }
 func (p *OHSTLSPlugin) Type() plugins.Protocol { return plugins.TCPTLS }
-func (p *OHSTLSPlugin) Priority() int          { return 100 }
+func (p *OHSTLSPlugin) Priority() int          { return -1 } // Runs before generic HTTPS so it can claim OHS on shared ports (e.g. 443)
