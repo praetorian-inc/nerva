@@ -115,7 +115,7 @@ func TestEvaluateEBS(t *testing.T) {
 			},
 			expectedTitle:   "",
 			expectedRelease: "",
-			expectedDetect:  true,
+			expectedDetect:  false,
 		},
 		{
 			name: "redirect Location to AppsLogin",
@@ -308,7 +308,7 @@ func TestEBSPlugin_Metadata(t *testing.T) {
 	plugin := &EBSPlugin{}
 	assert.Equal(t, OracleEBS, plugin.Name())
 	assert.Equal(t, plugins.TCP, plugin.Type())
-	assert.Equal(t, 100, plugin.Priority())
+	assert.Equal(t, -1, plugin.Priority())
 	assert.True(t, plugin.PortPriority(8000))
 	assert.False(t, plugin.PortPriority(443))
 	assert.False(t, plugin.PortPriority(80))
@@ -353,7 +353,7 @@ func TestEBSTLSPlugin_Metadata(t *testing.T) {
 	plugin := &EBSTLSPlugin{}
 	assert.Equal(t, OracleEBS, plugin.Name())
 	assert.Equal(t, plugins.TCPTLS, plugin.Type())
-	assert.Equal(t, 100, plugin.Priority())
+	assert.Equal(t, -1, plugin.Priority())
 	assert.True(t, plugin.PortPriority(443))
 	assert.False(t, plugin.PortPriority(8000))
 }
@@ -369,7 +369,7 @@ func TestEBSSecurityFindings(t *testing.T) {
 		}
 	})
 
-	t.Run("with Misconfigs=true yields AnonymousAccess and finding", func(t *testing.T) {
+	t.Run("with Misconfigs=true yields finding but no AnonymousAccess", func(t *testing.T) {
 		server := httptest.NewServer(handler)
 		defer server.Close()
 
@@ -390,7 +390,8 @@ func TestEBSSecurityFindings(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, service)
 
-		assert.True(t, service.AnonymousAccess)
+		// A reachable login page is not anonymous access; only the finding is set.
+		assert.False(t, service.AnonymousAccess)
 		require.Len(t, service.SecurityFindings, 1)
 		assert.Equal(t, "oracle-ebs-login-exposed", service.SecurityFindings[0].ID)
 		assert.Equal(t, plugins.SeverityLow, service.SecurityFindings[0].Severity)
