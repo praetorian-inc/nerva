@@ -45,6 +45,8 @@ Fields:
 
 Version:
   Parsed from the Server token (e.g. "Oracle-HTTP-Server/2.4.52" → "2.4.52").
+  Generation-suffixed Oracle Application Server banners are supported too, e.g.
+  "Oracle-Application-Server-11g/11.1.1.0.0" → "11.1.1.0.0".
   Degrades to "" when the version has been stripped from the header.
 
 CPE Format:
@@ -89,8 +91,11 @@ const (
 )
 
 // ohsVersionPattern extracts the version following a recognized product token,
-// e.g. "Oracle-HTTP-Server/2.4.52" → "2.4.52".
-var ohsVersionPattern = regexp.MustCompile(`(?i)(?:Oracle-HTTP-Server|Oracle-Application-Server|Oracle-iPlanet-Web-Server|Sun-Java-System-Web-Server|Sun-ONE-Web-Server|Netscape-Enterprise)/([\d]+(?:\.[\d]+)+)`)
+// e.g. "Oracle-HTTP-Server/2.4.52" → "2.4.52". An optional generation suffix on
+// the product token is tolerated so generation-suffixed Oracle Application
+// Server banners parse, e.g. "Oracle-Application-Server-11g/11.1.1.0.0" →
+// "11.1.1.0.0".
+var ohsVersionPattern = regexp.MustCompile(`(?i)(?:Oracle-HTTP-Server|Oracle-Application-Server|Oracle-iPlanet-Web-Server|Sun-Java-System-Web-Server|Sun-ONE-Web-Server|Netscape-Enterprise)(?:-[0-9a-z]+)?/([\d]+(?:\.[\d]+)+)`)
 
 // ohsServerMarkers are the recognized Server header product tokens (lowercased).
 var ohsServerMarkers = []string{
@@ -176,8 +181,11 @@ func isIPlanetLineage(server string) bool {
 	return false
 }
 
-// parseOHSVersion extracts the version from a recognized Server header token.
-// Returns "" when no version is present (e.g. the version was stripped).
+// parseOHSVersion extracts the version from a recognized Server header token,
+// tolerating a generation suffix on the product token (e.g.
+// "Oracle-Application-Server-11g/11.1.1.0.0" yields "11.1.1.0.0"). Returns ""
+// when no version is present (e.g. the version was stripped). The generation
+// itself is not returned; the raw Server header is preserved on the service.
 func parseOHSVersion(server string) string {
 	if m := ohsVersionPattern.FindStringSubmatch(server); len(m) >= 2 {
 		return m[1]
