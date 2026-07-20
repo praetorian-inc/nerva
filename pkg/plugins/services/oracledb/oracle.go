@@ -123,17 +123,6 @@ func checkForOracle(host string, port string) []byte {
 	return buildTNSConnect(connectData)
 }
 
-// versionQuery builds a TNS Connect packet whose CONNECT_DATA carries the
-// listener version command. It reuses the same Connect-packet construction as
-// checkForOracle; only the CONNECT_DATA payload differs.
-func versionQuery(host string, port string) []byte {
-	connectData := []byte(
-		"(DESCRIPTION=(CONNECT_DATA=(COMMAND=version))" +
-			"(ADDRESS=(PROTOCOL=tcp)(HOST=" + host + ")(PORT=" + port + ")))",
-	)
-	return buildTNSConnect(connectData)
-}
-
 // buildTNSConnect wraps the given CONNECT_DATA payload in the fixed TNS
 // Connect-packet header/body shared by every probe in this plugin.
 func buildTNSConnect(connectData []byte) []byte {
@@ -236,27 +225,40 @@ func isOracleDBRunning(response []byte) bool {
 // banner) instead of the classic (DESCRIPTION=(TMP=)(VSNNUM= refuse packet that
 // isOracleDBRunning keys off of. It only ever broadens detection, so it cannot
 // regress the existing behavior.
+//
+// It requires an Oracle-specific RESPONSE marker that is NOT present in the
+// probe this plugin sends. In particular the bare "(DESCRIPTION=" token is
+// deliberately NOT a marker: it is exactly what checkForOracle transmits, so an
+// echo/reflecting service would otherwise be misidentified as Oracle. A bare
+// "VSNNUM=" is likewise insufficient; only a VSNNUM with a non-zero value counts.
 func looksLikeOracleTNS(response []byte) bool {
 	markers := [][]byte{
-		[]byte("VSNNUM="),
-		[]byte("(DESCRIPTION="),
-		[]byte("TNSLSNR"),
-		[]byte("ERROR_STACK"),
+		[]byte("ERROR_STACK="),
 		[]byte("(ERR="),
+		[]byte("TNSLSNR"),
+		[]byte("ORA-"),
 	}
 	for _, m := range markers {
 		if bytes.Contains(response, m) {
 			return true
 		}
 	}
+	// A VSNNUM with a non-zero value is Oracle-specific; extractVSNNUM returns
+	// ok=false for a missing field or a zero value.
+	if _, ok := extractVSNNUM(response); ok {
+		return true
+	}
 	return false
 }
 
 var (
-	vsnnumRe        = regexp.MustCompile(`VSNNUM=(\d+)`)
-	errCodeRe       = regexp.MustCompile(`ERR=(\d+)`)
-	bannerVersionRe = regexp.MustCompile(`Version\s+(\d+(?:\.\d+)+)`)
-	dottedVersionRe = regexp.MustCompile(`(\d+\.\d+\.\d+(?:\.\d+)*)`)
+	vsnnumRe  = regexp.MustCompile(`VSNNUM=(\d+)`)
+	errCodeRe = regexp.MustCompile(`ERR=(\d+)`)
+	// bannerVersionRe only matches a dotted version anchored to a "Version" or
+	// "Release" context token. A bare dotted-number fallback is intentionally
+	// NOT used: it matched IP addresses echoed in HOST= (e.g. 192.168.1.1),
+	// whose major component (192) is >= 23 and falsely flipped AICapable on.
+	bannerVersionRe = regexp.MustCompile(`(?:Version|Release)\s+(\d+(?:\.\d+)+)`)
 )
 
 // extractVSNNUM pulls the decimal VSNNUM field out of a TNS response, if present.
@@ -287,12 +289,11 @@ func decodeVSNNUM(n uint32) string {
 }
 
 // extractBannerVersion regexes a dotted version out of a listener banner such as
-// "TNSLSNR for Linux: Version 19.0.0.0.0" or "Oracle TNS Listener 11.2.0.x".
+// "TNSLSNR for Linux: Version 19.0.0.0.0" or "... Release 11.2.0.4". The version
+// must be anchored to a "Version"/"Release" token so that unrelated dotted
+// numbers (e.g. an IP address echoed in HOST=) are never mistaken for a version.
 func extractBannerVersion(response []byte) string {
 	if m := bannerVersionRe.FindSubmatch(response); m != nil {
-		return string(m[1])
-	}
-	if m := dottedVersionRe.FindSubmatch(response); m != nil {
 		return string(m[1])
 	}
 	return ""
@@ -307,10 +308,38 @@ func majorVersion(dotted string) int {
 	return n
 }
 
-// oracleCPE builds a CPE 2.3 string for the Oracle Database, using the decoded
-// version when known and a wildcard otherwise.
+// normalizeCPEVersion maps a decoded dotted Oracle version onto the form NVD
+// uses in its oracle:database CPEs, so that emitted CPEs actually match:
+//   - Modern releases (major >= 18) use a letter suffix: 18 -> "18c",
+//     19 -> "19c", 21 -> "21c", and 23 -> "23ai". A full dotted version like
+//     "19.0.0.0.0" would NOT match NVD.
+//   - Legacy releases strip trailing ".0" components (e.g. 12.1.0.2.0 ->
+//     "12.1.0.2", 11.2.0.4.0 -> "11.2.0.4").
+//
+// The full decoded version is preserved in the service Version/metadata field;
+// only the CPE version component is normalized here.
+func normalizeCPEVersion(version string) string {
+	if version == "" {
+		return ""
+	}
+	major := majorVersion(version)
+	if major >= 18 {
+		if major == 23 {
+			return "23ai"
+		}
+		return fmt.Sprintf("%dc", major)
+	}
+	parts := strings.Split(version, ".")
+	for len(parts) > 1 && parts[len(parts)-1] == "0" {
+		parts = parts[:len(parts)-1]
+	}
+	return strings.Join(parts, ".")
+}
+
+// oracleCPE builds a CPE 2.3 string for the Oracle Database, using the
+// NVD-normalized version when known and a wildcard otherwise.
 func oracleCPE(version string) string {
-	v := version
+	v := normalizeCPEVersion(version)
 	if v == "" {
 		v = "*"
 	}
@@ -365,7 +394,10 @@ func (p *ORACLEPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.
 		return nil, nil
 	}
 
-	// Decode the version: prefer the VSNNUM bitfield, then a banner string.
+	// Decode the version: prefer the VSNNUM bitfield (works on legacy
+	// listeners), then a version banner anchored to a Version/Release token.
+	// Note: modern (18c/19c+) listeners typically suppress VSNNUM and do not
+	// return a banner here, so version is often "" on those.
 	version := ""
 	if n, ok := extractVSNNUM(response); ok {
 		version = decodeVSNNUM(n)
@@ -374,20 +406,14 @@ func (p *ORACLEPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.
 		version = extractBannerVersion(response)
 	}
 
-	// Graceful degradation: when VSNNUM is suppressed, make one best-effort
-	// COMMAND=version query for a human banner. Any failure (closed connection,
-	// TCPS/TLS-wrapped listener, timeout) is ignored so detection never regresses.
-	if version == "" {
-		if vResp, vErr := utils.SendRecv(conn, versionQuery(ip, port), timeout); vErr == nil && len(vResp) > 0 {
-			version = extractBannerVersion(vResp)
-		}
-	}
-
 	payload := plugins.ServiceOracle{
 		Info:    fmt.Sprintf("%s", parseInfo(response)),
 		Version: version,
 		CPEs:    []string{oracleCPE(version)},
 	}
+	// Best-effort AI-capability inference. Modern listeners suppress VSNNUM so a
+	// version is usually unavailable; in practice this mainly fires on legacy
+	// listeners that still return a decodable VSNNUM (or a version banner).
 	if majorVersion(version) >= 23 {
 		payload.AICapable = true
 		payload.Note = "Oracle AI Database (23ai/26ai) - AI Vector Search / Select AI capable (inferred from version, not confirmed)"
