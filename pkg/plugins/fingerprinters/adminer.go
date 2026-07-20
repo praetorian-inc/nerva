@@ -245,9 +245,13 @@ func fingerprintAdminer(resp *http.Response, body []byte) (*FingerprintResult, e
 
 	version := extractAdminerVersion(body)
 
+	vendorName, productName := "Adminer", "Adminer"
+	if variant == "adminerevo" {
+		vendorName, productName = "AdminerEvo", "AdminerEvo"
+	}
 	metadata := map[string]any{
-		"vendor":           "Adminer",
-		"product":          "Adminer",
+		"vendor":           vendorName,
+		"product":          productName,
 		"variant":          variant,
 		"detection_method": detectionMethod,
 	}
