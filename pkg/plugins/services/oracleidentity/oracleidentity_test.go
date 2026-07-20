@@ -150,7 +150,7 @@ func TestHasOAMMarker(t *testing.T) {
 		{
 			name:     "contains obrareq token",
 			s:        "redirected via obrareq handler",
-			expected: true,
+			expected: false,
 		},
 		{
 			name:     "no OAM markers",
@@ -281,7 +281,7 @@ func TestTitleIsOracleIdentity(t *testing.T) {
 		{
 			name:     "System Administration title",
 			title:    "System Administration",
-			expected: true,
+			expected: false,
 		},
 		{
 			name:     "unrelated title",
@@ -355,12 +355,12 @@ func TestEvaluateOIM(t *testing.T) {
 			expectedDetect: true,
 		},
 		{
-			name: "System Administration title signal",
+			name: "bare System Administration title alone does not trigger (unrelated admin app)",
 			evidence: []oimEvidence{
 				{path: "/sysadmin", statusCode: http.StatusOK, body: `<html><head><title>System Administration</title></head></html>`},
 			},
 			expectedLegacy: false,
-			expectedDetect: true,
+			expectedDetect: false,
 		},
 		{
 			name: "ADF static reference signal",
@@ -379,9 +379,17 @@ func TestEvaluateOIM(t *testing.T) {
 			expectedDetect: false,
 		},
 		{
-			name: "governance path responds non-404 WITH an Oracle marker triggers",
+			name: "governance path responds non-404 with only System Administration title does not trigger",
 			evidence: []oimEvidence{
 				{path: "/iam/governance/", statusCode: http.StatusOK, body: `<html><head><title>System Administration</title></head></html>`},
+			},
+			expectedLegacy: false,
+			expectedDetect: false,
+		},
+		{
+			name: "governance path responds non-404 WITH a genuine Oracle marker (ADF /afr/ ref) triggers",
+			evidence: []oimEvidence{
+				{path: "/iam/governance/", statusCode: http.StatusOK, body: `<html><head><title>System Administration</title></head><script src="/afr/adf-richclient.js"></script></html>`},
 			},
 			expectedLegacy: false,
 			expectedDetect: true,
@@ -703,6 +711,40 @@ func TestOIMPlugin_Run_Negative(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Nil(t, service)
+}
+
+// TestOIMPlugin_Run_UnrelatedAdminAppWithSystemAdministrationTitleDoesNotTrigger
+// verifies the fix for the false positive where any unrelated admin app that
+// happened to title itself "System Administration" was misclassified as OIM. A
+// bare "System Administration" title with no Oracle-specific corroboration (no
+// ADF /afr/ reference, no Oracle-branded title) must not be detected.
+func TestOIMPlugin_Run_UnrelatedAdminAppWithSystemAdministrationTitleDoesNotTrigger(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/sysadmin":
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprintf(w, `<html><head><title>System Administration</title></head><body>Generic admin console</body></html>`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	addr := parseTestServerAddr(t, server.URL)
+	conn, err := net.DialTimeout("tcp", strings.TrimPrefix(server.URL, "http://"), 5*time.Second)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	target := plugins.Target{
+		Host:    addr.Addr().String(),
+		Address: addr,
+	}
+
+	plugin := &OIMPlugin{}
+	service, err := plugin.Run(conn, 5*time.Second, target)
+
+	require.NoError(t, err)
+	assert.Nil(t, service, "unrelated admin app titled 'System Administration' with no Oracle marker must not be detected as OIM")
 }
 
 func TestOIMPlugin_Metadata(t *testing.T) {
