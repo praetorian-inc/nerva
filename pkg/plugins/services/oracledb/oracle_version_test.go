@@ -72,17 +72,28 @@ func TestExtractVSNNUM(t *testing.T) {
 }
 
 // TestExtractBannerVersion verifies extraction of a dotted version string
-// from a listener banner, covering the primary "Version X.Y.Z..." pattern,
-// the bare-dotted-version fallback pattern, and the absent case.
+// from a listener banner. The version must be anchored to a "Version" or
+// "Release" token; the bare-dotted-version fallback was removed because it
+// matched unrelated dotted numbers such as an IP address echoed in HOST=.
 func TestExtractBannerVersion(t *testing.T) {
 	t.Run("Version marker", func(t *testing.T) {
 		response := []byte("TNSLSNR for Linux: Version 19.0.0.0.0 - Production")
 		assert.Equal(t, "19.0.0.0.0", extractBannerVersion(response))
 	})
 
-	t.Run("bare dotted fallback", func(t *testing.T) {
+	t.Run("Release marker", func(t *testing.T) {
+		response := []byte("... Release 11.2.0.4 ...")
+		assert.Equal(t, "11.2.0.4", extractBannerVersion(response))
+	})
+
+	t.Run("bare dotted fallback is no longer matched", func(t *testing.T) {
 		response := []byte("Oracle TNS Listener 11.2.0.x")
-		assert.Equal(t, "11.2.0", extractBannerVersion(response))
+		assert.Equal(t, "", extractBannerVersion(response))
+	})
+
+	t.Run("dotted IP address in HOST= is not mistaken for a version", func(t *testing.T) {
+		response := []byte("(DESCRIPTION=(CONNECT_DATA=(COMMAND=version))(ADDRESS=(PROTOCOL=tcp)(HOST=192.168.1.1)))")
+		assert.Equal(t, "", extractBannerVersion(response))
 	})
 
 	t.Run("absent", func(t *testing.T) {
@@ -114,10 +125,11 @@ func TestMajorVersion(t *testing.T) {
 }
 
 // TestOracleCPE verifies CPE 2.3 string construction, both with a known
-// version and with the wildcard fallback used when the version is unknown.
+// version (normalized to the form NVD uses) and with the wildcard fallback
+// used when the version is unknown.
 func TestOracleCPE(t *testing.T) {
 	t.Run("versioned", func(t *testing.T) {
-		assert.Equal(t, "cpe:2.3:a:oracle:database:19.0.0.0.0:*:*:*:*:*:*:*", oracleCPE("19.0.0.0.0"))
+		assert.Equal(t, "cpe:2.3:a:oracle:database:19c:*:*:*:*:*:*:*", oracleCPE("19.0.0.0.0"))
 	})
 
 	t.Run("wildcard when version unknown", func(t *testing.T) {
@@ -125,9 +137,40 @@ func TestOracleCPE(t *testing.T) {
 	})
 }
 
+// TestNormalizeCPEVersion verifies the mapping from a decoded dotted Oracle
+// version onto the form NVD uses in its oracle:database CPEs: modern
+// releases (major >= 18) get a letter suffix (23 -> "23ai"), while legacy
+// releases have trailing ".0" components stripped.
+func TestNormalizeCPEVersion(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "19c", in: "19.0.0.0.0", want: "19c"},
+		{name: "21c", in: "21.0.0.0.0", want: "21c"},
+		{name: "18c", in: "18.0.0.0.0", want: "18c"},
+		{name: "23ai", in: "23.0.0.0.0", want: "23ai"},
+		{name: "12.1.0.2 (legacy, trailing .0 stripped)", in: "12.1.0.2.0", want: "12.1.0.2"},
+		{name: "11.2.0.4 (legacy, trailing .0 stripped)", in: "11.2.0.4.0", want: "11.2.0.4"},
+		{name: "empty version", in: "", want: ""},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, normalizeCPEVersion(tc.in))
+		})
+	}
+}
+
 // TestLooksLikeOracleTNS verifies the additive TNS detection heuristic used
 // for hardened 18c/19c+ listeners that suppress the classic VSNNUM refuse
-// packet.
+// packet. It requires an Oracle-specific RESPONSE marker (ERROR_STACK=,
+// (ERR=, TNSLSNR, ORA-, or a non-zero VSNNUM=); a bare "(DESCRIPTION=" is
+// intentionally NOT sufficient because it is exactly what the plugin's own
+// probe transmits, which would otherwise misidentify an echo/reflecting
+// service as Oracle.
 func TestLooksLikeOracleTNS(t *testing.T) {
 	t.Run("TNS-looking response with DESCRIPTION marker", func(t *testing.T) {
 		response := []byte("(DESCRIPTION=(TMP=)(VSNNUM=318767104)(ERR=1189)(ERROR_STACK=(ERROR=(CODE=1189)(EMFI=4))))")
@@ -135,8 +178,36 @@ func TestLooksLikeOracleTNS(t *testing.T) {
 	})
 
 	t.Run("refuse packet marker only", func(t *testing.T) {
-		response := []byte("some prefix bytes ERROR_STACK trailing bytes")
+		response := []byte("some prefix bytes ERROR_STACK= trailing bytes")
 		assert.True(t, looksLikeOracleTNS(response))
+	})
+
+	t.Run("real refuse packet with (ERR= marker", func(t *testing.T) {
+		response := []byte("(DESCRIPTION=(TMP=)(VSNNUM=0)(ERR=12514)(ERROR_STACK=(ERROR=(CODE=12514)(EMFI=4))))")
+		assert.True(t, looksLikeOracleTNS(response))
+	})
+
+	t.Run("real refuse packet with ERROR_STACK= marker", func(t *testing.T) {
+		response := []byte("ERROR_STACK=(ERROR=(CODE=12514)(EMFI=4))")
+		assert.True(t, looksLikeOracleTNS(response))
+	})
+
+	t.Run("real refuse packet with non-zero VSNNUM= marker", func(t *testing.T) {
+		response := []byte("(DESCRIPTION=(TMP=)(VSNNUM=318767104))")
+		assert.True(t, looksLikeOracleTNS(response))
+	})
+
+	t.Run("echoed probe payload is not mistaken for Oracle (fixes false positive)", func(t *testing.T) {
+		// This is exactly the shape of data checkForOracle sends (minus the
+		// service name substitution); an echo/reflecting service that bounces
+		// the probe back verbatim must NOT be misidentified as Oracle.
+		response := []byte("(DESCRIPTION=(CONNECT_DATA=(COMMAND=version))(ADDRESS=(PROTOCOL=tcp)(HOST=192.168.1.1)))")
+		assert.False(t, looksLikeOracleTNS(response))
+	})
+
+	t.Run("bare zero VSNNUM alone is not sufficient", func(t *testing.T) {
+		response := []byte("(DESCRIPTION=(TMP=)(VSNNUM=0))")
+		assert.False(t, looksLikeOracleTNS(response))
 	})
 
 	t.Run("unrelated bytes", func(t *testing.T) {
