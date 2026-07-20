@@ -154,14 +154,17 @@ func cookieContains(setCookie, name string) bool {
 	return strings.Contains(setCookie, name+"=")
 }
 
-// bodyHasPeopleSoftMarker reports whether a response body carries PeopleSoft
-// portal markers.
+// bodyHasPeopleSoftMarker reports whether a response body carries a genuine
+// PeopleSoft-specific marker. The bare "/psp/" and "/psc/" path tokens are
+// deliberately NOT treated as markers: they are exactly the servlet paths this
+// plugin probes, so a catch-all app that reflects the requested URL back in its
+// body would otherwise be misidentified as PeopleSoft. Only PeopleSoft-specific
+// content ("PeopleSoft"/"PeopleTools" strings or a PS_TOKEN reference) — which a
+// path-reflecting responder does not emit — counts as a real marker.
 func bodyHasPeopleSoftMarker(body string) bool {
 	lower := strings.ToLower(body)
 	return strings.Contains(lower, "peoplesoft") ||
 		strings.Contains(lower, "peopletools") ||
-		strings.Contains(body, "/psp/") ||
-		strings.Contains(body, "/psc/") ||
 		strings.Contains(body, "PS_TOKEN")
 }
 
