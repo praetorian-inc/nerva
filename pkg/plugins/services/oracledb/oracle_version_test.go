@@ -124,42 +124,60 @@ func TestMajorVersion(t *testing.T) {
 	}
 }
 
-// TestOracleCPE verifies CPE 2.3 string construction, both with a known
-// version (normalized to the form NVD uses) and with the wildcard fallback
-// used when the version is unknown.
-func TestOracleCPE(t *testing.T) {
+// TestOracleCPEs verifies CPE 2.3 string construction. Both the
+// "database_server" and "database" products are emitted (CVE applicability
+// keys predominantly to database_server), using the numeric canonicalized
+// version (never a lettered 19c/23ai form, since NVD CVE ranges match on
+// numeric versions), with a wildcard fallback when the version is unknown.
+func TestOracleCPEs(t *testing.T) {
 	t.Run("versioned", func(t *testing.T) {
-		assert.Equal(t, "cpe:2.3:a:oracle:database:19c:*:*:*:*:*:*:*", oracleCPE("19.0.0.0.0"))
+		got := oracleCPEs("19.0.0.0.0")
+		assert.Equal(t, []string{
+			"cpe:2.3:a:oracle:database_server:19.0.0.0:*:*:*:*:*:*:*",
+			"cpe:2.3:a:oracle:database:19.0.0.0:*:*:*:*:*:*:*",
+		}, got)
+	})
+
+	t.Run("23ai version stays numeric, not lettered", func(t *testing.T) {
+		got := oracleCPEs("23.26.0.0.0")
+		assert.Equal(t, []string{
+			"cpe:2.3:a:oracle:database_server:23.26.0.0:*:*:*:*:*:*:*",
+			"cpe:2.3:a:oracle:database:23.26.0.0:*:*:*:*:*:*:*",
+		}, got)
 	})
 
 	t.Run("wildcard when version unknown", func(t *testing.T) {
-		assert.Equal(t, "cpe:2.3:a:oracle:database:*:*:*:*:*:*:*:*", oracleCPE(""))
+		got := oracleCPEs("")
+		assert.Equal(t, []string{
+			"cpe:2.3:a:oracle:database_server:*:*:*:*:*:*:*:*",
+			"cpe:2.3:a:oracle:database:*:*:*:*:*:*:*:*",
+		}, got)
 	})
 }
 
-// TestNormalizeCPEVersion verifies the mapping from a decoded dotted Oracle
-// version onto the form NVD uses in its oracle:database CPEs: modern
-// releases (major >= 18) get a letter suffix (23 -> "23ai"), while legacy
-// releases have trailing ".0" components stripped.
-func TestNormalizeCPEVersion(t *testing.T) {
+// TestCanonicalizeCPEVersion verifies the mapping from a decoded dotted
+// Oracle version onto the NUMERIC form NVD CVE applicability uses. CVE
+// applicability keys off numeric version ranges, so no letter suffixes
+// (19c/23ai) are ever produced; only trailing all-zero components beyond
+// the first four (major.minor.patch.interim) are trimmed.
+func TestCanonicalizeCPEVersion(t *testing.T) {
 	tests := []struct {
 		name string
 		in   string
 		want string
 	}{
-		{name: "19c", in: "19.0.0.0.0", want: "19c"},
-		{name: "21c", in: "21.0.0.0.0", want: "21c"},
-		{name: "18c", in: "18.0.0.0.0", want: "18c"},
-		{name: "23ai", in: "23.0.0.0.0", want: "23ai"},
-		{name: "12.1.0.2 (legacy, trailing .0 stripped)", in: "12.1.0.2.0", want: "12.1.0.2"},
-		{name: "11.2.0.4 (legacy, trailing .0 stripped)", in: "11.2.0.4.0", want: "11.2.0.4"},
+		{name: "19.0.0.0.0 -> 19.0.0.0", in: "19.0.0.0.0", want: "19.0.0.0"},
+		{name: "21.0.0.0.0 -> 21.0.0.0", in: "21.0.0.0.0", want: "21.0.0.0"},
+		{name: "12.1.0.2.0 -> 12.1.0.2", in: "12.1.0.2.0", want: "12.1.0.2"},
+		{name: "11.2.0.4.0 -> 11.2.0.4", in: "11.2.0.4.0", want: "11.2.0.4"},
+		{name: "23.26.0.0.0 -> 23.26.0.0 (numeric, no 23ai suffix)", in: "23.26.0.0.0", want: "23.26.0.0"},
 		{name: "empty version", in: "", want: ""},
 	}
 
 	for _, tc := range tests {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, normalizeCPEVersion(tc.in))
+			assert.Equal(t, tc.want, canonicalizeCPEVersion(tc.in))
 		})
 	}
 }
