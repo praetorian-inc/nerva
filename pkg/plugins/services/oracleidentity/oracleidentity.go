@@ -50,7 +50,10 @@ Oracle Identity Manager / Governance (Name "oracle_oim"):
     - A <title> containing "Oracle Identity Self Service" or
       "System Administration"
     - An ADF static reference ("/afr/") in the body
-    - The Oracle-specific "/iam/governance" path responding (non-404)
+
+  A bare non-404 on "/iam/governance" is NOT sufficient on its own (too many
+  unrelated app servers answer that path); an Oracle-specific marker above must
+  also be present.
 
   The plugin also probes "/xlWebApp"; if it responds (non-404)
   ServiceOracleOIM.Legacy is set true, indicating the legacy 11g xlWebApp
@@ -127,13 +130,18 @@ func createHTTPClient(conn net.Conn, timeout time.Duration) *http.Client {
 	}
 }
 
-// doGet performs a GET request with the nerva User-Agent header.
-func doGet(client *http.Client, url string) (*http.Response, error) {
+// doGet performs a GET request with the nerva User-Agent header. When host is
+// non-empty it is set as the HTTP Host header so name-based virtual hosts are
+// reached (the connection is still dialed by IP via the client's transport).
+func doGet(client *http.Client, url string, host string) (*http.Response, error) {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("User-Agent", "nerva/1.0")
+	if host != "" {
+		req.Host = host
+	}
 	return client.Do(req)
 }
 
@@ -174,11 +182,14 @@ func hasOAMCookie(setCookie string) bool {
 }
 
 // hasOAMMarker reports whether a string (redirect Location or body) carries an
-// Oracle Access Manager marker.
+// Oracle Access Manager marker. The bare "/oam/" substring is intentionally not
+// used: it merely reflects the probe path we requested, which would be a
+// self-referential false positive. Detection relies instead on the branded
+// "oracle access manager" string, OAM cookies (checked separately), and the
+// obrareq.cgi redirect behaviour.
 func hasOAMMarker(s string) bool {
 	lower := strings.ToLower(s)
 	return strings.Contains(lower, "oracle access manager") ||
-		strings.Contains(lower, "/oam/") ||
 		strings.Contains(lower, "obrareq")
 }
 
@@ -212,7 +223,7 @@ func evaluateOAM(evs []oamEvidence) (openSSO bool, detected bool) {
 }
 
 // detectOAM fetches the OAM probe paths and evaluates the collected evidence.
-func detectOAM(client *http.Client, baseURL string) (openSSO bool, detected bool) {
+func detectOAM(client *http.Client, baseURL string, host string) (openSSO bool, detected bool) {
 	paths := []string{
 		"/oam/server/obrareq.cgi",
 		"/oam/server/logout",
@@ -220,7 +231,7 @@ func detectOAM(client *http.Client, baseURL string) (openSSO bool, detected bool
 	}
 	var evs []oamEvidence
 	for _, p := range paths {
-		resp, err := doGet(client, baseURL+p)
+		resp, err := doGet(client, baseURL+p, host)
 		if err != nil {
 			// Non-fatal: continue with whatever other evidence we can gather.
 			continue
@@ -290,10 +301,11 @@ func evaluateOIM(evs []oimEvidence) (legacy bool, detected bool) {
 			detected = true
 		}
 
-		// Strong signal: the Oracle-specific governance path responds.
-		if strings.Contains(ev.path, "/iam/governance") && ev.statusCode != http.StatusNotFound {
-			detected = true
-		}
+		// NOTE: a bare non-404 on /iam/governance is intentionally NOT a
+		// detection trigger; too many unrelated app servers return 200/302 on
+		// that path. Detection requires an Oracle-specific marker (the console
+		// title or an ADF /afr/ body reference), which is evaluated above and
+		// applies to the /iam/governance response body too.
 
 		// Enrichment: legacy 11g xlWebApp console present.
 		if strings.Contains(ev.path, "xlWebApp") && ev.statusCode != http.StatusNotFound {
@@ -304,11 +316,11 @@ func evaluateOIM(evs []oimEvidence) (legacy bool, detected bool) {
 }
 
 // detectOIM fetches the OIM probe paths and evaluates the collected evidence.
-func detectOIM(client *http.Client, baseURL string) (legacy bool, detected bool) {
+func detectOIM(client *http.Client, baseURL string, host string) (legacy bool, detected bool) {
 	paths := []string{"/identity", "/sysadmin", "/iam/governance/", "/xlWebApp"}
 	var evs []oimEvidence
 	for _, p := range paths {
-		resp, err := doGet(client, baseURL+p)
+		resp, err := doGet(client, baseURL+p, host)
 		if err != nil {
 			// Non-fatal: continue with whatever other evidence we can gather.
 			continue
@@ -345,7 +357,7 @@ func (p *OAMPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 	client := createHTTPClient(conn, timeout)
 	baseURL := fmt.Sprintf("http://%s", conn.RemoteAddr().String())
 
-	openSSO, detected := detectOAM(client, baseURL)
+	openSSO, detected := detectOAM(client, baseURL, target.Host)
 	if !detected {
 		return nil, nil
 	}
@@ -365,13 +377,13 @@ func (p *OAMPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 func (p *OAMPlugin) PortPriority(port uint16) bool { return port == DefaultOAMPort }
 func (p *OAMPlugin) Name() string                  { return OracleOAM }
 func (p *OAMPlugin) Type() plugins.Protocol        { return plugins.TCP }
-func (p *OAMPlugin) Priority() int                 { return 100 }
+func (p *OAMPlugin) Priority() int                 { return -1 } // Runs before generic HTTP so it can claim OAM on shared ports
 
 func (p *OAMTLSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
 	client := createHTTPClient(conn, timeout)
 	baseURL := fmt.Sprintf("http://%s", conn.RemoteAddr().String())
 
-	openSSO, detected := detectOAM(client, baseURL)
+	openSSO, detected := detectOAM(client, baseURL, target.Host)
 	if !detected {
 		return nil, nil
 	}
@@ -392,7 +404,7 @@ func (p *OAMTLSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.
 func (p *OAMTLSPlugin) PortPriority(port uint16) bool { return port == 443 }
 func (p *OAMTLSPlugin) Name() string                  { return OracleOAM }
 func (p *OAMTLSPlugin) Type() plugins.Protocol        { return plugins.TCPTLS }
-func (p *OAMTLSPlugin) Priority() int                 { return 100 }
+func (p *OAMTLSPlugin) Priority() int                 { return -1 } // Runs before generic HTTPS so it can claim OAM on shared ports (e.g. 443)
 
 // --- OIM plugin variants ---
 
@@ -400,7 +412,7 @@ func (p *OIMPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 	client := createHTTPClient(conn, timeout)
 	baseURL := fmt.Sprintf("http://%s", conn.RemoteAddr().String())
 
-	legacy, detected := detectOIM(client, baseURL)
+	legacy, detected := detectOIM(client, baseURL, target.Host)
 	if !detected {
 		return nil, nil
 	}
@@ -420,13 +432,13 @@ func (p *OIMPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 func (p *OIMPlugin) PortPriority(port uint16) bool { return port == DefaultOIMPort }
 func (p *OIMPlugin) Name() string                  { return OracleOIM }
 func (p *OIMPlugin) Type() plugins.Protocol        { return plugins.TCP }
-func (p *OIMPlugin) Priority() int                 { return 100 }
+func (p *OIMPlugin) Priority() int                 { return -1 } // Runs before generic HTTP so it can claim OIM on shared ports
 
 func (p *OIMTLSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
 	client := createHTTPClient(conn, timeout)
 	baseURL := fmt.Sprintf("http://%s", conn.RemoteAddr().String())
 
-	legacy, detected := detectOIM(client, baseURL)
+	legacy, detected := detectOIM(client, baseURL, target.Host)
 	if !detected {
 		return nil, nil
 	}
@@ -447,4 +459,4 @@ func (p *OIMTLSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.
 func (p *OIMTLSPlugin) PortPriority(port uint16) bool { return port == 443 }
 func (p *OIMTLSPlugin) Name() string                  { return OracleOIM }
 func (p *OIMTLSPlugin) Type() plugins.Protocol        { return plugins.TCPTLS }
-func (p *OIMTLSPlugin) Priority() int                 { return 100 }
+func (p *OIMTLSPlugin) Priority() int                 { return -1 } // Runs before generic HTTPS so it can claim OIM on shared ports (e.g. 443)
