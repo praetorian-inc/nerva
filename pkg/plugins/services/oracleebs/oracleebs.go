@@ -29,7 +29,8 @@ Detection Strategy (best-effort, non-fatal errors):
   A host is classified as Oracle E-Business Suite when ANY of these EBS-specific
   signals are present:
     - The page <title> contains "E-Business Suite Home Page Redirect"
-    - The body contains "Oracle E-Business Suite" or "Oracle Applications"
+    - The body contains "Oracle E-Business Suite" (the generic "Oracle
+      Applications" substring is deliberately not used: too FP-prone)
     - A redirect (301/302/307) Location header points to
       "/OA_HTML/AppsLogin" or "/OA_HTML/AppsLocalLogin.jsp"
     - The body or a Location header references "AppsLocalLogin"
@@ -108,13 +109,18 @@ func createHTTPClient(conn net.Conn, timeout time.Duration) *http.Client {
 	}
 }
 
-// doGet performs a GET request with the nerva User-Agent header.
-func doGet(client *http.Client, url string) (*http.Response, error) {
+// doGet performs a GET request with the nerva User-Agent header. When host is
+// non-empty it is set as the HTTP Host header so name-based virtual hosts are
+// reached (the connection is still dialed by IP via the client's transport).
+func doGet(client *http.Client, url string, host string) (*http.Response, error) {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("User-Agent", "nerva/1.0")
+	if host != "" {
+		req.Host = host
+	}
 	return client.Do(req)
 }
 
@@ -148,9 +154,10 @@ func evaluateEBS(evs []ebsEvidence) (title string, release string, detected bool
 			detected = true
 		}
 
-		// Signal: EBS-specific body markers.
-		if strings.Contains(ev.body, "Oracle E-Business Suite") ||
-			strings.Contains(ev.body, "Oracle Applications") {
+		// Signal: EBS-specific body marker. The bare "Oracle Applications"
+		// substring is intentionally NOT a trigger; it is too generic and
+		// false-positive prone.
+		if strings.Contains(ev.body, "Oracle E-Business Suite") {
 			detected = true
 		}
 
@@ -180,11 +187,11 @@ func evaluateEBS(evs []ebsEvidence) (title string, release string, detected bool
 }
 
 // detectEBS fetches the EBS probe paths and evaluates the collected evidence.
-func detectEBS(client *http.Client, baseURL string) (title string, release string, detected bool) {
+func detectEBS(client *http.Client, baseURL string, host string) (title string, release string, detected bool) {
 	paths := []string{"/", "/OA_HTML/AppsLogin"}
 	var evs []ebsEvidence
 	for _, p := range paths {
-		resp, err := doGet(client, baseURL+p)
+		resp, err := doGet(client, baseURL+p, host)
 		if err != nil {
 			// Non-fatal: continue with whatever other evidence we can gather.
 			continue
@@ -211,8 +218,8 @@ func ebsFinding() plugins.SecurityFinding {
 	return plugins.SecurityFinding{
 		ID:          "oracle-ebs-login-exposed",
 		Severity:    plugins.SeverityLow,
-		Description: "Oracle E-Business Suite login surface is reachable without authentication; the /OA_HTML/ login endpoints are exposed to the network",
-		Evidence:    "Oracle E-Business Suite login endpoints responded without credentials",
+		Description: "Oracle E-Business Suite login surface (/OA_HTML/) is exposed to the network; the login page itself does not grant access but broadens the attack surface for credential and CVE-based attacks",
+		Evidence:    "Oracle E-Business Suite login endpoints are reachable",
 	}
 }
 
@@ -220,7 +227,7 @@ func (p *EBSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 	client := createHTTPClient(conn, timeout)
 	baseURL := fmt.Sprintf("http://%s", conn.RemoteAddr().String())
 
-	title, release, detected := detectEBS(client, baseURL)
+	title, release, detected := detectEBS(client, baseURL, target.Host)
 	if !detected {
 		return nil, nil
 	}
@@ -233,7 +240,8 @@ func (p *EBSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 	// Version unknown (product known): pass "" like librechat's fallback.
 	service := plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP)
 	if target.Misconfigs {
-		service.AnonymousAccess = true
+		// A reachable login page is not anonymous access, so do not set
+		// AnonymousAccess; only flag the exposed login surface.
 		service.SecurityFindings = append(service.SecurityFindings, ebsFinding())
 	}
 	return service, nil
@@ -242,13 +250,13 @@ func (p *EBSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 func (p *EBSPlugin) PortPriority(port uint16) bool { return port == DefaultEBSPort }
 func (p *EBSPlugin) Name() string                  { return OracleEBS }
 func (p *EBSPlugin) Type() plugins.Protocol        { return plugins.TCP }
-func (p *EBSPlugin) Priority() int                 { return 100 }
+func (p *EBSPlugin) Priority() int                 { return -1 } // Runs before generic HTTP so it can claim EBS on shared ports (e.g. 8000)
 
 func (p *EBSTLSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
 	client := createHTTPClient(conn, timeout)
 	baseURL := fmt.Sprintf("http://%s", conn.RemoteAddr().String())
 
-	title, release, detected := detectEBS(client, baseURL)
+	title, release, detected := detectEBS(client, baseURL, target.Host)
 	if !detected {
 		return nil, nil
 	}
@@ -260,7 +268,8 @@ func (p *EBSTLSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.
 	}
 	service := plugins.CreateServiceFrom(target, payload, true, "", plugins.TCPTLS)
 	if target.Misconfigs {
-		service.AnonymousAccess = true
+		// A reachable login page is not anonymous access, so do not set
+		// AnonymousAccess; only flag the exposed login surface.
 		service.SecurityFindings = append(service.SecurityFindings, ebsFinding())
 		service.SecurityFindings = append(service.SecurityFindings, plugins.CheckTLS(conn)...)
 	}
@@ -270,4 +279,4 @@ func (p *EBSTLSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.
 func (p *EBSTLSPlugin) PortPriority(port uint16) bool { return port == 443 }
 func (p *EBSTLSPlugin) Name() string                  { return OracleEBS }
 func (p *EBSTLSPlugin) Type() plugins.Protocol        { return plugins.TCPTLS }
-func (p *EBSTLSPlugin) Priority() int                 { return 100 }
+func (p *EBSTLSPlugin) Priority() int                 { return -1 } // Runs before generic HTTPS so it can claim EBS on shared ports (e.g. 443)
