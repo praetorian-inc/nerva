@@ -42,8 +42,11 @@ Detection Strategy (best-effort, non-fatal errors):
   applications), which avoids false positives against unrelated Jetty deployments.
 
 APEX Flag:
-  APEX is reported when APEX evidence is present: an X-APEX-* header, or a body
-  referencing "apex", the "/i/" static path, or an "f?p=" application URL.
+  APEX is reported when APEX evidence is present: an X-APEX-* header (always),
+  or a body referencing "apex", the "/i/" static path, or an "f?p=" application
+  URL when that body was served under an /ords-prefixed path. The body-based
+  signal is gated to /ords paths so a generic root page does not falsely yield
+  an application_express CPE.
 
 Version:
   Parsed from the "Oracle-REST-Data-Services/<ver>" Server token when present,
@@ -114,13 +117,18 @@ func createHTTPClient(conn net.Conn, timeout time.Duration) *http.Client {
 	}
 }
 
-// doGet performs a GET request with the nerva User-Agent header.
-func doGet(client *http.Client, url string) (*http.Response, error) {
+// doGet performs a GET request with the nerva User-Agent header. When host is
+// non-empty it is set as the HTTP Host header so name-based virtual hosts are
+// reached (the connection is still dialed by IP via the client's transport).
+func doGet(client *http.Client, url string, host string) (*http.Response, error) {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("User-Agent", "nerva/1.0")
+	if host != "" {
+		req.Host = host
+	}
 	return client.Do(req)
 }
 
@@ -176,8 +184,14 @@ func evaluateORDS(evs []ordsEvidence) (version string, apex bool, detected bool)
 			}
 		}
 
-		// APEX flag.
-		if ev.hasAPEXHeader || bodyHasAPEX(ev.body) {
+		// APEX flag. The header signal is authoritative and unconditional.
+		// The body-based signal is gated to /ords-prefixed paths only, so a
+		// generic root page that happens to contain "apex" or "/i/" does not
+		// produce a false application_express CPE.
+		if ev.hasAPEXHeader {
+			apex = true
+		}
+		if strings.HasPrefix(ev.path, "/ords") && bodyHasAPEX(ev.body) {
 			apex = true
 		}
 	}
@@ -185,11 +199,11 @@ func evaluateORDS(evs []ordsEvidence) (version string, apex bool, detected bool)
 }
 
 // detectORDS fetches the ORDS probe paths and evaluates the collected evidence.
-func detectORDS(client *http.Client, baseURL string) (version string, apex bool, detected bool) {
+func detectORDS(client *http.Client, baseURL string, host string) (version string, apex bool, detected bool) {
 	paths := []string{"/ords/", "/ords/_/landing", "/"}
 	var evs []ordsEvidence
 	for _, p := range paths {
-		resp, err := doGet(client, baseURL+p)
+		resp, err := doGet(client, baseURL+p, host)
 		if err != nil {
 			// Non-fatal: continue with whatever other evidence we can gather.
 			continue
@@ -236,7 +250,7 @@ func (p *ORDSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 	client := createHTTPClient(conn, timeout)
 	baseURL := fmt.Sprintf("http://%s", conn.RemoteAddr().String())
 
-	version, apex, detected := detectORDS(client, baseURL)
+	version, apex, detected := detectORDS(client, baseURL, target.Host)
 	if !detected {
 		return nil, nil
 	}
@@ -259,13 +273,13 @@ func (p *ORDSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 func (p *ORDSPlugin) PortPriority(port uint16) bool { return port == DefaultORDSPort }
 func (p *ORDSPlugin) Name() string                  { return OracleORDS }
 func (p *ORDSPlugin) Type() plugins.Protocol        { return plugins.TCP }
-func (p *ORDSPlugin) Priority() int                 { return 100 }
+func (p *ORDSPlugin) Priority() int                 { return -1 } // Runs before generic HTTP so it can claim ORDS on shared ports (e.g. 8080)
 
 func (p *ORDSTLSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
 	client := createHTTPClient(conn, timeout)
 	baseURL := fmt.Sprintf("http://%s", conn.RemoteAddr().String())
 
-	version, apex, detected := detectORDS(client, baseURL)
+	version, apex, detected := detectORDS(client, baseURL, target.Host)
 	if !detected {
 		return nil, nil
 	}
@@ -287,4 +301,4 @@ func (p *ORDSTLSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins
 func (p *ORDSTLSPlugin) PortPriority(port uint16) bool { return port == DefaultORDSTLSPort }
 func (p *ORDSTLSPlugin) Name() string                  { return OracleORDS }
 func (p *ORDSTLSPlugin) Type() plugins.Protocol        { return plugins.TCPTLS }
-func (p *ORDSTLSPlugin) Priority() int                 { return 100 }
+func (p *ORDSTLSPlugin) Priority() int                 { return -1 } // Runs before generic HTTPS so it can claim ORDS on shared ports (e.g. 8443)
