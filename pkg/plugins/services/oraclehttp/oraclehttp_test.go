@@ -349,8 +349,10 @@ func TestOHSPlugin_Run_PositiveIPlanet(t *testing.T) {
 	require.NoError(t, err, "failed to unmarshal service payload")
 	assert.Equal(t, "Oracle/Sun", ohsService.Vendor)
 	require.Len(t, ohsService.CPEs, 2)
-	assert.Contains(t, ohsService.CPEs, "cpe:2.3:a:oracle:http_server:7.0:*:*:*:*:*:*:*")
-	assert.Contains(t, ohsService.CPEs, "cpe:2.3:a:oracle:iplanet_web_server:*:*:*:*:*:*:*:*")
+	// The iPlanet lineage version belongs to iplanet_web_server, not
+	// http_server: http_server stays an unversioned coarse family marker.
+	assert.Contains(t, ohsService.CPEs, "cpe:2.3:a:oracle:http_server:*:*:*:*:*:*:*:*")
+	assert.Contains(t, ohsService.CPEs, "cpe:2.3:a:oracle:iplanet_web_server:7.0:*:*:*:*:*:*:*")
 }
 
 func TestOHSPlugin_Run_FusionMiddlewareHeader(t *testing.T) {
@@ -453,7 +455,7 @@ func TestOHSPlugin_Metadata(t *testing.T) {
 	plugin := &OHSPlugin{}
 	assert.Equal(t, OracleHTTPServer, plugin.Name())
 	assert.Equal(t, plugins.TCP, plugin.Type())
-	assert.Equal(t, 100, plugin.Priority())
+	assert.Equal(t, -1, plugin.Priority())
 	assert.True(t, plugin.PortPriority(7777))
 	assert.False(t, plugin.PortPriority(4443))
 	assert.False(t, plugin.PortPriority(80))
@@ -499,7 +501,7 @@ func TestOHSTLSPlugin_Metadata(t *testing.T) {
 	plugin := &OHSTLSPlugin{}
 	assert.Equal(t, OracleHTTPServer, plugin.Name())
 	assert.Equal(t, plugins.TCPTLS, plugin.Type())
-	assert.Equal(t, 100, plugin.Priority())
+	assert.Equal(t, -1, plugin.Priority())
 	assert.True(t, plugin.PortPriority(4443))
 	assert.True(t, plugin.PortPriority(443))
 	assert.False(t, plugin.PortPriority(7777))
@@ -564,6 +566,36 @@ func TestOHSSecurityFindings(t *testing.T) {
 
 		require.NoError(t, err)
 		require.NotNil(t, service)
+
+		assert.False(t, service.AnonymousAccess)
+		assert.Empty(t, service.SecurityFindings)
+	})
+
+	t.Run("401 response still detects the service but yields no AnonymousAccess or finding", func(t *testing.T) {
+		unauthorizedHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Server", "Oracle-HTTP-Server/2.4.52")
+			w.WriteHeader(http.StatusUnauthorized)
+			fmt.Fprintf(w, "unauthorized")
+		})
+		server := httptest.NewServer(unauthorizedHandler)
+		defer server.Close()
+
+		addr := parseTestServerAddr(t, server.URL)
+		conn, err := net.DialTimeout("tcp", strings.TrimPrefix(server.URL, "http://"), 5*time.Second)
+		require.NoError(t, err)
+		defer conn.Close()
+
+		target := plugins.Target{
+			Host:       addr.Addr().String(),
+			Address:    addr,
+			Misconfigs: true,
+		}
+
+		plugin := &OHSPlugin{}
+		service, err := plugin.Run(conn, 5*time.Second, target)
+
+		require.NoError(t, err)
+		require.NotNil(t, service, "the Server header alone must still detect the service on a 401")
 
 		assert.False(t, service.AnonymousAccess)
 		assert.Empty(t, service.SecurityFindings)
