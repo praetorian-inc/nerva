@@ -158,6 +158,7 @@ const (
 	ProtoOpenVPN           = "openvpn"
 	ProtoOpenVPNManagement = "openvpn-management"
 	ProtoOracle            = "oracle"
+	ProtoPeopleSoft        = "oracle_peoplesoft"
 	ProtoPCOM              = "pcom"
 	ProtoPFCP              = "pfcp"
 	ProtoPinecone          = "pinecone"
@@ -462,6 +463,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoOracle:
 		var p ServiceOracle
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoPeopleSoft:
+		var p ServicePeopleSoft
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoOMRONFINS:
@@ -1498,6 +1503,13 @@ type ServiceOracle struct {
 }
 
 func (e ServiceOracle) Type() string { return ProtoOracle }
+
+type ServicePeopleSoft struct {
+	PSToken bool     `json:"ps_token,omitempty"`
+	CPEs    []string `json:"cpes,omitempty"`
+}
+
+func (e ServicePeopleSoft) Type() string { return ProtoPeopleSoft }
 
 type ServicePCOM struct {
 	Model     string   `json:"model,omitempty"`
