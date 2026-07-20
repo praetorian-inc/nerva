@@ -47,13 +47,15 @@ Oracle Identity Manager / Governance (Name "oracle_oim"):
   "/xlWebApp".
 
   A host is classified as OIM when ANY strong, Oracle-specific signal is present:
-    - A <title> containing "Oracle Identity Self Service" or
-      "System Administration"
+    - A <title> containing an Oracle-branded "Oracle Identity" name
+      (e.g. "Oracle Identity Self Service")
     - An ADF static reference ("/afr/") in the body
 
-  A bare non-404 on "/iam/governance" is NOT sufficient on its own (too many
-  unrelated app servers answer that path); an Oracle-specific marker above must
-  also be present.
+  A bare generic "System Administration" title is NOT sufficient on its own (it
+  would misclassify unrelated admin apps); it requires Oracle-specific
+  corroboration (an ADF /afr/ reference or an Oracle-branded title). A bare
+  non-404 on "/iam/governance" is likewise NOT sufficient (too many unrelated app
+  servers answer that path); an Oracle-specific marker above must also be present.
 
   The plugin also probes "/xlWebApp"; if it responds (non-404)
   ServiceOracleOIM.Legacy is set true, indicating the legacy 11g xlWebApp
@@ -181,16 +183,17 @@ func hasOAMCookie(setCookie string) bool {
 		strings.Contains(setCookie, "OAMAuthnCookie_")
 }
 
-// hasOAMMarker reports whether a string (redirect Location or body) carries an
-// Oracle Access Manager marker. The bare "/oam/" substring is intentionally not
-// used: it merely reflects the probe path we requested, which would be a
-// self-referential false positive. Detection relies instead on the branded
-// "oracle access manager" string, OAM cookies (checked separately), and the
-// obrareq.cgi redirect behaviour.
+// hasOAMMarker reports whether a string (redirect Location or body) carries a
+// non-reflective Oracle Access Manager marker. Only the branded "oracle access
+// manager" string counts. The "obrareq" token is intentionally NOT a marker: it
+// is part of the probe path (/oam/server/obrareq.cgi) this plugin requests, so an
+// error/echo page that reflects the requested URL back in its body would
+// otherwise be a self-referential false positive. The bare "/oam/" substring is
+// likewise not used. Non-reflective OAM signals are the branded string here, OAM
+// authentication cookies (checked separately by hasOAMCookie), and a redirect
+// Location carrying the branded string.
 func hasOAMMarker(s string) bool {
-	lower := strings.ToLower(s)
-	return strings.Contains(lower, "oracle access manager") ||
-		strings.Contains(lower, "obrareq")
+	return strings.Contains(strings.ToLower(s), "oracle access manager")
 }
 
 // evaluateOAM inspects collected responses and decides whether the host is
@@ -273,11 +276,14 @@ type oimEvidence struct {
 	body       string
 }
 
-// titleIsOracleIdentity reports whether an HTML title identifies an Oracle
-// Identity console.
+// titleIsOracleIdentity reports whether an HTML title is an Oracle-branded
+// Oracle Identity console title (e.g. "Oracle Identity Self Service", "Oracle
+// Identity Manager"/"Governance"). This is a strong, standalone signal. The
+// generic "System Administration" title is deliberately NOT matched here: on its
+// own it is ambiguous and would misclassify unrelated admin apps, so it requires
+// Oracle-specific corroboration (see evaluateOIM).
 func titleIsOracleIdentity(title string) bool {
-	return strings.Contains(title, "Oracle Identity Self Service") ||
-		strings.Contains(title, "System Administration")
+	return strings.Contains(title, "Oracle Identity")
 }
 
 // bodyHasADFRef reports whether a body carries an ADF (Application Development
@@ -291,21 +297,23 @@ func bodyHasADFRef(body string) bool {
 // present.
 func evaluateOIM(evs []oimEvidence) (legacy bool, detected bool) {
 	for _, ev := range evs {
-		// Strong signal: Oracle Identity console title.
+		// Strong signal: an Oracle-branded "Oracle Identity ..." console title.
 		if titleIsOracleIdentity(extractTitle(ev.body)) {
 			detected = true
 		}
 
-		// Strong signal: ADF static references.
+		// Strong signal: ADF static references, distinctive to OIM/OIG consoles.
 		if bodyHasADFRef(ev.body) {
 			detected = true
 		}
 
-		// NOTE: a bare non-404 on /iam/governance is intentionally NOT a
-		// detection trigger; too many unrelated app servers return 200/302 on
-		// that path. Detection requires an Oracle-specific marker (the console
-		// title or an ADF /afr/ body reference), which is evaluated above and
-		// applies to the /iam/governance response body too.
+		// NOTE: a bare generic "System Administration" title is intentionally NOT
+		// a standalone trigger; on its own it would misclassify an unrelated admin
+		// app. It only counts when corroborated by an Oracle-specific signal (an
+		// ADF /afr/ body reference or an Oracle-branded title), which are exactly
+		// the standalone triggers evaluated above. A bare non-404 on
+		// /iam/governance is likewise NOT a trigger; too many unrelated app
+		// servers return 200/302 on that path.
 
 		// Enrichment: legacy 11g xlWebApp console present.
 		if strings.Contains(ev.path, "xlWebApp") && ev.statusCode != http.StatusNotFound {
