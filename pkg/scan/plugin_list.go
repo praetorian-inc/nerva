@@ -80,6 +80,7 @@ import (
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/m2pa"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/m2ua"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/m3ua"
+	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/managesieve"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/megaco"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/melsecq"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/memcached"

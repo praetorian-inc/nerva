@@ -133,6 +133,7 @@ const (
 	ProtoLwM2M             = "lwm2m"
 	ProtoM2UA              = "m2ua"
 	ProtoM3UA              = "m3ua"
+	ProtoManageSieve       = "managesieve"
 	ProtoMegaco            = "megaco"
 	ProtoMGCP              = "mgcp"
 	ProtoMemcached         = "memcached"
@@ -576,6 +577,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoM3UA:
 		var p ServiceM3UA
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoManageSieve:
+		var p ServiceManageSieve
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoSUA:
@@ -1376,6 +1381,17 @@ type ServiceGit struct {
 }
 
 func (e ServiceGit) Type() string { return ProtoGit }
+
+// ServiceManageSieve contains metadata extracted from a ManageSieve (RFC 5804) greeting.
+type ServiceManageSieve struct {
+	Implementation    string   `json:"implementation,omitempty"`
+	SASLMechanisms    []string `json:"sasl_mechanisms,omitempty"`
+	StarttlsAvailable bool     `json:"starttls_available"`
+	SieveExtensions   []string `json:"sieve_extensions,omitempty"`
+	CPEs              []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceManageSieve) Type() string { return ProtoManageSieve }
 
 type ServiceSMPP struct {
 	CPEs            []string `json:"cpes,omitempty"`             // Common Platform Enumeration identifiers for vulnerability tracking
