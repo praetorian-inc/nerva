@@ -129,6 +129,30 @@ func TestCookieContains(t *testing.T) {
 			cookie:    "PS_TOKEN",
 			expected:  false,
 		},
+		{
+			name:      "PS_TOKEN alone at start of value matches",
+			setCookie: "PS_TOKEN=abc",
+			cookie:    "PS_TOKEN",
+			expected:  true,
+		},
+		{
+			name:      "PS_TOKEN after an unrelated cookie delimited by semicolon matches",
+			setCookie: "X=y; PS_TOKEN=abc",
+			cookie:    "PS_TOKEN",
+			expected:  true,
+		},
+		{
+			name:      "lowercase ps_token does not match (matching is case-sensitive)",
+			setCookie: "ps_token=abc",
+			cookie:    "PS_TOKEN",
+			expected:  false,
+		},
+		{
+			name:      "mixed-case Ps_Token does not match (matching is case-sensitive)",
+			setCookie: "Ps_Token=abc",
+			cookie:    "PS_TOKEN",
+			expected:  false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -637,6 +661,21 @@ func TestPeopleSoftTLSPlugin_Metadata(t *testing.T) {
 	assert.Equal(t, -1, plugin.Priority())
 	assert.True(t, plugin.PortPriority(443))
 	assert.False(t, plugin.PortPriority(8000))
+}
+
+// TestPeopleSoftTLSPlugin_PortPriority verifies the fix that claims both the
+// classic HTTPS port (443) and the PeopleSoft HTTPS default port (8443) ahead
+// of generic HTTPS, while a non-matching port is not claimed. The TCP variant
+// (port 8000) is unaffected by this change.
+func TestPeopleSoftTLSPlugin_PortPriority(t *testing.T) {
+	tlsPlugin := &PeopleSoftTLSPlugin{}
+	assert.True(t, tlsPlugin.PortPriority(443))
+	assert.True(t, tlsPlugin.PortPriority(8443))
+	assert.False(t, tlsPlugin.PortPriority(9999))
+
+	tcpPlugin := &PeopleSoftPlugin{}
+	assert.True(t, tcpPlugin.PortPriority(8000))
+	assert.False(t, tcpPlugin.PortPriority(443))
 }
 
 func TestPeopleSoftSecurityFindings(t *testing.T) {
