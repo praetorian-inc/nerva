@@ -49,7 +49,7 @@ Classic Manager (TCP 7809):
   volunteers a distinguishing GoldenGate marker, and otherwise returns nil.
 
 Default Ports:
-  - TCP 9011, 9100 (Microservices control plane)
+  - TCP 9001, 9011, 9100 (Microservices control plane; 9001 = Service Manager)
   - TLS 443
   - TCP 7809 (Classic Manager, GGSNET)
 
@@ -216,10 +216,14 @@ func (p *Plugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target
 	return plugins.CreateServiceFrom(target, payload, false, version, plugins.TCP), nil
 }
 
-func (p *Plugin) PortPriority(port uint16) bool { return port == 9011 || port == 9100 }
-func (p *Plugin) Name() string                  { return GOLDENGATE }
-func (p *Plugin) Type() plugins.Protocol        { return plugins.TCP }
-func (p *Plugin) Priority() int                 { return -1 }
+func (p *Plugin) PortPriority(port uint16) bool {
+	// 9001 is the default Service Manager port; 9011 and 9100 are common
+	// deployment/administration service ports in the MA control plane.
+	return port == 9011 || port == 9100 || port == 9001
+}
+func (p *Plugin) Name() string           { return GOLDENGATE }
+func (p *Plugin) Type() plugins.Protocol { return plugins.TCP }
+func (p *Plugin) Priority() int          { return -1 }
 
 // TLSPlugin detects Oracle GoldenGate Microservices over TLS.
 type TLSPlugin struct{}
