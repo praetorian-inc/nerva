@@ -161,6 +161,7 @@ const (
 	ProtoOracleOAM         = "oracle_oam"
 	ProtoOracleOIM         = "oracle_oim"
 	ProtoOracleHTTPServer  = "oracle_http_server"
+	ProtoOracleSOA         = "oracle_soa"
 	ProtoPCOM              = "pcom"
 	ProtoPFCP              = "pfcp"
 	ProtoPinecone          = "pinecone"
@@ -477,6 +478,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoOracleHTTPServer:
 		var p ServiceOracleHTTPServer
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoOracleSOA:
+		var p ServiceOracleSOA
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoOMRONFINS:
@@ -1540,6 +1545,13 @@ type ServiceOracleHTTPServer struct {
 }
 
 func (e ServiceOracleHTTPServer) Type() string { return ProtoOracleHTTPServer }
+
+type ServiceOracleSOA struct {
+	Product string   `json:"product,omitempty"` // soa | osb
+	CPEs    []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceOracleSOA) Type() string { return ProtoOracleSOA }
 
 type ServicePCOM struct {
 	Model     string   `json:"model,omitempty"`
