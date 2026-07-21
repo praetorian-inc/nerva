@@ -277,6 +277,8 @@ func TestHasSiebelCookie(t *testing.T) {
 		{name: "_sweEntryPoint cookie", setCookie: "_sweEntryPoint=xyz; Path=/", expected: true},
 		{name: "LB cookie is not a trigger", setCookie: "BIGipServerSiebel_pool=...", expected: false},
 		{name: "unrelated cookie", setCookie: "JSESSIONID=abc", expected: false},
+		{name: "cookie name ending in _sn is not a trigger", setCookie: "dummy_sn=x; Path=/", expected: false},
+		{name: "_sn= inside another cookie value is not a trigger", setCookie: "foo=_sn=abc", expected: false},
 		{name: "empty", setCookie: "", expected: false},
 	}
 	for _, tt := range tests {
@@ -340,6 +342,8 @@ func TestParseSiebelVersion(t *testing.T) {
 		{name: "dotted marketing version", body: "Siebel version 8.1.1", expected: "8.1.1"},
 		{name: "IP-year form keeps IP prefix", body: "Siebel build IP2023", expected: "IP2023"},
 		{name: "critical: build folder must NOT become a version", body: ".../enu/23021/scripts/", expected: ""},
+		{name: "bare year without IP prefix is NOT a version", body: "Siebel CRM (c) 2023", expected: ""},
+		{name: "bare year with copyright label is NOT a version", body: "Siebel CRM Copyright 2023", expected: ""},
 		{name: "generic page", body: "generic page", expected: ""},
 	}
 	for _, tt := range tests {

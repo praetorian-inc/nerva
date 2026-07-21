@@ -125,12 +125,24 @@ var jdeVersionShape = regexp.MustCompile(`^\d+(\.\d+){1,3}$`)
 var siebelBuild = regexp.MustCompile(`(?i)/(?:public/)?[a-z]{3}/(\d{4,6})/(?:scripts|files|images|htmltemplates)/`)
 
 // siebelBuildLoose is a looser fallback for a /<build>/scripts/siebel segment.
-var siebelBuildLoose = regexp.MustCompile(`(?i)/(\d{5,6})/scripts/siebel`)
+// Digit length is kept consistent with siebelBuild (\d{4,6}); the very specific
+// /scripts/siebel suffix keeps this low-FP even at 4 digits.
+var siebelBuildLoose = regexp.MustCompile(`(?i)/(\d{4,6})/scripts/siebel`)
 
-// siebelMarketingVer matches a directly-observed clean Siebel marketing version
-// (an IP-year line or a legacy dotted version). Capture is [0-9.] plus the
-// literal IP prefix, so it cannot inject CPE separators.
-var siebelMarketingVer = regexp.MustCompile(`(?i)Siebel[^0-9]{0,15}?(?:version|build)?\s*[:\s]?\s*((?:IP)?20\d{2}|\d{1,2}\.\d{1,2}(?:\.\d+)?)`)
+// siebelMarketingVer matches a directly-observed clean Siebel marketing version:
+// an Innovation Pack "IP<year>" designation or a legacy dotted version. A bare
+// 4-digit year is deliberately NOT accepted as a version — real Siebel marketing
+// versions since 2017 carry the "IP" prefix, so an incidental year in footer or
+// copyright text (e.g. "Siebel CRM (c) 2023") must not become a CPE version. The
+// capture is [0-9.] plus the literal IP prefix, so it cannot inject CPE separators.
+var siebelMarketingVer = regexp.MustCompile(`(?i)Siebel[^0-9]{0,15}?(?:version|build)?\s*[:\s]?\s*(IP20\d{2}|\d{1,2}\.\d{1,2}(?:\.\d+)?)`)
+
+// siebelCookieName matches a Siebel session cookie by NAME (_sn or
+// _sweEntryPoint), anchored to a cookie-name boundary (start of the header, or
+// after a ";"/","/space once Set-Cookie headers are joined). This prevents a
+// substring false positive on an unrelated cookie whose name ends in "_sn"
+// (e.g. "dummy_sn=") or whose value merely contains "_sn=" (e.g. "foo=_sn=abc").
+var siebelCookieName = regexp.MustCompile(`(?:^|[;,\s])(?:_sn|_sweEntryPoint)=`)
 
 // containsFold reports whether s contains sub, case-insensitively.
 func containsFold(s, sub string) bool {
@@ -151,6 +163,15 @@ func createHTTPClient(conn net.Conn, timeout time.Duration) *http.Client {
 	return &http.Client{
 		Timeout: timeout,
 		Transport: &http.Transport{
+			// The scanner hands each plugin a single already-established net.Conn,
+			// so DialContext always returns that same conn. Every probe in
+			// detectJDE/detectSiebel shares this one connection: if the server sends
+			// "Connection: close" (or closes) after an early probe, the transport's
+			// redial returns the now-closed conn and later probes fail (safely
+			// skipped via the non-fatal `continue`), so the highest-signal probe is
+			// ordered first. Re-dialing per probe is intentionally NOT done — it would
+			// break the TLS variant (the conn is already TLS-wrapped) and diverge from
+			// the oracleidentity single-connection precedent.
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 				return conn, nil
 			},
@@ -314,11 +335,12 @@ type siebelEvidence struct {
 }
 
 // hasSiebelCookie reports whether the joined Set-Cookie header defines a Siebel
-// session cookie. This is the strongest, lowest-FP signal: a Set-Cookie cannot
-// be reflected from the plugin's GET.
+// session cookie (_sn or _sweEntryPoint) by NAME. This is the strongest,
+// lowest-FP signal: a Set-Cookie cannot be reflected from the plugin's GET. The
+// match is anchored to a cookie-name boundary so an unrelated cookie that merely
+// contains the substring "_sn=" is not treated as a Siebel cookie.
 func hasSiebelCookie(setCookie string) bool {
-	return strings.Contains(setCookie, "_sn=") ||
-		strings.Contains(setCookie, "_sweEntryPoint=")
+	return siebelCookieName.MatchString(setCookie)
 }
 
 // hasSiebelStrongMarker reports whether a string (body or Location) carries a
