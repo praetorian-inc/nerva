@@ -240,6 +240,14 @@ func TestDetectConsoleOrExpress(t *testing.T) {
 			expectedComponent: "",
 			expectedDetect:    false,
 		},
+		{
+			name: "bare 'Oracle Enterprise Manager' text with no logon redirect or agent XML -> NOT detected",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				fmt.Fprint(w, `<html><head><title>Welcome</title></head><body>Powered by Oracle Enterprise Manager</body></html>`)
+			},
+			expectedComponent: "",
+			expectedDetect:    false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -392,6 +400,21 @@ func TestPlugin_Run_NotDetected(t *testing.T) {
 	assert.Nil(t, service)
 }
 
+func TestPlugin_Run_GenericMarkerTextNotDetected(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `<html><head><title>Welcome</title></head><body>Powered by Oracle Enterprise Manager</body></html>`)
+	}))
+	defer server.Close()
+
+	conn, target := dialTestServer(t, server.URL)
+	defer conn.Close()
+
+	plugin := &Plugin{}
+	service, err := plugin.Run(conn, 5*time.Second, target)
+	require.NoError(t, err)
+	assert.Nil(t, service)
+}
+
 func TestTLSPlugin_Run_AgentDetection(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, `<EMResponse agentVersion="13.5.0.0.0"><AgentState>up</AgentState></EMResponse>`)
@@ -433,9 +456,11 @@ func TestPlugin_PortPriority(t *testing.T) {
 		port     uint16
 		expected bool
 	}{
-		{7803, true},
 		{3872, true},
-		{5500, true},
+		// 7803 (Cloud Control console) and 5500 (EM Express) are HTTPS and now
+		// belong exclusively to the TLS variant.
+		{7803, false},
+		{5500, false},
 		{443, false},
 		{80, false},
 	}
@@ -451,9 +476,10 @@ func TestTLSPlugin_PortPriority(t *testing.T) {
 		expected bool
 	}{
 		{7803, true},
+		{5500, true},
 		{443, true},
 		{3872, false},
-		{5500, false},
+		{8080, false},
 	}
 	for _, tt := range tests {
 		assert.Equal(t, tt.expected, plugin.PortPriority(tt.port))
