@@ -270,8 +270,17 @@ func TestDetectConsoleOrExpress(t *testing.T) {
 }
 
 func TestBuildEMCPE(t *testing.T) {
-	assert.Equal(t, "cpe:2.3:a:oracle:enterprise_manager_base_platform:13.5.0.0.0:*:*:*:*:*:*:*", buildEMCPE("13.5.0.0.0"))
-	assert.Equal(t, "cpe:2.3:a:oracle:enterprise_manager_base_platform:*:*:*:*:*:*:*:*", buildEMCPE(""))
+	assert.Equal(t, []string{"cpe:2.3:a:oracle:enterprise_manager_base_platform:13.5.0.0.0:*:*:*:*:*:*:*"}, buildEMCPE("console", "13.5.0.0.0"))
+	assert.Equal(t, []string{"cpe:2.3:a:oracle:enterprise_manager_base_platform:*:*:*:*:*:*:*:*"}, buildEMCPE("console", ""))
+	assert.Equal(t, []string{"cpe:2.3:a:oracle:enterprise_manager_base_platform:13.5.0.0.0:*:*:*:*:*:*:*"}, buildEMCPE("agent", "13.5.0.0.0"))
+	assert.Equal(t, []string{
+		"cpe:2.3:a:oracle:database_server:*:*:*:*:*:*:*:*",
+		"cpe:2.3:a:oracle:database:*:*:*:*:*:*:*:*",
+	}, buildEMCPE("express", "13.5.0.0.0"))
+	assert.Equal(t, []string{
+		"cpe:2.3:a:oracle:database_server:*:*:*:*:*:*:*:*",
+		"cpe:2.3:a:oracle:database:*:*:*:*:*:*:*:*",
+	}, buildEMCPE("express", ""))
 }
 
 func TestPlugin_Run_AgentDetection_Misconfigs(t *testing.T) {
@@ -383,6 +392,10 @@ func TestPlugin_Run_ExpressDetection(t *testing.T) {
 	var payload plugins.ServiceOracleEM
 	require.NoError(t, json.Unmarshal(service.Raw, &payload))
 	assert.Equal(t, "express", payload.Component)
+	assert.Equal(t, []string{
+		"cpe:2.3:a:oracle:database_server:*:*:*:*:*:*:*:*",
+		"cpe:2.3:a:oracle:database:*:*:*:*:*:*:*:*",
+	}, payload.CPEs)
 }
 
 func TestPlugin_Run_NotDetected(t *testing.T) {
@@ -477,8 +490,8 @@ func TestTLSPlugin_PortPriority(t *testing.T) {
 	}{
 		{7803, true},
 		{5500, true},
+		{3872, true},
 		{443, true},
-		{3872, false},
 		{8080, false},
 	}
 	for _, tt := range tests {
