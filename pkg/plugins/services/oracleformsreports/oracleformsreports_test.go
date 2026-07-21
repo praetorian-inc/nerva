@@ -1,0 +1,878 @@
+// Copyright 2022 Praetorian Security, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package oracleformsreports
+
+import (
+	"encoding/json"
+	"fmt"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"net/netip"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/praetorian-inc/nerva/pkg/plugins"
+)
+
+// --- Pure helper unit tests ---
+
+func TestHasFormsMarker(t *testing.T) {
+	tests := []struct {
+		name     string
+		body     string
+		expected bool
+	}{
+		{"applet main class", `<applet code="oracle.forms.engine.Main">`, true},
+		{"frmall.jar archive", `archive="frmall.jar"`, true},
+		{"base HTML provenance comment", `<!-- FILE: webutiljpi.htm (Oracle Forms) -->`, true},
+		{"branded Forms Services text", `Oracle Fusion Middleware Forms Services`, true},
+		{"FRM-9xxxx error code", `FRM-92050 failed to connect to the Forms server`, true},
+		{"FRM code below threshold is not matched", `FRM-401: field must be entered`, false},
+		{"bare frmservlet path echo is not a marker", `/forms/frmservlet not found`, false},
+		{"generic login page", `<html><body>please log in</body></html>`, false},
+		{"empty body", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, hasFormsMarker(tt.body))
+		})
+	}
+}
+
+func TestHasReportsMarker(t *testing.T) {
+	tests := []struct {
+		name     string
+		body     string
+		expected bool
+	}{
+		{"REP error code", `REP-52251: Cannot get output`, true},
+		{"branded Oracle Reports title", `<title>Oracle Reports</title>`, true},
+		{"Reports Servlet text", `Reports Servlet Command`, true},
+		{"Oracle diagnostic CSS class OraInstructionText", `<span class="OraInstructionText">`, true},
+		{"Oracle diagnostic CSS class OraDataText", `<td class="OraDataText">value</td>`, true},
+		{"Oracle diagnostic CSS class OraTableCellText", `<td class="OraTableCellText">value</td>`, true},
+		{"bare rwservlet path echo is not a marker", `/reports/rwservlet not found`, false},
+		{"echoed sub-path tokens are not markers", `<a href="rwservlet/showenv">showenv</a><a href="rwservlet/getserverinfo">getserverinfo</a>`, false},
+		{"unrelated body", "hello world", false},
+		{"empty body", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, hasReportsMarker(tt.body))
+		})
+	}
+}
+
+func TestParseReportsVersion(t *testing.T) {
+	tests := []struct {
+		name     string
+		body     string
+		expected string
+	}{
+		{"XML serverInfo attribute", `<serverInfo name="repserv" version="10.1.2.0.2">`, "10.1.2.0.2"},
+		{"HTML version label", `<td>Version: 12.2.1.4.0</td>`, "12.2.1.4.0"},
+		{"no version present", `<serverInfo name="repserv">`, ""},
+		{"empty body", "", ""},
+		// Regression (M1): getserverinfo XML responses begin with an XML
+		// declaration ("<?xml version='1.0' ...?>") whose two-segment "1.0" must
+		// NOT be mis-extracted as the Reports version; the real three-segment
+		// serverInfo version attribute later in the body must win instead.
+		{"XML declaration prefix does not shadow the real serverInfo version", `<?xml version='1.0' encoding="UTF-8"?><serverInfo name="repserv" version="10.1.2.0.2">`, "10.1.2.0.2"},
+		{"bare two-segment XML declaration version with no serverInfo version => no match", `<?xml version='1.0' encoding="UTF-8"?><serverInfo name="repserv">`, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, parseReportsVersion(tt.body))
+		})
+	}
+}
+
+func TestHasReportsDiagnosticContent(t *testing.T) {
+	tests := []struct {
+		name     string
+		body     string
+		expected bool
+	}{
+		{"PATH_TRANSLATED env dump", `PATH_TRANSLATED=/u01/oracle/domains/base_domain`, true},
+		{"Oracle diagnostic CSS class", `<span class="OraDataText">env</span>`, true},
+		{"parsed version present", `<serverInfo version="10.1.2.0.2">`, true},
+		{"bare 200 with no diagnostic content", `OK`, false},
+		{"echoed path tokens only (self-referential guard)", `/reports/rwservlet/showenv and /reports/rwservlet/getserverinfo not found`, false},
+		{"empty body", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, hasReportsDiagnosticContent(tt.body))
+		})
+	}
+}
+
+func TestEraFromShowenv(t *testing.T) {
+	tests := []struct {
+		name     string
+		body     string
+		expected string
+	}{
+		{"OC4J_BI_Forms => 10g", `PATH_TRANSLATED=/ofa/u01/app/oracle/product/10g/j2ee/OC4J_BI_Forms/applications/reports/web/`, "10g"},
+		{"DevSuiteHome => 10g", `C:\DevSuiteHome_1\reports\j2ee\reports_ids\web\showenv`, "10g"},
+		{"WLS_REPORTS domain layout => 12c", `PATH_TRANSLATED=/u01/oracle/user_projects/domains/base_domain/servers/WLS_REPORTS/`, "12c"},
+		{"WLS_FORMS domain layout => 12c", `PATH_TRANSLATED=/u01/oracle/user_projects/domains/base_domain/servers/WLS_FORMS/`, "12c"},
+		{"unrelated body => ''", `SOME_ENV=value`, ""},
+		{"empty body => ''", ``, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, eraFromShowenv(tt.body))
+		})
+	}
+}
+
+func TestEraFromServerHeader(t *testing.T) {
+	assert.Equal(t, "12c", eraFromServerHeader("Oracle-HTTP-Server-12c"))
+	assert.Equal(t, "12c", eraFromServerHeader("oracle-http-server-12c/12.2.1.4.0"))
+	assert.Equal(t, "", eraFromServerHeader("Oracle-HTTP-Server"))
+	assert.Equal(t, "", eraFromServerHeader(""))
+}
+
+func TestPortInList(t *testing.T) {
+	assert.True(t, portInList(7777))
+	assert.True(t, portInList(7778))
+	assert.True(t, portInList(8888))
+	assert.True(t, portInList(9001))
+	assert.False(t, portInList(443))
+	assert.False(t, portInList(80))
+	assert.False(t, portInList(0))
+}
+
+func TestBuildFormsCPE(t *testing.T) {
+	assert.Equal(t, "cpe:2.3:a:oracle:forms:*:*:*:*:*:*:*:*", buildFormsCPE())
+}
+
+func TestBuildReportsCPE(t *testing.T) {
+	assert.Equal(t, "cpe:2.3:a:oracle:reports:*:*:*:*:*:*:*:*", buildReportsCPE(""))
+	assert.Equal(t, "cpe:2.3:a:oracle:reports:10.1.2.0.2:*:*:*:*:*:*:*", buildReportsCPE("10.1.2.0.2"))
+}
+
+func TestEvaluateForms(t *testing.T) {
+	tests := []struct {
+		name         string
+		ev           formsEvidence
+		wantEra      string
+		wantFusion   bool
+		wantDetected bool
+	}{
+		{
+			name:         "200 + applet class => detected",
+			ev:           formsEvidence{statusCode: 200, body: `code="oracle.forms.engine.Main"`},
+			wantDetected: true,
+		},
+		{
+			name:         "200 + marker + Server -12c => era 12c",
+			ev:           formsEvidence{statusCode: 200, body: `oracle.forms.engine.Main`, server: "Oracle-HTTP-Server-12c"},
+			wantEra:      "12c",
+			wantDetected: true,
+		},
+		{
+			name:         "200 + marker + DMS => fusion true",
+			ev:           formsEvidence{statusCode: 200, body: `frmall.jar`, dms: true},
+			wantFusion:   true,
+			wantDetected: true,
+		},
+		{
+			name:         "200 + marker + Server -12c + DMS => era 12c and fusion true",
+			ev:           formsEvidence{statusCode: 200, body: `frmall.jar`, server: "Oracle-HTTP-Server-12c", dms: true},
+			wantEra:      "12c",
+			wantFusion:   true,
+			wantDetected: true,
+		},
+		{
+			name:         "200 generic body => not detected (bare-non-404 guard)",
+			ev:           formsEvidence{statusCode: 200, body: "generic page"},
+			wantDetected: false,
+		},
+		{
+			name:         "401 with marker still detected (status is not 404)",
+			ev:           formsEvidence{statusCode: 401, body: `oracle.forms.engine.Main`},
+			wantDetected: true,
+		},
+		{
+			name:         "404 with marker text => not detected",
+			ev:           formsEvidence{statusCode: 404, body: `oracle.forms.engine.Main`},
+			wantDetected: false,
+		},
+		{
+			name:         "headers alone with no marker => not detected (corroboration-only guard)",
+			ev:           formsEvidence{statusCode: 200, body: "generic page", server: "Oracle-HTTP-Server-12c", dms: true},
+			wantDetected: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			era, fusion, detected := evaluateForms(tt.ev)
+			assert.Equal(t, tt.wantDetected, detected)
+			assert.Equal(t, tt.wantEra, era)
+			assert.Equal(t, tt.wantFusion, fusion)
+		})
+	}
+}
+
+func TestEvaluateReports(t *testing.T) {
+	tests := []struct {
+		name         string
+		ev           reportsEvidence
+		wantVersion  string
+		wantEra      string
+		wantFusion   bool
+		wantDetected bool
+	}{
+		{
+			name:         "rwservlet 200 + REP code => detected, no version/era",
+			ev:           reportsEvidence{statusCode: 200, body: "REP-52251"},
+			wantDetected: true,
+		},
+		{
+			name: "getserverinfo version parsed",
+			ev: reportsEvidence{
+				statusCode:    200,
+				body:          "Oracle Reports",
+				getServerInfo: diagResponse{statusCode: 200, body: `<serverInfo version="10.1.2.0.2">`},
+			},
+			wantVersion:  "10.1.2.0.2",
+			wantDetected: true,
+		},
+		{
+			name: "getserverinfo gated (non-2xx) => version stays empty",
+			ev: reportsEvidence{
+				statusCode:    200,
+				body:          "Oracle Reports",
+				getServerInfo: diagResponse{statusCode: 403, body: `<serverInfo version="10.1.2.0.2">`},
+			},
+			wantDetected: true,
+		},
+		{
+			name: "showenv OC4J_BI_Forms => era 10g",
+			ev: reportsEvidence{
+				statusCode: 200,
+				body:       "Oracle Reports",
+				showenv:    diagResponse{statusCode: 200, body: "PATH_TRANSLATED=.../OC4J_BI_Forms/..."},
+			},
+			wantEra:      "10g",
+			wantDetected: true,
+		},
+		{
+			name: "Server -12c header + 12c showenv => era 12c (showenv wins over header)",
+			ev: reportsEvidence{
+				statusCode: 200,
+				body:       "Oracle Reports",
+				server:     "Oracle-HTTP-Server-12c",
+				showenv:    diagResponse{statusCode: 200, body: "user_projects/domains/base_domain/servers/WLS_REPORTS"},
+			},
+			wantEra:      "12c",
+			wantDetected: true,
+		},
+		{
+			name: "DMS header present => fusion true",
+			ev: reportsEvidence{
+				statusCode: 200,
+				body:       "Oracle Reports",
+				dms:        true,
+			},
+			wantFusion:   true,
+			wantDetected: true,
+		},
+		{
+			name:         "rwservlet 200 generic => not detected",
+			ev:           reportsEvidence{statusCode: 200, body: "generic page"},
+			wantDetected: false,
+		},
+		{
+			name:         "rwservlet 404 => not detected",
+			ev:           reportsEvidence{statusCode: 404, body: "Oracle Reports"},
+			wantDetected: false,
+		},
+		{
+			name:         "headers alone with no marker => not detected (corroboration-only guard)",
+			ev:           reportsEvidence{statusCode: 200, body: "generic page", server: "Oracle-HTTP-Server-12c", dms: true},
+			wantDetected: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			version, era, fusion, detected := evaluateReports(tt.ev)
+			assert.Equal(t, tt.wantDetected, detected)
+			assert.Equal(t, tt.wantVersion, version)
+			assert.Equal(t, tt.wantEra, era)
+			assert.Equal(t, tt.wantFusion, fusion)
+		})
+	}
+}
+
+func TestReportsInfoDisclosed(t *testing.T) {
+	tests := []struct {
+		name string
+		ev   reportsEvidence
+		want bool
+	}{
+		{"getserverinfo 200 + version content", reportsEvidence{getServerInfo: diagResponse{statusCode: 200, body: `version="10.1.2.0.2"`}}, true},
+		{"showenv 200 + PATH_TRANSLATED", reportsEvidence{showenv: diagResponse{statusCode: 200, body: "PATH_TRANSLATED=/x"}}, true},
+		{"showenv 403 gated => false", reportsEvidence{showenv: diagResponse{statusCode: 403, body: "PATH_TRANSLATED=/x"}}, false},
+		{"getserverinfo 404 gated => false", reportsEvidence{getServerInfo: diagResponse{statusCode: 404, body: `version="10.1.2.0.2"`}}, false},
+		{"200 but no diagnostic content => false", reportsEvidence{showenv: diagResponse{statusCode: 200, body: "ok"}}, false},
+		{"neither diag endpoint populated => false", reportsEvidence{}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, reportsInfoDisclosed(tt.ev))
+		})
+	}
+}
+
+// --- httptest end-to-end harness (matches oracleidentity/oraclehttp pattern) ---
+
+// parseTestServerAddr parses an httptest server URL into a netip.AddrPort.
+func parseTestServerAddr(t *testing.T, serverURL string) netip.AddrPort {
+	t.Helper()
+	hostPort := strings.TrimPrefix(serverURL, "http://")
+	host, portStr, err := net.SplitHostPort(hostPort)
+	require.NoError(t, err)
+	port, err := strconv.Atoi(portStr)
+	require.NoError(t, err)
+	return netip.AddrPortFrom(netip.MustParseAddr(host), uint16(port))
+}
+
+// runPlugin wires an httptest server to a raw TCP dial and invokes p.Run, matching
+// the harness pattern used by oracleidentity_test.go / oraclehttp_test.go. TLS
+// plugin variants are exercised the same way: Run() only special-cases the conn
+// type inside plugins.CheckTLS (a safe no-op for a non-*tls.Conn), so a plain TCP
+// dial is sufficient to test TLS-variant detection logic without internals of TLS.
+func runPlugin(t *testing.T, p plugins.Plugin, handler http.HandlerFunc, misconfigs bool) *plugins.Service {
+	t.Helper()
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	addr := parseTestServerAddr(t, server.URL)
+	conn, err := net.DialTimeout("tcp", strings.TrimPrefix(server.URL, "http://"), 5*time.Second)
+	require.NoError(t, err)
+	defer conn.Close()
+	svc, err := p.Run(conn, 5*time.Second, plugins.Target{Host: addr.Addr().String(), Address: addr, Misconfigs: misconfigs})
+	require.NoError(t, err)
+	return svc
+}
+
+// --- Forms plugin: positive detection ---
+
+func TestFormsPlugin_Run_PositiveViaAppletClass(t *testing.T) {
+	svc := runPlugin(t, &FormsPlugin{}, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/forms/frmservlet" {
+			fmt.Fprint(w, `<applet code="oracle.forms.engine.Main" archive="frmall.jar"></applet>`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}, false)
+	require.NotNil(t, svc)
+	var f plugins.ServiceOracleForms
+	require.NoError(t, json.Unmarshal(svc.Raw, &f))
+	require.Len(t, f.CPEs, 1)
+	assert.Equal(t, "cpe:2.3:a:oracle:forms:*:*:*:*:*:*:*:*", f.CPEs[0])
+	assert.Equal(t, "", svc.Version, "Forms version is never populated (no reliable unauthenticated version surface)")
+}
+
+func TestFormsPlugin_Run_PositiveViaFrmErrorCode(t *testing.T) {
+	svc := runPlugin(t, &FormsPlugin{}, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/forms/frmservlet" {
+			fmt.Fprint(w, `FRM-92050: unable to connect to the Forms Listener Servlet`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}, false)
+	require.NotNil(t, svc)
+	var f plugins.ServiceOracleForms
+	require.NoError(t, json.Unmarshal(svc.Raw, &f))
+	require.Len(t, f.CPEs, 1)
+	assert.Equal(t, "cpe:2.3:a:oracle:forms:*:*:*:*:*:*:*:*", f.CPEs[0])
+}
+
+func TestFormsPlugin_Run_PositiveViaProvenanceComment(t *testing.T) {
+	svc := runPlugin(t, &FormsPlugin{}, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/forms/frmservlet" {
+			fmt.Fprint(w, `<!-- FILE: webutiljpi.htm (Oracle Forms) -->`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}, false)
+	require.NotNil(t, svc)
+}
+
+func TestFormsPlugin_Run_PositiveViaFormsServicesText(t *testing.T) {
+	svc := runPlugin(t, &FormsPlugin{}, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/forms/frmservlet" {
+			fmt.Fprint(w, `Oracle Fusion Middleware Forms Services`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}, false)
+	require.NotNil(t, svc)
+}
+
+func TestFormsPlugin_Run_FusionMiddlewareFromDMSHeader(t *testing.T) {
+	svc := runPlugin(t, &FormsPlugin{}, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/forms/frmservlet" {
+			w.Header().Set("Server", "Oracle-HTTP-Server-12c")
+			w.Header().Set("X-ORACLE-DMS-ECID", "005ABC123.deadbeef")
+			fmt.Fprint(w, `code="oracle.forms.engine.Main"`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}, false)
+	require.NotNil(t, svc)
+	var f plugins.ServiceOracleForms
+	require.NoError(t, json.Unmarshal(svc.Raw, &f))
+	assert.True(t, f.FusionMiddleware, "DMS header on an already-classified Forms service must set FusionMiddleware")
+	assert.Equal(t, "12c", f.Era, "Server: Oracle-HTTP-Server-12c corroborates the 12c era on an already-classified service")
+}
+
+// --- Forms plugin: negative / false-positive guards ---
+
+func TestFormsPlugin_Run_Negative_Bare200NoMarker(t *testing.T) {
+	svc := runPlugin(t, &FormsPlugin{}, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, "generic /forms/frmservlet landing page")
+	}, false)
+	assert.Nil(t, svc)
+}
+
+func TestFormsPlugin_Run_Negative_Bare404NoMarker(t *testing.T) {
+	svc := runPlugin(t, &FormsPlugin{}, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		fmt.Fprint(w, "404 not found")
+	}, false)
+	assert.Nil(t, svc)
+}
+
+func TestFormsPlugin_Run_Negative_SelfReferentialPathEcho(t *testing.T) {
+	svc := runPlugin(t, &FormsPlugin{}, func(w http.ResponseWriter, r *http.Request) {
+		// An error/echo page reflecting the requested path is NOT a product marker.
+		fmt.Fprintf(w, "The requested resource /forms/frmservlet is not available on this server")
+	}, false)
+	assert.Nil(t, svc)
+}
+
+func TestFormsPlugin_Run_Negative_CorroborationHeadersOnlyNoMarker(t *testing.T) {
+	// Server: Oracle-HTTP-Server-12c and the DMS header alone (no servlet marker)
+	// must NOT classify the host as Forms.
+	svc := runPlugin(t, &FormsPlugin{}, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Server", "Oracle-HTTP-Server-12c")
+		w.Header().Set("X-ORACLE-DMS-ECID", "005ABC123.deadbeef")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, "generic welcome page")
+	}, false)
+	assert.Nil(t, svc)
+}
+
+func TestFormsPlugin_Metadata(t *testing.T) {
+	p := &FormsPlugin{}
+	assert.Equal(t, OracleForms, p.Name())
+	assert.Equal(t, plugins.TCP, p.Type())
+	assert.Equal(t, -1, p.Priority())
+	assert.True(t, p.PortPriority(7777))
+	assert.True(t, p.PortPriority(7778))
+	assert.True(t, p.PortPriority(8888))
+	assert.True(t, p.PortPriority(9001))
+	assert.False(t, p.PortPriority(443))
+}
+
+// --- Forms TLS plugin ---
+
+func TestFormsTLSPlugin_Run_Positive(t *testing.T) {
+	svc := runPlugin(t, &FormsTLSPlugin{}, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/forms/frmservlet" {
+			fmt.Fprint(w, `frmall.jar`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}, false)
+	require.NotNil(t, svc)
+	var f plugins.ServiceOracleForms
+	require.NoError(t, json.Unmarshal(svc.Raw, &f))
+	require.Len(t, f.CPEs, 1)
+	assert.Equal(t, "cpe:2.3:a:oracle:forms:*:*:*:*:*:*:*:*", f.CPEs[0])
+}
+
+func TestFormsTLSPlugin_Run_Negative(t *testing.T) {
+	svc := runPlugin(t, &FormsTLSPlugin{}, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, "generic landing page")
+	}, false)
+	assert.Nil(t, svc)
+}
+
+func TestFormsTLSPlugin_Run_MisconfigsAppendsFindingAndCheckTLSIsSafeNoop(t *testing.T) {
+	// CheckTLS type-asserts the conn to *tls.Conn; a plain TCP conn from httptest
+	// makes it a safe no-op, so only the shared exposed finding is expected. Per
+	// task instructions we don't assert CheckTLS's internals, only that appending
+	// its result doesn't break the plugin.
+	svc := runPlugin(t, &FormsTLSPlugin{}, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/forms/frmservlet" {
+			fmt.Fprint(w, `frmall.jar`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}, true)
+	require.NotNil(t, svc)
+	assert.True(t, svc.AnonymousAccess)
+	require.Len(t, svc.SecurityFindings, 1)
+	assert.Equal(t, "oracle-forms-reports-exposed", svc.SecurityFindings[0].ID)
+}
+
+func TestFormsTLSPlugin_Metadata(t *testing.T) {
+	p := &FormsTLSPlugin{}
+	assert.Equal(t, OracleForms, p.Name())
+	assert.Equal(t, plugins.TCPTLS, p.Type())
+	assert.Equal(t, -1, p.Priority())
+	assert.True(t, p.PortPriority(443))
+	assert.False(t, p.PortPriority(7777))
+}
+
+// --- Reports plugin: positive detection ---
+
+func TestReportsPlugin_Run_PositiveWithVersionAnd10gEra(t *testing.T) {
+	svc := runPlugin(t, &ReportsPlugin{}, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/reports/rwservlet":
+			fmt.Fprint(w, `<html><title>Oracle Reports</title>REP-52251</html>`)
+		case "/reports/rwservlet/getserverinfo":
+			fmt.Fprint(w, `<serverInfo name="repserv" version="10.1.2.0.2">`)
+		case "/reports/rwservlet/showenv":
+			fmt.Fprint(w, `PATH_TRANSLATED=/ofa/u01/app/oracle/product/10g/j2ee/OC4J_BI_Forms/applications/reports/web/`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}, false)
+	require.NotNil(t, svc)
+	assert.Equal(t, "10.1.2.0.2", svc.Version)
+	var rp plugins.ServiceOracleReports
+	require.NoError(t, json.Unmarshal(svc.Raw, &rp))
+	assert.Equal(t, "10g", rp.Era)
+	require.Len(t, rp.CPEs, 1)
+	assert.Equal(t, "cpe:2.3:a:oracle:reports:10.1.2.0.2:*:*:*:*:*:*:*", rp.CPEs[0])
+}
+
+func TestReportsPlugin_Run_XMLDeclarationGetServerInfo_VersionRidesThroughToCPE(t *testing.T) {
+	// Regression (M1): getserverinfo answering with a full XML document -- an XML
+	// declaration ("<?xml version='1.0' encoding=\"UTF-8\"?>") followed by the real
+	// serverInfo version attribute -- must extract the serverInfo version
+	// (10.1.2.0.2), not the XML declaration's own two-segment "1.0", and that
+	// version must ride through to both svc.Version and the emitted CPE.
+	svc := runPlugin(t, &ReportsPlugin{}, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/reports/rwservlet":
+			fmt.Fprint(w, `<html><title>Oracle Reports</title>REP-52251</html>`)
+		case "/reports/rwservlet/getserverinfo":
+			fmt.Fprint(w, `<?xml version='1.0' encoding="UTF-8"?><serverInfo name="repserv" version="10.1.2.0.2">`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}, false)
+	require.NotNil(t, svc)
+	assert.Equal(t, "10.1.2.0.2", svc.Version, "must extract the serverInfo version, not the XML declaration's own version='1.0'")
+	var rp plugins.ServiceOracleReports
+	require.NoError(t, json.Unmarshal(svc.Raw, &rp))
+	require.Len(t, rp.CPEs, 1)
+	assert.Equal(t, "cpe:2.3:a:oracle:reports:10.1.2.0.2:*:*:*:*:*:*:*", rp.CPEs[0])
+}
+
+func TestReportsPlugin_Run_PositiveWith12cEra(t *testing.T) {
+	svc := runPlugin(t, &ReportsPlugin{}, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/reports/rwservlet":
+			w.Header().Set("Server", "Oracle-HTTP-Server-12c")
+			fmt.Fprint(w, `Reports Servlet Command`)
+		case "/reports/rwservlet/getserverinfo":
+			fmt.Fprint(w, `Version: 12.2.1.4.0`)
+		case "/reports/rwservlet/showenv":
+			fmt.Fprint(w, `PATH_TRANSLATED=/u01/oracle/user_projects/domains/base_domain/servers/WLS_REPORTS/`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}, false)
+	require.NotNil(t, svc)
+	assert.Equal(t, "12.2.1.4.0", svc.Version)
+	var rp plugins.ServiceOracleReports
+	require.NoError(t, json.Unmarshal(svc.Raw, &rp))
+	assert.Equal(t, "12c", rp.Era)
+	require.Len(t, rp.CPEs, 1)
+	assert.Equal(t, "cpe:2.3:a:oracle:reports:12.2.1.4.0:*:*:*:*:*:*:*", rp.CPEs[0])
+}
+
+func TestReportsPlugin_Run_FusionMiddlewareFromDMSHeader(t *testing.T) {
+	svc := runPlugin(t, &ReportsPlugin{}, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/reports/rwservlet":
+			w.Header().Set("X-ORACLE-DMS-ECID", "005ABC123.deadbeef")
+			fmt.Fprint(w, `Oracle Reports`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}, false)
+	require.NotNil(t, svc)
+	var rp plugins.ServiceOracleReports
+	require.NoError(t, json.Unmarshal(svc.Raw, &rp))
+	assert.True(t, rp.FusionMiddleware, "DMS header on an already-classified Reports service must set FusionMiddleware")
+}
+
+func TestReportsPlugin_Run_DiagEndpointsGated_VersionAndEraStayUnknown(t *testing.T) {
+	// getserverinfo/showenv are frequently DIAGNOSTIC=NO gated (non-2xx); version
+	// and era must default to unknown/wildcard rather than erroring.
+	svc := runPlugin(t, &ReportsPlugin{}, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/reports/rwservlet":
+			fmt.Fprint(w, `Oracle Reports`)
+		case "/reports/rwservlet/getserverinfo", "/reports/rwservlet/showenv":
+			w.WriteHeader(http.StatusForbidden)
+			fmt.Fprint(w, "Access Forbidden")
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}, false)
+	require.NotNil(t, svc)
+	assert.Equal(t, "", svc.Version)
+	var rp plugins.ServiceOracleReports
+	require.NoError(t, json.Unmarshal(svc.Raw, &rp))
+	assert.Equal(t, "", rp.Era)
+	require.Len(t, rp.CPEs, 1)
+	assert.Equal(t, "cpe:2.3:a:oracle:reports:*:*:*:*:*:*:*:*", rp.CPEs[0])
+}
+
+// --- Reports plugin: negative / false-positive guards ---
+
+func TestReportsPlugin_Run_Negative_Bare200NoMarker(t *testing.T) {
+	svc := runPlugin(t, &ReportsPlugin{}, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/reports/rwservlet" {
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprint(w, "generic /reports/rwservlet landing page")
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}, false)
+	assert.Nil(t, svc)
+}
+
+func TestReportsPlugin_Run_Negative_Bare404NoMarker(t *testing.T) {
+	svc := runPlugin(t, &ReportsPlugin{}, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		fmt.Fprint(w, "404 not found")
+	}, false)
+	assert.Nil(t, svc)
+}
+
+func TestReportsPlugin_Run_Negative_SelfReferentialPathEcho(t *testing.T) {
+	svc := runPlugin(t, &ReportsPlugin{}, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/reports/rwservlet" {
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprint(w, "proxied /reports/rwservlet not found")
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}, false)
+	assert.Nil(t, svc)
+}
+
+func TestReportsPlugin_Run_Negative_CorroborationHeadersOnlyNoMarker(t *testing.T) {
+	svc := runPlugin(t, &ReportsPlugin{}, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/reports/rwservlet" {
+			w.Header().Set("Server", "Oracle-HTTP-Server-12c")
+			w.Header().Set("X-ORACLE-DMS-ECID", "005ABC123.deadbeef")
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprint(w, "generic welcome page")
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}, false)
+	assert.Nil(t, svc)
+}
+
+func TestReportsPlugin_Metadata(t *testing.T) {
+	p := &ReportsPlugin{}
+	assert.Equal(t, OracleReports, p.Name())
+	assert.Equal(t, plugins.TCP, p.Type())
+	assert.Equal(t, -1, p.Priority())
+	assert.True(t, p.PortPriority(7778))
+	assert.False(t, p.PortPriority(443))
+}
+
+// --- Reports TLS plugin ---
+
+func TestReportsTLSPlugin_Run_Positive(t *testing.T) {
+	svc := runPlugin(t, &ReportsTLSPlugin{}, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/reports/rwservlet":
+			fmt.Fprint(w, `REP-52251`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}, false)
+	require.NotNil(t, svc)
+	var rp plugins.ServiceOracleReports
+	require.NoError(t, json.Unmarshal(svc.Raw, &rp))
+	require.Len(t, rp.CPEs, 1)
+	assert.Equal(t, "cpe:2.3:a:oracle:reports:*:*:*:*:*:*:*:*", rp.CPEs[0])
+}
+
+func TestReportsTLSPlugin_Run_Negative(t *testing.T) {
+	svc := runPlugin(t, &ReportsTLSPlugin{}, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, "generic landing page")
+	}, false)
+	assert.Nil(t, svc)
+}
+
+func TestReportsTLSPlugin_Metadata(t *testing.T) {
+	p := &ReportsTLSPlugin{}
+	assert.Equal(t, OracleReports, p.Name())
+	assert.Equal(t, plugins.TCPTLS, p.Type())
+	assert.Equal(t, -1, p.Priority())
+	assert.True(t, p.PortPriority(443))
+	assert.False(t, p.PortPriority(7777))
+}
+
+// --- Security findings / Misconfigs gating ---
+
+func TestFormsSecurityFindings(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/forms/frmservlet" {
+			fmt.Fprint(w, `code="oracle.forms.engine.Main"`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	})
+	t.Run("Misconfigs=true yields AnonymousAccess and Low finding", func(t *testing.T) {
+		svc := runPlugin(t, &FormsPlugin{}, handler, true)
+		require.NotNil(t, svc)
+		assert.True(t, svc.AnonymousAccess)
+		require.Len(t, svc.SecurityFindings, 1)
+		assert.Equal(t, "oracle-forms-reports-exposed", svc.SecurityFindings[0].ID)
+		assert.Equal(t, plugins.SeverityLow, svc.SecurityFindings[0].Severity)
+	})
+	t.Run("Misconfigs=false yields no findings", func(t *testing.T) {
+		svc := runPlugin(t, &FormsPlugin{}, handler, false)
+		require.NotNil(t, svc)
+		assert.False(t, svc.AnonymousAccess)
+		assert.Empty(t, svc.SecurityFindings)
+	})
+}
+
+func TestFormsSecurityFindings_AbsentOnNon2xxEvenWhenMisconfigsTrue(t *testing.T) {
+	// The Forms marker is present but the classifier response itself is a 401 (not
+	// a 2xx) — AnonymousAccess/finding must NOT be reported, only the detection.
+	svc := runPlugin(t, &FormsPlugin{}, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/forms/frmservlet" {
+			w.WriteHeader(http.StatusUnauthorized)
+			fmt.Fprint(w, `code="oracle.forms.engine.Main"`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}, true)
+	require.NotNil(t, svc, "a 401 with a genuine marker is still a detected service")
+	assert.False(t, svc.AnonymousAccess)
+	assert.Empty(t, svc.SecurityFindings)
+}
+
+func TestReportsSecurityFindings(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/reports/rwservlet":
+			fmt.Fprint(w, `<title>Oracle Reports</title>`)
+		case "/reports/rwservlet/getserverinfo":
+			fmt.Fprint(w, `<serverInfo version="10.1.2.0.2">`)
+		case "/reports/rwservlet/showenv":
+			fmt.Fprint(w, `PATH_TRANSLATED=/x/OC4J_BI_Forms/y`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	t.Run("Misconfigs=true yields exposed (Low) + info-disclosure (Medium)", func(t *testing.T) {
+		svc := runPlugin(t, &ReportsPlugin{}, handler, true)
+		require.NotNil(t, svc)
+		assert.True(t, svc.AnonymousAccess)
+		require.Len(t, svc.SecurityFindings, 2)
+		byID := map[string]plugins.SecurityFinding{}
+		for _, f := range svc.SecurityFindings {
+			byID[f.ID] = f
+		}
+		lowFinding, ok := byID["oracle-forms-reports-exposed"]
+		require.True(t, ok)
+		assert.Equal(t, plugins.SeverityLow, lowFinding.Severity)
+
+		medFinding, ok := byID["oracle-reports-info-disclosure"]
+		require.True(t, ok)
+		assert.Equal(t, plugins.SeverityMedium, medFinding.Severity)
+		// The Medium finding must report protocol facts only — never the actual
+		// leaked env/path/version content observed in the diagnostic response body.
+		assert.NotContains(t, medFinding.Evidence, "PATH_TRANSLATED")
+		assert.NotContains(t, medFinding.Evidence, "OC4J_BI_Forms")
+		assert.NotContains(t, medFinding.Evidence, "10.1.2.0.2")
+	})
+	t.Run("Misconfigs=false yields no findings", func(t *testing.T) {
+		svc := runPlugin(t, &ReportsPlugin{}, handler, false)
+		require.NotNil(t, svc)
+		assert.False(t, svc.AnonymousAccess)
+		assert.Empty(t, svc.SecurityFindings)
+	})
+}
+
+func TestReportsSecurityFindings_AbsentOnNon2xxEvenWhenMisconfigsTrue(t *testing.T) {
+	// Main classifier response is 401 (not 2xx) and the diagnostic endpoints are
+	// also gated (403) -- neither the exposed nor the info-disclosure finding
+	// should be reported, even though the host is still detected as Reports.
+	svc := runPlugin(t, &ReportsPlugin{}, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/reports/rwservlet":
+			w.WriteHeader(http.StatusUnauthorized)
+			fmt.Fprint(w, `Oracle Reports`)
+		case "/reports/rwservlet/getserverinfo", "/reports/rwservlet/showenv":
+			w.WriteHeader(http.StatusForbidden)
+			fmt.Fprint(w, `PATH_TRANSLATED=/x/OC4J_BI_Forms/y`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}, true)
+	require.NotNil(t, svc, "a 401 with a genuine marker is still a detected service")
+	assert.False(t, svc.AnonymousAccess)
+	assert.Empty(t, svc.SecurityFindings)
+}
+
+func TestReportsTLSSecurityFindings_CheckTLSAppendedSafely(t *testing.T) {
+	// Same as the TCP case, plus plugins.CheckTLS is appended. On a plain TCP
+	// httptest conn (not *tls.Conn) CheckTLS is a safe no-op, so the finding count
+	// matches the non-TLS variant; we don't assert CheckTLS's internals.
+	svc := runPlugin(t, &ReportsTLSPlugin{}, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/reports/rwservlet":
+			fmt.Fprint(w, `<title>Oracle Reports</title>`)
+		case "/reports/rwservlet/getserverinfo":
+			fmt.Fprint(w, `<serverInfo version="10.1.2.0.2">`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}, true)
+	require.NotNil(t, svc)
+	assert.True(t, svc.AnonymousAccess)
+	require.Len(t, svc.SecurityFindings, 2)
+}

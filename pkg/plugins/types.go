@@ -161,6 +161,8 @@ const (
 	ProtoOracleOAM         = "oracle_oam"
 	ProtoOracleOIM         = "oracle_oim"
 	ProtoOracleHTTPServer  = "oracle_http_server"
+	ProtoOracleForms       = "oracle_forms"
+	ProtoOracleReports     = "oracle_reports"
 	ProtoPCOM              = "pcom"
 	ProtoPFCP              = "pfcp"
 	ProtoPinecone          = "pinecone"
@@ -477,6 +479,14 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoOracleHTTPServer:
 		var p ServiceOracleHTTPServer
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoOracleForms:
+		var p ServiceOracleForms
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoOracleReports:
+		var p ServiceOracleReports
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoOMRONFINS:
@@ -1540,6 +1550,22 @@ type ServiceOracleHTTPServer struct {
 }
 
 func (e ServiceOracleHTTPServer) Type() string { return ProtoOracleHTTPServer }
+
+type ServiceOracleForms struct {
+	Era              string   `json:"era,omitempty"` // "10g" | "12c" | ""
+	FusionMiddleware bool     `json:"fusion_middleware,omitempty"`
+	CPEs             []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceOracleForms) Type() string { return ProtoOracleForms }
+
+type ServiceOracleReports struct {
+	Era              string   `json:"era,omitempty"` // "10g" | "12c" | ""
+	FusionMiddleware bool     `json:"fusion_middleware,omitempty"`
+	CPEs             []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceOracleReports) Type() string { return ProtoOracleReports }
 
 type ServicePCOM struct {
 	Model     string   `json:"model,omitempty"`
