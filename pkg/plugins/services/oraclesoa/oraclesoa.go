@@ -30,9 +30,13 @@ Detection Surfaces (probed over one connection, first match wins):
 
 Detection Signals (product-specific, no bare-status / generic-title triggers):
 
-  - SOA markers: "Oracle SOA Platform", "Welcome to the Oracle SOA", "soa-infra",
+  - SOA markers: "Oracle SOA Platform", "Welcome to the Oracle SOA",
     "Oracle SOA Composer", "Business Process Workspace".
   - OSB markers: "Oracle Service Bus", "Service Bus Console".
+
+The requested path itself (e.g. "soa-infra" or "sbconsole") is never used as a
+marker, so a 404 body that merely echoes the requested path cannot trigger a
+false positive.
 
 WebLogic auth cookies (e.g. _WL_AUTHCOOKIE_) are common to every WebLogic
 deployment, so they are intentionally NOT used as a detection trigger here;
@@ -81,7 +85,6 @@ var (
 	soaInfraMarkers = []string{
 		"Oracle SOA Platform",
 		"Welcome to the Oracle SOA",
-		"soa-infra",
 	}
 	osbMarkers = []string{
 		"Oracle Service Bus",
