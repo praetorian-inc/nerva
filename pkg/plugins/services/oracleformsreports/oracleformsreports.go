@@ -42,13 +42,20 @@ Oracle Reports Services (Name "oracle_reports"):
   Reports-specific, non-reflective marker: a "REP-" error/status code, the
   branded "Oracle Reports" / "Reports Servlet" text, or an Oracle diagnostic-page
   CSS class ("OraInstructionText", "OraDataText", "OraTableCellText"). ONLY after
-  detection does the plugin additionally GET the read-only diagnostic actions
+  detection AND only when the caller opts in (Misconfigs || Deep) does the plugin
+  additionally GET the ADMINISTRATOR-ONLY read-only diagnostic actions
   "/reports/rwservlet/getserverinfo" (Reports Server version) and
-  "/reports/rwservlet/showenv" (10g/12c era from the deployment path layout).
-  These are best-effort and frequently DIAGNOSTIC=NO gated, so version and era
-  default to unknown.
+  "/reports/rwservlet/showenv" (10g/12c era from the deployment path layout). A
+  baseline scan (neither flag set) probes only the bare rwservlet path. These are
+  best-effort and frequently DIAGNOSTIC=NO gated, so version and era default to
+  unknown, and the Medium info-disclosure finding fires only on ACTUAL leaked data
+  (a PATH_TRANSLATED env field or a parsed version), never on the Ora* CSS classes
+  alone.
 
-  CPE Format: cpe:2.3:a:oracle:reports:<ver-or-*>:*:*:*:*:*:*:*
+  CPE Format: cpe:2.3:a:oracle:reports_developer:<12c-ver>:... for parsed 12c
+  versions (the current NVD product token, e.g. CVE-2024-21133 =>
+  cpe:2.3:a:oracle:reports_developer:12.2.1.4.0), otherwise
+  cpe:2.3:a:oracle:reports:<ver-or-*>:... for the legacy 6i/9i/10g line.
 
 Corroboration-only signals (NEVER standalone classifiers): a
 "Server: Oracle-HTTP-Server[-12c]" response header and the "X-ORACLE-DMS-ECID" /
@@ -63,12 +70,14 @@ getserverinfo) echoed back in an error/404 body are NOT markers — only
 product-emitted strings count, mirroring oracleidentity's hasOAMMarker exclusion
 of the obrareq path token.
 
-Scanning safety: only bare unauthenticated GETs are issued to /forms/frmservlet,
-/reports/rwservlet, /reports/rwservlet/getserverinfo and /reports/rwservlet/showenv.
-No query parameter is ever appended to rwservlet (rwservlet executes reports when
-given a job request), and no request is ever a POST.
+Scanning safety: only bare unauthenticated GETs are issued to /forms/frmservlet
+and /reports/rwservlet. The admin-only /reports/rwservlet/getserverinfo and
+/reports/rwservlet/showenv GETs are issued only when the caller opts in
+(Misconfigs || Deep). No query parameter is ever appended to rwservlet (rwservlet
+executes reports when given a job request), and no request is ever a POST.
 
-Default Ports: 7777 / 7778 / 8888 / 9001 (TCP variants), 443 (TLS variants).
+Default Ports: 7777 / 7778 / 8888 / 9001 (TCP variants), 443 / 4443 (TLS variants;
+4443 is the Oracle HTTP Server TLS default that commonly fronts Forms/Reports).
 */
 
 package oracleformsreports
@@ -319,18 +328,18 @@ func eraFromShowenv(body string) string {
 }
 
 // hasReportsDiagnosticContent reports whether a getserverinfo/showenv body carries
-// genuine Reports diagnostic content (an environment/server-info dump), as opposed
-// to a bare 200 or a DIAGNOSTIC=NO access-error page. Only product-emitted tokens
-// are used (env var name, Oracle diagnostic CSS classes, a parsed version) — never
-// the probe path tokens, so an echoed request URL cannot self-trigger.
+// ACTUAL leaked Reports diagnostic data (an environment/server-info dump), as
+// opposed to a bare 200, a DIAGNOSTIC=NO access-error page, or a generic Oracle
+// diagnostic page that merely carries the Ora* CSS classes. The Medium
+// info-disclosure finding requires real leaked data: the PATH_TRANSLATED
+// environment field, or a parsed Reports version (getserverinfo). The Ora* CSS
+// classes still CLASSIFY the product (see hasReportsMarker) but do NOT by
+// themselves prove a disclosure, so they are intentionally excluded here to avoid
+// over-reporting. Only product-emitted tokens are used — never the probe path
+// tokens, so an echoed request URL cannot self-trigger.
 func hasReportsDiagnosticContent(body string) bool {
 	if strings.Contains(body, "PATH_TRANSLATED") {
 		return true
-	}
-	for _, c := range oraDiagClasses {
-		if strings.Contains(body, c) {
-			return true
-		}
 	}
 	return parseReportsVersion(body) != ""
 }
@@ -384,9 +393,15 @@ func fetchDiag(client *http.Client, url string, host string) diagResponse {
 }
 
 // detectReports issues the Reports classifier GET and, ONLY when a marker
-// classifies the host, the two read-only diagnostic GETs (avoids extra requests on
-// non-Reports hosts). No query parameter is ever appended to rwservlet.
-func detectReports(client *http.Client, baseURL string, host string) reportsEvidence {
+// classifies the host AND probeDiagnostics is set, the two read-only diagnostic
+// GETs (avoids extra requests on non-Reports hosts). getserverinfo and showenv are
+// Oracle-documented ADMINISTRATOR-ONLY rwservlet web commands, so they are only
+// issued when the caller opts in (Misconfigs || Deep); a baseline scan probes only
+// the bare /reports/rwservlet path. Detection via the bare servlet marker still
+// works in baseline mode; only version/era enrichment and the info-disclosure
+// finding depend on these gated diagnostics. No query parameter is ever appended
+// to rwservlet.
+func detectReports(client *http.Client, baseURL string, host string, probeDiagnostics bool) reportsEvidence {
 	var ev reportsEvidence
 	resp, err := doGet(client, baseURL+"/reports/rwservlet", host)
 	if err != nil {
@@ -399,8 +414,9 @@ func detectReports(client *http.Client, baseURL string, host string) reportsEvid
 	ev.dms = dmsPresent(resp)
 	_ = resp.Body.Close()
 
-	// Enrichment ONLY after the classifier detected Reports.
-	if ev.statusCode == http.StatusNotFound || !hasReportsMarker(ev.body) {
+	// Enrichment ONLY after the classifier detected Reports, and only when the
+	// caller opted into the admin-only diagnostic probes.
+	if ev.statusCode == http.StatusNotFound || !hasReportsMarker(ev.body) || !probeDiagnostics {
 		return ev
 	}
 	ev.getServerInfo = fetchDiag(client, baseURL+"/reports/rwservlet/getserverinfo", host)
@@ -409,13 +425,23 @@ func detectReports(client *http.Client, baseURL string, host string) reportsEvid
 }
 
 // buildReportsCPE returns the CPE for Oracle Reports, stamping the parsed version
-// when available and a wildcard otherwise.
+// when available and a wildcard otherwise. The NVD product token is
+// version-dependent (verified against the NVD CPE dictionary): the current 12c
+// line is published as "reports_developer" (NVD versions 12.2.1.3, 12.2.1.3.0,
+// 12.2.1.4.0; e.g. CVE-2024-21133 => cpe:2.3:a:oracle:reports_developer:12.2.1.4.0),
+// while the legacy 6i/9i/10g line is published as "reports" (NVD versions 6i, 9i,
+// 9.0.2, 10g, ...). Parsed 12c versions therefore map to "reports_developer";
+// everything else (legacy or unknown version) keeps the "reports" token.
 func buildReportsCPE(version string) string {
 	v := version
 	if v == "" {
 		v = "*"
 	}
-	return fmt.Sprintf("cpe:2.3:a:oracle:reports:%s:*:*:*:*:*:*:*", v)
+	product := "reports"
+	if strings.HasPrefix(v, "12.") {
+		product = "reports_developer"
+	}
+	return fmt.Sprintf("cpe:2.3:a:oracle:%s:%s:*:*:*:*:*:*:*", product, v)
 }
 
 // --- Security findings (shared) ---
@@ -501,7 +527,7 @@ func (p *FormsTLSPlugin) Run(conn net.Conn, timeout time.Duration, target plugin
 	return service, nil
 }
 
-func (p *FormsTLSPlugin) PortPriority(port uint16) bool { return port == 443 }
+func (p *FormsTLSPlugin) PortPriority(port uint16) bool { return port == 443 || port == 4443 } // 4443 is the Oracle HTTP Server TLS default that commonly fronts Forms
 func (p *FormsTLSPlugin) Name() string                  { return OracleForms }
 func (p *FormsTLSPlugin) Type() plugins.Protocol        { return plugins.TCPTLS }
 func (p *FormsTLSPlugin) Priority() int                 { return -1 } // Runs before generic HTTPS so it can claim Forms on shared ports (e.g. 443)
@@ -512,7 +538,7 @@ func (p *ReportsPlugin) Run(conn net.Conn, timeout time.Duration, target plugins
 	client := createHTTPClient(conn, timeout)
 	baseURL := fmt.Sprintf("http://%s", conn.RemoteAddr().String())
 
-	ev := detectReports(client, baseURL, target.Host)
+	ev := detectReports(client, baseURL, target.Host, target.Misconfigs || target.Deep)
 	version, era, fusion, detected := evaluateReports(ev)
 	if !detected {
 		return nil, nil
@@ -530,6 +556,9 @@ func (p *ReportsPlugin) Run(conn net.Conn, timeout time.Duration, target plugins
 			service.SecurityFindings = append(service.SecurityFindings, formsReportsExposedFinding())
 		}
 		if reportsInfoDisclosed(ev) {
+			// The surface answered anonymously with real leaked diagnostic data,
+			// even if the bare rwservlet classifier response was non-2xx.
+			service.AnonymousAccess = true
 			service.SecurityFindings = append(service.SecurityFindings, reportsInfoDisclosureFinding())
 		}
 	}
@@ -545,7 +574,7 @@ func (p *ReportsTLSPlugin) Run(conn net.Conn, timeout time.Duration, target plug
 	client := createHTTPClient(conn, timeout)
 	baseURL := fmt.Sprintf("http://%s", conn.RemoteAddr().String())
 
-	ev := detectReports(client, baseURL, target.Host)
+	ev := detectReports(client, baseURL, target.Host, target.Misconfigs || target.Deep)
 	version, era, fusion, detected := evaluateReports(ev)
 	if !detected {
 		return nil, nil
@@ -563,6 +592,9 @@ func (p *ReportsTLSPlugin) Run(conn net.Conn, timeout time.Duration, target plug
 			service.SecurityFindings = append(service.SecurityFindings, formsReportsExposedFinding())
 		}
 		if reportsInfoDisclosed(ev) {
+			// The surface answered anonymously with real leaked diagnostic data,
+			// even if the bare rwservlet classifier response was non-2xx.
+			service.AnonymousAccess = true
 			service.SecurityFindings = append(service.SecurityFindings, reportsInfoDisclosureFinding())
 		}
 		service.SecurityFindings = append(service.SecurityFindings, plugins.CheckTLS(conn)...)
@@ -570,7 +602,7 @@ func (p *ReportsTLSPlugin) Run(conn net.Conn, timeout time.Duration, target plug
 	return service, nil
 }
 
-func (p *ReportsTLSPlugin) PortPriority(port uint16) bool { return port == 443 }
+func (p *ReportsTLSPlugin) PortPriority(port uint16) bool { return port == 443 || port == 4443 } // 4443 is the Oracle HTTP Server TLS default that commonly fronts Reports
 func (p *ReportsTLSPlugin) Name() string                  { return OracleReports }
 func (p *ReportsTLSPlugin) Type() plugins.Protocol        { return plugins.TCPTLS }
 func (p *ReportsTLSPlugin) Priority() int                 { return -1 } // Runs before generic HTTPS so it can claim Reports on shared ports (e.g. 443)

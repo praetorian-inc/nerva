@@ -23,6 +23,7 @@ import (
 	"net/netip"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -112,7 +113,11 @@ func TestHasReportsDiagnosticContent(t *testing.T) {
 		expected bool
 	}{
 		{"PATH_TRANSLATED env dump", `PATH_TRANSLATED=/u01/oracle/domains/base_domain`, true},
-		{"Oracle diagnostic CSS class", `<span class="OraDataText">env</span>`, true},
+		// Regression (P0): the Ora* CSS classes alone (no PATH_TRANSLATED, no parsed
+		// version) merely classify the product (see hasReportsMarker) — they are NOT
+		// proof of an actual diagnostic-data leak, so the Medium info-disclosure
+		// finding must not fire on them alone.
+		{"Oracle diagnostic CSS class alone is not real leaked data", `<span class="OraDataText">env</span>`, false},
 		{"parsed version present", `<serverInfo version="10.1.2.0.2">`, true},
 		{"bare 200 with no diagnostic content", `OK`, false},
 		{"echoed path tokens only (self-referential guard)", `/reports/rwservlet/showenv and /reports/rwservlet/getserverinfo not found`, false},
@@ -169,6 +174,10 @@ func TestBuildFormsCPE(t *testing.T) {
 func TestBuildReportsCPE(t *testing.T) {
 	assert.Equal(t, "cpe:2.3:a:oracle:reports:*:*:*:*:*:*:*:*", buildReportsCPE(""))
 	assert.Equal(t, "cpe:2.3:a:oracle:reports:10.1.2.0.2:*:*:*:*:*:*:*", buildReportsCPE("10.1.2.0.2"))
+	// Regression: the current NVD product token for the 12c line is
+	// "reports_developer" (e.g. CVE-2024-21133 => oracle:reports_developer:12.2.1.4.0),
+	// while the legacy 6i/9i/10g line keeps the "reports" token (case above).
+	assert.Equal(t, "cpe:2.3:a:oracle:reports_developer:12.2.1.4.0:*:*:*:*:*:*:*", buildReportsCPE("12.2.1.4.0"))
 }
 
 func TestEvaluateForms(t *testing.T) {
@@ -358,12 +367,14 @@ func parseTestServerAddr(t *testing.T, serverURL string) netip.AddrPort {
 	return netip.AddrPortFrom(netip.MustParseAddr(host), uint16(port))
 }
 
-// runPlugin wires an httptest server to a raw TCP dial and invokes p.Run, matching
-// the harness pattern used by oracleidentity_test.go / oraclehttp_test.go. TLS
-// plugin variants are exercised the same way: Run() only special-cases the conn
-// type inside plugins.CheckTLS (a safe no-op for a non-*tls.Conn), so a plain TCP
-// dial is sufficient to test TLS-variant detection logic without internals of TLS.
-func runPlugin(t *testing.T, p plugins.Plugin, handler http.HandlerFunc, misconfigs bool) *plugins.Service {
+// runPluginWithTarget wires an httptest server to a raw TCP dial and invokes
+// p.Run with the given Misconfigs/Deep target flags, matching the harness
+// pattern used by oracleidentity_test.go / oraclehttp_test.go. TLS plugin
+// variants are exercised the same way: Run() only special-cases the conn type
+// inside plugins.CheckTLS (a safe no-op for a non-*tls.Conn), so a plain TCP
+// dial is sufficient to test TLS-variant detection logic without internals of
+// TLS.
+func runPluginWithTarget(t *testing.T, p plugins.Plugin, handler http.HandlerFunc, misconfigs, deep bool) *plugins.Service {
 	t.Helper()
 	server := httptest.NewServer(handler)
 	defer server.Close()
@@ -371,9 +382,16 @@ func runPlugin(t *testing.T, p plugins.Plugin, handler http.HandlerFunc, misconf
 	conn, err := net.DialTimeout("tcp", strings.TrimPrefix(server.URL, "http://"), 5*time.Second)
 	require.NoError(t, err)
 	defer conn.Close()
-	svc, err := p.Run(conn, 5*time.Second, plugins.Target{Host: addr.Addr().String(), Address: addr, Misconfigs: misconfigs})
+	svc, err := p.Run(conn, 5*time.Second, plugins.Target{Host: addr.Addr().String(), Address: addr, Misconfigs: misconfigs, Deep: deep})
 	require.NoError(t, err)
 	return svc
+}
+
+// runPlugin is the Deep=false convenience wrapper around runPluginWithTarget
+// used by the majority of tests that don't need to opt into Deep scanning.
+func runPlugin(t *testing.T, p plugins.Plugin, handler http.HandlerFunc, misconfigs bool) *plugins.Service {
+	t.Helper()
+	return runPluginWithTarget(t, p, handler, misconfigs, false)
 }
 
 // --- Forms plugin: positive detection ---
@@ -496,6 +514,7 @@ func TestFormsPlugin_Metadata(t *testing.T) {
 	assert.True(t, p.PortPriority(8888))
 	assert.True(t, p.PortPriority(9001))
 	assert.False(t, p.PortPriority(443))
+	assert.False(t, p.PortPriority(4443))
 }
 
 // --- Forms TLS plugin ---
@@ -547,12 +566,17 @@ func TestFormsTLSPlugin_Metadata(t *testing.T) {
 	assert.Equal(t, plugins.TCPTLS, p.Type())
 	assert.Equal(t, -1, p.Priority())
 	assert.True(t, p.PortPriority(443))
+	// Regression: 4443 is the Oracle HTTP Server TLS default that commonly fronts
+	// Forms, and must be treated as a priority port alongside 443.
+	assert.True(t, p.PortPriority(4443))
 	assert.False(t, p.PortPriority(7777))
 }
 
 // --- Reports plugin: positive detection ---
 
 func TestReportsPlugin_Run_PositiveWithVersionAnd10gEra(t *testing.T) {
+	// Misconfigs=true: the admin-only getserverinfo/showenv diagnostics are
+	// gated behind Misconfigs||Deep, so opt in to exercise version/era enrichment.
 	svc := runPlugin(t, &ReportsPlugin{}, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/reports/rwservlet":
@@ -564,7 +588,7 @@ func TestReportsPlugin_Run_PositiveWithVersionAnd10gEra(t *testing.T) {
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
-	}, false)
+	}, true)
 	require.NotNil(t, svc)
 	assert.Equal(t, "10.1.2.0.2", svc.Version)
 	var rp plugins.ServiceOracleReports
@@ -580,6 +604,7 @@ func TestReportsPlugin_Run_XMLDeclarationGetServerInfo_VersionRidesThroughToCPE(
 	// serverInfo version attribute -- must extract the serverInfo version
 	// (10.1.2.0.2), not the XML declaration's own two-segment "1.0", and that
 	// version must ride through to both svc.Version and the emitted CPE.
+	// Misconfigs=true opts into the admin-only getserverinfo diagnostic probe.
 	svc := runPlugin(t, &ReportsPlugin{}, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/reports/rwservlet":
@@ -589,7 +614,7 @@ func TestReportsPlugin_Run_XMLDeclarationGetServerInfo_VersionRidesThroughToCPE(
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
-	}, false)
+	}, true)
 	require.NotNil(t, svc)
 	assert.Equal(t, "10.1.2.0.2", svc.Version, "must extract the serverInfo version, not the XML declaration's own version='1.0'")
 	var rp plugins.ServiceOracleReports
@@ -599,6 +624,7 @@ func TestReportsPlugin_Run_XMLDeclarationGetServerInfo_VersionRidesThroughToCPE(
 }
 
 func TestReportsPlugin_Run_PositiveWith12cEra(t *testing.T) {
+	// Misconfigs=true opts into the admin-only getserverinfo/showenv diagnostics.
 	svc := runPlugin(t, &ReportsPlugin{}, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/reports/rwservlet":
@@ -611,14 +637,16 @@ func TestReportsPlugin_Run_PositiveWith12cEra(t *testing.T) {
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
-	}, false)
+	}, true)
 	require.NotNil(t, svc)
 	assert.Equal(t, "12.2.1.4.0", svc.Version)
 	var rp plugins.ServiceOracleReports
 	require.NoError(t, json.Unmarshal(svc.Raw, &rp))
 	assert.Equal(t, "12c", rp.Era)
 	require.Len(t, rp.CPEs, 1)
-	assert.Equal(t, "cpe:2.3:a:oracle:reports:12.2.1.4.0:*:*:*:*:*:*:*", rp.CPEs[0])
+	// Regression: the current NVD product token for the parsed 12c version is
+	// "reports_developer", not the legacy "reports" token.
+	assert.Equal(t, "cpe:2.3:a:oracle:reports_developer:12.2.1.4.0:*:*:*:*:*:*:*", rp.CPEs[0])
 }
 
 func TestReportsPlugin_Run_FusionMiddlewareFromDMSHeader(t *testing.T) {
@@ -639,7 +667,9 @@ func TestReportsPlugin_Run_FusionMiddlewareFromDMSHeader(t *testing.T) {
 
 func TestReportsPlugin_Run_DiagEndpointsGated_VersionAndEraStayUnknown(t *testing.T) {
 	// getserverinfo/showenv are frequently DIAGNOSTIC=NO gated (non-2xx); version
-	// and era must default to unknown/wildcard rather than erroring.
+	// and era must default to unknown/wildcard rather than erroring. Misconfigs=true
+	// so the diagnostics are actually probed (opted in) and observed as gated,
+	// rather than simply never being attempted.
 	svc := runPlugin(t, &ReportsPlugin{}, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/reports/rwservlet":
@@ -650,7 +680,7 @@ func TestReportsPlugin_Run_DiagEndpointsGated_VersionAndEraStayUnknown(t *testin
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
-	}, false)
+	}, true)
 	require.NotNil(t, svc)
 	assert.Equal(t, "", svc.Version)
 	var rp plugins.ServiceOracleReports
@@ -658,6 +688,51 @@ func TestReportsPlugin_Run_DiagEndpointsGated_VersionAndEraStayUnknown(t *testin
 	assert.Equal(t, "", rp.Era)
 	require.Len(t, rp.CPEs, 1)
 	assert.Equal(t, "cpe:2.3:a:oracle:reports:*:*:*:*:*:*:*:*", rp.CPEs[0])
+}
+
+func TestReportsPlugin_Run_BaselineNoOptIn_DiagnosticsNeverProbed(t *testing.T) {
+	// Baseline (Misconfigs=false, Deep=false): detection must still succeed via the
+	// bare rwservlet classifier marker alone, but the admin-only
+	// getserverinfo/showenv diagnostic endpoints must NEVER be probed.
+	var diagnosticsProbed atomic.Bool
+	svc := runPluginWithTarget(t, &ReportsPlugin{}, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/reports/rwservlet":
+			fmt.Fprint(w, `<title>Oracle Reports</title>`)
+		case "/reports/rwservlet/getserverinfo", "/reports/rwservlet/showenv":
+			diagnosticsProbed.Store(true)
+			w.WriteHeader(http.StatusForbidden)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}, false, false)
+	require.NotNil(t, svc)
+	assert.False(t, diagnosticsProbed.Load(), "baseline scan (Misconfigs=false, Deep=false) must never probe the admin-only getserverinfo/showenv diagnostic endpoints")
+	assert.Equal(t, "", svc.Version)
+	var rp plugins.ServiceOracleReports
+	require.NoError(t, json.Unmarshal(svc.Raw, &rp))
+	require.Len(t, rp.CPEs, 1)
+	assert.Equal(t, "cpe:2.3:a:oracle:reports:*:*:*:*:*:*:*:*", rp.CPEs[0])
+}
+
+func TestReportsPlugin_Run_DeepTrueProbesDiagnosticsButEmitsNoFindings(t *testing.T) {
+	// Deep=true (Misconfigs=false): diagnostics ARE probed (version parsed), but no
+	// SecurityFindings are emitted and AnonymousAccess stays false, since finding
+	// emission is gated on Misconfigs, not Deep.
+	svc := runPluginWithTarget(t, &ReportsPlugin{}, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/reports/rwservlet":
+			fmt.Fprint(w, `<title>Oracle Reports</title>`)
+		case "/reports/rwservlet/getserverinfo":
+			fmt.Fprint(w, `<serverInfo version="10.1.2.0.2">`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}, false, true)
+	require.NotNil(t, svc)
+	assert.Equal(t, "10.1.2.0.2", svc.Version, "Deep=true opts into the admin-only diagnostic probes")
+	assert.False(t, svc.AnonymousAccess)
+	assert.Empty(t, svc.SecurityFindings)
 }
 
 // --- Reports plugin: negative / false-positive guards ---
@@ -715,6 +790,7 @@ func TestReportsPlugin_Metadata(t *testing.T) {
 	assert.Equal(t, -1, p.Priority())
 	assert.True(t, p.PortPriority(7778))
 	assert.False(t, p.PortPriority(443))
+	assert.False(t, p.PortPriority(4443))
 }
 
 // --- Reports TLS plugin ---
@@ -749,6 +825,9 @@ func TestReportsTLSPlugin_Metadata(t *testing.T) {
 	assert.Equal(t, plugins.TCPTLS, p.Type())
 	assert.Equal(t, -1, p.Priority())
 	assert.True(t, p.PortPriority(443))
+	// Regression: 4443 is the Oracle HTTP Server TLS default that commonly fronts
+	// Reports, and must be treated as a priority port alongside 443.
+	assert.True(t, p.PortPriority(4443))
 	assert.False(t, p.PortPriority(7777))
 }
 
@@ -856,6 +935,39 @@ func TestReportsSecurityFindings_AbsentOnNon2xxEvenWhenMisconfigsTrue(t *testing
 	require.NotNil(t, svc, "a 401 with a genuine marker is still a detected service")
 	assert.False(t, svc.AnonymousAccess)
 	assert.Empty(t, svc.SecurityFindings)
+}
+
+func TestReportsSecurityFindings_InfoDisclosureSetsAnonymousAccessDespiteNon2xxClassifier(t *testing.T) {
+	// Regression: Reports.Run must set AnonymousAccess when EITHER the bare
+	// rwservlet classifier response is a 2xx OR the diagnostic endpoints leaked
+	// real content (reportsInfoDisclosed) -- not only on a 2xx classifier. Here the
+	// bare classifier itself is a 401 (non-2xx, but still carries a genuine REP-
+	// marker so detection succeeds), while getserverinfo answers 200 with a real
+	// parsed version. The Low exposed finding stays gated on the classifier's own
+	// 2xx status, so it must be absent; only the Medium info-disclosure finding
+	// fires.
+	svc := runPlugin(t, &ReportsPlugin{}, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/reports/rwservlet":
+			w.WriteHeader(http.StatusUnauthorized)
+			fmt.Fprint(w, `REP-52251: authentication required`)
+		case "/reports/rwservlet/getserverinfo":
+			fmt.Fprint(w, `<serverInfo name="repserv" version="10.1.2.0.2">`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}, true)
+	require.NotNil(t, svc, "a 401 classifier response with a genuine REP- marker is still detected")
+	assert.True(t, svc.AnonymousAccess, "info-disclosure alone must set AnonymousAccess even when the classifier itself is non-2xx")
+	require.Len(t, svc.SecurityFindings, 1)
+	assert.Equal(t, "oracle-reports-info-disclosure", svc.SecurityFindings[0].ID)
+	assert.Equal(t, plugins.SeverityMedium, svc.SecurityFindings[0].Severity)
+
+	var ids []string
+	for _, f := range svc.SecurityFindings {
+		ids = append(ids, f.ID)
+	}
+	assert.NotContains(t, ids, "oracle-forms-reports-exposed", "the Low finding stays gated on the classifier's own 2xx status")
 }
 
 func TestReportsTLSSecurityFindings_CheckTLSAppendedSafely(t *testing.T) {
