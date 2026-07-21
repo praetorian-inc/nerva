@@ -105,6 +105,30 @@ func TestCookieContains(t *testing.T) {
 			cookie:    "PS_TOKEN",
 			expected:  true,
 		},
+		{
+			name:      "PS_TOKEN after another cookie delimited by semicolon",
+			setCookie: "PS_LASTSITE=x; PS_TOKEN=abc",
+			cookie:    "PS_TOKEN",
+			expected:  true,
+		},
+		{
+			name:      "APP_PS_TOKEN does not match PS_TOKEN check (name embedded mid-token, not at a boundary)",
+			setCookie: "APP_PS_TOKEN=abc",
+			cookie:    "PS_TOKEN",
+			expected:  false,
+		},
+		{
+			name:      "PS_TOKENEXPIRE alone does not match PS_TOKEN check",
+			setCookie: "PS_TOKENEXPIRE=x",
+			cookie:    "PS_TOKEN",
+			expected:  false,
+		},
+		{
+			name:      "PS_LOGINLIST alone does not match PS_TOKEN check",
+			setCookie: "PS_LOGINLIST=x",
+			cookie:    "PS_TOKEN",
+			expected:  false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -523,6 +547,42 @@ func TestPeopleSoftPlugin_Run_PathReflectionDoesNotTrigger(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Nil(t, service, "path-reflecting catch-all with no genuine PeopleSoft marker must not be detected as PeopleSoft")
+}
+
+// TestPeopleSoftPlugin_Run_AppPSTokenCookieDoesNotTrigger verifies that a
+// cookie whose name merely embeds "PS_TOKEN" mid-token (e.g. a hypothetical
+// "APP_PS_TOKEN" cookie set by some unrelated app) is not mistaken for the
+// genuine PeopleSoft PS_TOKEN cookie. cookieContains requires the name at a
+// cookie boundary, so with no other PeopleSoft evidence present, Run must
+// return nil.
+func TestPeopleSoftPlugin_Run_AppPSTokenCookieDoesNotTrigger(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/":
+			w.Header().Set("Set-Cookie", "APP_PS_TOKEN=abc123; Path=/")
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprintf(w, "hello")
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	addr := parseTestServerAddr(t, server.URL)
+	conn, err := net.DialTimeout("tcp", strings.TrimPrefix(server.URL, "http://"), 5*time.Second)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	target := plugins.Target{
+		Host:    addr.Addr().String(),
+		Address: addr,
+	}
+
+	plugin := &PeopleSoftPlugin{}
+	service, err := plugin.Run(conn, 5*time.Second, target)
+
+	require.NoError(t, err)
+	assert.Nil(t, service, "APP_PS_TOKEN cookie alone (no other PeopleSoft evidence) must not be detected as PeopleSoft")
 }
 
 func TestPeopleSoftPlugin_Metadata(t *testing.T) {
