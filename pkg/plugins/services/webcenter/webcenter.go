@@ -110,8 +110,39 @@ const (
 	pathWebCenter = "/webcenter/"
 )
 
-// titlePattern extracts the contents of an HTML <title> element.
-var titlePattern = regexp.MustCompile(`(?is)<title>(.*?)</title>`)
+// PortPriority port sets, from Oracle's documented WebCenter port table. Detection
+// stays marker-gated, so broadening these only affects --fast reachability across
+// the Content, Portal, and Sites default ports (a broadened priority never causes
+// a detection on its own).
+var (
+	// webCenterTCPPorts are the cleartext HTTP default ports.
+	webCenterTCPPorts = []uint16{
+		DefaultWebCenterPort, // 16200 Content (UCM) managed server
+		8888, 8889,           // Portal
+		7103, 7105, 7107, 7109, // Sites
+	}
+	// webCenterTLSPorts are the TLS default ports.
+	webCenterTLSPorts = []uint16{
+		443,                 // Content / general HTTPS
+		16201, 16301, 16251, // Content SSL
+		8788, 8789, // Portal SSL
+		7104, 7106, 7108, 7110, // Sites SSL
+	}
+)
+
+// portInList reports whether port is a member of list.
+func portInList(port uint16, list []uint16) bool {
+	for _, p := range list {
+		if port == p {
+			return true
+		}
+	}
+	return false
+}
+
+// titlePattern extracts the contents of an HTML <title> element, tolerating any
+// attributes on the opening tag (e.g. `<title id="pageTitle">`).
+var titlePattern = regexp.MustCompile(`(?is)<title[^>]*>(.*?)</title>`)
 
 // hdaVersionPattern extracts the leading dotted-numeric product version from the
 // PING_SERVER HDA prefix, e.g.
@@ -279,14 +310,13 @@ func buildWebCenterCPE(component, version string) string {
 // family title) is required. Precedence is Content -> Sites -> Portal.
 func evaluateWebCenter(evs []wcEvidence) (component string, version string, detected bool) {
 	var (
-		hasHDA        bool
-		hasIdcCookie  bool
-		contentTitle  bool
-		portalTitle   bool
-		sitesTitle    bool
-		familyTitle   bool
-		satelliteSeen bool
-		idcBody       string
+		hasHDA           bool
+		hasIdcCookie     bool
+		contentTitle     bool
+		portalTitle      bool
+		sitesTitle       bool
+		satelliteBranded bool
+		idcBody          string
 	)
 
 	for _, ev := range evs {
@@ -308,11 +338,14 @@ func evaluateWebCenter(evs []wcEvidence) (component string, version string, dete
 		if titleIsWebCenterSites(title) {
 			sitesTitle = true
 		}
-		if titleIsWebCenterFamily(title) {
-			familyTitle = true
-		}
-		if strings.Contains(ev.path, pathSatellite) && ev.statusCode != http.StatusNotFound {
-			satelliteSeen = true
+		// Correlate the Satellite/Sites signal to THIS response only: a bare
+		// non-404 on /cs/Satellite is never enough -- the same response must also
+		// carry a WebCenter Sites (or family) branded title. This prevents a Portal
+		// host whose /cs/Satellite merely returns a non-404 from being
+		// misclassified as Sites.
+		if strings.Contains(ev.path, pathSatellite) && ev.statusCode != http.StatusNotFound &&
+			(titleIsWebCenterSites(title) || titleIsWebCenterFamily(title)) {
+			satelliteBranded = true
 		}
 	}
 
@@ -323,7 +356,7 @@ func evaluateWebCenter(evs []wcEvidence) (component string, version string, dete
 	switch {
 	case hasHDA || hasIdcCookie || contentTitle:
 		component = componentContent
-	case sitesTitle || (satelliteSeen && familyTitle):
+	case sitesTitle || satelliteBranded:
 		component = componentSites
 	case portalTitle:
 		component = componentPortal
@@ -441,7 +474,7 @@ func (p *WebCenterPlugin) Run(conn net.Conn, timeout time.Duration, target plugi
 	return service, nil
 }
 
-func (p *WebCenterPlugin) PortPriority(port uint16) bool { return port == DefaultWebCenterPort }
+func (p *WebCenterPlugin) PortPriority(port uint16) bool { return portInList(port, webCenterTCPPorts) }
 func (p *WebCenterPlugin) Name() string                  { return OracleWebCenter }
 func (p *WebCenterPlugin) Type() plugins.Protocol        { return plugins.TCP }
 func (p *WebCenterPlugin) Priority() int                 { return -1 } // Runs before generic HTTP so it can claim WebCenter on shared ports
@@ -473,7 +506,9 @@ func (p *WebCenterTLSPlugin) Run(conn net.Conn, timeout time.Duration, target pl
 	return service, nil
 }
 
-func (p *WebCenterTLSPlugin) PortPriority(port uint16) bool { return port == 443 }
-func (p *WebCenterTLSPlugin) Name() string                  { return OracleWebCenter }
-func (p *WebCenterTLSPlugin) Type() plugins.Protocol        { return plugins.TCPTLS }
-func (p *WebCenterTLSPlugin) Priority() int                 { return -1 } // Runs before generic HTTPS so it can claim WebCenter on shared ports (e.g. 443)
+func (p *WebCenterTLSPlugin) PortPriority(port uint16) bool {
+	return portInList(port, webCenterTLSPorts)
+}
+func (p *WebCenterTLSPlugin) Name() string           { return OracleWebCenter }
+func (p *WebCenterTLSPlugin) Type() plugins.Protocol { return plugins.TCPTLS }
+func (p *WebCenterTLSPlugin) Priority() int          { return -1 } // Runs before generic HTTPS so it can claim WebCenter on shared ports (e.g. 443)

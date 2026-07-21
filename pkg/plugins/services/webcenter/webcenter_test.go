@@ -67,6 +67,14 @@ func TestExtractTitle(t *testing.T) {
 			expected: "",
 		},
 		{
+			// TP2 regression: titlePattern must tolerate attributes on the
+			// opening <title> tag (e.g. an id attribute), not just a bare
+			// <title>.
+			name:     "title with id attribute",
+			body:     `<html><head><title id="pageTitle">Oracle WebCenter Content</title></head></html>`,
+			expected: "Oracle WebCenter Content",
+		},
+		{
 			name:     "empty body",
 			body:     "",
 			expected: "",
@@ -339,6 +347,21 @@ func TestEvaluateWebCenter(t *testing.T) {
 				{path: pathSatellite, statusCode: http.StatusOK, body: `<html><head><title>Welcome</title></head></html>`},
 			},
 			expectedDetect: false,
+		},
+		{
+			// TP1 regression: a Portal host whose /cs/Satellite merely returns a
+			// non-404 (with a NON-branded title on that same response) must not
+			// be misclassified as Sites. The Satellite/Sites signal must be
+			// correlated to its OWN response's title, not corroborated by a
+			// family title seen on a completely different path (the old
+			// satelliteSeen && familyTitle cross-path aggregation bug).
+			name: "Portal host with non-404 /cs/Satellite bearing a non-branded title stays Portal, not Sites",
+			evidence: []wcEvidence{
+				{path: pathWebCenter, statusCode: http.StatusOK, body: `<html><head><title>Oracle WebCenter Portal</title></head></html>`},
+				{path: pathSatellite, statusCode: http.StatusOK, body: `<html><head><title>Welcome</title></head></html>`},
+			},
+			expectedComponent: componentPortal,
+			expectedDetect:    true,
 		},
 		{
 			name: "idcplg body reflecting probe tokens only is not detected (reflection guard)",
@@ -787,9 +810,15 @@ func TestWebCenterPlugin_Metadata(t *testing.T) {
 	assert.Equal(t, OracleWebCenter, plugin.Name())
 	assert.Equal(t, plugins.TCP, plugin.Type())
 	assert.Equal(t, -1, plugin.Priority())
-	assert.True(t, plugin.PortPriority(DefaultWebCenterPort))
-	assert.False(t, plugin.PortPriority(443))
-	assert.False(t, plugin.PortPriority(80))
+
+	// TP3: PortPriority broadened to cover Content (UCM), Portal, and Sites
+	// default cleartext HTTP ports.
+	for _, port := range []uint16{DefaultWebCenterPort, 8888, 8889, 7103, 7105, 7107, 7109} {
+		assert.True(t, plugin.PortPriority(port), "expected TCP port %d to be in priority list", port)
+	}
+	for _, port := range []uint16{443, 80} {
+		assert.False(t, plugin.PortPriority(port), "expected TLS/non-WebCenter port %d to not be in TCP priority list", port)
+	}
 }
 
 func TestWebCenterTLSPlugin_Run_Positive(t *testing.T) {
@@ -863,6 +892,13 @@ func TestWebCenterTLSPlugin_Metadata(t *testing.T) {
 	assert.Equal(t, OracleWebCenter, plugin.Name())
 	assert.Equal(t, plugins.TCPTLS, plugin.Type())
 	assert.Equal(t, -1, plugin.Priority())
-	assert.True(t, plugin.PortPriority(443))
-	assert.False(t, plugin.PortPriority(DefaultWebCenterPort))
+
+	// TP3: PortPriority broadened to cover Content (general HTTPS + SSL),
+	// Portal SSL, and Sites SSL default ports.
+	for _, port := range []uint16{443, 16201, 16301, 16251, 8788, 8789, 7104, 7106, 7108, 7110} {
+		assert.True(t, plugin.PortPriority(port), "expected TLS port %d to be in priority list", port)
+	}
+	for _, port := range []uint16{DefaultWebCenterPort, 80} {
+		assert.False(t, plugin.PortPriority(port), "expected TCP/non-WebCenter port %d to not be in TLS priority list", port)
+	}
 }
