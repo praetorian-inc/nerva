@@ -186,6 +186,94 @@ func TestEvaluateEBS(t *testing.T) {
 	}
 }
 
+func TestLocationMatchesEBSLogin(t *testing.T) {
+	tests := []struct {
+		name     string
+		location string
+		expected bool
+	}{
+		{
+			name:     "exact AppsLogin path",
+			location: "/OA_HTML/AppsLogin",
+			expected: true,
+		},
+		{
+			name:     "exact AppsLocalLogin.jsp path",
+			location: "/OA_HTML/AppsLocalLogin.jsp",
+			expected: true,
+		},
+		{
+			name:     "absolute URL with AppsLogin path",
+			location: "http://host/OA_HTML/AppsLogin",
+			expected: true,
+		},
+		{
+			name:     "path-prefix match",
+			location: "/OA_HTML/AppsLogin/x",
+			expected: true,
+		},
+		{
+			name:     "reflected in query string does not match",
+			location: "/login?next=/OA_HTML/AppsLogin",
+			expected: false,
+		},
+		{
+			name:     "unrelated path",
+			location: "/some/other",
+			expected: false,
+		},
+		{
+			name:     "empty location",
+			location: "",
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := locationMatchesEBSLogin(tt.location)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestEvaluateEBS_AppsSSOCookieBoundary(t *testing.T) {
+	tests := []struct {
+		name           string
+		setCookie      string
+		expectedDetect bool
+	}{
+		{
+			name:           "cookie name at start of header matches",
+			setCookie:      "APPS_SSO_HTTP_ONLY=abc",
+			expectedDetect: true,
+		},
+		{
+			name:           "cookie name after separator matches",
+			setCookie:      "X=y; APPS_SSO_FOO=abc",
+			expectedDetect: true,
+		},
+		{
+			name:           "reflected inside a cookie value does not match",
+			setCookie:      "session=APPS_SSO_test",
+			expectedDetect: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			evs := []ebsEvidence{
+				{
+					statusCode: http.StatusOK,
+					setCookie:  tt.setCookie,
+				},
+			}
+			_, _, detected := evaluateEBS(evs)
+			assert.Equal(t, tt.expectedDetect, detected)
+		})
+	}
+}
+
 // parseTestServerAddr parses httptest server URL into netip.AddrPort
 func parseTestServerAddr(t *testing.T, serverURL string) netip.AddrPort {
 	t.Helper()
@@ -281,6 +369,37 @@ func TestEBSPlugin_Run_GenericOHSHeaderDoesNotTrigger(t *testing.T) {
 		case "/":
 			w.WriteHeader(http.StatusOK)
 			fmt.Fprintf(w, "hello")
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	addr := parseTestServerAddr(t, server.URL)
+	conn, err := net.DialTimeout("tcp", strings.TrimPrefix(server.URL, "http://"), 5*time.Second)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	target := plugins.Target{
+		Host:    addr.Addr().String(),
+		Address: addr,
+	}
+
+	plugin := &EBSPlugin{}
+	service, err := plugin.Run(conn, 5*time.Second, target)
+
+	require.NoError(t, err)
+	assert.Nil(t, service)
+}
+
+func TestEBSPlugin_Run_ReflectedLocationDoesNotTrigger(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/":
+			// Only "signal" is a reflected EBS login path in the query string of
+			// the redirect target, never as the actual path being redirected to.
+			w.Header().Set("Location", "/login?next=/OA_HTML/AppsLogin")
+			w.WriteHeader(http.StatusFound)
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
