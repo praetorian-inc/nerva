@@ -198,6 +198,15 @@ func dmsPresent(resp *http.Response) bool {
 	return resp.Header.Get("X-ORACLE-DMS-ECID") != "" || resp.Header.Get("X-ORACLE-DMS-RID") != ""
 }
 
+// ohsServerPresent reports whether a Server header value identifies Oracle HTTP
+// Server (e.g. "Oracle-HTTP-Server" or "Oracle-HTTP-Server-12c"), the Fusion
+// Middleware web tier that fronts Forms/Reports. Case-insensitive. Like the DMS
+// headers this is a corroboration-only signal: it only decorates a service that a
+// servlet marker has already classified, and never classifies a host on its own.
+func ohsServerPresent(server string) bool {
+	return strings.Contains(strings.ToLower(server), "oracle-http-server")
+}
+
 // eraFromServerHeader infers the 12c era from an "Oracle-HTTP-Server-12c" Server
 // token. This is a corroboration-only signal: it only decorates a service that a
 // servlet marker has already classified. Returns "" when no generation suffix.
@@ -241,7 +250,11 @@ func evaluateForms(ev formsEvidence) (era string, fusion bool, detected bool) {
 	if !detected {
 		return "", false, false
 	}
-	return eraFromServerHeader(ev.server), ev.dms, true
+	// FusionMiddleware is corroborated by either the DMS monitoring headers or an
+	// Oracle-HTTP-Server Server header (both emitted by the OHS/FMW web tier). Only
+	// reached once a servlet marker has classified the host, so it enriches — never
+	// causes — detection.
+	return eraFromServerHeader(ev.server), ev.dms || ohsServerPresent(ev.server), true
 }
 
 // detectForms issues the single Forms classifier GET and collects evidence.
@@ -352,7 +365,11 @@ func evaluateReports(ev reportsEvidence) (version string, era string, fusion boo
 	if !detected {
 		return "", "", false, false
 	}
-	fusion = ev.dms
+	// FusionMiddleware is corroborated by either the DMS monitoring headers or an
+	// Oracle-HTTP-Server Server header (both emitted by the OHS/FMW web tier). Only
+	// reached once a servlet marker has classified the host, so it enriches — never
+	// causes — detection.
+	fusion = ev.dms || ohsServerPresent(ev.server)
 	era = eraFromServerHeader(ev.server)
 	if isSuccessStatus(ev.getServerInfo.statusCode) {
 		if v := parseReportsVersion(ev.getServerInfo.body); v != "" {

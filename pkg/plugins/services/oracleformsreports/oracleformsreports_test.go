@@ -157,6 +157,15 @@ func TestEraFromServerHeader(t *testing.T) {
 	assert.Equal(t, "", eraFromServerHeader(""))
 }
 
+func TestOhsServerPresent(t *testing.T) {
+	assert.True(t, ohsServerPresent("Oracle-HTTP-Server"))
+	assert.True(t, ohsServerPresent("oracle-http-server-12c"))
+	// Regression: matching is case-insensitive.
+	assert.True(t, ohsServerPresent("ORACLE-HTTP-SERVER-12C"))
+	assert.False(t, ohsServerPresent(""))
+	assert.False(t, ohsServerPresent("nginx"))
+}
+
 func TestPortInList(t *testing.T) {
 	assert.True(t, portInList(7777))
 	assert.True(t, portInList(7778))
@@ -194,9 +203,12 @@ func TestEvaluateForms(t *testing.T) {
 			wantDetected: true,
 		},
 		{
-			name:         "200 + marker + Server -12c => era 12c",
+			// Updated (PR #374 round-3): the Server: Oracle-HTTP-Server-12c header now
+			// also corroborates FusionMiddleware via ohsServerPresent, not just era.
+			name:         "200 + marker + Server -12c => era 12c and fusion true",
 			ev:           formsEvidence{statusCode: 200, body: `oracle.forms.engine.Main`, server: "Oracle-HTTP-Server-12c"},
 			wantEra:      "12c",
+			wantFusion:   true,
 			wantDetected: true,
 		},
 		{
@@ -231,6 +243,57 @@ func TestEvaluateForms(t *testing.T) {
 			name:         "headers alone with no marker => not detected (corroboration-only guard)",
 			ev:           formsEvidence{statusCode: 200, body: "generic page", server: "Oracle-HTTP-Server-12c", dms: true},
 			wantDetected: false,
+		},
+		{
+			// Regression (PR #374 round-3): Server: Oracle-HTTP-Server corroborates an
+			// already-classified Forms service via ohsServerPresent, independent of DMS.
+			name:         "200 + marker + Server: Oracle-HTTP-Server (no DMS) => fusion true via ohsServerPresent",
+			ev:           formsEvidence{statusCode: 200, body: `oracle.forms.engine.Main`, server: "Oracle-HTTP-Server", dms: false},
+			wantFusion:   true,
+			wantDetected: true,
+		},
+		{
+			// Case-insensitive / dashed-lowercase 12c variant must also corroborate, and
+			// still carries the era via eraFromServerHeader.
+			name:         "200 + marker + Server: oracle-http-server-12c (no DMS) => fusion true, era 12c",
+			ev:           formsEvidence{statusCode: 200, body: `oracle.forms.engine.Main`, server: "oracle-http-server-12c", dms: false},
+			wantEra:      "12c",
+			wantFusion:   true,
+			wantDetected: true,
+		},
+		{
+			name:         "200 + marker + Server: Apache (no DMS) => fusion false (not Oracle HTTP Server)",
+			ev:           formsEvidence{statusCode: 200, body: `oracle.forms.engine.Main`, server: "Apache", dms: false},
+			wantFusion:   false,
+			wantDetected: true,
+		},
+		{
+			name:         "200 + marker + empty Server (no DMS) => fusion false",
+			ev:           formsEvidence{statusCode: 200, body: `oracle.forms.engine.Main`, server: "", dms: false},
+			wantFusion:   false,
+			wantDetected: true,
+		},
+		{
+			// Regression guard: the Server: Oracle-HTTP-Server corroboration header must
+			// NEVER cause detection on its own -- only decorate an already-classified host.
+			name:         "Server: Oracle-HTTP-Server with no servlet marker in body => not detected, fusion false",
+			ev:           formsEvidence{statusCode: 200, body: "generic page", server: "Oracle-HTTP-Server", dms: false},
+			wantFusion:   false,
+			wantDetected: false,
+		},
+		{
+			name:         "Server: Oracle-HTTP-Server + marker text but 404 => not detected, fusion false",
+			ev:           formsEvidence{statusCode: 404, body: `oracle.forms.engine.Main`, server: "Oracle-HTTP-Server", dms: false},
+			wantFusion:   false,
+			wantDetected: false,
+		},
+		{
+			// Regression: DMS-based corroboration must keep working (OR-not-replacement)
+			// even when the Server header is not an Oracle HTTP Server value.
+			name:         "200 + marker + DMS true + non-OHS Server => fusion true (DMS still works)",
+			ev:           formsEvidence{statusCode: 200, body: `oracle.forms.engine.Main`, server: "Apache", dms: true},
+			wantFusion:   true,
+			wantDetected: true,
 		},
 	}
 	for _, tt := range tests {
@@ -287,7 +350,9 @@ func TestEvaluateReports(t *testing.T) {
 			wantDetected: true,
 		},
 		{
-			name: "Server -12c header + 12c showenv => era 12c (showenv wins over header)",
+			// Updated (PR #374 round-3): the Server: Oracle-HTTP-Server-12c header now
+			// also corroborates FusionMiddleware via ohsServerPresent, not just era.
+			name: "Server -12c header + 12c showenv => era 12c (showenv wins over header) and fusion true",
 			ev: reportsEvidence{
 				statusCode: 200,
 				body:       "Oracle Reports",
@@ -295,6 +360,7 @@ func TestEvaluateReports(t *testing.T) {
 				showenv:    diagResponse{statusCode: 200, body: "user_projects/domains/base_domain/servers/WLS_REPORTS"},
 			},
 			wantEra:      "12c",
+			wantFusion:   true,
 			wantDetected: true,
 		},
 		{
@@ -321,6 +387,50 @@ func TestEvaluateReports(t *testing.T) {
 			name:         "headers alone with no marker => not detected (corroboration-only guard)",
 			ev:           reportsEvidence{statusCode: 200, body: "generic page", server: "Oracle-HTTP-Server-12c", dms: true},
 			wantDetected: false,
+		},
+		{
+			// Regression (PR #374 round-3): Server: Oracle-HTTP-Server-12c corroborates
+			// an already-classified Reports service via ohsServerPresent, independent of
+			// DMS. era is also derived from the same header (eraFromServerHeader).
+			name:         "rwservlet 200 + REP marker + Server: Oracle-HTTP-Server-12c (no DMS) => fusion true, era 12c",
+			ev:           reportsEvidence{statusCode: 200, body: "REP-52251", server: "Oracle-HTTP-Server-12c", dms: false},
+			wantEra:      "12c",
+			wantFusion:   true,
+			wantDetected: true,
+		},
+		{
+			name:         "rwservlet 200 + REP marker + Server: Apache (no DMS) => fusion false (not Oracle HTTP Server)",
+			ev:           reportsEvidence{statusCode: 200, body: "REP-52251", server: "Apache", dms: false},
+			wantFusion:   false,
+			wantDetected: true,
+		},
+		{
+			name:         "rwservlet 200 + REP marker + empty Server (no DMS) => fusion false",
+			ev:           reportsEvidence{statusCode: 200, body: "REP-52251", server: "", dms: false},
+			wantFusion:   false,
+			wantDetected: true,
+		},
+		{
+			// Regression guard: the Server: Oracle-HTTP-Server corroboration header must
+			// NEVER cause detection on its own -- only decorate an already-classified host.
+			name:         "Server: Oracle-HTTP-Server with no servlet marker in body => not detected, fusion false",
+			ev:           reportsEvidence{statusCode: 200, body: "generic page", server: "Oracle-HTTP-Server", dms: false},
+			wantFusion:   false,
+			wantDetected: false,
+		},
+		{
+			name:         "Server: Oracle-HTTP-Server + marker text but 404 => not detected, fusion false",
+			ev:           reportsEvidence{statusCode: 404, body: "REP-52251", server: "Oracle-HTTP-Server", dms: false},
+			wantFusion:   false,
+			wantDetected: false,
+		},
+		{
+			// Regression: DMS-based corroboration must keep working (OR-not-replacement)
+			// even when the Server header is not an Oracle HTTP Server value.
+			name:         "rwservlet 200 + REP marker + DMS true + non-OHS Server => fusion true (DMS still works)",
+			ev:           reportsEvidence{statusCode: 200, body: "REP-52251", server: "Apache", dms: true},
+			wantFusion:   true,
+			wantDetected: true,
 		},
 	}
 	for _, tt := range tests {
