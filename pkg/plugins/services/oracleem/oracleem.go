@@ -230,13 +230,23 @@ func detectEM(client *http.Client, baseURL, host string) (component, version str
 	return "", "", false, false
 }
 
-// buildEMCPE returns the CPE for Oracle Enterprise Manager, wildcarding an
-// unknown version.
-func buildEMCPE(version string) string {
+// buildEMCPE returns the CPEs for the detected Oracle Enterprise Manager
+// component. The "express" component is the Database Express console, which is
+// a database feature rather than an Enterprise Manager install, so it maps to
+// database CPEs (with a wildcard version, since none is exposed). The "console"
+// and "agent" components map to the Enterprise Manager base platform,
+// wildcarding an unknown version.
+func buildEMCPE(component, version string) []string {
+	if component == "express" {
+		return []string{
+			"cpe:2.3:a:oracle:database_server:*:*:*:*:*:*:*:*",
+			"cpe:2.3:a:oracle:database:*:*:*:*:*:*:*:*",
+		}
+	}
 	if version == "" {
 		version = "*"
 	}
-	return fmt.Sprintf("cpe:2.3:a:oracle:enterprise_manager_base_platform:%s:*:*:*:*:*:*:*", version)
+	return []string{fmt.Sprintf("cpe:2.3:a:oracle:enterprise_manager_base_platform:%s:*:*:*:*:*:*:*", version)}
 }
 
 func emAnonymousFinding() plugins.SecurityFinding {
@@ -262,7 +272,7 @@ func (p *Plugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target
 
 	payload := plugins.ServiceOracleEM{
 		Component: component,
-		CPEs:      []string{buildEMCPE(version)},
+		CPEs:      buildEMCPE(component, version),
 	}
 	service := plugins.CreateServiceFrom(target, payload, false, version, plugins.TCP)
 	if target.Misconfigs && anonymous {
@@ -295,7 +305,7 @@ func (p *TLSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 
 	payload := plugins.ServiceOracleEM{
 		Component: component,
-		CPEs:      []string{buildEMCPE(version)},
+		CPEs:      buildEMCPE(component, version),
 	}
 	service := plugins.CreateServiceFrom(target, payload, true, version, plugins.TCPTLS)
 	if target.Misconfigs {
@@ -309,9 +319,11 @@ func (p *TLSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 }
 
 func (p *TLSPlugin) PortPriority(port uint16) bool {
-	// 7803 (Cloud Control console) and 5500 (EM Express) are HTTPS; 443 covers
+	// 7803 (Cloud Control console) and 5500 (EM Express) are HTTPS. Management
+	// Agents on 3872 are commonly HTTPS too, so the TLS variant also prioritizes
+	// it (the TCP variant keeps 3872 for plaintext agents). 443 covers
 	// reverse-proxied deployments.
-	return port == 7803 || port == 5500 || port == 443
+	return port == 7803 || port == 5500 || port == 3872 || port == 443
 }
 func (p *TLSPlugin) Name() string           { return EM }
 func (p *TLSPlugin) Type() plugins.Protocol { return plugins.TCPTLS }
