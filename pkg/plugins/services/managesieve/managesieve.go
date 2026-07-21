@@ -150,7 +150,7 @@ func buildCPEs(implementation, version string) []string {
 
 	lower := strings.ToLower(implementation)
 	switch {
-	case strings.Contains(lower, "cyrus"):
+	case strings.Contains(lower, "cyrus timsieved"):
 		return []string{fmt.Sprintf("cpe:2.3:a:cyrusimap:cyrus_imap:%s:*:*:*:*:*:*:*", cpeVersion)}
 	case strings.Contains(lower, "dovecot"), strings.Contains(lower, "pigeonhole"):
 		return []string{fmt.Sprintf("cpe:2.3:a:dovecot:dovecot:%s:*:*:*:*:*:*:*", cpeVersion)}
@@ -175,7 +175,7 @@ func (p *ManageSievePlugin) Run(conn net.Conn, timeout time.Duration, target plu
 
 	lines := strings.Split(string(response), "\r\n")
 
-	var hasCapabilityLine, hasOK bool
+	var hasCoreCapability, hasOK bool
 	var implementation string
 	var saslMechanisms []string
 	var starttls bool
@@ -187,6 +187,11 @@ func (p *ManageSievePlugin) Run(conn net.Conn, timeout time.Duration, target plu
 			continue
 		}
 
+		if hasOK {
+			// Content after OK response invalidates the greeting.
+			hasOK = false
+		}
+
 		if strings.HasPrefix(trimmed, `"`) {
 			keyword, value, ok := parseCapabilityLine(trimmed)
 			if !ok {
@@ -195,23 +200,22 @@ func (p *ManageSievePlugin) Run(conn net.Conn, timeout time.Duration, target plu
 
 			switch keyword {
 			case "IMPLEMENTATION":
-				hasCapabilityLine = true
+				hasCoreCapability = true
 				implementation = value
 			case "SASL":
-				hasCapabilityLine = true
+				hasCoreCapability = true
 				if value != "" {
 					saslMechanisms = strings.Fields(value)
 				}
 			case "STARTTLS":
-				hasCapabilityLine = true
+				hasCoreCapability = true
 				starttls = true
 			case "SIEVE":
-				hasCapabilityLine = true
+				hasCoreCapability = true
 				if value != "" {
 					sieveExtensions = strings.Fields(value)
 				}
 			case "NOTIFY", "VERSION", "UNAUTHENTICATE", "LANGUAGE", "MAXREDIRECTS", "OWNER":
-				hasCapabilityLine = true
 			}
 			continue
 		}
@@ -221,7 +225,7 @@ func (p *ManageSievePlugin) Run(conn net.Conn, timeout time.Duration, target plu
 		}
 	}
 
-	if !hasCapabilityLine || !hasOK {
+	if !hasCoreCapability || !hasOK {
 		return nil, nil
 	}
 

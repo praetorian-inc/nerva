@@ -285,6 +285,12 @@ func TestCPEBuilder(t *testing.T) {
 			want:           nil,
 		},
 		{
+			name:           "Cyrus-compatible does not match Cyrus CPE",
+			implementation: "Cyrus-compatible Sieve Server",
+			version:        "1.0",
+			want:           nil,
+		},
+		{
 			name:           "empty implementation emits no CPE",
 			implementation: "",
 			version:        "",
@@ -304,6 +310,28 @@ func TestCPEBuilder(t *testing.T) {
 			assert.Equal(t, tt.want, got)
 		})
 	}
+}
+
+func TestDetectManageSieve_VersionOnlyFalsePositive(t *testing.T) {
+	versionOnlyGreeting := "\"VERSION\" \"1.0\"\r\nOK\r\n"
+	conn := newMockConn(t, versionOnlyGreeting)
+	plugin := &ManageSievePlugin{}
+
+	service, err := plugin.Run(conn, 2*time.Second, testTarget())
+
+	require.NoError(t, err)
+	assert.Nil(t, service, "VERSION-only greeting should not be detected as ManageSieve")
+}
+
+func TestDetectManageSieve_OKNotFinal(t *testing.T) {
+	okMiddle := "\"IMPLEMENTATION\" \"Dovecot Pigeonhole\"\r\nOK\r\n\"SIEVE\" \"fileinto\"\r\n"
+	conn := newMockConn(t, okMiddle)
+	plugin := &ManageSievePlugin{}
+
+	service, err := plugin.Run(conn, 2*time.Second, testTarget())
+
+	require.NoError(t, err)
+	assert.Nil(t, service, "OK in middle of response should not be detected as ManageSieve")
 }
 
 func TestPortPriority(t *testing.T) {
