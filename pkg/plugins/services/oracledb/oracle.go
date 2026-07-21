@@ -308,26 +308,6 @@ func majorVersion(dotted string) int {
 	return n
 }
 
-// canonicalizeCPEVersion canonicalizes a decoded dotted Oracle version into the
-// NUMERIC form used by NVD CVE applicability. CVE applicability keys off numeric
-// version RANGES (versionStartIncluding/versionEndExcluding), so the numeric
-// dotted version must be preserved: mapping to a named form like "19c" or "23ai"
-// would break range matching. Trailing all-zero components are trimmed down to a
-// four-component major.minor.patch.interim form so that, e.g., "12.1.0.2.0" ->
-// "12.1.0.2" and "19.0.0.0.0" -> "19.0.0.0". No letter suffixes are ever
-// produced. The full decoded version is preserved separately in the service
-// Version/metadata field.
-func canonicalizeCPEVersion(version string) string {
-	if version == "" {
-		return ""
-	}
-	parts := strings.Split(version, ".")
-	for len(parts) > 4 && parts[len(parts)-1] == "0" {
-		parts = parts[:len(parts)-1]
-	}
-	return strings.Join(parts, ".")
-}
-
 // oracleCPEs builds the CPE 2.3 strings for an Oracle Database instance. Real
 // Oracle DB CVEs key predominantly to the "database_server" product (521 CVEs on
 // NVD vs 66 on "database"), so CPEs are emitted on BOTH products to maximize CVE
