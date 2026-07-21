@@ -154,6 +154,32 @@ func TestDetectSOA(t *testing.T) {
 			expectedDetect:  true,
 		},
 		{
+			name: "osb via /servicebus (12c/14c console)",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/servicebus":
+					fmt.Fprint(w, "Oracle Service Bus Console")
+				default:
+					w.WriteHeader(404)
+				}
+			},
+			expectedProduct: "osb",
+			expectedDetect:  true,
+		},
+		{
+			name: "/servicebus reflects the request path only, no genuine marker -> NOT detected",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/servicebus":
+					fmt.Fprintf(w, "<html><body>404 Not Found: %s</body></html>", r.URL.Path)
+				default:
+					w.WriteHeader(404)
+				}
+			},
+			expectedProduct: "",
+			expectedDetect:  false,
+		},
+		{
 			name: "soa via /soa/composer",
 			handler: func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
@@ -295,6 +321,52 @@ func TestPlugin_Run_OSBDetection(t *testing.T) {
 	require.NoError(t, json.Unmarshal(service.Raw, &payload))
 	assert.Equal(t, "osb", payload.Product)
 	assert.Equal(t, "cpe:2.3:a:oracle:service_bus:*:*:*:*:*:*:*:*", payload.CPEs[0])
+}
+
+func TestPlugin_Run_OSBDetection_ServiceBusPath(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/servicebus":
+			fmt.Fprint(w, "Oracle Service Bus Console")
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer server.Close()
+
+	conn, target := dialTestServer(t, server.URL)
+	defer conn.Close()
+	target.Misconfigs = true
+
+	plugin := &Plugin{}
+	service, err := plugin.Run(conn, 5*time.Second, target)
+	require.NoError(t, err)
+	require.NotNil(t, service)
+
+	var payload plugins.ServiceOracleSOA
+	require.NoError(t, json.Unmarshal(service.Raw, &payload))
+	assert.Equal(t, "osb", payload.Product)
+	assert.Equal(t, "cpe:2.3:a:oracle:service_bus:*:*:*:*:*:*:*:*", payload.CPEs[0])
+}
+
+func TestPlugin_Run_ServiceBusPath_ReflectedOnly_NotDetected(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/servicebus":
+			fmt.Fprintf(w, "<html><body>404 Not Found: %s</body></html>", r.URL.Path)
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer server.Close()
+
+	conn, target := dialTestServer(t, server.URL)
+	defer conn.Close()
+
+	plugin := &Plugin{}
+	service, err := plugin.Run(conn, 5*time.Second, target)
+	require.NoError(t, err)
+	assert.Nil(t, service)
 }
 
 func TestPlugin_Run_WeblogicCookieOnly_NotDetected(t *testing.T) {
