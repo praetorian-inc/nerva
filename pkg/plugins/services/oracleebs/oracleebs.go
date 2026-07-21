@@ -61,14 +61,12 @@ package oracleebs
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"regexp"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/praetorian-inc/nerva/pkg/plugins"
@@ -95,28 +93,19 @@ func init() {
 	plugins.RegisterPlugin(&EBSTLSPlugin{})
 }
 
-// createHTTPClient creates an http.Client that uses the already-established
-// net.Conn for its FIRST request, then re-dials a FRESH connection via redial
-// for every subsequent request. Multi-path probing therefore survives a server
-// that closes the connection (Connection: close / HTTP 1.0) after the first
-// response, which previously left the second probe (/OA_HTML/AppsLogin) failing
-// on a dead conn and missed EBS-only-on-AppsLogin hosts.
-//
-// When the server keeps the connection alive, the transport reuses the pooled
-// connection and never re-dials, so behavior is identical to before. The client
-// does not follow redirects (so Location headers can be inspected directly).
-func createHTTPClient(conn net.Conn, timeout time.Duration, redial func(ctx context.Context) (net.Conn, error)) *http.Client {
-	var once sync.Once
+// createHTTPClient creates an http.Client that wraps the provided net.Conn.
+// This enables multiple HTTP requests over the same connection via HTTP/1.1
+// keep-alive. Multi-path probing is therefore best-effort: if the server closes
+// the connection after the first response, later probes fail on the dead conn
+// (this mirrors the single-injected-connection convention used by the other
+// HTTP fingerprinters, e.g. librechat and sonarqube). The client does not
+// follow redirects, so Location headers can be inspected directly.
+func createHTTPClient(conn net.Conn, timeout time.Duration) *http.Client {
 	return &http.Client{
 		Timeout: timeout,
 		Transport: &http.Transport{
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-				var injected net.Conn
-				once.Do(func() { injected = conn })
-				if injected != nil {
-					return injected, nil
-				}
-				return redial(ctx)
+				return conn, nil
 			},
 		},
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -240,13 +229,7 @@ func ebsFinding() plugins.SecurityFinding {
 }
 
 func (p *EBSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
-	// Re-dial a fresh plain TCP connection to the target if the server closes
-	// the keep-alive connection between probe paths.
-	redial := func(ctx context.Context) (net.Conn, error) {
-		d := net.Dialer{Timeout: timeout}
-		return d.DialContext(ctx, "tcp", target.Address.String())
-	}
-	client := createHTTPClient(conn, timeout, redial)
+	client := createHTTPClient(conn, timeout)
 	baseURL := fmt.Sprintf("http://%s", conn.RemoteAddr().String())
 
 	title, release, detected := detectEBS(client, baseURL, target.Host)
@@ -275,14 +258,7 @@ func (p *EBSPlugin) Type() plugins.Protocol        { return plugins.TCP }
 func (p *EBSPlugin) Priority() int                 { return -1 } // Runs before generic HTTP so it can claim EBS on shared ports (e.g. 8000)
 
 func (p *EBSTLSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
-	// Re-dial a fresh TLS connection to the target if the server closes the
-	// keep-alive connection between probe paths. The re-dial must re-wrap with
-	// TLS, mirroring how the repo establishes TLS conns elsewhere (see amqp.go).
-	redial := func(ctx context.Context) (net.Conn, error) {
-		return tls.DialWithDialer(&net.Dialer{Timeout: timeout}, "tcp", target.Address.String(),
-			&tls.Config{InsecureSkipVerify: true}) // #nosec G402 -- scanner probing untrusted targets; cert validation would prevent detection
-	}
-	client := createHTTPClient(conn, timeout, redial)
+	client := createHTTPClient(conn, timeout)
 	baseURL := fmt.Sprintf("http://%s", conn.RemoteAddr().String())
 
 	title, release, detected := detectEBS(client, baseURL, target.Host)
