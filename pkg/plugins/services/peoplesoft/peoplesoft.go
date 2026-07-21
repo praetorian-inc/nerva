@@ -156,7 +156,7 @@ func extractTitle(body string) string {
 // APP_PS_TOKEN (name embedded mid-token) do not match the PS_TOKEN check, while
 // "PS_TOKEN=abc" and "PS_LASTSITE=x; PS_TOKEN=abc" do.
 func cookieContains(setCookie, name string) bool {
-	re := regexp.MustCompile(`(?i)(^|[;,])\s*` + regexp.QuoteMeta(name) + `=`)
+	re := regexp.MustCompile(`(^|[;,])\s*` + regexp.QuoteMeta(name) + `=`)
 	return re.MatchString(setCookie)
 }
 
@@ -344,7 +344,7 @@ func (p *PeopleSoftTLSPlugin) Run(conn net.Conn, timeout time.Duration, target p
 	return service, nil
 }
 
-func (p *PeopleSoftTLSPlugin) PortPriority(port uint16) bool { return port == 443 }
+func (p *PeopleSoftTLSPlugin) PortPriority(port uint16) bool { return port == 443 || port == 8443 }
 func (p *PeopleSoftTLSPlugin) Name() string                  { return PeopleSoft }
 func (p *PeopleSoftTLSPlugin) Type() plugins.Protocol        { return plugins.TCPTLS }
 func (p *PeopleSoftTLSPlugin) Priority() int                 { return -1 } // Runs before generic HTTPS so it can claim PeopleSoft on shared ports (e.g. 443)
