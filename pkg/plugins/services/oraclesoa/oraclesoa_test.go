@@ -84,7 +84,7 @@ func TestDetectSOAInfra(t *testing.T) {
 			name: "non-2xx with marker: detected but not anonymous",
 			handler: func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(403)
-				fmt.Fprint(w, "soa-infra forbidden")
+				fmt.Fprint(w, "Oracle SOA Platform")
 			},
 			expectedAnonymous: false,
 			expectedDetect:    true,
@@ -93,6 +93,15 @@ func TestDetectSOAInfra(t *testing.T) {
 			name: "no marker",
 			handler: func(w http.ResponseWriter, r *http.Request) {
 				fmt.Fprint(w, "generic response")
+			},
+			expectedAnonymous: false,
+			expectedDetect:    false,
+		},
+		{
+			name: "reflected requested path only, no product marker -> NOT detected",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(403)
+				fmt.Fprintf(w, "%s forbidden", strings.TrimPrefix(r.URL.Path, "/"))
 			},
 			expectedAnonymous: false,
 			expectedDetect:    false,
