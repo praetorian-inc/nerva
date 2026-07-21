@@ -80,8 +80,13 @@ var (
 	// agent/emd version marker in the Management Agent XML.
 	agentVersionPattern = regexp.MustCompile(`(?i)(?:agent[_ ]?version|emd[_ ]?version)["'>:= ]{1,6}v?(\d+(?:\.\d+){2,})`)
 
-	agentMarkers = []string{
-		"Oracle Enterprise Manager",
+	// agentXMLMarkers are structural markers unique to the Management Agent
+	// status XML document (the EMResponse/AgentState envelope). At least one MUST
+	// be present for a /emd/main/ response to be treated as genuine agent XML.
+	// This confines detection to the agent XML context so the generic phrase
+	// "Oracle Enterprise Manager" can never trigger as a bare substring on an
+	// arbitrary page.
+	agentXMLMarkers = []string{
 		"<EMResponse",
 		"AgentState",
 		"emdVersion",
@@ -182,7 +187,7 @@ func detectAgent(client *http.Client, baseURL, host string) (version string, ano
 	_ = resp.Body.Close()
 	content := string(body)
 
-	if !containsAny(content, agentMarkers) {
+	if !containsAny(content, agentXMLMarkers) {
 		return "", false, false
 	}
 	return extractAgentVersion(content), is2xx, true
@@ -208,8 +213,7 @@ func detectConsoleOrExpress(client *http.Client, baseURL, host string) (componen
 		return "express", true
 	}
 	if strings.Contains(locPath, logonPath) ||
-		containsAny(title, []string{"Oracle Enterprise Manager"}) ||
-		containsAny(content, []string{"/em/faces/logon", "Oracle Enterprise Manager"}) {
+		containsAny(content, []string{"/em/faces/logon"}) {
 		return "console", true
 	}
 	return "", false
@@ -269,7 +273,9 @@ func (p *Plugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target
 }
 
 func (p *Plugin) PortPriority(port uint16) bool {
-	return port == 7803 || port == 3872 || port == 5500
+	// 3872 is the plaintext Management Agent port. The HTTPS console (7803)
+	// and EM Express (5500) ports belong to the TLS variant.
+	return port == 3872
 }
 func (p *Plugin) Name() string           { return EM }
 func (p *Plugin) Type() plugins.Protocol { return plugins.TCP }
@@ -302,7 +308,11 @@ func (p *TLSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 	return service, nil
 }
 
-func (p *TLSPlugin) PortPriority(port uint16) bool { return port == 7803 || port == 443 }
-func (p *TLSPlugin) Name() string                  { return EM }
-func (p *TLSPlugin) Type() plugins.Protocol        { return plugins.TCPTLS }
-func (p *TLSPlugin) Priority() int                 { return -1 }
+func (p *TLSPlugin) PortPriority(port uint16) bool {
+	// 7803 (Cloud Control console) and 5500 (EM Express) are HTTPS; 443 covers
+	// reverse-proxied deployments.
+	return port == 7803 || port == 5500 || port == 443
+}
+func (p *TLSPlugin) Name() string           { return EM }
+func (p *TLSPlugin) Type() plugins.Protocol { return plugins.TCPTLS }
+func (p *TLSPlugin) Priority() int          { return -1 }
