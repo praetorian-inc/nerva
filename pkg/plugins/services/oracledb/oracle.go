@@ -331,16 +331,20 @@ func canonicalizeCPEVersion(version string) string {
 // oracleCPEs builds the CPE 2.3 strings for an Oracle Database instance. Real
 // Oracle DB CVEs key predominantly to the "database_server" product (521 CVEs on
 // NVD vs 66 on "database"), so CPEs are emitted on BOTH products to maximize CVE
-// matching. The numeric canonicalized version is used (so NVD numeric version
-// ranges match); a wildcard is used when the version is unknown.
+// matching.
+//
+// The CPE version is ALWAYS wildcard "*". VSNNUM (the only version source in
+// practice) exposes just the RU-less *family* version (e.g. 318767104 ->
+// 19.0.0.0.0), but NVD's Oracle DB CVE ranges are keyed to RU-level versions
+// (e.g. 19.3-19.23 for CVE-2024-21123). Emitting a fake-precise family version
+// such as 19.0.0.0 sorts BELOW those ranges and MISSES the CVEs, so a wildcard
+// is used to keep the CPE matchable against every RU range. The full decoded
+// family version is preserved separately in the service Version/metadata field
+// for human reporting.
 func oracleCPEs(version string) []string {
-	v := canonicalizeCPEVersion(version)
-	if v == "" {
-		v = "*"
-	}
 	return []string{
-		fmt.Sprintf("cpe:2.3:a:oracle:database_server:%s:*:*:*:*:*:*:*", v),
-		fmt.Sprintf("cpe:2.3:a:oracle:database:%s:*:*:*:*:*:*:*", v),
+		"cpe:2.3:a:oracle:database_server:*:*:*:*:*:*:*:*",
+		"cpe:2.3:a:oracle:database:*:*:*:*:*:*:*:*",
 	}
 }
 
