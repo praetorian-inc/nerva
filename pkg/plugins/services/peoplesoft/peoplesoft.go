@@ -148,10 +148,16 @@ func extractTitle(body string) string {
 }
 
 // cookieContains reports whether the joined Set-Cookie header defines a cookie
-// with the given name (matched as "<name>="). This distinguishes PS_TOKEN from
-// PS_TOKENEXPIRE, which would otherwise match a bare substring test.
+// with the given name. The name must appear at a cookie boundary — either at the
+// start of the Set-Cookie value or immediately after a cookie delimiter (';' or
+// ',', with optional surrounding whitespace) — and be followed by '='. Matching
+// "<name>=" at a boundary (rather than as a bare substring) means a differently
+// named cookie does NOT satisfy the check: PS_TOKENEXPIRE (different name) and
+// APP_PS_TOKEN (name embedded mid-token) do not match the PS_TOKEN check, while
+// "PS_TOKEN=abc" and "PS_LASTSITE=x; PS_TOKEN=abc" do.
 func cookieContains(setCookie, name string) bool {
-	return strings.Contains(setCookie, name+"=")
+	re := regexp.MustCompile(`(?i)(^|[;,])\s*` + regexp.QuoteMeta(name) + `=`)
+	return re.MatchString(setCookie)
 }
 
 // bodyHasPeopleSoftMarker reports whether a response body carries a genuine
