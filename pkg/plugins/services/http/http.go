@@ -69,6 +69,7 @@ var (
 		8080: {},
 		8081: {},
 		8082: {}, // JFrog Platform Router
+		8123: {}, // ClickHouse HTTP interface
 		8200: {}, // HashiCorp Vault
 		8888: {},
 		9001: {},
