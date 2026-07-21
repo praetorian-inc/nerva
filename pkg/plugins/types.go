@@ -161,6 +161,8 @@ const (
 	ProtoOracleOAM         = "oracle_oam"
 	ProtoOracleOIM         = "oracle_oim"
 	ProtoOracleHTTPServer  = "oracle_http_server"
+	ProtoGlassFish         = "oracle_glassfish"
+	ProtoPayara            = "payara"
 	ProtoPCOM              = "pcom"
 	ProtoPFCP              = "pfcp"
 	ProtoPinecone          = "pinecone"
@@ -477,6 +479,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoOracleHTTPServer:
 		var p ServiceOracleHTTPServer
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoGlassFish, ProtoPayara:
+		var p ServiceGlassFish
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoOMRONFINS:
@@ -1540,6 +1546,24 @@ type ServiceOracleHTTPServer struct {
 }
 
 func (e ServiceOracleHTTPServer) Type() string { return ProtoOracleHTTPServer }
+
+type ServiceGlassFish struct {
+	Product      string   `json:"product"`                 // "glassfish" or "payara"
+	Server       string   `json:"server,omitempty"`        // raw Server header
+	XPoweredBy   string   `json:"x_powered_by,omitempty"`  // raw X-Powered-By header
+	JDK          string   `json:"jdk,omitempty"`           // JDK version parsed from X-Powered-By
+	AdminConsole bool     `json:"admin_console,omitempty"` // /common/index.jsf corroboration
+	CPEs         []string `json:"cpes,omitempty"`
+}
+
+// Type returns the emitted service protocol, dynamically discriminating Payara
+// from the GlassFish family based on the Product field (VMware precedent).
+func (e ServiceGlassFish) Type() string {
+	if e.Product == "payara" {
+		return ProtoPayara
+	}
+	return ProtoGlassFish
+}
 
 type ServicePCOM struct {
 	Model     string   `json:"model,omitempty"`
