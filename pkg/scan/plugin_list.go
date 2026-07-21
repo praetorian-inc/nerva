@@ -104,6 +104,7 @@ import (
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/opcua"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/openvpn"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/oracledb"
+	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/oracleebs"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/oraclehttp"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/oracleidentity"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/oracleords"
