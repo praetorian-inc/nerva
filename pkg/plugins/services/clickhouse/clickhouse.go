@@ -127,6 +127,7 @@ type serverHelloFields struct {
 	Timezone        string
 	DisplayName     string
 	VersionPatch    uint64
+	HasPatch        bool
 }
 
 func init() {
@@ -292,6 +293,7 @@ func parseServerHello(data []byte) (*serverHelloFields, error) {
 		if err != nil {
 			return nil, err
 		}
+		fields.HasPatch = true
 	}
 
 	return fields, nil
@@ -312,6 +314,30 @@ func buildClickHouseCPE(version string) string {
 		version = "*"
 	}
 	return fmt.Sprintf("cpe:2.3:a:clickhouse:clickhouse:%s:*:*:*:*:*:*:*", version)
+}
+
+// validateExceptionFrame checks that the response contains a structurally valid
+// ClickHouse exception after the packet type byte: error_code (VarUInt) followed
+// by a non-empty error_name (String). This prevents false positives from
+// non-ClickHouse services that happen to respond with a leading 0x02 byte.
+func validateExceptionFrame(data []byte) bool {
+	pos := 0
+	// Skip packet type (already read by caller).
+	_, pos, err := readVarUInt(data, pos)
+	if err != nil {
+		return false
+	}
+	// Read error_code.
+	_, pos, err = readVarUInt(data, pos)
+	if err != nil {
+		return false
+	}
+	// Read error_name — must be non-empty (e.g. "DB::Exception").
+	name, _, err := readString(data, pos)
+	if err != nil {
+		return false
+	}
+	return len(name) > 0
 }
 
 // DetectClickHouse performs ClickHouse fingerprinting using the native protocol
@@ -347,9 +373,12 @@ func DetectClickHouse(conn net.Conn, timeout time.Duration) (*serverHelloFields,
 
 	switch packetType {
 	case packetTypeException:
-		// Server rejected the handshake (e.g. authentication required). The
-		// response is still a valid ClickHouse native protocol frame, but
-		// there is no version metadata to extract.
+		if !validateExceptionFrame(response) {
+			return nil, false, &utils.InvalidResponseErrorInfo{
+				Service: CLICKHOUSE,
+				Info:    "exception packet failed structural validation",
+			}
+		}
 		return &serverHelloFields{}, true, nil
 	case packetTypeHello:
 		fields, err := parseServerHello(response)
@@ -383,8 +412,10 @@ func runClickHouse(conn net.Conn, timeout time.Duration, target plugins.Target, 
 	}
 
 	version := ""
-	if fields.VersionMajor != 0 || fields.VersionMinor != 0 || fields.VersionPatch != 0 {
+	if fields.HasPatch {
 		version = fmt.Sprintf("%d.%d.%d", fields.VersionMajor, fields.VersionMinor, fields.VersionPatch)
+	} else if fields.VersionMajor != 0 || fields.VersionMinor != 0 {
+		version = fmt.Sprintf("%d.%d", fields.VersionMajor, fields.VersionMinor)
 	}
 
 	// Guard against CPE metacharacters in server-supplied version fields.

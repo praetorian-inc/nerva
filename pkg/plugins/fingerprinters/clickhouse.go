@@ -77,10 +77,10 @@ func (f *ClickHouseHTTPFingerprinter) ProbeEndpoint() string {
 }
 
 // Match returns true when any X-ClickHouse-* response header is present on a
-// 200-499 status response. Header presence is checked case-insensitively
+// 200-599 status response. Header presence is checked case-insensitively
 // since HTTP header names are not case sensitive.
 func (f *ClickHouseHTTPFingerprinter) Match(resp *http.Response) bool {
-	if resp.StatusCode < 200 || resp.StatusCode > 499 {
+	if resp.StatusCode < 200 || resp.StatusCode > 599 {
 		return false
 	}
 	for key := range resp.Header {

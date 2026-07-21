@@ -16,6 +16,7 @@ package clickhouse
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"strings"
 	"testing"
@@ -200,6 +201,7 @@ func TestParseServerHello_AllOptionalFields(t *testing.T) {
 	assert.Equal(t, "UTC", fields.Timezone)
 	assert.Equal(t, "test-server", fields.DisplayName)
 	assert.Equal(t, uint64(5), fields.VersionPatch)
+	assert.True(t, fields.HasPatch)
 }
 
 // TestParseServerHello_LegacyServer verifies a ServerHello with a protocol_version
@@ -219,6 +221,7 @@ func TestParseServerHello_LegacyServer(t *testing.T) {
 	assert.Equal(t, "", fields.Timezone)
 	assert.Equal(t, "", fields.DisplayName)
 	assert.Equal(t, uint64(0), fields.VersionPatch)
+	assert.False(t, fields.HasPatch)
 }
 
 // TestParseServerHello_IntermediateProtocolVersions verifies fields are gated
@@ -288,7 +291,14 @@ func newMockClickHouseConn(t *testing.T, response []byte) net.Conn {
 // VarUInt(2) (Exception packet type) is treated as a detected ClickHouse server
 // with zero-value fields (no version metadata available).
 func TestDetectClickHouse_Exception(t *testing.T) {
+	// Build a structurally valid exception: packet_type=2, error_code=516,
+	// error_name="DB::Exception"
 	response := writeVarUInt(nil, packetTypeException)
+	response = writeVarUInt(response, 516)
+	response = writeString(response, "DB::Exception")
+	response = writeString(response, "Authentication failed")
+	response = writeString(response, "")
+	response = writeVarUInt(response, 0)
 	conn := newMockClickHouseConn(t, response)
 
 	fields, detected, err := DetectClickHouse(conn, 5*time.Second)
@@ -296,6 +306,18 @@ func TestDetectClickHouse_Exception(t *testing.T) {
 	assert.True(t, detected)
 	require.NotNil(t, fields)
 	assert.Equal(t, &serverHelloFields{}, fields)
+}
+
+// TestDetectClickHouse_BareExceptionByte verifies that a response starting with
+// 0x02 but lacking a valid exception frame structure is rejected.
+func TestDetectClickHouse_BareExceptionByte(t *testing.T) {
+	response := writeVarUInt(nil, packetTypeException)
+	conn := newMockClickHouseConn(t, response)
+
+	fields, detected, err := DetectClickHouse(conn, 5*time.Second)
+	assert.False(t, detected)
+	assert.Error(t, err)
+	assert.Nil(t, fields)
 }
 
 // TestDetectClickHouse_UnknownPacketType verifies that a response starting with
@@ -363,6 +385,25 @@ func TestBuildClickHouseCPE(t *testing.T) {
 			assert.Equal(t, tt.wantCPE, cpe)
 		})
 	}
+}
+
+// TestVersionFormatWithoutPatch verifies that when HasPatch is false, runClickHouse
+// would format version as major.minor (not major.minor.0).
+func TestVersionFormatWithoutPatch(t *testing.T) {
+	data := buildMockServerHello("ClickHouse", 18, 16, 54000, 0, "", "")
+
+	fields, err := parseServerHello(data)
+	require.NoError(t, err)
+	assert.False(t, fields.HasPatch)
+
+	// Replicate runClickHouse's version logic.
+	version := ""
+	if fields.HasPatch {
+		version = fmt.Sprintf("%d.%d.%d", fields.VersionMajor, fields.VersionMinor, fields.VersionPatch)
+	} else if fields.VersionMajor != 0 || fields.VersionMinor != 0 {
+		version = fmt.Sprintf("%d.%d", fields.VersionMajor, fields.VersionMinor)
+	}
+	assert.Equal(t, "18.16", version)
 }
 
 // TestCPEMetacharacterGuard verifies that a version string containing CPE

@@ -87,8 +87,14 @@ func TestClickHouseHTTPFingerprinter_Match(t *testing.T) {
 			want:       false,
 		},
 		{
-			name:       "500 with header → false (status out of range)",
+			name:       "500 with header → true (5xx with ClickHouse header)",
 			statusCode: 500,
+			headers:    map[string]string{"X-ClickHouse-Exception-Code": "1"},
+			want:       true,
+		},
+		{
+			name:       "600 with header → false (status out of range)",
+			statusCode: 600,
 			headers:    map[string]string{"X-ClickHouse-Exception-Code": "1"},
 			want:       false,
 		},
