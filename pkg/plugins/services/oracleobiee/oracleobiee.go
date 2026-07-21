@@ -300,7 +300,7 @@ func (p *TLSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 	return service, nil
 }
 
-func (p *TLSPlugin) PortPriority(port uint16) bool { return port == 443 }
+func (p *TLSPlugin) PortPriority(port uint16) bool { return port == 443 || port == 9503 }
 func (p *TLSPlugin) Name() string                  { return OBIEE }
 func (p *TLSPlugin) Type() plugins.Protocol        { return plugins.TCPTLS }
 func (p *TLSPlugin) Priority() int                 { return -1 }
