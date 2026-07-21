@@ -89,21 +89,26 @@ func targetForListener(ln net.Listener) plugins.Target {
 // GROUP 1 — Pure-helper table tests
 // ---------------------------------------------------------------------------
 
-func TestIsAuthChallenge(t *testing.T) {
+func TestIsAnonymousExposure(t *testing.T) {
 	tests := []struct {
 		name     string
 		code     int
+		location string
 		expected bool
 	}{
-		{name: "401 StatusUnauthorized", code: http.StatusUnauthorized, expected: true},
-		{name: "407 StatusProxyAuthRequired", code: http.StatusProxyAuthRequired, expected: true},
-		{name: "200 OK", code: http.StatusOK, expected: false},
-		{name: "403 Forbidden", code: http.StatusForbidden, expected: false},
-		{name: "404 Not Found", code: http.StatusNotFound, expected: false},
+		{name: "200 OK, no location", code: http.StatusOK, location: "", expected: true},
+		{name: "204 No Content, no location", code: http.StatusNoContent, location: "", expected: true},
+		{name: "302 redirect with login location", code: http.StatusFound, location: "/sso/login", expected: true},
+		{name: "302 redirect with no location is not exposure", code: http.StatusFound, location: "", expected: false},
+		{name: "301 redirect with absolute location", code: http.StatusMovedPermanently, location: "https://x/", expected: true},
+		{name: "401 Unauthorized", code: http.StatusUnauthorized, location: "", expected: false},
+		{name: "403 Forbidden", code: http.StatusForbidden, location: "", expected: false},
+		{name: "404 Not Found", code: http.StatusNotFound, location: "", expected: false},
+		{name: "500 Internal Server Error", code: http.StatusInternalServerError, location: "", expected: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.expected, isAuthChallenge(tt.code))
+			assert.Equal(t, tt.expected, isAnonymousExposure(tt.code, tt.location))
 		})
 	}
 }
@@ -212,6 +217,13 @@ func TestEvaluateJDE(t *testing.T) {
 			expectedAIS: false, expectedAnon: false, expectedVersion: "", expectedDetect: true,
 		},
 		{
+			name: "N2-1: 404 branded error page discloses product but is not anonymous",
+			evs: []jdeEvidence{
+				{path: "/jde/E1Menu.maf", statusCode: 404, body: "jdeLoginAction"},
+			},
+			expectedAIS: false, expectedAnon: false, expectedVersion: "", expectedDetect: true,
+		},
+		{
 			name: "AIS envelope only counts on a jderest path",
 			evs: []jdeEvidence{
 				{path: "/jde/owhtml", statusCode: 200, body: `{"aisVersion":"9.2.5.3"}`, ctype: "application/json"},
@@ -269,21 +281,24 @@ func TestBuildJDECPEs(t *testing.T) {
 
 func TestHasSiebelCookie(t *testing.T) {
 	tests := []struct {
-		name      string
-		setCookie string
-		expected  bool
+		name       string
+		setCookies []string
+		expected   bool
 	}{
-		{name: "_sn cookie", setCookie: "_sn=abc; Path=/", expected: true},
-		{name: "_sweEntryPoint cookie", setCookie: "_sweEntryPoint=xyz; Path=/", expected: true},
-		{name: "LB cookie is not a trigger", setCookie: "BIGipServerSiebel_pool=...", expected: false},
-		{name: "unrelated cookie", setCookie: "JSESSIONID=abc", expected: false},
-		{name: "cookie name ending in _sn is not a trigger", setCookie: "dummy_sn=x; Path=/", expected: false},
-		{name: "_sn= inside another cookie value is not a trigger", setCookie: "foo=_sn=abc", expected: false},
-		{name: "empty", setCookie: "", expected: false},
+		{name: "_sn cookie", setCookies: []string{"_sn=abc; Path=/"}, expected: true},
+		{name: "_sweEntryPoint cookie", setCookies: []string{"_sweEntryPoint=xyz; Path=/"}, expected: true},
+		{name: "LB cookie is not a trigger", setCookies: []string{"BIGipServerSiebel_pool=..."}, expected: false},
+		{name: "unrelated cookie", setCookies: []string{"JSESSIONID=abc"}, expected: false},
+		{name: "cookie name ending in _sn is not a trigger", setCookies: []string{"dummy_sn=x; Path=/"}, expected: false},
+		{name: "_sn= inside another cookie value is not a trigger", setCookies: []string{"foo=_sn=abc"}, expected: false},
+		{name: "empty", setCookies: []string{""}, expected: false},
+		{name: "_sn present as an attribute of an unrelated cookie is not a trigger", setCookies: []string{"session=abc; _sn=debug"}, expected: false},
+		{name: "real _sn across multiple Set-Cookie headers", setCookies: []string{"JSESSIONID=x", "_sn=abc; Path=/"}, expected: true},
+		{name: "no cookies", setCookies: nil, expected: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.expected, hasSiebelCookie(tt.setCookie))
+			assert.Equal(t, tt.expected, hasSiebelCookie(tt.setCookies))
 		})
 	}
 }
@@ -378,14 +393,14 @@ func TestEvaluateSiebel(t *testing.T) {
 		{
 			name: "cookie signal",
 			evs: []siebelEvidence{
-				{statusCode: 200, setCookie: "_sn=abc; Path=/"},
+				{statusCode: 200, setCookies: []string{"_sn=abc; Path=/"}},
 			},
 			expectedBuild: "", expectedVersion: "", expectedAnon: true, expectedDetect: true,
 		},
 		{
 			name: "sweEntryPoint cookie signal",
 			evs: []siebelEvidence{
-				{statusCode: 200, setCookie: "_sweEntryPoint=x"},
+				{statusCode: 200, setCookies: []string{"_sweEntryPoint=x"}},
 			},
 			expectedBuild: "", expectedVersion: "", expectedAnon: true, expectedDetect: true,
 		},
@@ -399,7 +414,14 @@ func TestEvaluateSiebel(t *testing.T) {
 		{
 			name: "P0-4: 401 challenge with cookie detected but not anonymous",
 			evs: []siebelEvidence{
-				{statusCode: 401, setCookie: "_sn=abc"},
+				{statusCode: 401, setCookies: []string{"_sn=abc"}},
+			},
+			expectedBuild: "", expectedVersion: "", expectedAnon: false, expectedDetect: true,
+		},
+		{
+			name: "N2-1: 403 branded error page discloses product but is not anonymous",
+			evs: []siebelEvidence{
+				{statusCode: 403, body: "<script src=swecommon_top.js>"},
 			},
 			expectedBuild: "", expectedVersion: "", expectedAnon: false, expectedDetect: true,
 		},

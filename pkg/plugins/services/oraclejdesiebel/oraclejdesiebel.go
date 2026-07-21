@@ -108,8 +108,11 @@ const (
 // restricted to digits/dots so it cannot inject CPE separators.
 var jdeToolsLabeled = regexp.MustCompile(`(?i)(?:E1\s*)?Tools\s*Release[^0-9]{0,10}(\d+\.\d+(?:\.\d+){0,2})`)
 
-// jdeAISVersion matches an AIS JSON version field (dotted quad).
-var jdeAISVersion = regexp.MustCompile(`(?i)"?(?:aisVersion|toolsRelease|version)"?\s*[:=]\s*"?(\d+\.\d+\.\d+\.\d+)`)
+// jdeAISVersion matches an AIS JSON version field (dotted quad). Only the
+// AIS-specific keys aisVersion/toolsRelease are accepted — a generic "version"
+// key is intentionally excluded so an unrelated dotted-quad "version" elsewhere
+// on the page cannot populate the best-effort Tools CPE.
+var jdeAISVersion = regexp.MustCompile(`(?i)"?(?:aisVersion|toolsRelease)"?\s*[:=]\s*"?(\d+\.\d+\.\d+\.\d+)`)
 
 // jdeQuadFallback matches a bare E1 Tools quad, prefix-validated to a known
 // JDE Tools family (9.1.x.x / 9.2.x.x / 8.98.x.x) to cut false positives.
@@ -137,24 +140,25 @@ var siebelBuildLoose = regexp.MustCompile(`(?i)/(\d{4,6})/scripts/siebel`)
 // capture is [0-9.] plus the literal IP prefix, so it cannot inject CPE separators.
 var siebelMarketingVer = regexp.MustCompile(`(?i)Siebel[^0-9]{0,15}?(?:version|build)?\s*[:\s]?\s*(IP20\d{2}|\d{1,2}\.\d{1,2}(?:\.\d+)?)`)
 
-// siebelCookieName matches a Siebel session cookie by NAME (_sn or
-// _sweEntryPoint), anchored to a cookie-name boundary (start of the header, or
-// after a ";"/","/space once Set-Cookie headers are joined). This prevents a
-// substring false positive on an unrelated cookie whose name ends in "_sn"
-// (e.g. "dummy_sn=") or whose value merely contains "_sn=" (e.g. "foo=_sn=abc").
-var siebelCookieName = regexp.MustCompile(`(?:^|[;,\s])(?:_sn|_sweEntryPoint)=`)
-
 // containsFold reports whether s contains sub, case-insensitively.
 func containsFold(s, sub string) bool {
 	return strings.Contains(strings.ToLower(s), strings.ToLower(sub))
 }
 
-// isAuthChallenge reports whether a status code is an authentication challenge.
-// Detection off such a response is product disclosure, not anonymous access
-// (P0-4): AnonymousAccess and the "exposed without auth" finding are suppressed
-// when the only marker-bearing response was a 401/407 challenge.
-func isAuthChallenge(code int) bool {
-	return code == http.StatusUnauthorized || code == http.StatusProxyAuthRequired
+// isAnonymousExposure reports whether a marker-bearing response actually shows
+// the product reachable WITHOUT authentication: a success (2xx) or an intended
+// login redirect (3xx carrying a Location). A branded error page (a 403/404 or
+// any other non-success status without a redirect) discloses the product but is
+// NOT anonymous access, so AnonymousAccess and the "exposed without auth" finding
+// are not raised from it (P0-4: only success/login-redirect responses qualify).
+func isAnonymousExposure(statusCode int, location string) bool {
+	if statusCode >= 200 && statusCode < 300 {
+		return true
+	}
+	if statusCode >= 300 && statusCode < 400 && location != "" {
+		return true
+	}
+	return false
 }
 
 // createHTTPClient creates an http.Client that wraps the provided net.Conn and
@@ -255,7 +259,8 @@ func parseJDEToolsRelease(body string) string {
 // returning whether the AIS REST tier is present, whether the product was
 // disclosed without an auth challenge (anonymous), and the best-effort E1 Tools
 // Release version (first match wins). anonymous is true only when a detection
-// signal came from a non-401/407 response (P0-4).
+// signal came from a success or login-redirect response (P0-4); branded 4xx/5xx
+// error pages disclose the product but are not anonymous access.
 func evaluateJDE(evs []jdeEvidence) (ais, anonymous bool, version string, detected bool) {
 	for _, ev := range evs {
 		sig := false
@@ -268,7 +273,7 @@ func evaluateJDE(evs []jdeEvidence) (ais, anonymous bool, version string, detect
 		}
 		if sig {
 			detected = true
-			if !isAuthChallenge(ev.statusCode) {
+			if isAnonymousExposure(ev.statusCode, ev.location) {
 				anonymous = true
 			}
 		}
@@ -331,16 +336,33 @@ type siebelEvidence struct {
 	statusCode int
 	location   string
 	body       string
-	setCookie  string
+	setCookies []string
 }
 
-// hasSiebelCookie reports whether the joined Set-Cookie header defines a Siebel
-// session cookie (_sn or _sweEntryPoint) by NAME. This is the strongest,
-// lowest-FP signal: a Set-Cookie cannot be reflected from the plugin's GET. The
-// match is anchored to a cookie-name boundary so an unrelated cookie that merely
-// contains the substring "_sn=" is not treated as a Siebel cookie.
-func hasSiebelCookie(setCookie string) bool {
-	return siebelCookieName.MatchString(setCookie)
+// hasSiebelCookie reports whether any Set-Cookie header defines a Siebel session
+// cookie (_sn or _sweEntryPoint) by its actual cookie NAME. Each header is parsed
+// as "name=value; attr...": only the leading name=value pair is the cookie, so a
+// spurious "_sn" appearing as an attribute of an unrelated cookie
+// (e.g. "session=abc; _sn=debug"), a name that merely ends in "_sn"
+// (e.g. "dummy_sn="), or "_sn=" inside a value (e.g. "foo=_sn=abc") do NOT count.
+// A Set-Cookie cannot be reflected from the plugin's GET, so a genuine Siebel
+// session cookie remains the strongest, lowest-FP signal.
+func hasSiebelCookie(setCookies []string) bool {
+	for _, sc := range setCookies {
+		pair := sc
+		if i := strings.IndexByte(pair, ';'); i >= 0 {
+			pair = pair[:i]
+		}
+		name := pair
+		if i := strings.IndexByte(name, '='); i >= 0 {
+			name = name[:i]
+		}
+		switch strings.TrimSpace(name) {
+		case "_sn", "_sweEntryPoint":
+			return true
+		}
+	}
+	return false
 }
 
 // hasSiebelStrongMarker reports whether a string (body or Location) carries a
@@ -392,11 +414,12 @@ func parseSiebelVersion(body string) string {
 // Siebel, returning the best-effort opaque build folder, (rarely) a clean
 // marketing version, and whether the product was disclosed without an auth
 // challenge (anonymous). anonymous is true only when a detection signal came
-// from a non-401/407 response (P0-4).
+// from a success or login-redirect response (P0-4); branded 4xx/5xx error pages
+// disclose the product but are not anonymous access.
 func evaluateSiebel(evs []siebelEvidence) (build, version string, anonymous, detected bool) {
 	for _, ev := range evs {
 		sig := false
-		if hasSiebelCookie(ev.setCookie) {
+		if hasSiebelCookie(ev.setCookies) {
 			sig = true
 		}
 		if hasSiebelStrongMarker(ev.body) || hasSiebelStrongMarker(ev.location) {
@@ -404,7 +427,7 @@ func evaluateSiebel(evs []siebelEvidence) (build, version string, anonymous, det
 		}
 		if sig {
 			detected = true
-			if !isAuthChallenge(ev.statusCode) {
+			if isAnonymousExposure(ev.statusCode, ev.location) {
 				anonymous = true
 			}
 		}
@@ -438,7 +461,7 @@ func detectSiebel(client *http.Client, baseURL string, host string) (build, vers
 			statusCode: resp.StatusCode,
 			location:   resp.Header.Get("Location"),
 			body:       string(body),
-			setCookie:  strings.Join(resp.Header.Values("Set-Cookie"), "; "),
+			setCookies: resp.Header.Values("Set-Cookie"),
 		})
 		_ = resp.Body.Close()
 	}
