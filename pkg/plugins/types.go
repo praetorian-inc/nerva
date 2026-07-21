@@ -158,6 +158,9 @@ const (
 	ProtoOpenVPN           = "openvpn"
 	ProtoOpenVPNManagement = "openvpn-management"
 	ProtoOracle            = "oracle"
+	ProtoOracleEBS         = "oracle_ebs"
+	ProtoOracleORDS        = "oracle_ords"
+	ProtoPeopleSoft        = "oracle_peoplesoft"
 	ProtoOracleOAM         = "oracle_oam"
 	ProtoOracleOIM         = "oracle_oim"
 	ProtoOracleHTTPServer  = "oracle_http_server"
@@ -467,6 +470,18 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoOracle:
 		var p ServiceOracle
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoOracleEBS:
+		var p ServiceOracleEBS
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoOracleORDS:
+		var p ServiceOracleORDS
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoPeopleSoft:
+		var p ServicePeopleSoft
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoOracleOAM:
@@ -1527,6 +1542,29 @@ type ServiceOracle struct {
 }
 
 func (e ServiceOracle) Type() string { return ProtoOracle }
+
+type ServiceOracleEBS struct {
+	Title   string   `json:"title,omitempty"`
+	Release string   `json:"release,omitempty"` // "R12", "11i", or ""
+	CPEs    []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceOracleEBS) Type() string { return ProtoOracleEBS }
+
+type ServiceOracleORDS struct {
+	APEX      bool     `json:"apex,omitempty"`
+	AICapable bool     `json:"ai_capable,omitempty"` // ORDS is the common carrier for Select AI / Vector Search / OML REST
+	CPEs      []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceOracleORDS) Type() string { return ProtoOracleORDS }
+
+type ServicePeopleSoft struct {
+	PSToken bool     `json:"ps_token,omitempty"`
+	CPEs    []string `json:"cpes,omitempty"`
+}
+
+func (e ServicePeopleSoft) Type() string { return ProtoPeopleSoft }
 
 type ServiceOracleOAM struct {
 	OpenSSO bool     `json:"opensso,omitempty"` // legacy 11g endpoint present
