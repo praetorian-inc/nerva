@@ -160,6 +160,7 @@ const (
 	ProtoOracle            = "oracle"
 	ProtoOracleOAM         = "oracle_oam"
 	ProtoOracleOIM         = "oracle_oim"
+	ProtoOracleHTTPServer  = "oracle_http_server"
 	ProtoPCOM              = "pcom"
 	ProtoPFCP              = "pfcp"
 	ProtoPinecone          = "pinecone"
@@ -472,6 +473,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoOracleOIM:
 		var p ServiceOracleOIM
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoOracleHTTPServer:
+		var p ServiceOracleHTTPServer
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoOMRONFINS:
@@ -1504,7 +1509,11 @@ type ServiceLwM2M struct {
 func (e ServiceLwM2M) Type() string { return ProtoLwM2M }
 
 type ServiceOracle struct {
-	Info string `json:"info"`
+	Info      string   `json:"info"`
+	Version   string   `json:"version,omitempty"`
+	AICapable bool     `json:"ai_capable,omitempty"` // major version >= 23 (Oracle AI Database 23ai/26ai)
+	Note      string   `json:"note,omitempty"`
+	CPEs      []string `json:"cpes,omitempty"`
 }
 
 func (e ServiceOracle) Type() string { return ProtoOracle }
@@ -1522,6 +1531,15 @@ type ServiceOracleOIM struct {
 }
 
 func (e ServiceOracleOIM) Type() string { return ProtoOracleOIM }
+
+type ServiceOracleHTTPServer struct {
+	Server           string   `json:"server,omitempty"`
+	Vendor           string   `json:"vendor,omitempty"`
+	FusionMiddleware bool     `json:"fusion_middleware,omitempty"`
+	CPEs             []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceOracleHTTPServer) Type() string { return ProtoOracleHTTPServer }
 
 type ServicePCOM struct {
 	Model     string   `json:"model,omitempty"`
