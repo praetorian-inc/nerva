@@ -15,6 +15,7 @@
 package oracleformsreports
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -513,6 +514,33 @@ func runPlugin(t *testing.T, p plugins.Plugin, handler http.HandlerFunc, misconf
 	return runPluginWithTarget(t, p, handler, misconfigs, false)
 }
 
+// --- createHTTPClient single-dial guard (unit) ---
+
+// TestCreateHTTPClient_DialContextGuardRefusesSecondDial is a focused unit test
+// for the round-5 concurrency fix: the *http.Transport returned by
+// createHTTPClient hands out its single wrapped net.Conn on the first
+// DialContext call, then refuses (a clean, non-fatal error) any subsequent
+// dial rather than handing the same socket to a second concurrent caller,
+// which would otherwise corrupt the connection / race on it.
+func TestCreateHTTPClient_DialContextGuardRefusesSecondDial(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer server.Close()
+	conn, err := net.DialTimeout("tcp", strings.TrimPrefix(server.URL, "http://"), 5*time.Second)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	client := createHTTPClient(conn, 5*time.Second)
+	transport, ok := client.Transport.(*http.Transport)
+	require.True(t, ok, "createHTTPClient must configure an *http.Transport")
+
+	gotConn, err := transport.DialContext(context.Background(), "tcp", "ignored:0")
+	require.NoError(t, err, "the first dial must succeed and hand out the wrapped conn")
+	assert.Same(t, conn, gotConn)
+
+	_, err = transport.DialContext(context.Background(), "tcp", "ignored:0")
+	require.Error(t, err, "a second dial must be refused rather than handing out the same conn again")
+}
+
 // --- Forms plugin: positive detection ---
 
 func TestFormsPlugin_Run_PositiveViaAppletClass(t *testing.T) {
@@ -852,6 +880,50 @@ func TestReportsPlugin_Run_DeepTrueProbesDiagnosticsButEmitsNoFindings(t *testin
 	assert.Equal(t, "10.1.2.0.2", svc.Version, "Deep=true opts into the admin-only diagnostic probes")
 	assert.False(t, svc.AnonymousAccess)
 	assert.Empty(t, svc.SecurityFindings)
+}
+
+func TestReportsPlugin_Run_ConnectionCloseForcesRedialGuard_GracefulDegradation(t *testing.T) {
+	// Regression (PR #374 round-5): detectReports closes the classifier response
+	// BEFORE issuing the getserverinfo/showenv diag probes so the underlying
+	// net/http transport can return the single connection to its idle pool and
+	// the diag GETs reuse it. But when the server answers the classifier with
+	// "Connection: close" (disabling keep-alive for that response), the
+	// transport cannot reuse that connection at all and must dial again for the
+	// diag probes. The plugin owns exactly one net.Conn, so createHTTPClient's
+	// DialContext guard refuses that second dial (a clean, non-fatal error)
+	// rather than handing the same socket to a second concurrent request loop,
+	// which would otherwise race on / corrupt the connection. The classifier
+	// marker was already read into ev.body before the connection closed, so
+	// Reports is still detected -- only the admin-only version/era enrichment is
+	// gracefully lost. Run with `go test -race` to confirm no data race occurs.
+	var diagRequested atomic.Bool
+	svc := runPlugin(t, &ReportsPlugin{}, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/reports/rwservlet":
+			// Disable keep-alive for this response only, forcing the transport to
+			// re-dial for any subsequent request on this client.
+			w.Header().Set("Connection", "close")
+			fmt.Fprint(w, `<html><title>Oracle Reports</title>REP-12345</html>`)
+		case "/reports/rwservlet/getserverinfo", "/reports/rwservlet/showenv":
+			// Would answer with a real, parseable version/era if ever reached --
+			// proves the diag probes are refused by the dial guard before ever
+			// reaching the server, not merely gated off elsewhere.
+			diagRequested.Store(true)
+			fmt.Fprint(w, `<serverInfo version="10.1.2.0.2">`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}, true)
+
+	require.NotNil(t, svc, "the classifier REP- marker was read before the connection closed, so Reports is still detected")
+	assert.False(t, diagRequested.Load(), "the diag probes must never reach the server once the classifier connection is non-reusable")
+	assert.Equal(t, "", svc.Version, "the re-dial refused by the guard means getserverinfo version enrichment is unavailable")
+
+	var rp plugins.ServiceOracleReports
+	require.NoError(t, json.Unmarshal(svc.Raw, &rp))
+	assert.Equal(t, "", rp.Era, "showenv era enrichment is unavailable for the same reason")
+	require.Len(t, rp.CPEs, 1)
+	assert.Equal(t, "cpe:2.3:a:oracle:reports:*:*:*:*:*:*:*:*", rp.CPEs[0], "CPE stays wildcard since no version was ever enriched")
 }
 
 // --- Reports plugin: negative / false-positive guards ---

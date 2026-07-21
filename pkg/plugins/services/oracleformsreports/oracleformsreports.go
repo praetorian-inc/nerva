@@ -93,6 +93,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/praetorian-inc/nerva/pkg/plugins"
@@ -148,10 +149,20 @@ func init() {
 // createHTTPClient creates an http.Client that wraps the provided net.Conn and
 // does not follow redirects (so headers can be inspected directly).
 func createHTTPClient(conn net.Conn, timeout time.Duration) *http.Client {
+	// The plugin owns a single net.Conn, so the transport may hand it out exactly
+	// once. Guard against a re-dial (which would hand the same socket to a second
+	// request loop, causing a data race / protocol corruption): return the conn on
+	// the first dial and a clean, non-fatal error on any subsequent dial. In correct
+	// operation the classifier body is closed before the diag probes, so the diag
+	// requests reuse the idle conn and this guard never triggers.
+	var dialed atomic.Bool
 	return &http.Client{
 		Timeout: timeout,
 		Transport: &http.Transport{
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				if dialed.Swap(true) {
+					return nil, fmt.Errorf("oracleformsreports: single-connection transport already dialed")
+				}
 				return conn, nil
 			},
 		},
@@ -419,12 +430,17 @@ func detectReports(client *http.Client, baseURL string, host string, probeDiagno
 	if err != nil {
 		return ev
 	}
-	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
 	ev.statusCode = resp.StatusCode
 	ev.body = string(body)
 	ev.server = resp.Header.Get("Server")
 	ev.dms = dmsPresent(resp)
+	// Close the classifier response BEFORE issuing any diagnostic probe. The plugin
+	// holds a single net.Conn, so leaving this body open would prevent the transport
+	// from returning the connection to the idle pool and force the diag GET to
+	// re-dial the same socket (data race / protocol corruption). Closing here releases
+	// the connection so the diag requests reuse it cleanly, one user at a time.
+	_ = resp.Body.Close()
 
 	// Enrichment ONLY after the classifier detected Reports, and only when the
 	// caller opted into the admin-only diagnostic probes.
