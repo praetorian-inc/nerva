@@ -92,6 +92,13 @@ func TestParseXPoweredBy(t *testing.T) {
 			expectedJDK:     "",
 		},
 		{
+			name:            "Payara Open Source Edition with version and JDK",
+			xpb:             "Servlet/4.0 (Payara Server Open Source Edition 4.1.152.1 Java/Oracle Corporation/1.8)",
+			expectedProduct: "payara",
+			expectedVersion: "4.1.152.1",
+			expectedJDK:     "1.8",
+		},
+		{
 			name:            "bare Servlet with no branded parenthetical",
 			xpb:             "Servlet/3.0",
 			expectedProduct: "",
@@ -326,6 +333,42 @@ func TestGlassFishPlugin_Run_PositivePayaraServerHeader(t *testing.T) {
 	assert.Equal(t, "payara", gf.Product)
 	assert.Equal(t, "5.2021.1", service.Version)
 	assert.Equal(t, plugins.ProtoPayara, service.Protocol)
+}
+
+// TestGlassFishPlugin_Run_PositivePayaraOpenSourceEditionBuildTag guards the
+// production fix that lets serverVersionPattern match the "Payara Server Open
+// Source Edition" banner (Payara 4.x/early-5) without wildcarding the CPE. The
+// "#badassfish" custom build tag trailing the version must not leak into the
+// parsed version.
+func TestGlassFishPlugin_Run_PositivePayaraOpenSourceEditionBuildTag(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case rootPath:
+			w.Header().Set("Server", "Payara Server Open Source Edition 4.1.152.1 #badassfish")
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprint(w, "hello")
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	conn, target := dialTestServer(t, server.URL, false)
+	defer conn.Close()
+
+	plugin := &GlassFishPlugin{}
+	service, err := plugin.Run(conn, 5*time.Second, target)
+
+	require.NoError(t, err)
+	require.NotNil(t, service)
+
+	var gf plugins.ServiceGlassFish
+	require.NoError(t, json.Unmarshal(service.Raw, &gf))
+	assert.Equal(t, "payara", gf.Product)
+	assert.Equal(t, "4.1.152.1", service.Version)
+	assert.NotContains(t, service.Version, "badassfish", "the #badassfish build tag must not be part of the parsed version")
+	require.Len(t, gf.CPEs, 1)
+	assert.Equal(t, "cpe:2.3:a:payara:payara:4.1.152.1:*:*:*:*:*:*:*", gf.CPEs[0])
 }
 
 func TestGlassFishPlugin_Run_PositiveLegacySunGlassFish(t *testing.T) {

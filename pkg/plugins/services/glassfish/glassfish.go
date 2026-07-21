@@ -98,12 +98,12 @@ const (
 //	Group 1 -> product family (GlassFish vs Payara)
 //	Group 2 -> app-server version (4.1.1, 5.0, 5.2021.1)
 //	Group 3 -> JDK version (1.8, 11, 17); empty when the build omits it
-var xPoweredByPattern = regexp.MustCompile(`(?i)\((GlassFish Server Open Source Edition|Payara Server)\s+([0-9][0-9A-Za-z.]*)(?:[^)]*?Java/[^/)]+/([0-9._]+))?[^)]*\)`)
+var xPoweredByPattern = regexp.MustCompile(`(?i)\((GlassFish Server Open Source Edition|Payara Server(?: Open Source Edition)?)\s+([0-9][0-9A-Za-z.]*)(?:[^)]*?Java/[^/)]+/([0-9._]+))?[^)]*\)`)
 
 // serverVersionPattern extracts the version token that follows a branded Server
 // header product name, tolerating the optional "v" prefix (Sun GlassFish
 // Enterprise Server v2.1) and slash separator (Eclipse GlassFish/7.0.0).
-var serverVersionPattern = regexp.MustCompile(`(?i)(?:GlassFish Server Open Source Edition|Payara Server|Eclipse GlassFish|Sun GlassFish Enterprise Server(?:\s+v)?)\s*/?\s*v?([0-9][0-9A-Za-z._]*)`)
+var serverVersionPattern = regexp.MustCompile(`(?i)(?:GlassFish Server Open Source Edition|Payara Server(?: Open Source Edition)?|Eclipse GlassFish|Sun GlassFish Enterprise Server(?:\s+v)?)\s*/?\s*v?([0-9][0-9A-Za-z._]*)`)
 
 type GlassFishPlugin struct{}
 
