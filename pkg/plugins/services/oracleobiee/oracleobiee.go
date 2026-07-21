@@ -120,7 +120,6 @@ var obieeProbes = []obieeProbe{
 		},
 		bodyMarkers: []string{
 			"Oracle BI Publisher",
-			"xmlpserver",
 		},
 	},
 	{
@@ -243,8 +242,14 @@ func detectOBIEE(client *http.Client, baseURL, host string) (surface string, det
 	return "", false
 }
 
-// buildOBIEECPE returns the wildcard-version CPE for Oracle Business Intelligence.
-func buildOBIEECPE() string {
+// buildOBIEECPE returns the wildcard-version CPE for the detected surface. The
+// bi-publisher surface maps to the oracle:bi_publisher product (which has its
+// own CVE history in NVD); the analytics and dv surfaces map to
+// oracle:business_intelligence.
+func buildOBIEECPE(surface string) string {
+	if surface == "bi-publisher" {
+		return "cpe:2.3:a:oracle:bi_publisher:*:*:*:*:*:*:*:*"
+	}
 	return "cpe:2.3:a:oracle:business_intelligence:*:*:*:*:*:*:*:*"
 }
 
@@ -262,7 +267,7 @@ func (p *Plugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target
 
 	payload := plugins.ServiceOracleOBIEE{
 		Surface: surface,
-		CPEs:    []string{buildOBIEECPE()},
+		CPEs:    []string{buildOBIEECPE(surface)},
 	}
 	return plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP), nil
 }
@@ -286,7 +291,7 @@ func (p *TLSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 
 	payload := plugins.ServiceOracleOBIEE{
 		Surface: surface,
-		CPEs:    []string{buildOBIEECPE()},
+		CPEs:    []string{buildOBIEECPE(surface)},
 	}
 	service := plugins.CreateServiceFrom(target, payload, true, "", plugins.TCPTLS)
 	if target.Misconfigs {
