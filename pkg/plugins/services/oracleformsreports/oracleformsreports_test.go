@@ -67,13 +67,22 @@ func TestHasReportsMarker(t *testing.T) {
 		{"REP error code", `REP-52251: Cannot get output`, true},
 		{"branded Oracle Reports title", `<title>Oracle Reports</title>`, true},
 		{"Reports Servlet text", `Reports Servlet Command`, true},
-		{"Oracle diagnostic CSS class OraInstructionText", `<span class="OraInstructionText">`, true},
-		{"Oracle diagnostic CSS class OraDataText", `<td class="OraDataText">value</td>`, true},
-		{"Oracle diagnostic CSS class OraTableCellText", `<td class="OraTableCellText">value</td>`, true},
+		// Regression (PR #374 round-4): the generic Ora* CSS classes no longer
+		// classify Reports on their own — they appear on many Fusion Middleware
+		// diagnostic/error pages, so a non-Reports Oracle app would otherwise be
+		// misclassified. These cases are kept as negative regression guards.
+		{"Oracle diagnostic CSS class OraInstructionText alone is not a marker", `<span class="OraInstructionText">`, false},
+		{"Oracle diagnostic CSS class OraDataText alone is not a marker", `<td class="OraDataText">value</td>`, false},
+		{"Oracle diagnostic CSS class OraTableCellText alone is not a marker", `<td class="OraTableCellText">value</td>`, false},
 		{"bare rwservlet path echo is not a marker", `/reports/rwservlet not found`, false},
 		{"echoed sub-path tokens are not markers", `<a href="rwservlet/showenv">showenv</a><a href="rwservlet/getserverinfo">getserverinfo</a>`, false},
 		{"unrelated body", "hello world", false},
 		{"empty body", "", false},
+		// Regression (PR #374 round-4): an Ora*-CSS body that ALSO carries a REP-
+		// code or the branded "Oracle Reports" text must still detect — the Ora*
+		// classes are simply non-classifying, not disqualifying.
+		{"Ora* CSS classes plus REP- code => still detected", `<span class="OraInstructionText">error</span> REP-12345`, true},
+		{"Ora* CSS classes plus Oracle Reports text => still detected", `<span class="OraDataText">Oracle Reports</span>`, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -891,6 +900,39 @@ func TestReportsPlugin_Run_Negative_CorroborationHeadersOnlyNoMarker(t *testing.
 		w.WriteHeader(http.StatusNotFound)
 	}, false)
 	assert.Nil(t, svc)
+}
+
+func TestReportsPlugin_Run_Negative_OraCSSClassesAloneAreNotReports(t *testing.T) {
+	// Regression (PR #374 round-4): a non-Reports Oracle Fusion Middleware page
+	// (e.g. a different FMW product's diagnostic/error page) served at
+	// /reports/rwservlet with a non-404 status and ONLY the generic Ora* CSS
+	// classes -- no "Oracle Reports"/"Reports Servlet" text, no REP- code -- must
+	// NOT be classified as Reports.
+	svc := runPlugin(t, &ReportsPlugin{}, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/reports/rwservlet" {
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprint(w, `<html><body><span class="OraInstructionText">Enter parameter values</span><td class="OraDataText">value</td><td class="OraTableCellText">value</td></body></html>`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}, false)
+	assert.Nil(t, svc, "Ora* CSS classes alone must not classify a host as Oracle Reports")
+}
+
+func TestReportsPlugin_Run_Positive_OraCSSClassesPlusRealMarkerStillDetected(t *testing.T) {
+	// Regression (PR #374 round-4): the Ora* CSS classes are simply
+	// non-classifying, not disqualifying -- a body carrying them ALONGSIDE a
+	// genuine REP- code (or "Oracle Reports"/"Reports Servlet" text) must still
+	// be detected as Reports.
+	svc := runPlugin(t, &ReportsPlugin{}, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/reports/rwservlet" {
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprint(w, `<html><body><span class="OraInstructionText">Enter parameter values</span>REP-12345: parameter error</body></html>`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}, false)
+	require.NotNil(t, svc, "a REP- code alongside Ora* CSS classes must still be detected")
 }
 
 func TestReportsPlugin_Metadata(t *testing.T) {

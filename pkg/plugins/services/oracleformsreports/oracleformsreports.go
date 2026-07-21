@@ -39,9 +39,12 @@ Oracle Reports Services (Name "oracle_reports"):
 
   The plugin issues a GET to "/reports/rwservlet". A host is classified as
   Reports when that path responds (non-404) AND the body carries a strong,
-  Reports-specific, non-reflective marker: a "REP-" error/status code, the
-  branded "Oracle Reports" / "Reports Servlet" text, or an Oracle diagnostic-page
-  CSS class ("OraInstructionText", "OraDataText", "OraTableCellText"). ONLY after
+  Reports-specific, non-reflective marker: a "REP-" error/status code or the
+  branded "Oracle Reports" / "Reports Servlet" text. The generic Oracle
+  diagnostic-page CSS classes ("OraInstructionText", "OraDataText",
+  "OraTableCellText") are NOT classifiers — they appear on many Fusion Middleware
+  diagnostic/error pages, so a non-Reports Oracle app would otherwise be
+  misclassified. ONLY after
   detection AND only when the caller opts in (Misconfigs || Deep) does the plugin
   additionally GET the ADMINISTRATOR-ONLY read-only diagnostic actions
   "/reports/rwservlet/getserverinfo" (Reports Server version) and
@@ -124,10 +127,6 @@ var repErrorPattern = regexp.MustCompile(`REP-\d{3,}`)
 // declaration value (version='1.0') is rejected rather than mis-extracted as the
 // Reports version when getserverinfo answers in the XML statusformat.
 var reportsVersionPattern = regexp.MustCompile(`(?i)version\s*[=:>"']{1,3}\s*([0-9]+(?:\.[0-9]+){2,})`)
-
-// oraDiagClasses are Oracle diagnostic-page CSS classes emitted on rwservlet
-// showmap/showenv/status pages; distinctive when present in a body.
-var oraDiagClasses = []string{"OraInstructionText", "OraDataText", "OraTableCellText"}
 
 type FormsPlugin struct{}
 
@@ -308,11 +307,6 @@ func hasReportsMarker(body string) bool {
 		strings.Contains(lower, "reports servlet") {
 		return true
 	}
-	for _, c := range oraDiagClasses {
-		if strings.Contains(body, c) {
-			return true
-		}
-	}
 	return repErrorPattern.MatchString(body)
 }
 
@@ -345,11 +339,12 @@ func eraFromShowenv(body string) string {
 // opposed to a bare 200, a DIAGNOSTIC=NO access-error page, or a generic Oracle
 // diagnostic page that merely carries the Ora* CSS classes. The Medium
 // info-disclosure finding requires real leaked data: the PATH_TRANSLATED
-// environment field, or a parsed Reports version (getserverinfo). The Ora* CSS
-// classes still CLASSIFY the product (see hasReportsMarker) but do NOT by
-// themselves prove a disclosure, so they are intentionally excluded here to avoid
-// over-reporting. Only product-emitted tokens are used — never the probe path
-// tokens, so an echoed request URL cannot self-trigger.
+// environment field, or a parsed Reports version (getserverinfo). The generic
+// Ora* CSS classes do NOT by themselves prove a disclosure, so they are
+// intentionally excluded here to avoid over-reporting (they also no longer
+// classify the product — see hasReportsMarker). Only product-emitted tokens are
+// used — never the probe path tokens, so an echoed request URL cannot
+// self-trigger.
 func hasReportsDiagnosticContent(body string) bool {
 	if strings.Contains(body, "PATH_TRANSLATED") {
 		return true
@@ -424,12 +419,12 @@ func detectReports(client *http.Client, baseURL string, host string, probeDiagno
 	if err != nil {
 		return ev
 	}
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
 	ev.statusCode = resp.StatusCode
 	ev.body = string(body)
 	ev.server = resp.Header.Get("Server")
 	ev.dms = dmsPresent(resp)
-	_ = resp.Body.Close()
 
 	// Enrichment ONLY after the classifier detected Reports, and only when the
 	// caller opted into the admin-only diagnostic probes.
