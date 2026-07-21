@@ -24,7 +24,8 @@ injected connection, distinguishing two products:
 Detection Surfaces (probed over one connection, first match wins):
 
   - /soa-infra       SOA Infrastructure landing               -> product "soa"
-  - /sbconsole       Oracle Service Bus console               -> product "osb"
+  - /sbconsole       Oracle Service Bus console (11g)          -> product "osb"
+  - /servicebus      Oracle Service Bus console (12c/14c)      -> product "osb"
   - /soa/composer    SOA Composer                             -> product "soa"
   - /bpm/workspace   BPM / Business Process Workspace         -> product "soa"
 
@@ -111,6 +112,7 @@ type soaProbe struct {
 
 var soaProbes = []soaProbe{
 	{path: "/sbconsole", product: "osb", markers: osbMarkers},
+	{path: "/servicebus", product: "osb", markers: osbMarkers},
 	{path: "/soa/composer", product: "soa", markers: composerMarkers},
 	{path: "/bpm/workspace", product: "soa", markers: bpmMarkers},
 }
