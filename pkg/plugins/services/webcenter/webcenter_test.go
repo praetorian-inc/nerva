@@ -364,6 +364,43 @@ func TestEvaluateWebCenter(t *testing.T) {
 			expectedDetect:    true,
 		},
 		{
+			// PR #373 round-3 production fix regression: a Portal host whose
+			// /cs/Satellite response is ITSELF non-404 and carries the branded
+			// "Oracle WebCenter Portal" title must stay Portal, not Sites. Before
+			// the fix, ANY WebCenter-family title on the Satellite path --
+			// including a Portal title, since "Oracle WebCenter Portal" contains
+			// the "Oracle WebCenter" family substring -- set the Sites
+			// corroboration flag, and Sites outranks Portal in precedence. This
+			// case reproduces that exact host: a Portal deployment whose Portal
+			// page is also served at /cs/Satellite.
+			name: "Portal host whose /cs/Satellite response also carries the Portal title stays Portal, not Sites (round-3 regression)",
+			evidence: []wcEvidence{
+				{path: pathWebCenter, statusCode: http.StatusOK, body: `<html><head><title>Oracle WebCenter Portal</title></head></html>`},
+				{path: pathSatellite, statusCode: http.StatusOK, body: `<html><head><title>Oracle WebCenter Portal</title></head></html>`},
+			},
+			expectedComponent: componentPortal,
+			expectedDetect:    true,
+		},
+		{
+			name: "/cs/Satellite non-404 with a Sites-specific title still classifies Sites",
+			evidence: []wcEvidence{
+				{path: pathSatellite, statusCode: http.StatusOK, body: `<html><head><title>Oracle WebCenter Sites</title></head></html>`},
+			},
+			expectedComponent: componentSites,
+			expectedDetect:    true,
+		},
+		{
+			// A bare generic family title (not Portal/Content/Sites-specific)
+			// still corroborates Sites via the Satellite servlet, since it is
+			// family-branded and explicitly not a Portal title.
+			name: "/cs/Satellite non-404 with a bare generic WebCenter family title (not Portal) still classifies Sites",
+			evidence: []wcEvidence{
+				{path: pathSatellite, statusCode: http.StatusOK, body: `<html><head><title>Oracle WebCenter</title></head></html>`},
+			},
+			expectedComponent: componentSites,
+			expectedDetect:    true,
+		},
+		{
 			name: "idcplg body reflecting probe tokens only is not detected (reflection guard)",
 			evidence: []wcEvidence{
 				{path: pathPing, statusCode: http.StatusOK, body: "Error: unknown IdcService=PING_SERVER via idcplg"},
@@ -632,6 +669,22 @@ func TestWebCenterPlugin_Run_TableDriven(t *testing.T) {
 			expectComponent: componentSites,
 			expectVersion:   "",
 			expectCPE:       "cpe:2.3:a:oracle:webcenter_sites:*:*:*:*:*:*:*:*",
+		},
+		{
+			// PR #373 round-3 production fix regression: a Portal deployment
+			// whose Portal page is ALSO served at /cs/Satellite must classify as
+			// Portal, not Sites. Before the fix, the Satellite corroboration
+			// matched on any WebCenter-family title (Portal titles included),
+			// so this exact host misclassified as Sites.
+			name: "round-3 regression: Portal page served at /cs/Satellite classifies Portal, not Sites",
+			responses: map[string]pathResponse{
+				"/webcenter/":   {status: http.StatusOK, body: `<html><head><title>Oracle WebCenter Portal</title></head></html>`},
+				"/cs/Satellite": {status: http.StatusOK, body: `<html><head><title>Oracle WebCenter Portal</title></head></html>`},
+			},
+			expectDetected:  true,
+			expectComponent: componentPortal,
+			expectVersion:   "",
+			expectCPE:       "cpe:2.3:a:oracle:webcenter_portal:*:*:*:*:*:*:*:*",
 		},
 		{
 			name: "precedence: Content and Portal markers both present -> Content wins",

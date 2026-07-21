@@ -340,11 +340,12 @@ func evaluateWebCenter(evs []wcEvidence) (component string, version string, dete
 		}
 		// Correlate the Satellite/Sites signal to THIS response only: a bare
 		// non-404 on /cs/Satellite is never enough -- the same response must also
-		// carry a WebCenter Sites (or family) branded title. This prevents a Portal
-		// host whose /cs/Satellite merely returns a non-404 from being
-		// misclassified as Sites.
+		// carry a Sites-specific title, or a generic WebCenter-family title that is
+		// NOT a Portal title. A generic family title (e.g. the bare "Oracle
+		// WebCenter" brand) still corroborates Sites, but a Portal deployment whose
+		// Portal page appears at /cs/Satellite must not be misclassified as Sites.
 		if strings.Contains(ev.path, pathSatellite) && ev.statusCode != http.StatusNotFound &&
-			(titleIsWebCenterSites(title) || titleIsWebCenterFamily(title)) {
+			(titleIsWebCenterSites(title) || (titleIsWebCenterFamily(title) && !titleIsWebCenterPortal(title))) {
 			satelliteBranded = true
 		}
 	}
