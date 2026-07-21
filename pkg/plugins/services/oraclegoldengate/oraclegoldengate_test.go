@@ -181,6 +181,19 @@ func TestDetectMicroservices(t *testing.T) {
 			expectedVersion: "",
 			expectedDetect:  false,
 		},
+		{
+			name: "bare 'GoldenGate' marketing text without 'Oracle' -> NOT detected",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/":
+					fmt.Fprint(w, `<html><body>GoldenGate Bridge tours - book now!</body></html>`)
+				default:
+					w.WriteHeader(404)
+				}
+			},
+			expectedVersion: "",
+			expectedDetect:  false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -227,6 +240,26 @@ func TestPlugin_Run_MicroservicesDetection(t *testing.T) {
 	require.Len(t, payload.CPEs, 1)
 	assert.Equal(t, "cpe:2.3:a:oracle:goldengate:21.3.0.0.0:*:*:*:*:*:*:*", payload.CPEs[0])
 	assert.Equal(t, "21.3.0.0.0", service.Version)
+}
+
+func TestPlugin_Run_BareGoldenGateMarketingText_NotDetected(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/":
+			fmt.Fprint(w, `<html><body>GoldenGate Bridge tours - book now!</body></html>`)
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer server.Close()
+
+	conn, target := dialTestServer(t, server.URL)
+	defer conn.Close()
+
+	plugin := &Plugin{}
+	service, err := plugin.Run(conn, 5*time.Second, target)
+	require.NoError(t, err)
+	assert.Nil(t, service)
 }
 
 func TestPlugin_Run_NotDetected(t *testing.T) {
