@@ -417,6 +417,7 @@ func TestPlugin_PortPriority(t *testing.T) {
 func TestTLSPlugin_PortPriority(t *testing.T) {
 	plugin := &TLSPlugin{}
 	assert.True(t, plugin.PortPriority(443))
+	assert.True(t, plugin.PortPriority(9503))
 	assert.False(t, plugin.PortPriority(9704))
 }
 
