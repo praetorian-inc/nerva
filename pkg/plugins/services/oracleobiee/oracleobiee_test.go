@@ -158,7 +158,33 @@ func TestHasCookieWithPrefix(t *testing.T) {
 }
 
 func TestBuildOBIEECPE(t *testing.T) {
-	assert.Equal(t, "cpe:2.3:a:oracle:business_intelligence:*:*:*:*:*:*:*:*", buildOBIEECPE())
+	tests := []struct {
+		name     string
+		surface  string
+		expected string
+	}{
+		{
+			name:     "bi-publisher surface maps to bi_publisher CPE",
+			surface:  "bi-publisher",
+			expected: "cpe:2.3:a:oracle:bi_publisher:*:*:*:*:*:*:*:*",
+		},
+		{
+			name:     "analytics surface maps to business_intelligence CPE",
+			surface:  "analytics",
+			expected: "cpe:2.3:a:oracle:business_intelligence:*:*:*:*:*:*:*:*",
+		},
+		{
+			name:     "dv surface maps to business_intelligence CPE",
+			surface:  "dv",
+			expected: "cpe:2.3:a:oracle:business_intelligence:*:*:*:*:*:*:*:*",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, buildOBIEECPE(tt.surface))
+		})
+	}
 }
 
 func TestDetectOBIEE(t *testing.T) {
@@ -212,6 +238,15 @@ func TestDetectOBIEE(t *testing.T) {
 			name: "no matching surface",
 			handler: func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(404)
+			},
+			expectedSurface: "",
+			expectedDetect:  false,
+		},
+		{
+			name: "404 reflecting requested path with no product marker",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(404)
+				fmt.Fprintf(w, "404 Not Found: %s", r.URL.Path)
 			},
 			expectedSurface: "",
 			expectedDetect:  false,
@@ -286,6 +321,23 @@ func TestPlugin_Run_NotDetected(t *testing.T) {
 	assert.Nil(t, service)
 }
 
+func TestPlugin_Run_ReflectedPathNotDetected(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(404)
+		fmt.Fprintf(w, "404 Not Found: %s", r.URL.Path)
+	}))
+	defer server.Close()
+
+	conn, target := dialTestServer(t, server.URL)
+	defer conn.Close()
+
+	plugin := &Plugin{}
+	service, err := plugin.Run(conn, 5*time.Second, target)
+
+	require.NoError(t, err)
+	assert.Nil(t, service)
+}
+
 func TestTLSPlugin_Run_PositiveDetection(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -310,7 +362,24 @@ func TestTLSPlugin_Run_PositiveDetection(t *testing.T) {
 	require.NoError(t, json.Unmarshal(service.Raw, &payload))
 	assert.Equal(t, "bi-publisher", payload.Surface)
 	require.Len(t, payload.CPEs, 1)
-	assert.Equal(t, "cpe:2.3:a:oracle:business_intelligence:*:*:*:*:*:*:*:*", payload.CPEs[0])
+	assert.Equal(t, "cpe:2.3:a:oracle:bi_publisher:*:*:*:*:*:*:*:*", payload.CPEs[0])
+}
+
+func TestTLSPlugin_Run_ReflectedPathNotDetected(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(404)
+		fmt.Fprintf(w, "404 Not Found: %s", r.URL.Path)
+	}))
+	defer server.Close()
+
+	conn, target := dialTestServer(t, server.URL)
+	defer conn.Close()
+
+	plugin := &TLSPlugin{}
+	service, err := plugin.Run(conn, 5*time.Second, target)
+
+	require.NoError(t, err)
+	assert.Nil(t, service)
 }
 
 func TestTLSPlugin_Run_NotDetected(t *testing.T) {
