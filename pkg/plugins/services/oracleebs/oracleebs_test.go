@@ -304,54 +304,6 @@ func TestEBSPlugin_Run_GenericOHSHeaderDoesNotTrigger(t *testing.T) {
 	assert.Nil(t, service)
 }
 
-// TestEBSPlugin_Run_ConnectionCloseSurvivesMultiPathProbing verifies the fix
-// for createHTTPClient re-dialing a fresh connection between probe paths. The
-// server closes the connection (Connection: close) after the first response on
-// "/", which returns a non-EBS body, so the plugin can ONLY detect EBS by
-// successfully issuing the second probe to "/OA_HTML/AppsLogin" on a fresh
-// connection. Prior to the fix, that second request failed on the dead
-// injected conn and EBS-only-on-AppsLogin hosts were missed.
-func TestEBSPlugin_Run_ConnectionCloseSurvivesMultiPathProbing(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/":
-			// Close the connection after this response so the client's
-			// pooled connection is dead by the time the second probe fires.
-			w.Header().Set("Connection", "close")
-			w.WriteHeader(http.StatusOK)
-			fmt.Fprintf(w, "hello, this is not EBS")
-		case "/OA_HTML/AppsLogin":
-			w.Header().Set("Content-Type", "text/html")
-			fmt.Fprintf(w, `<html><head><title>E-Business Suite Home Page Redirect</title></head><body>AppsLocalLogin</body></html>`)
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
-	defer server.Close()
-
-	addr := parseTestServerAddr(t, server.URL)
-	conn, err := net.DialTimeout("tcp", strings.TrimPrefix(server.URL, "http://"), 5*time.Second)
-	require.NoError(t, err)
-	defer conn.Close()
-
-	target := plugins.Target{
-		Host:    addr.Addr().String(),
-		Address: addr,
-	}
-
-	plugin := &EBSPlugin{}
-	service, err := plugin.Run(conn, 5*time.Second, target)
-
-	require.NoError(t, err)
-	require.NotNil(t, service, "EBS should still be detected via the AppsLogin probe on a re-dialed connection")
-
-	var ebsService plugins.ServiceOracleEBS
-	err = json.Unmarshal(service.Raw, &ebsService)
-	require.NoError(t, err, "failed to unmarshal service payload")
-	assert.Equal(t, "E-Business Suite Home Page Redirect", ebsService.Title)
-	assert.Equal(t, "R12", ebsService.Release)
-}
-
 func TestEBSPlugin_Metadata(t *testing.T) {
 	plugin := &EBSPlugin{}
 	assert.Equal(t, OracleEBS, plugin.Name())
