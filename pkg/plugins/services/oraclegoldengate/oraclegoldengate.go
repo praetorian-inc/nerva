@@ -33,9 +33,10 @@ Microservices Detection Surfaces (probed over one connection, first match wins):
 
 Detection Signals (product-specific, no bare-status / generic-title triggers):
 
-  - REST/JSON or SPA content containing "Oracle GoldenGate" / "GoldenGate".
-    "GoldenGate" is distinctive to this product and is not reflected from any of
-    the requested paths, so it cannot be triggered by request echoing.
+  - REST/JSON or SPA content containing the Oracle-specific string
+    "Oracle GoldenGate". The bare word "GoldenGate" is intentionally NOT used as
+    a marker because it also occurs in unrelated documentation and marketing
+    content; requiring the full product string avoids those false positives.
   - A version is best-effort parsed from the /services/ health JSON when present;
     otherwise the version is wildcarded.
 
@@ -92,9 +93,11 @@ var (
 	// field in the MA health response.
 	ggVersionPattern = regexp.MustCompile(`(?i)"version"\s*:\s*"v?(\d+(?:\.\d+){2,})`)
 
+	// goldenGateMarkers requires the full, Oracle-specific product string. The
+	// bare word "GoldenGate" is avoided because it also appears in unrelated
+	// documentation and marketing content, which would cause false positives.
 	goldenGateMarkers = []string{
 		"Oracle GoldenGate",
-		"GoldenGate",
 	}
 )
 
