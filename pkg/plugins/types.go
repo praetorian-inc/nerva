@@ -1548,7 +1548,7 @@ type ServiceOracleHTTPServer struct {
 func (e ServiceOracleHTTPServer) Type() string { return ProtoOracleHTTPServer }
 
 type ServiceGlassFish struct {
-	Product      string   `json:"product"`                 // "glassfish" or "payara"
+	Product      string   `json:"product"`                 // "glassfish", "eclipse", or "payara"
 	Server       string   `json:"server,omitempty"`        // raw Server header
 	XPoweredBy   string   `json:"x_powered_by,omitempty"`  // raw X-Powered-By header
 	JDK          string   `json:"jdk,omitempty"`           // JDK version parsed from X-Powered-By

@@ -85,6 +85,7 @@ const (
 
 	productGlassFish = "glassfish"
 	productPayara    = "payara"
+	productEclipse   = "eclipse"
 
 	rootPath  = "/"
 	adminPath = "/common/index.jsf"
@@ -163,6 +164,15 @@ func hasPayaraMarker(s string) bool {
 	return strings.Contains(strings.ToLower(s), productPayara)
 }
 
+// hasEclipseMarker reports whether a value carries the Eclipse GlassFish brand
+// ("Eclipse GlassFish", case-insensitive). Eclipse GlassFish is part of the
+// GlassFish family for detection, but its CVEs are keyed to eclipse:glassfish
+// rather than oracle:glassfish_server, so the lineage is tracked separately for
+// CPE construction.
+func hasEclipseMarker(s string) bool {
+	return strings.Contains(strings.ToLower(s), "eclipse glassfish")
+}
+
 // isBranded reports whether a value carries any branded GlassFish/Payara token.
 func isBranded(s string) bool {
 	return hasGlassFishMarker(s) || hasPayaraMarker(s)
@@ -213,10 +223,15 @@ func buildGlassFishCPEs(product, version string) []string {
 	if v == "" {
 		v = "*"
 	}
-	if product == productPayara {
+	switch product {
+	case productPayara:
 		return []string{fmt.Sprintf("cpe:2.3:a:payara:payara:%s:*:*:*:*:*:*:*", v)}
+	case productEclipse:
+		// Eclipse GlassFish 5.1+/6/7 CVEs use eclipse:glassfish, e.g. CVE-2024-8646.
+		return []string{fmt.Sprintf("cpe:2.3:a:eclipse:glassfish:%s:*:*:*:*:*:*:*", v)}
+	default:
+		return []string{fmt.Sprintf("cpe:2.3:a:oracle:glassfish_server:%s:*:*:*:*:*:*:*", v)}
 	}
-	return []string{fmt.Sprintf("cpe:2.3:a:oracle:glassfish_server:%s:*:*:*:*:*:*:*", v)}
 }
 
 // gfEvidence captures the inspectable parts of a single GlassFish/Payara probe.
@@ -233,7 +248,7 @@ type gfEvidence struct {
 // gate anonymous-access reporting). adminConsole is true only when the DAS
 // console path returned a branded 2xx page.
 func evaluate(evs []gfEvidence) (product, version, jdk string, adminConsole bool, statusCode int, detected bool) {
-	var payara, glassfish bool
+	var payara, glassfish, eclipse bool
 	var xpbForVersion, serverForVersion string
 
 	for _, ev := range evs {
@@ -251,12 +266,20 @@ func evaluate(evs []gfEvidence) (product, version, jdk string, adminConsole bool
 			glassfish, detected = true, true
 		}
 
+		// Eclipse GlassFish lineage: tracked separately from plain GlassFish so
+		// the CPE can be keyed to eclipse:glassfish. Detection is unaffected
+		// (classifyProduct already sets glassfish=true since "eclipse glassfish"
+		// contains "glassfish").
+		if hasEclipseMarker(ev.server) || hasEclipseMarker(ev.xPoweredBy) || hasEclipseMarker(ev.body) {
+			eclipse = true
+		}
+
 		// Admin-console corroboration: a branded header or branded body on a 2xx
 		// response to the DAS console path. A bare 200 without a branded marker is
 		// NOT sufficient.
-		if ev.path == adminPath && isSuccessStatus(ev.statusCode) && (isBranded(ev.server) || isBranded(ev.body)) {
+		if ev.path == adminPath && isSuccessStatus(ev.statusCode) && (isBranded(ev.server) || isBranded(ev.xPoweredBy) || isBranded(ev.body)) {
 			adminConsole, detected = true, true
-			if hasPayaraMarker(ev.server) || hasPayaraMarker(ev.body) {
+			if hasPayaraMarker(ev.server) || hasPayaraMarker(ev.xPoweredBy) || hasPayaraMarker(ev.body) {
 				payara = true
 			} else {
 				glassfish = true
@@ -277,9 +300,15 @@ func evaluate(evs []gfEvidence) (product, version, jdk string, adminConsole bool
 		return "", "", "", false, statusCode, false
 	}
 
-	if payara {
+	// Product/CPE lineage precedence: Payara wins, then Eclipse GlassFish, then
+	// plain GlassFish. Only the CPE vendor differs; the emitted technology stays
+	// oracle_glassfish for both eclipse and glassfish (ServiceGlassFish.Type()).
+	switch {
+	case payara:
 		product = productPayara
-	} else {
+	case eclipse:
+		product = productEclipse
+	default:
 		_ = glassfish
 		product = productGlassFish
 	}

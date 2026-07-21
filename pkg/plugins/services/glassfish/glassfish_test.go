@@ -241,6 +241,18 @@ func TestBuildGlassFishCPEs(t *testing.T) {
 			version:  "",
 			expected: []string{"cpe:2.3:a:payara:payara:*:*:*:*:*:*:*:*"},
 		},
+		{
+			name:     "eclipse glassfish emits eclipse CPE",
+			product:  "eclipse",
+			version:  "7.0.0",
+			expected: []string{"cpe:2.3:a:eclipse:glassfish:7.0.0:*:*:*:*:*:*:*"},
+		},
+		{
+			name:     "eclipse with empty version wildcards",
+			product:  "eclipse",
+			version:  "",
+			expected: []string{"cpe:2.3:a:eclipse:glassfish:*:*:*:*:*:*:*:*"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -369,8 +381,10 @@ func TestGlassFishPlugin_Run_PositiveEclipseGlassFish(t *testing.T) {
 
 	var gf plugins.ServiceGlassFish
 	require.NoError(t, json.Unmarshal(service.Raw, &gf))
-	assert.Equal(t, "glassfish", gf.Product)
+	assert.Equal(t, "eclipse", gf.Product)
 	assert.Equal(t, "7.0.0", service.Version)
+	require.Len(t, gf.CPEs, 1)
+	assert.Equal(t, "cpe:2.3:a:eclipse:glassfish:7.0.0:*:*:*:*:*:*:*", gf.CPEs[0])
 }
 
 func TestGlassFishPlugin_Run_PositiveAdminConsoleCorroboration(t *testing.T) {
@@ -400,6 +414,49 @@ func TestGlassFishPlugin_Run_PositiveAdminConsoleCorroboration(t *testing.T) {
 	require.NoError(t, json.Unmarshal(service.Raw, &gf))
 	assert.True(t, gf.AdminConsole)
 	assert.Equal(t, "glassfish", gf.Product)
+}
+
+// TestGlassFishPlugin_Run_AdminConsoleViaXPoweredBy verifies that admin-console
+// corroboration in evaluate also honors a branded X-Powered-By header alone
+// (not just Server/body): a 2xx admin-console page with no Server header and no
+// product text in the body, but a branded X-Powered-By, must still set
+// AdminConsole=true and fire the Medium admin-console-exposed finding.
+func TestGlassFishPlugin_Run_AdminConsoleViaXPoweredBy(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case rootPath:
+			w.WriteHeader(http.StatusNotFound)
+		case adminPath:
+			w.Header().Set("X-Powered-By", "Servlet/4.0 (GlassFish Server Open Source Edition 5.1.0 Java/Oracle Corporation/1.8)")
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprint(w, "<html><body>Welcome</body></html>")
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	conn, target := dialTestServer(t, server.URL, true)
+	defer conn.Close()
+
+	plugin := &GlassFishPlugin{}
+	service, err := plugin.Run(conn, 5*time.Second, target)
+
+	require.NoError(t, err)
+	require.NotNil(t, service)
+
+	var gf plugins.ServiceGlassFish
+	require.NoError(t, json.Unmarshal(service.Raw, &gf))
+	assert.True(t, gf.AdminConsole, "X-Powered-By alone must corroborate the admin console")
+
+	var found bool
+	for _, f := range service.SecurityFindings {
+		if f.ID == "glassfish-payara-admin-console-exposed" {
+			found = true
+			assert.Equal(t, plugins.SeverityMedium, f.Severity)
+		}
+	}
+	assert.True(t, found, "expected glassfish-payara-admin-console-exposed finding")
 }
 
 // ---------------------------------------------------------------------------
