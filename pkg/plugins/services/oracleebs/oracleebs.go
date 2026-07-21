@@ -65,6 +65,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -82,6 +83,18 @@ const (
 
 // titlePattern extracts the contents of an HTML <title> element.
 var titlePattern = regexp.MustCompile(`(?is)<title>(.*?)</title>`)
+
+// appsSSOCookiePattern matches the EBS "APPS_SSO_" cookie as a cookie NAME
+// (prefix) at a delimiter boundary: at the start of the Set-Cookie value or
+// immediately after a ";"/"," separator. This avoids matching "APPS_SSO_" when
+// it merely appears inside a cookie value/attribute (e.g. "session=APPS_SSO_x").
+var appsSSOCookiePattern = regexp.MustCompile(`(^|[;,]\s*)APPS_SSO_`)
+
+// ebsLoginPaths are the EBS login-surface URL paths a redirect Location may
+// point to. Matching is done against the parsed path component (exact match or
+// path-prefix), never as a substring, so a reflected path in a query string
+// (e.g. "/login?next=/OA_HTML/AppsLogin") does not trigger a match.
+var ebsLoginPaths = []string{"/OA_HTML/AppsLogin", "/OA_HTML/AppsLocalLogin.jsp"}
 
 type EBSPlugin struct{}
 
@@ -145,6 +158,25 @@ func extractTitle(body string) string {
 	return ""
 }
 
+// locationMatchesEBSLogin reports whether a redirect Location header points at
+// the EBS login surface. It parses the Location (handling both absolute URLs
+// like "http://host/OA_HTML/AppsLogin" and relative values like
+// "/OA_HTML/AppsLogin") and compares only the path component. If the Location
+// fails to parse, it is treated as no-match rather than falling back to a
+// substring check.
+func locationMatchesEBSLogin(location string) bool {
+	u, err := url.Parse(location)
+	if err != nil {
+		return false
+	}
+	for _, p := range ebsLoginPaths {
+		if u.Path == p || strings.HasPrefix(u.Path, p+"/") {
+			return true
+		}
+	}
+	return false
+}
+
 // evaluateEBS inspects collected responses and decides whether the host is
 // Oracle E-Business Suite, returning the detected title and release.
 func evaluateEBS(evs []ebsEvidence) (title string, release string, detected bool) {
@@ -170,8 +202,7 @@ func evaluateEBS(evs []ebsEvidence) (title string, release string, detected bool
 		if ev.statusCode == http.StatusMovedPermanently ||
 			ev.statusCode == http.StatusFound ||
 			ev.statusCode == http.StatusTemporaryRedirect {
-			if strings.Contains(ev.location, "/OA_HTML/AppsLogin") ||
-				strings.Contains(ev.location, "/OA_HTML/AppsLocalLogin.jsp") {
+			if locationMatchesEBSLogin(ev.location) {
 				detected = true
 			}
 		}
@@ -183,8 +214,10 @@ func evaluateEBS(evs []ebsEvidence) (title string, release string, detected bool
 			release = "R12"
 		}
 
-		// Signal: EBS single sign-on cookie.
-		if strings.Contains(ev.setCookie, "APPS_SSO_") {
+		// Signal: EBS single sign-on cookie. Match "APPS_SSO_" only as a cookie
+		// NAME prefix at a delimiter boundary, so a cookie value/attribute such
+		// as "session=APPS_SSO_test" does not falsely trigger.
+		if appsSSOCookiePattern.MatchString(ev.setCookie) {
 			detected = true
 		}
 	}
