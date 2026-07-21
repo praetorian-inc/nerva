@@ -356,6 +356,7 @@ func TestPlugin_PortPriority(t *testing.T) {
 	plugin := &Plugin{}
 	assert.True(t, plugin.PortPriority(9011))
 	assert.True(t, plugin.PortPriority(9100))
+	assert.True(t, plugin.PortPriority(9001))
 	assert.False(t, plugin.PortPriority(443))
 }
 
