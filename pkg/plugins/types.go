@@ -159,6 +159,10 @@ const (
 	ProtoOpenVPNManagement = "openvpn-management"
 	ProtoOracle            = "oracle"
 	ProtoOracleORDS        = "oracle_ords"
+	ProtoPeopleSoft        = "oracle_peoplesoft"
+	ProtoOracleOAM         = "oracle_oam"
+	ProtoOracleOIM         = "oracle_oim"
+	ProtoOracleHTTPServer  = "oracle_http_server"
 	ProtoPCOM              = "pcom"
 	ProtoPFCP              = "pfcp"
 	ProtoPinecone          = "pinecone"
@@ -467,6 +471,22 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoOracleORDS:
 		var p ServiceOracleORDS
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoPeopleSoft:
+		var p ServicePeopleSoft
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoOracleOAM:
+		var p ServiceOracleOAM
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoOracleOIM:
+		var p ServiceOracleOIM
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoOracleHTTPServer:
+		var p ServiceOracleHTTPServer
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoOMRONFINS:
@@ -1499,7 +1519,11 @@ type ServiceLwM2M struct {
 func (e ServiceLwM2M) Type() string { return ProtoLwM2M }
 
 type ServiceOracle struct {
-	Info string `json:"info"`
+	Info      string   `json:"info"`
+	Version   string   `json:"version,omitempty"`
+	AICapable bool     `json:"ai_capable,omitempty"` // major version >= 23 (Oracle AI Database 23ai/26ai)
+	Note      string   `json:"note,omitempty"`
+	CPEs      []string `json:"cpes,omitempty"`
 }
 
 func (e ServiceOracle) Type() string { return ProtoOracle }
@@ -1511,6 +1535,36 @@ type ServiceOracleORDS struct {
 }
 
 func (e ServiceOracleORDS) Type() string { return ProtoOracleORDS }
+
+type ServicePeopleSoft struct {
+	PSToken bool     `json:"ps_token,omitempty"`
+	CPEs    []string `json:"cpes,omitempty"`
+}
+
+func (e ServicePeopleSoft) Type() string { return ProtoPeopleSoft }
+
+type ServiceOracleOAM struct {
+	OpenSSO bool     `json:"opensso,omitempty"` // legacy 11g endpoint present
+	CPEs    []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceOracleOAM) Type() string { return ProtoOracleOAM }
+
+type ServiceOracleOIM struct {
+	Legacy bool     `json:"legacy,omitempty"` // 11g xlWebApp
+	CPEs   []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceOracleOIM) Type() string { return ProtoOracleOIM }
+
+type ServiceOracleHTTPServer struct {
+	Server           string   `json:"server,omitempty"`
+	Vendor           string   `json:"vendor,omitempty"`
+	FusionMiddleware bool     `json:"fusion_middleware,omitempty"`
+	CPEs             []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceOracleHTTPServer) Type() string { return ProtoOracleHTTPServer }
 
 type ServicePCOM struct {
 	Model     string   `json:"model,omitempty"`
