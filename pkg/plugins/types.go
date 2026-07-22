@@ -166,6 +166,11 @@ const (
 	ProtoOracleHTTPServer  = "oracle_http_server"
 	ProtoOracleHyperion    = "oracle_hyperion"
 	ProtoOracleEssbase     = "oracle_essbase"
+	ProtoGlassFish         = "oracle_glassfish"
+	ProtoPayara            = "payara"
+	ProtoOracleGoldenGate  = "oracle_goldengate"
+	ProtoOracleForms       = "oracle_forms"
+	ProtoOracleReports     = "oracle_reports"
 	ProtoPCOM              = "pcom"
 	ProtoPFCP              = "pfcp"
 	ProtoPinecone          = "pinecone"
@@ -502,6 +507,20 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoOracleEssbase:
 		var p ServiceOracleEssbase
+	case ProtoGlassFish, ProtoPayara:
+		var p ServiceGlassFish
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoOracleGoldenGate:
+		var p ServiceOracleGoldenGate
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoOracleForms:
+		var p ServiceOracleForms
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoOracleReports:
+		var p ServiceOracleReports
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoOMRONFINS:
@@ -1605,6 +1624,46 @@ type ServiceOracleEssbase struct {
 }
 
 func (e ServiceOracleEssbase) Type() string { return ProtoOracleEssbase }
+type ServiceGlassFish struct {
+	Product      string   `json:"product"`                 // "glassfish", "eclipse", or "payara"
+	Server       string   `json:"server,omitempty"`        // raw Server header
+	XPoweredBy   string   `json:"x_powered_by,omitempty"`  // raw X-Powered-By header
+	JDK          string   `json:"jdk,omitempty"`           // JDK version parsed from X-Powered-By
+	AdminConsole bool     `json:"admin_console,omitempty"` // /common/index.jsf corroboration
+	CPEs         []string `json:"cpes,omitempty"`
+}
+
+// Type returns the emitted service protocol, dynamically discriminating Payara
+// from the GlassFish family based on the Product field (VMware precedent).
+func (e ServiceGlassFish) Type() string {
+	if e.Product == "payara" {
+		return ProtoPayara
+	}
+	return ProtoGlassFish
+}
+
+type ServiceOracleGoldenGate struct {
+	Edition string   `json:"edition,omitempty"` // microservices | classic
+	CPEs    []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceOracleGoldenGate) Type() string { return ProtoOracleGoldenGate }
+
+type ServiceOracleForms struct {
+	Era              string   `json:"era,omitempty"` // "10g" | "12c" | ""
+	FusionMiddleware bool     `json:"fusion_middleware,omitempty"`
+	CPEs             []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceOracleForms) Type() string { return ProtoOracleForms }
+
+type ServiceOracleReports struct {
+	Era              string   `json:"era,omitempty"` // "10g" | "12c" | ""
+	FusionMiddleware bool     `json:"fusion_middleware,omitempty"`
+	CPEs             []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceOracleReports) Type() string { return ProtoOracleReports }
 
 type ServicePCOM struct {
 	Model     string   `json:"model,omitempty"`
