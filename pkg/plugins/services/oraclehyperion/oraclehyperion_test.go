@@ -50,14 +50,16 @@ func parseTestServerAddr(t *testing.T, serverURL string) netip.AddrPort {
 }
 
 // hEv builds a hyperionEvidence value the same way detectHyperion does:
-// title is always extractTitle(body).
+// title is always extractTitle(body). cookie is wrapped in a single-element
+// setCookies slice (matching the []string field), mirroring how a single
+// Set-Cookie header would be captured by detectHyperion.
 func hEv(path string, status int, location, body, cookie string) hyperionEvidence {
 	return hyperionEvidence{
 		path:       path,
 		statusCode: status,
 		location:   location,
 		body:       body,
-		setCookie:  cookie,
+		setCookies: []string{cookie},
 		title:      extractTitle(body),
 	}
 }
@@ -281,19 +283,34 @@ func TestHasSharedServicesMarker(t *testing.T) {
 
 func TestHasEPMCookie(t *testing.T) {
 	tests := []struct {
-		name      string
-		setCookie string
-		expected  bool
+		name       string
+		setCookies []string
+		expected   bool
 	}{
-		{name: "EPM_ROOT cookie", setCookie: "EPM_ROOT=abc; Path=/", expected: true},
-		{name: "EPMwvSess cookie", setCookie: "EPMwvSess=xyz", expected: true},
-		{name: "unrelated cookie", setCookie: "JSESSIONID=abc123; Path=/", expected: false},
-		{name: "empty Set-Cookie header", setCookie: "", expected: false},
+		{name: "EPM_ROOT cookie", setCookies: []string{"EPM_ROOT=abc; Path=/"}, expected: true},
+		{name: "EPMwvSess cookie", setCookies: []string{"EPMwvSess=xyz"}, expected: true},
+		{name: "unrelated cookie", setCookies: []string{"JSESSIONID=abc123; Path=/"}, expected: false},
+		{name: "empty Set-Cookie header", setCookies: []string{""}, expected: false},
+		{
+			name:       "cookie name ending in EPM_ROOT is not a trigger",
+			setCookies: []string{"notEPM_ROOT=x; Path=/"},
+			expected:   false,
+		},
+		{
+			name:       "EPM_ROOT= inside another cookie value is not a trigger",
+			setCookies: []string{"foo=EPM_ROOT=x"},
+			expected:   false,
+		},
+		{
+			name:       "real EPM_ROOT across multiple Set-Cookie headers",
+			setCookies: []string{"JSESSIONID=x", "EPM_ROOT=abc; Path=/"},
+			expected:   true,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.expected, hasEPMCookie(tt.setCookie))
+			assert.Equal(t, tt.expected, hasEPMCookie(tt.setCookies))
 		})
 	}
 }
@@ -479,10 +496,22 @@ func TestEvaluateEssbaseREST(t *testing.T) {
 			wantAnon:     true,
 		},
 		{
-			name:         "name present, 3-group version (too few) leaves version empty but still detected",
+			// essbaseRestVersion now accepts 2-5 dot-separated components
+			// (`(\d+(?:\.\d+){1,4})`), so a 3-component version is captured.
+			name:         "name and 3-group version (now captured)",
 			ev:           essbaseRESTEvidence{statusCode: http.StatusOK, body: `{"name":"Essbase","version":"21.2.3"}`},
 			wantREST:     true,
-			wantVersion:  "",
+			wantVersion:  "21.2.3",
+			wantDetected: true,
+			wantAnon:     true,
+		},
+		{
+			// 2-component version is the new lower bound (1 initial digit run
+			// plus a minimum of 1 additional `.digits` group).
+			name:         "name and 2-group version (new lower bound)",
+			ev:           essbaseRESTEvidence{statusCode: http.StatusOK, body: `{"name":"Essbase","version":"21.2"}`},
+			wantREST:     true,
+			wantVersion:  "21.2",
 			wantDetected: true,
 			wantAnon:     true,
 		},
@@ -533,6 +562,38 @@ func TestEvaluateEssbaseREST(t *testing.T) {
 		{
 			name:         "name and version on 302 with Location is anon exposure",
 			ev:           essbaseRESTEvidence{statusCode: http.StatusFound, location: "/login", body: `{"name":"Essbase","version":"21.6.0.0.0"}`},
+			wantREST:     true,
+			wantVersion:  "21.6.0.0.0",
+			wantDetected: true,
+			wantAnon:     true,
+		},
+		{
+			// Regression: an HTML page whose body merely happens to contain the
+			// literal substring "name":"Essbase" (e.g. an error/docs page) must
+			// NOT be detected. Without the JSON-envelope gate (a JSON
+			// Content-Type or a body starting with '{'), this text/html response
+			// would previously false-positive on the bare essbaseRestName regex
+			// match.
+			name: "HTML page with embedded name:Essbase substring is not detected (JSON-envelope gate)",
+			ev: essbaseRESTEvidence{
+				statusCode: http.StatusOK,
+				ctype:      "text/html",
+				body:       `<html><body>Error: unknown field "name":"Essbase" in request</body></html>`,
+			},
+			wantREST:     false,
+			wantVersion:  "",
+			wantDetected: false,
+			wantAnon:     false,
+		},
+		{
+			// Positive control for the same gate: a JSON Content-Type header
+			// (rather than a body-prefix '{') also satisfies isJSON.
+			name: "JSON Content-Type header satisfies the JSON-envelope gate",
+			ev: essbaseRESTEvidence{
+				statusCode: http.StatusOK,
+				ctype:      "application/json; charset=utf-8",
+				body:       `{"name":"Essbase","version":"21.6.0.0.0"}`,
+			},
 			wantREST:     true,
 			wantVersion:  "21.6.0.0.0",
 			wantDetected: true,
@@ -653,6 +714,35 @@ func TestIsEssbaseAgent(t *testing.T) {
 		{
 			name:     "binary with CR/LF whitespace not counted as non-printable",
 			response: []byte{0xDE, 0xAD, 0xBE, '\n'}, // 3/4 non-printable
+			expected: true,
+		},
+		{
+			// TLS handshake record (0x16 0x03 ...): a TLS-fronted service on
+			// 1423 answering the plaintext probe with a binary TLS record must
+			// not be misclassified as the Agent.
+			name:     "TLS handshake record is excluded",
+			response: []byte{0x16, 0x03, 0x01, 0x00, 0x10, 0xAB, 0xCD, 0xEF, 0x01, 0x02},
+			expected: false,
+		},
+		{
+			// TLS alert record (0x15 0x03 ...): same exclusion, different
+			// content-type byte.
+			name:     "TLS alert record is excluded",
+			response: []byte{0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28},
+			expected: false,
+		},
+		{
+			name:     "SSH banner is excluded",
+			response: []byte("SSH-2.0-x"),
+			expected: false,
+		},
+		{
+			// A non-excluded binary blob (>=25% non-printable, len>=4, and not
+			// matching any of the TLS/SSH/HTTP/printable-ASCII exclusions) must
+			// still be classified true: the new exclusions must not regress the
+			// existing positive signal.
+			name:     "non-excluded binary blob still classified true",
+			response: []byte{0x01, 0x02, 0xFF, 'A', 'B', 0xFE},
 			expected: true,
 		},
 	}
@@ -960,6 +1050,30 @@ func TestEssbasePlugin_Run_MalformedJSON(t *testing.T) {
 	service, err := runPlugin(t, &EssbasePlugin{}, server.URL, false)
 	require.NoError(t, err)
 	assert.Nil(t, service)
+}
+
+// TestEssbasePlugin_Run_HTMLPageEmbeddedNameSubstring is a regression test for
+// the JSON-envelope gate exercised through the real HTTP path (real
+// Content-Type header via detectEssbaseREST, not a hand-built
+// essbaseRESTEvidence). An HTML error/docs page whose body happens to contain
+// the literal substring "name":"Essbase", served with Content-Type: text/html
+// and not starting with '{', must NOT be detected. Before the fix this was a
+// false positive on the bare essbaseRestName regex match.
+func TestEssbasePlugin_Run_HTMLPageEmbeddedNameSubstring(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/essbase/rest/v1/about":
+			w.Header().Set("Content-Type", "text/html")
+			fmt.Fprint(w, `<html><body>Error: unknown field "name":"Essbase" in request</body></html>`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	service, err := runPlugin(t, &EssbasePlugin{}, server.URL, false)
+	require.NoError(t, err)
+	assert.Nil(t, service, "an HTML page merely containing the name:Essbase substring must never be detected")
 }
 
 // TestEssbasePlugin_Run_NameNoVersion verifies CURRENT behavior: a
@@ -1434,6 +1548,55 @@ func TestEssbaseAgent_Run_ConnectionClosedImmediately(t *testing.T) {
 
 	assert.Nil(t, service)
 	assert.NoError(t, err, "an immediately-closed peer must yield (nil, nil), never (nil, err)")
+}
+
+// TestEssbaseAgent_Run_DisabledByEssbaseAgentEnabled is a regression test for
+// the essbaseAgentEnabled kill-switch: when it is flipped to false, Run must
+// return (nil, nil) immediately, even for a reply that would otherwise be
+// classified as the Agent by isEssbaseAgent (a genuinely binary blob).
+func TestEssbaseAgent_Run_DisabledByEssbaseAgentEnabled(t *testing.T) {
+	original := essbaseAgentEnabled
+	essbaseAgentEnabled = func() bool { return false }
+	t.Cleanup(func() { essbaseAgentEnabled = original })
+
+	port := startAgentLoopback(t, func(conn net.Conn) {
+		defer conn.Close()
+		buf := make([]byte, 64)
+		_, _ = conn.Read(buf)
+		_, _ = conn.Write([]byte{0xDE, 0xAD, 0xBE, 0xEF})
+		time.Sleep(50 * time.Millisecond)
+	})
+	conn, target := dialAgent(t, port)
+
+	plugin := &EssbaseAgentPlugin{}
+	service, err := plugin.Run(conn, agentTestTimeout, target)
+
+	assert.Nil(t, service, "Run must return nil when essbaseAgentEnabled is false, even for an otherwise-detecting reply")
+	assert.NoError(t, err)
+}
+
+// TestEssbaseAgent_Run_EnabledByDefaultStillDetects confirms the default
+// (essbaseAgentEnabled == true) path is unaffected by the kill-switch and
+// still detects a genuinely binary reply. This complements
+// TestEssbaseAgent_Run_DisabledByEssbaseAgentEnabled to prove the toggle only
+// suppresses detection when explicitly flipped off.
+func TestEssbaseAgent_Run_EnabledByDefaultStillDetects(t *testing.T) {
+	require.True(t, essbaseAgentEnabled(), "essbaseAgentEnabled must default to true")
+
+	port := startAgentLoopback(t, func(conn net.Conn) {
+		defer conn.Close()
+		buf := make([]byte, 64)
+		_, _ = conn.Read(buf)
+		_, _ = conn.Write([]byte{0xDE, 0xAD, 0xBE, 0xEF})
+		time.Sleep(50 * time.Millisecond)
+	})
+	conn, target := dialAgent(t, port)
+
+	plugin := &EssbaseAgentPlugin{}
+	service, err := plugin.Run(conn, agentTestTimeout, target)
+
+	require.NoError(t, err)
+	require.NotNil(t, service)
 }
 
 // ---------------------------------------------------------------------------

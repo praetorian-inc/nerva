@@ -123,7 +123,7 @@ var titlePattern = regexp.MustCompile(`(?is)<title[^>]*>(.*?)</title>`)
 // attacker-controlled bytes cannot inject CPE separators (see buildEssbaseCPE).
 var (
 	essbaseRestName    = regexp.MustCompile(`(?i)"name"\s*:\s*"Essbase"`)
-	essbaseRestVersion = regexp.MustCompile(`(?i)"version"\s*:\s*"(\d+\.\d+\.\d+\.\d+(?:\.\d+)?)"`)
+	essbaseRestVersion = regexp.MustCompile(`(?i)"version"\s*:\s*"(\d+(?:\.\d+){1,4})"`)
 )
 
 // HyperionPlugin detects the Oracle Hyperion EPM web tier over plain HTTP.
@@ -236,7 +236,7 @@ type hyperionEvidence struct {
 	statusCode int
 	location   string
 	body       string
-	setCookie  string
+	setCookies []string
 	title      string // extractTitle(body), precomputed
 }
 
@@ -271,12 +271,28 @@ func hasSharedServicesMarker(s string) bool {
 			strings.Contains(lower, "foundation services"))
 }
 
-// hasEPMCookie reports whether a joined Set-Cookie header defines an EPM/Workspace
-// session cookie by NAME. Only the cookie name is inspected; the cookie value is a
-// live session token and is never read, logged, or stored (P0-7).
-func hasEPMCookie(setCookie string) bool {
-	return strings.Contains(setCookie, "EPM_ROOT=") ||
-		strings.Contains(setCookie, "EPMwvSess=")
+// hasEPMCookie reports whether any Set-Cookie header defines an EPM/Workspace
+// session cookie by NAME. Each header's real cookie name is isolated (the token
+// before the first ';' and before the first '=') and matched exact-equal, so a
+// substring like notEPM_ROOT= or x=EPM_ROOT=... can never falsely trigger. Only the
+// cookie name is inspected; the cookie value is a live session token and is never
+// read, logged, or stored (P0-7).
+func hasEPMCookie(setCookies []string) bool {
+	for _, sc := range setCookies {
+		pair := sc
+		if i := strings.IndexByte(pair, ';'); i >= 0 {
+			pair = pair[:i]
+		}
+		name := pair
+		if i := strings.IndexByte(name, '='); i >= 0 {
+			name = name[:i]
+		}
+		switch strings.TrimSpace(name) {
+		case "EPM_ROOT", "EPMwvSess":
+			return true
+		}
+	}
+	return false
 }
 
 // evaluateHyperion inspects collected responses and decides whether the host is the
@@ -304,7 +320,7 @@ func evaluateHyperion(evs []hyperionEvidence) (sharedServices, planning, aps, de
 			sharedServices = true
 		}
 		// S4: EPM session-cookie name.
-		if hasEPMCookie(ev.setCookie) {
+		if hasEPMCookie(ev.setCookies) {
 			strong = true
 		}
 
@@ -355,7 +371,7 @@ func detectHyperion(client *http.Client, baseURL, host string) (sharedServices, 
 			statusCode: resp.StatusCode,
 			location:   resp.Header.Get("Location"),
 			body:       bodyStr,
-			setCookie:  strings.Join(resp.Header.Values("Set-Cookie"), "; "),
+			setCookies: resp.Header.Values("Set-Cookie"),
 			title:      extractTitle(bodyStr),
 		})
 		_ = resp.Body.Close()
@@ -403,13 +419,17 @@ type essbaseRESTEvidence struct {
 	statusCode int
 	location   string
 	body       string
+	ctype      string
 }
 
 // evaluateEssbaseREST decides whether the /about response is a genuine Essbase 21c
-// REST document. DETECTION (P0) turns on the server-generated "name":"Essbase" JSON
-// gate ALONE: a bare 200 with HTML, a 401/403 with no JSON, or a plain echo of the
-// reflectable /essbase/rest/v1/about path never carry the "name":"Essbase" key/value
-// envelope, so none of them assert the product (P0-8, P0-10).
+// REST document. DETECTION (P0) requires BOTH a JSON envelope AND the server-generated
+// "name":"Essbase" gate: the response must be JSON (a JSON Content-Type, or a body that
+// begins with '{') AND carry the "name":"Essbase" key/value. This JSON-envelope gate
+// prevents any HTML/docs/error page that merely contains the literal "name":"Essbase"
+// substring from being misclassified as Essbase. A bare 200 with HTML, a 401/403 with
+// no JSON, or a plain echo of the reflectable /essbase/rest/v1/about path fails one or
+// both conditions, so none of them assert the product (P0-8, P0-10).
 //
 // VERSION (P1) is parsed SEPARATELY as best-effort and is deliberately decoupled from
 // detection: when a clean [0-9.]-shaped "version" is present in the same body it is
@@ -417,7 +437,9 @@ type essbaseRESTEvidence struct {
 // detection STILL succeeds and version stays "" (buildEssbaseCPE emits the wildcard
 // cpe:2.3:a:oracle:essbase:*:...). The [0-9.]-only capture is the CPE-injection guard.
 func evaluateEssbaseREST(ev essbaseRESTEvidence) (rest bool, version string, detected, anonExposure bool) {
-	if !essbaseRestName.MatchString(ev.body) {
+	isJSON := strings.Contains(strings.ToLower(ev.ctype), "json") ||
+		strings.HasPrefix(strings.TrimSpace(ev.body), "{")
+	if !isJSON || !essbaseRestName.MatchString(ev.body) {
 		return false, "", false, false
 	}
 	rest = true
@@ -441,6 +463,7 @@ func detectEssbaseREST(client *http.Client, baseURL, host string) (rest bool, ve
 		statusCode: resp.StatusCode,
 		location:   resp.Header.Get("Location"),
 		body:       string(body),
+		ctype:      resp.Header.Get("Content-Type"),
 	}
 	_ = resp.Body.Close()
 	return evaluateEssbaseREST(ev)
@@ -533,6 +556,9 @@ func hasBinaryContent(b []byte) bool {
 //     read timeout or a connection refused (requests.go:77-80). A bare open/held-but-
 //     silent port is therefore unrepresentable as a positive here (P0-9a, P0-9b).
 //   - a response shorter than minAgentResponse bytes,
+//   - a TLS handshake/alert record (0x16/0x15 0x03 ...), the common vector where a
+//     TLS-fronted service on 1423 answers the plaintext probe with a binary TLS record,
+//   - an SSH banner ("SSH-..."), the common vector where an SSH service on 1423 greets,
 //   - an HTTP status line (a web server on 1423),
 //   - a fully printable-ASCII response (an FTP/SMTP/SSH/telnet-style banner greeter).
 //
@@ -544,6 +570,12 @@ func hasBinaryContent(b []byte) bool {
 func isEssbaseAgent(response []byte) bool {
 	if len(response) < minAgentResponse {
 		return false // empty / silence / RST / too short -> NOT detected
+	}
+	if len(response) >= 3 && (response[0] == 0x16 || response[0] == 0x15) && response[1] == 0x03 {
+		return false // TLS handshake/alert record, not the Agent
+	}
+	if bytes.HasPrefix(response, []byte("SSH-")) {
+		return false // SSH banner, not the Agent
 	}
 	if hasHTTPPrefix(response) {
 		return false // web server, not the Agent
@@ -676,12 +708,19 @@ func (p *EssbaseTLSPlugin) Run(conn net.Conn, timeout time.Duration, target plug
 	return service, nil
 }
 
-func (p *EssbaseTLSPlugin) PortPriority(port uint16) bool { return port == 443 || port == EssbaseRESTPortAlt }
-func (p *EssbaseTLSPlugin) Name() string                  { return OracleEssbase }
-func (p *EssbaseTLSPlugin) Type() plugins.Protocol        { return plugins.TCPTLS }
-func (p *EssbaseTLSPlugin) Priority() int                 { return -1 } // Runs before generic HTTPS so it can claim Essbase on shared ports (e.g. 443)
+func (p *EssbaseTLSPlugin) PortPriority(port uint16) bool {
+	return port == 443 || port == EssbaseRESTPortAlt
+}
+func (p *EssbaseTLSPlugin) Name() string           { return OracleEssbase }
+func (p *EssbaseTLSPlugin) Type() plugins.Protocol { return plugins.TCPTLS }
+func (p *EssbaseTLSPlugin) Priority() int          { return -1 } // Runs before generic HTTPS so it can claim Essbase on shared ports (e.g. 443)
 
 // --- EssbaseAgentPlugin (TCP 1423, best-effort) ---
+
+// essbaseAgentEnabled gates the best-effort 1423 Agent probe. There is no
+// confirmed positive Essbase-agent signature, so this is a heuristic; flip to
+// `func() bool { return false }` to disable it entirely if field FPs appear.
+var essbaseAgentEnabled = func() bool { return true }
 
 // Run performs the best-effort, low-confidence Essbase Agent listener probe. It sends
 // ONE benign probe and does ONE bounded read via utils.SendRecv (a fixed 4096-byte
@@ -694,6 +733,9 @@ func (p *EssbaseTLSPlugin) Priority() int                 { return -1 } // Runs 
 // produced on this path: confidence is too low to make a security claim, and nothing
 // was accessed or authenticated.
 func (p *EssbaseAgentPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
+	if !essbaseAgentEnabled() {
+		return nil, nil
+	}
 	resp, err := utils.SendRecv(conn, buildEssbaseAgentProbe(), timeout)
 	if err != nil {
 		// Refused / closed / RST / read error -> no evidence, not an error.
