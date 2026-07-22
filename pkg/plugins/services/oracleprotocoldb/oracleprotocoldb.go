@@ -65,6 +65,11 @@ const (
 	// unique, but both plugins emit the same ServiceOracleNoSQL product type.
 	oracleNoSQLHTTPName = "oracle_nosql_http"
 
+	// coherencePort is the Coherence NameService (cluster) port. The deliberately
+	// loose POF heuristic is only allowed to assert on this port (see
+	// CoherencePlugin.Run); PortPriority uses the same const.
+	coherencePort = 7574
+
 	// coherenceMaxFrame bounds the length of a response the Coherence heuristic
 	// will consider a plausible NameService handshake frame (not a bulk stream).
 	coherenceMaxFrame = 512
@@ -225,10 +230,22 @@ func itoa(n int) string {
 // The framing follows the classic skeleton-style stub protocol as documented in
 // architecture.md §2a. It is NOT verified against a live rmiregistry capture in
 // this environment; the developer note stands that this framing is best-effort.
-// A mis-framed call is FN-safe: the server blocks or resets, pluginutils.Recv
-// returns []byte{}, and Run returns (nil, nil) — it can never produce a false
-// positive because detection is gated on the marker regex, not on eliciting a
-// reply.
+//
+// KNOWN GAP (deferred pending live validation): the call arguments (ObjID +
+// operation index + interface hash) written after the 0xac 0xed 0x00 0x05
+// ObjectOutputStream header should be carried inside a TC_BLOCKDATA (0x77) record
+// — i.e. a 0x77 tag plus a one-byte block length must precede those raw argument
+// bytes. As written they are emitted without that wrapper, so a real rmiregistry
+// may read the first argument byte as an ObjectStreamConstants type code, fail to
+// recognize it, and reject the call before Registry.list() ever executes. This is
+// DEFERRED until it can be checked against a live Oracle NoSQL RMI registry
+// capture (adding 0x77 <len> here is the specific thing to validate).
+//
+// The gap is FN-safe, never FP-causing: a rejected or mis-framed call yields no
+// listing, so pluginutils.Recv returns []byte{} and Run returns (nil, nil).
+// Detection is gated on the marker regex over a real listing, not on merely
+// eliciting a reply, so a wrongly-framed call can only under-detect. Oracle NoSQL
+// is additionally still detected via the HTTP/8080 (NoSQLHTTPPlugin) path.
 func buildRegistryListCall() []byte {
 	buf := make([]byte, 0, 45)
 	// Client-side EndpointIdentifier written after ProtocolAck: writeUTF("") then
@@ -309,9 +326,12 @@ func (p *NoSQLPlugin) PortPriority(port uint16) bool { return port == 5000 }
 func (p *NoSQLPlugin) Name() string                  { return plugins.ProtoOracleNoSQL }
 func (p *NoSQLPlugin) Type() plugins.Protocol        { return plugins.TCP }
 
-// Priority 900 (matches oracledb) so NoSQL gets first claim on port 5000 ahead of
-// the generic javarmi plugin (Priority 500); it bails to nil when the marker is
-// absent so javarmi still reports generic RMI.
+// Priority 900 (matches oracledb). The scheduler sorts priority ASCENDING, so in
+// a full sweep the generic javarmi plugin (Priority 500) actually runs BEFORE
+// this one; that ordering is harmless because NoSQL bails to nil when the marker
+// is absent, leaving javarmi to report generic RMI. What matters here is fast
+// mode: NoSQL is the sole PortPriority claimant of 5000, so it is the one plugin
+// dispatched there and it wins that port regardless of the numeric priority.
 func (p *NoSQLPlugin) Priority() int { return 900 }
 
 // ---------------------------------------------------------------------------
@@ -328,6 +348,10 @@ func createHTTPClient(conn net.Conn, timeout time.Duration) *http.Client {
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 				return conn, nil
 			},
+			// The probe makes exactly one request over a framework-owned conn.
+			// Disable keep-alives so the transport does not pool the conn or leave
+			// a background read goroutine waiting after Run returns.
+			DisableKeepAlives: true,
 		},
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
@@ -583,6 +607,15 @@ func isLikelyCoherencePOF(resp []byte) bool {
 }
 
 func (p *CoherencePlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
+	// Port gate: the POF heuristic is deliberately loose, so confine WHERE it may
+	// assert to the Coherence port. In full-sweep scans the engine runs every
+	// plugin on every open port (PortPriority only governs fast-mode ordering), so
+	// without this gate the heuristic could fire on an unrelated length-prefixed
+	// binary service on some other port and mislabel it oracle_coherence.
+	if target.Address.Port() != coherencePort {
+		return nil, nil
+	}
+
 	// Disable switch is checked before any I/O.
 	if !coherenceHeuristicEnabled() {
 		return nil, nil
@@ -605,7 +638,7 @@ func (p *CoherencePlugin) Run(conn net.Conn, timeout time.Duration, target plugi
 	return plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP), nil
 }
 
-func (p *CoherencePlugin) PortPriority(port uint16) bool { return port == 7574 }
+func (p *CoherencePlugin) PortPriority(port uint16) bool { return port == coherencePort }
 func (p *CoherencePlugin) Name() string                  { return plugins.ProtoOracleCoherence }
 func (p *CoherencePlugin) Type() plugins.Protocol        { return plugins.TCP }
 func (p *CoherencePlugin) Priority() int                 { return 900 }

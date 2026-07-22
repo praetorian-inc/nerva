@@ -824,6 +824,7 @@ func TestCoherencePluginRun(t *testing.T) {
 	t.Run("positive POF fixture - detected", func(t *testing.T) {
 		conn, target := scriptedServer(t, writeOnce([]byte{0x03, 0x00, 0x01, 0x02}))
 		defer conn.Close()
+		target.Address = netip.AddrPortFrom(target.Address.Addr(), coherencePort)
 
 		svc, err := (&CoherencePlugin{}).Run(conn, shortTimeout, target)
 		assert.NoError(t, err)
@@ -833,6 +834,7 @@ func TestCoherencePluginRun(t *testing.T) {
 	t.Run("TLS response - not detected", func(t *testing.T) {
 		conn, target := scriptedServer(t, writeOnce([]byte{0x16, 0x03, 0x01, 0x00, 0x05, 0x01, 0x02}))
 		defer conn.Close()
+		target.Address = netip.AddrPortFrom(target.Address.Addr(), coherencePort)
 
 		svc, err := (&CoherencePlugin{}).Run(conn, shortTimeout, target)
 		assert.NoError(t, err)
@@ -844,6 +846,7 @@ func TestCoherencePluginRun(t *testing.T) {
 		wrapper = append(wrapper, 0x03, 0x04)
 		conn, target := scriptedServer(t, writeOnce(wrapper))
 		defer conn.Close()
+		target.Address = netip.AddrPortFrom(target.Address.Addr(), coherencePort)
 
 		svc, err := (&CoherencePlugin{}).Run(conn, shortTimeout, target)
 		assert.NoError(t, err)
@@ -853,6 +856,7 @@ func TestCoherencePluginRun(t *testing.T) {
 	t.Run("length-inconsistent frame - not detected", func(t *testing.T) {
 		conn, target := scriptedServer(t, writeOnce([]byte{0x05, 0x00, 0x01, 0x02}))
 		defer conn.Close()
+		target.Address = netip.AddrPortFrom(target.Address.Addr(), coherencePort)
 
 		svc, err := (&CoherencePlugin{}).Run(conn, shortTimeout, target)
 		assert.NoError(t, err)
@@ -862,6 +866,7 @@ func TestCoherencePluginRun(t *testing.T) {
 	t.Run("hold until deadline - silence, not detected", func(t *testing.T) {
 		conn, target := scriptedServer(t, holdOpen)
 		defer conn.Close()
+		target.Address = netip.AddrPortFrom(target.Address.Addr(), coherencePort)
 
 		svc, err := (&CoherencePlugin{}).Run(conn, shortTimeout, target)
 		assert.NoError(t, err)
@@ -871,6 +876,22 @@ func TestCoherencePluginRun(t *testing.T) {
 	t.Run("close immediately - not detected", func(t *testing.T) {
 		conn, target := scriptedServer(t, closeImmediately)
 		defer conn.Close()
+		target.Address = netip.AddrPortFrom(target.Address.Addr(), coherencePort)
+
+		svc, err := (&CoherencePlugin{}).Run(conn, shortTimeout, target)
+		assert.NoError(t, err)
+		assert.Nil(t, svc)
+	})
+
+	t.Run("cross-port guard: POF-shaped reply on non-Coherence port - not detected", func(t *testing.T) {
+		// Regression for the review fix in PR #385: CoherencePlugin.Run must
+		// confine the loose POF heuristic to coherencePort (7574). Here the
+		// reply is the exact positive POF fixture (would be detected on 7574),
+		// but the target port is forced to a non-Coherence port, so Run must
+		// short-circuit at the port gate before any I/O and return (nil, nil).
+		conn, target := scriptedServer(t, writeOnce([]byte{0x03, 0x00, 0x01, 0x02}))
+		defer conn.Close()
+		target.Address = netip.AddrPortFrom(target.Address.Addr(), 9999)
 
 		svc, err := (&CoherencePlugin{}).Run(conn, shortTimeout, target)
 		assert.NoError(t, err)
@@ -894,6 +915,10 @@ func TestCoherenceHeuristicDisabled(t *testing.T) {
 		receivedBytes <- n
 	})
 	defer conn.Close()
+	// Set the target port to coherencePort so this test exercises the
+	// disable-switch branch itself rather than short-circuiting on the
+	// port gate (which runs before the coherenceHeuristicEnabled check).
+	target.Address = netip.AddrPortFrom(target.Address.Addr(), coherencePort)
 
 	coherenceHeuristicEnabled = func() bool { return false }
 
