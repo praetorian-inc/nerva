@@ -111,6 +111,7 @@ import (
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/oraclehttp"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/oracleidentity"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/oracleords"
+	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/oracleprotocoldb"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/pcworx"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/peoplesoft"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/pfcp"

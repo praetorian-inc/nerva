@@ -169,6 +169,9 @@ const (
 	ProtoOracleGoldenGate  = "oracle_goldengate"
 	ProtoOracleForms       = "oracle_forms"
 	ProtoOracleReports     = "oracle_reports"
+	ProtoOracleCoherence   = "oracle_coherence"
+	ProtoOracleNoSQL       = "oracle_nosql"
+	ProtoOracleTimesTen    = "oracle_timesten"
 	ProtoPCOM              = "pcom"
 	ProtoPFCP              = "pfcp"
 	ProtoPinecone          = "pinecone"
@@ -493,6 +496,18 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoOracleOIM:
 		var p ServiceOracleOIM
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoOracleCoherence:
+		var p ServiceOracleCoherence
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoOracleNoSQL:
+		var p ServiceOracleNoSQL
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoOracleTimesTen:
+		var p ServiceOracleTimesTen
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoOracleHTTPServer:
@@ -1590,6 +1605,36 @@ type ServiceOracleOIM struct {
 }
 
 func (e ServiceOracleOIM) Type() string { return ProtoOracleOIM }
+
+// ServiceOracleCoherence identifies an Oracle Coherence data-grid node
+// (best-effort binary detection on the 7574 cluster/NameService port). No
+// version is exposed on the wire, so CPE is versionless.
+type ServiceOracleCoherence struct {
+	CPEs []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceOracleCoherence) Type() string { return ProtoOracleCoherence }
+
+// ServiceOracleNoSQL identifies an Oracle NoSQL Database. It is emitted by both
+// the RMI registry plugin (port 5000, Endpoint populated from the JRMP
+// handshake) and the HTTP proxy plugin (port 8080, ViaHTTP set). No store
+// version is exposed pre-auth, so CPE is versionless.
+type ServiceOracleNoSQL struct {
+	Endpoint string   `json:"endpoint,omitempty"` // RMI endpoint host:port (RMI plugin)
+	ViaHTTP  bool     `json:"via_http,omitempty"` // detected via the 8080 proxy
+	CPEs     []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceOracleNoSQL) Type() string { return ProtoOracleNoSQL }
+
+// ServiceOracleTimesTen identifies an Oracle TimesTen In-Memory Database
+// listener (6624/6625) via its distinctive malformed-HTTP reject. No version
+// is exposed, so CPE is versionless.
+type ServiceOracleTimesTen struct {
+	CPEs []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceOracleTimesTen) Type() string { return ProtoOracleTimesTen }
 
 type ServiceOracleHTTPServer struct {
 	Server           string   `json:"server,omitempty"`
