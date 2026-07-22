@@ -169,6 +169,7 @@ const (
 	ProtoOracleGoldenGate  = "oracle_goldengate"
 	ProtoOracleForms       = "oracle_forms"
 	ProtoOracleReports     = "oracle_reports"
+	ProtoOracleWebLogic    = "oracle_weblogic"
 	ProtoPCOM              = "pcom"
 	ProtoPFCP              = "pfcp"
 	ProtoPinecone          = "pinecone"
@@ -513,6 +514,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoOracleReports:
 		var p ServiceOracleReports
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoOracleWebLogic:
+		var p ServiceWebLogic
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoOMRONFINS:
@@ -1640,6 +1645,16 @@ type ServiceOracleReports struct {
 }
 
 func (e ServiceOracleReports) Type() string { return ProtoOracleReports }
+
+type ServiceWebLogic struct {
+	T3           bool     `json:"t3,omitempty"`            // server answered the T3 handshake
+	T3Version    string   `json:"t3_version,omitempty"`    // raw version from the HELO line, e.g. "12.2.1.3.0"
+	AdminConsole bool     `json:"admin_console,omitempty"` // /console/login/LoginForm.jsp matched
+	ConsoleTitle string   `json:"console_title,omitempty"` // the <title> observed on the console page
+	CPEs         []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceWebLogic) Type() string { return ProtoOracleWebLogic }
 
 type ServicePCOM struct {
 	Model     string   `json:"model,omitempty"`
