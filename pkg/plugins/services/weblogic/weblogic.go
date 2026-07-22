@@ -77,9 +77,6 @@ const (
 
 	// consoleCookie is the WebLogic console's default session cookie name.
 	consoleCookie = "ADMINCONSOLESESSION"
-
-	// serverMarker is the branded token that may appear in a Server header.
-	serverMarker = "weblogic server"
 )
 
 // t3Handshake is the single benign T3 probe sent on connect. It is the nmap
@@ -190,11 +187,16 @@ func parseT3Response(raw []byte) (version string, detected bool) {
 }
 
 // matchConsole applies the HTTP-console detection and anti-false-positive rules
-// to already-extracted primitives. A host is the WebLogic console when ANY strong
-// signal is present: a console <title>, an ADMINCONSOLESESSION cookie, or a
-// "WebLogic Server" Server header. A bare JSESSIONID cookie or generic servlet
-// response never triggers.
-func matchConsole(title string, setCookies []string, server string) (detected bool) {
+// to already-extracted primitives. The admin console is confirmed ONLY by a
+// console-specific signal: a console <title> (modern or legacy) OR an
+// ADMINCONSOLESESSION cookie. A bare "Server: WebLogic Server" header identifies
+// the host as WebLogic but does NOT prove the admin console is deployed at this
+// path (e.g. a WebLogic-hosted app with a /* wildcard mapping can return 200 at
+// /console/login/LoginForm.jsp without being the real console), so it must not
+// set AdminConsole or trigger the console-exposed finding; T3 on the provided
+// conn remains the WebLogic identifier. A bare JSESSIONID cookie or generic
+// servlet response never triggers.
+func matchConsole(title string, setCookies []string) (detected bool) {
 	lt := strings.ToLower(title)
 	if strings.Contains(lt, strings.ToLower(consoleTitleModern)) ||
 		strings.Contains(lt, strings.ToLower(consoleTitleLegacy)) {
@@ -204,9 +206,6 @@ func matchConsole(title string, setCookies []string, server string) (detected bo
 		if strings.Contains(strings.ToUpper(c), consoleCookie) {
 			return true
 		}
-	}
-	if strings.Contains(strings.ToLower(server), serverMarker) {
-		return true
 	}
 	return false
 }
@@ -305,7 +304,7 @@ func probeConsole(target plugins.Target, timeout time.Duration, useTLS bool) (de
 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
 	title = extractTitle(string(body))
-	detected = matchConsole(title, resp.Header.Values("Set-Cookie"), resp.Header.Get("Server"))
+	detected = matchConsole(title, resp.Header.Values("Set-Cookie"))
 	return detected, title, resp.StatusCode
 }
 

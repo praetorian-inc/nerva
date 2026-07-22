@@ -148,7 +148,6 @@ func TestMatchConsole(t *testing.T) {
 		name       string
 		title      string
 		setCookies []string
-		server     string
 		want       bool
 	}{
 		{
@@ -173,20 +172,20 @@ func TestMatchConsole(t *testing.T) {
 			want:       true,
 		},
 		{
-			name:   "WebLogic Server marker in Server header matches",
-			server: "WebLogic Server 12.2.1.3.0",
-			want:   true,
-		},
-		{
 			name:       "bare JSESSIONID cookie does not match (anti-FP)",
 			title:      "",
 			setCookies: []string{"JSESSIONID=abc123; Path=/"},
 			want:       false,
 		},
 		{
-			name:   "Servlet/3.1 in Server header does not match (anti-FP)",
-			server: "Servlet/3.1",
-			want:   false,
+			// Anti-FP regression: matchConsole no longer accepts a Server header
+			// at all, so a WebLogic-branded Server header carries no weight here
+			// unless paired with a console title or the ADMINCONSOLESESSION
+			// cookie. A generic WebLogic-hosted app response (e.g. a /* wildcard
+			// mapping returning 200 at the console path) must not be mistaken for
+			// the real admin console.
+			name: "bare WebLogic Server header does not confirm console (anti-FP)",
+			want: false,
 		},
 		{
 			name: "generic 200 with no signals does not match",
@@ -206,7 +205,7 @@ func TestMatchConsole(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := matchConsole(tt.title, tt.setCookies, tt.server)
+			got := matchConsole(tt.title, tt.setCookies)
 			assert.Equal(t, tt.want, got)
 		})
 	}
@@ -690,6 +689,44 @@ func TestWebLogicPlugin_Run_MisconfigGating(t *testing.T) {
 		assert.False(t, service.AnonymousAccess)
 		assert.Empty(t, service.SecurityFindings)
 	})
+}
+
+// TestWebLogicPlugin_Run_ServerHeaderAloneDoesNotConfirmConsole is the round-3
+// review regression (LAB-5071, PR #386): a generic WebLogic-hosted response
+// carrying a "Server: WebLogic Server" header but no console <title> and no
+// ADMINCONSOLESESSION cookie must not be mistaken for the real admin console
+// (e.g. a WebLogic-hosted app with a /* wildcard mapping returning 200 at the
+// console path is not proof the console is actually deployed there). With T3
+// also undetected (the mock never answers), the plugin must return a clean
+// negative rather than a false console-exposure finding, even with
+// Misconfigs=true.
+func TestWebLogicPlugin_Run_ServerHeaderAloneDoesNotConfirmConsole(t *testing.T) {
+	// T3 mock accepts the connection but never writes a reply, so probeT3 sees
+	// an I/O error (the mock closes after its short second-read deadline) and
+	// t3Detected is false.
+	addr, capturedCh, secondCh, cleanup := startT3Mock(t, nil)
+	defer cleanup()
+
+	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Server", "WebLogic Server")
+		fmt.Fprint(w, "<html><head></head><body>OK</body></html>")
+	}))
+	defer server.Close()
+	consoleAddr := parseWeblogicTestServerAddr(t, server.URL)
+
+	target := plugins.Target{Host: consoleAddr.Addr().String(), Address: consoleAddr, Misconfigs: true}
+	plugin := &WebLogicPlugin{}
+	service, err := plugin.Run(conn, 5*time.Second, target)
+
+	<-capturedCh
+	<-secondCh
+
+	require.NoError(t, err)
+	assert.Nil(t, service, "a bare WebLogic Server header with no console title/cookie and no T3 answer must yield a clean negative, not a false console detection")
 }
 
 // -----------------------------------------------------------------------------
