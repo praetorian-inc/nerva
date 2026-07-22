@@ -249,6 +249,65 @@ func TestBuildWebLogicCPE(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------------
+// PURE FUNCTIONS: t3ReadTimeout
+// -----------------------------------------------------------------------------
+
+// TestT3ReadTimeout covers every branch of t3ReadTimeout deterministically:
+// timeouts above the cap are clamped down, the cap itself passes through,
+// positive timeouts below the cap are returned unchanged, and non-positive
+// timeouts (zero or negative) fall back to the cap as a floor.
+func TestT3ReadTimeout(t *testing.T) {
+	tests := []struct {
+		name    string
+		timeout time.Duration
+		want    time.Duration
+	}{
+		{
+			name:    "timeout greater than cap is clamped to the cap",
+			timeout: 10 * time.Second,
+			want:    maxT3ReadTimeout,
+		},
+		{
+			name:    "timeout much greater than cap is clamped to the cap",
+			timeout: 30 * time.Second,
+			want:    maxT3ReadTimeout,
+		},
+		{
+			name:    "timeout equal to the cap passes through unchanged",
+			timeout: maxT3ReadTimeout,
+			want:    maxT3ReadTimeout,
+		},
+		{
+			name:    "positive timeout below the cap is returned unchanged",
+			timeout: 1 * time.Second,
+			want:    1 * time.Second,
+		},
+		{
+			name:    "small positive timeout below the cap is returned unchanged",
+			timeout: 500 * time.Millisecond,
+			want:    500 * time.Millisecond,
+		},
+		{
+			name:    "zero timeout floors to the cap",
+			timeout: 0,
+			want:    maxT3ReadTimeout,
+		},
+		{
+			name:    "negative timeout floors to the cap",
+			timeout: -1 * time.Second,
+			want:    maxT3ReadTimeout,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := t3ReadTimeout(tt.timeout)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+// -----------------------------------------------------------------------------
 // NETWORK MOCK HELPERS
 // -----------------------------------------------------------------------------
 

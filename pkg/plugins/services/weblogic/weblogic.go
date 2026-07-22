@@ -221,6 +221,23 @@ func buildWebLogicCPE(version string) string {
 	return fmt.Sprintf("cpe:2.3:a:oracle:weblogic_server:%s:*:*:*:*:*:*:*", v)
 }
 
+// maxT3ReadTimeout bounds how long we wait for the T3 handshake reply. A live
+// WebLogic T3 listener answers within one round-trip; capping the wait keeps a
+// non-WebLogic host (e.g. any HTTPS server on 443/7002 that silently ignores
+// the plaintext handshake bytes) from stalling the whole plugin for the full
+// scanner timeout before we fall through to the console probe.
+const maxT3ReadTimeout = 3 * time.Second
+
+// t3ReadTimeout returns the (possibly shortened) timeout used for the T3
+// handshake read: min(timeout, maxT3ReadTimeout), with a sane floor if the
+// caller passes a non-positive timeout.
+func t3ReadTimeout(timeout time.Duration) time.Duration {
+	if timeout <= 0 || timeout > maxT3ReadTimeout {
+		return maxT3ReadTimeout
+	}
+	return timeout
+}
+
 // probeT3 sends the single benign handshake on the scanner-provided conn and
 // classifies the reply. The whole operation is bounded by a deadline that is
 // cleared on return (G3); the read is a single 4096-byte Recv (G2). An I/O
@@ -320,7 +337,11 @@ func applyMisconfigs(service *plugins.Service, adminConsole bool, consoleStatus 
 // conn, merges into one ServiceWebLogic, and applies the gated findings. The T3
 // version is canonical; HTTP-only detection emits version "" and a wildcard CPE.
 func runWebLogic(conn net.Conn, timeout time.Duration, target plugins.Target, useTLS bool) (*plugins.Service, error) {
-	t3Version, t3Detected, t3IOErr := probeT3(conn, timeout)
+	// Cap the T3 handshake read so a non-WebLogic host on 443/7002 that ignores
+	// the plaintext handshake cannot stall the plugin for the full scanner
+	// timeout before we fall through to the console probe. The console probe
+	// keeps the full timeout (its dial may legitimately need the full budget).
+	t3Version, t3Detected, t3IOErr := probeT3(conn, t3ReadTimeout(timeout))
 	consoleDetected, consoleTitle, consoleStatus := probeConsole(target, timeout, useTLS)
 
 	if !t3Detected && !consoleDetected {
