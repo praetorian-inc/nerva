@@ -422,7 +422,7 @@ type essbaseRESTEvidence struct {
 
 // evaluateEssbaseREST decides whether the /about response is a genuine Essbase 21c
 // REST document. DETECTION (P0) requires the body to parse as JSON into essbaseAbout
-// AND to carry a server-generated "name" of exactly "Essbase". The body is decoded
+// AND to carry a server-generated "name" that equals "Essbase" case-insensitively. The body is decoded
 // with encoding/json (into a fixed narrow struct, over an io.LimitReader-capped
 // body), so a truncated/malformed body like `{"name":"Essbase"` or an HTML page that
 // merely contains the "name":"Essbase" substring cannot pass. A bare 200 with HTML, a
