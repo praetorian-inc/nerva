@@ -154,6 +154,14 @@ func init() {
 // createHTTPClient creates an http.Client that wraps the provided net.Conn and
 // does not follow redirects (so Location headers can be inspected directly, and no
 // attacker-chosen redirect target is ever fetched).
+//
+// The scanner provides a single net.Conn; detectHyperion/detectEssbaseREST reuse
+// it across their sequential probes. If the server sends "Connection: close" (or
+// closes) after an early probe, later probes fail and are skipped (non-fatal), so
+// the highest-signal path (the Workspace title on the first probe) is ordered
+// first. Re-dialing per probe is intentionally avoided: the conn may already be
+// TLS-wrapped (the TLS variants), and this matches the merged oracleidentity
+// precedent.
 func createHTTPClient(conn net.Conn, timeout time.Duration) *http.Client {
 	return &http.Client{
 		Timeout: timeout,
@@ -207,7 +215,8 @@ func isRedirect(code int) bool {
 	return code == http.StatusMovedPermanently ||
 		code == http.StatusFound ||
 		code == http.StatusSeeOther ||
-		code == http.StatusTemporaryRedirect
+		code == http.StatusTemporaryRedirect ||
+		code == http.StatusPermanentRedirect
 }
 
 // isAnonymousExposure reports whether a branded response actually demonstrates
