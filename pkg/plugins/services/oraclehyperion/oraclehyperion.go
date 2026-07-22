@@ -736,6 +736,13 @@ func (p *EssbaseAgentPlugin) Run(conn net.Conn, timeout time.Duration, target pl
 	if !essbaseAgentEnabled() {
 		return nil, nil
 	}
+	// Slow-lane TCP scans (pkg/scan/simple_scan.go) invoke every plugin's Run
+	// regardless of PortPriority. The Agent classifier is a weak best-effort
+	// binary heuristic, so restrict it to the fixed well-known Agent port (1423)
+	// to avoid false-positives on unrelated binary services on other ports.
+	if target.Address.Port() != EssbaseAgentPort {
+		return nil, nil
+	}
 	resp, err := utils.SendRecv(conn, buildEssbaseAgentProbe(), timeout)
 	if err != nil {
 		// Refused / closed / RST / read error -> no evidence, not an error.
