@@ -164,6 +164,7 @@ const (
 	ProtoOracleOAM         = "oracle_oam"
 	ProtoOracleOIM         = "oracle_oim"
 	ProtoOracleHTTPServer  = "oracle_http_server"
+	ProtoOracleGoldenGate  = "oracle_goldengate"
 	ProtoOracleForms       = "oracle_forms"
 	ProtoOracleReports     = "oracle_reports"
 	ProtoPCOM              = "pcom"
@@ -494,6 +495,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoOracleHTTPServer:
 		var p ServiceOracleHTTPServer
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoOracleGoldenGate:
+		var p ServiceOracleGoldenGate
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoOracleForms:
@@ -1588,6 +1593,13 @@ type ServiceOracleHTTPServer struct {
 }
 
 func (e ServiceOracleHTTPServer) Type() string { return ProtoOracleHTTPServer }
+
+type ServiceOracleGoldenGate struct {
+	Edition string   `json:"edition,omitempty"` // microservices | classic
+	CPEs    []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceOracleGoldenGate) Type() string { return ProtoOracleGoldenGate }
 
 type ServiceOracleForms struct {
 	Era              string   `json:"era,omitempty"` // "10g" | "12c" | ""
