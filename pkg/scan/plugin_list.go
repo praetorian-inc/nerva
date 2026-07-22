@@ -106,6 +106,7 @@ import (
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/oracledb"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/oracleebs"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/oraclehttp"
+	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/oraclehyperion"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/oracleidentity"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/oracleords"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/pcworx"
