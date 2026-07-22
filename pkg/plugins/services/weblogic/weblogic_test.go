@@ -31,7 +31,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/praetorian-inc/nerva/pkg/plugins"
-	utils "github.com/praetorian-inc/nerva/pkg/plugins/pluginutils"
 )
 
 // -----------------------------------------------------------------------------
@@ -302,6 +301,46 @@ func TestT3ReadTimeout(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := t3ReadTimeout(tt.timeout)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+// -----------------------------------------------------------------------------
+// PURE FUNCTIONS: canSelfDialConsole
+// -----------------------------------------------------------------------------
+
+// TestCanSelfDialConsole covers every branch of canSelfDialConsole
+// deterministically: a valid, routable address permits the self-dial, an
+// unspecified address (e.g. 0.0.0.0, seen behind socks5h/proxy or unresolved
+// scans) refuses it, and a zero-value/invalid netip.AddrPort also refuses it.
+func TestCanSelfDialConsole(t *testing.T) {
+	tests := []struct {
+		name string
+		addr netip.AddrPort
+		want bool
+	}{
+		{
+			name: "valid routable address is self-dialable",
+			addr: netip.MustParseAddrPort("127.0.0.1:7002"),
+			want: true,
+		},
+		{
+			name: "unspecified address (0.0.0.0) is not self-dialable",
+			addr: netip.MustParseAddrPort("0.0.0.0:7002"),
+			want: false,
+		},
+		{
+			name: "zero-value/invalid AddrPort is not self-dialable",
+			addr: netip.AddrPort{},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			target := plugins.Target{Address: tt.addr}
+			got := canSelfDialConsole(target)
 			assert.Equal(t, tt.want, got)
 		})
 	}
@@ -596,6 +635,42 @@ func TestWebLogicPlugin_Run_MisconfigGating(t *testing.T) {
 		assert.False(t, service.AnonymousAccess, "G7 regression: T3-only detection must not set AnonymousAccess")
 	})
 
+	t.Run("Misconfigs=true and both console 2xx and T3 answer yield both findings and AnonymousAccess=true", func(t *testing.T) {
+		heloResponse := []byte("HELO:12.2.1.3.0.false AS:2048 HL:19")
+		addr, capturedCh, secondCh, cleanup := startT3Mock(t, heloResponse)
+		defer cleanup()
+
+		conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+		require.NoError(t, err)
+		defer conn.Close()
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			fmt.Fprint(w, "<html><head><title>Oracle WebLogic Server Administration Console</title></head><body></body></html>")
+		}))
+		defer server.Close()
+		consoleAddr := parseWeblogicTestServerAddr(t, server.URL)
+
+		target := plugins.Target{Host: consoleAddr.Addr().String(), Address: consoleAddr, Misconfigs: true}
+		plugin := &WebLogicPlugin{}
+		service, err := plugin.Run(conn, 5*time.Second, target)
+		require.NoError(t, err)
+		require.NotNil(t, service)
+
+		<-capturedCh
+		<-secondCh
+
+		assert.True(t, service.AnonymousAccess)
+		require.Len(t, service.SecurityFindings, 2)
+
+		consoleFinding := findFinding(service.SecurityFindings, "oracle-weblogic-console-exposed")
+		require.NotNil(t, consoleFinding, "expected the console-exposed finding to be present")
+		assert.Equal(t, plugins.SeverityMedium, consoleFinding.Severity)
+
+		t3Finding := findFinding(service.SecurityFindings, "oracle-weblogic-t3-exposed")
+		require.NotNil(t, t3Finding, "expected the T3-exposed finding to be present")
+		assert.Equal(t, plugins.SeverityLow, t3Finding.Severity)
+	})
+
 	t.Run("Misconfigs=false yields no SecurityFindings at all", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			fmt.Fprint(w, "<html><head><title>Oracle WebLogic Server Administration Console</title></head><body></body></html>")
@@ -621,11 +696,12 @@ func TestWebLogicPlugin_Run_MisconfigGating(t *testing.T) {
 // NETWORK: Error contract
 // -----------------------------------------------------------------------------
 
-// TestWebLogicPlugin_Run_T3IOFailure verifies that a T3 I/O failure (here: a
-// write to an already-closed connection) surfaces as *utils.RequestError, and
-// that no false detection occurs when the console probe also fails to reach
-// anything.
-func TestWebLogicPlugin_Run_T3IOFailure(t *testing.T) {
+// TestWebLogicPlugin_Run_T3IOFailure_CleanNegative verifies that a T3 I/O
+// failure (here: a write to an already-closed connection) is treated as an
+// unrecognized/closed T3 endpoint and yields a clean (nil, nil) negative,
+// mirroring the other detection-only Oracle plugins, rather than surfacing as
+// an error — provided the console probe also fails to reach anything.
+func TestWebLogicPlugin_Run_T3IOFailure_CleanNegative(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	defer listener.Close()
@@ -649,10 +725,8 @@ func TestWebLogicPlugin_Run_T3IOFailure(t *testing.T) {
 	plugin := &WebLogicPlugin{}
 	service, err := plugin.Run(conn, 5*time.Second, target)
 
+	require.NoError(t, err)
 	assert.Nil(t, service)
-	require.Error(t, err)
-	var reqErr *utils.RequestError
-	assert.ErrorAs(t, err, &reqErr)
 }
 
 // TestWebLogicPlugin_Run_CleanNonWebLogicService verifies that a target which

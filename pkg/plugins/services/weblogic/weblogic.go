@@ -241,7 +241,8 @@ func t3ReadTimeout(timeout time.Duration) time.Duration {
 // probeT3 sends the single benign handshake on the scanner-provided conn and
 // classifies the reply. The whole operation is bounded by a deadline that is
 // cleared on return (G3); the read is a single 4096-byte Recv (G2). An I/O
-// failure is returned as ioErr for the caller to map to a RequestError.
+// failure is surfaced as ioErr; runWebLogic treats it as an expected negative
+// (dropped/closed connection on a non-WebLogic host) and ignores it.
 func probeT3(conn net.Conn, timeout time.Duration) (version string, detected bool, ioErr error) {
 	_ = conn.SetDeadline(time.Now().Add(timeout))
 	defer func() { _ = conn.SetDeadline(time.Time{}) }()
@@ -252,6 +253,18 @@ func probeT3(conn net.Conn, timeout time.Duration) (version string, detected boo
 	}
 	version, detected = parseT3Response(raw)
 	return version, detected, nil
+}
+
+// canSelfDialConsole reports whether the target has a concrete, routable address
+// for the self-dialed HTTP console probe. When the address is unspecified
+// (e.g. 0.0.0.0 in socks5h/proxy or unresolved scans) we skip the console
+// corroborator rather than misdial a wrong local address or leak scan traffic
+// outside the configured proxy; T3 detection still runs on the scanner-provided
+// (proxy-aware) connection. Full proxy routing for the self-dial requires an
+// engine-level dialer that is not exposed to plugins.
+func canSelfDialConsole(target plugins.Target) bool {
+	a := target.Address.Addr()
+	return a.IsValid() && !a.IsUnspecified()
 }
 
 // dialConsoleConn opens a short-lived connection to the target for the HTTP
@@ -318,16 +331,19 @@ func weblogicT3ExposedFinding() plugins.SecurityFinding {
 	}
 }
 
-// applyMisconfigs appends the appropriate exposure finding and sets
-// AnonymousAccess. The console finding (Medium, only on a 2xx surface) takes
-// precedence over the T3 banner finding (Low); nothing fires otherwise. Called
-// only under target.Misconfigs. Shared by both transport variants (DRY).
+// applyMisconfigs appends exposure findings and sets AnonymousAccess. The T3
+// listener (deserialization RCE surface, CVE-2015-4852) and the HTTP admin
+// console are independent attack surfaces, so each fires its own finding when
+// present: an exposed console (Medium, only on a 2xx surface) additionally sets
+// AnonymousAccess, while an answered T3 handshake always emits the Low banner
+// finding. Called only under target.Misconfigs. Shared by both transport
+// variants (DRY).
 func applyMisconfigs(service *plugins.Service, adminConsole bool, consoleStatus int, t3Detected bool) {
-	switch {
-	case adminConsole && isSuccessStatus(consoleStatus):
+	if adminConsole && isSuccessStatus(consoleStatus) {
 		service.AnonymousAccess = true
 		service.SecurityFindings = append(service.SecurityFindings, weblogicConsoleFinding())
-	case t3Detected:
+	}
+	if t3Detected {
 		service.SecurityFindings = append(service.SecurityFindings, weblogicT3ExposedFinding())
 	}
 }
@@ -341,13 +357,20 @@ func runWebLogic(conn net.Conn, timeout time.Duration, target plugins.Target, us
 	// the plaintext handshake cannot stall the plugin for the full scanner
 	// timeout before we fall through to the console probe. The console probe
 	// keeps the full timeout (its dial may legitimately need the full budget).
-	t3Version, t3Detected, t3IOErr := probeT3(conn, t3ReadTimeout(timeout))
-	consoleDetected, consoleTitle, consoleStatus := probeConsole(target, timeout, useTLS)
+	t3Version, t3Detected, _ := probeT3(conn, t3ReadTimeout(timeout))
 
+	// Only run the self-dialed console corroborator when the target has a
+	// concrete, routable address; otherwise skip it and rely on the T3 probe
+	// (see canSelfDialConsole).
+	consoleDetected, consoleTitle, consoleStatus := false, "", 0
+	if canSelfDialConsole(target) {
+		consoleDetected, consoleTitle, consoleStatus = probeConsole(target, timeout, useTLS)
+	}
+
+	// No WebLogic surface answered. A dropped/closed connection on a
+	// non-WebLogic host is an expected negative for a fingerprinter, so we
+	// return a clean (nil, nil) rather than a RequestError.
 	if !t3Detected && !consoleDetected {
-		if t3IOErr != nil {
-			return nil, &utils.RequestError{Message: t3IOErr.Error()}
-		}
 		return nil, nil
 	}
 
