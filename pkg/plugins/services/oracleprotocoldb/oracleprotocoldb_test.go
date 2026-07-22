@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -196,6 +197,30 @@ func ackThenHoldRound2(ack []byte) func(net.Conn) {
 	}
 }
 
+// partialThenErrorConn wraps a net.Conn so that its Nth Read call (errorOnCall)
+// returns injectPartial bytes TOGETHER WITH a non-nil, non-timeout error -
+// modeling pluginutils.Recv's "partial read: N bytes before error" branch
+// (response[:length], &ReadError{...}) for a connection reset mid-listing.
+// This is injected directly rather than relying on OS-level TCP timing to
+// combine a data delivery and a close into a single syscall, which is not
+// reliably reproducible over a real loopback connection. All other Read calls,
+// and every other net.Conn method, forward unchanged to the embedded conn.
+type partialThenErrorConn struct {
+	net.Conn
+	errorOnCall   int
+	calls         int
+	injectPartial []byte
+}
+
+func (c *partialThenErrorConn) Read(b []byte) (int, error) {
+	c.calls++
+	if c.calls == c.errorOnCall {
+		n := copy(b, c.injectPartial)
+		return n, errors.New("simulated connection reset mid-read")
+	}
+	return c.Conn.Read(b)
+}
+
 // httpOnce drains the client's HTTP request and writes back a raw HTTP
 // response built from statusLine and body.
 func httpOnce(statusLine, body string) func(net.Conn) {
@@ -368,10 +393,10 @@ func TestIsOracleNoSQLProxy(t *testing.T) {
 		{"apex in body - APEX reject", httpRespWithLocation(""), "apex login", false},
 		{"Location ORDS reject", httpRespWithLocation("/ords/f?p=..."), "oracle nosql", false},
 		{
-			"DIVERGENCE: marker only in Location, body empty - markers matched in body only",
+			"marker only in Location, empty body - a redirect may carry the product name before any body is sent",
 			httpRespWithLocation("/oracle.kv/redirect"),
 			"",
-			false,
+			true,
 		},
 	}
 
@@ -572,20 +597,28 @@ func TestProbeConstants(t *testing.T) {
 
 func TestBuildRegistryListCall(t *testing.T) {
 	call := buildRegistryListCall()
-	require.Len(t, call, 45)
+	require.Len(t, call, 47)
 
 	// TransportConstants.Call marker at offset 6.
 	assert.Equal(t, byte(0x50), call[6])
 
-	// 22-byte well-known registry ObjID (offset 11..33) must be all-zero -
+	// TC_BLOCKDATA framing (offsets 11-12): tag 0x77 + one-byte block length
+	// 0x22 (34 = 22 ObjID + 4 op index + 8 interface hash), immediately before
+	// the call arguments. Without this the arguments would be raw bytes after
+	// the ObjectOutputStream header, which a real ObjectInputStream would
+	// misread as a type code and reject.
+	assert.Equal(t, byte(0x77), call[11])
+	assert.Equal(t, byte(0x22), call[12])
+
+	// 22-byte well-known registry ObjID (offset 13..35) must be all-zero -
 	// this proves the call targets ObjID 0, not an attacker-supplied object.
-	assert.Equal(t, make([]byte, 22), call[11:33])
+	assert.Equal(t, make([]byte, 22), call[13:35])
 
 	// Operation index = 1 (Registry.list()), NOT bind(2)/unbind(3)/rebind(4).
-	assert.Equal(t, []byte{0x00, 0x00, 0x00, 0x01}, call[33:37])
+	assert.Equal(t, []byte{0x00, 0x00, 0x00, 0x01}, call[35:39])
 
 	// Trailing 8 bytes decode to the well-known RegistryImpl interface hash.
-	assert.Equal(t, registryInterfaceHash, binary.BigEndian.Uint64(call[37:45]))
+	assert.Equal(t, registryInterfaceHash, binary.BigEndian.Uint64(call[39:47]))
 }
 
 func TestItoa(t *testing.T) {
@@ -687,6 +720,37 @@ func TestNoSQLPluginRun(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Nil(t, svc)
 	})
+
+	t.Run("round-2 partial read with error, marker in partial bytes - still detected", func(t *testing.T) {
+		// ackThenHoldRound2 keeps the underlying conn open and draining so the
+		// round-2 Write succeeds; the round-2 Read is intercepted before it ever
+		// reaches the real conn.
+		conn, target := scriptedServer(t, ackThenHoldRound2(ack))
+		defer conn.Close()
+		wrapped := &partialThenErrorConn{
+			Conn:          conn,
+			errorOnCall:   2, // round 1 = call 1 (ack), round 2 = call 2 (listing)
+			injectPartial: classMarkerListing,
+		}
+
+		svc, err := (&NoSQLPlugin{}).Run(wrapped, shortTimeout, target)
+		require.NoError(t, err)
+		assertDetectionOnly(t, svc, plugins.ProtoOracleNoSQL, nosqlCPE)
+	})
+
+	t.Run("round-2 read error with empty buffer - ambiguous, not detected", func(t *testing.T) {
+		conn, target := scriptedServer(t, ackThenHoldRound2(ack))
+		defer conn.Close()
+		wrapped := &partialThenErrorConn{
+			Conn:          conn,
+			errorOnCall:   2,
+			injectPartial: nil, // no bytes at all alongside the error
+		}
+
+		svc, err := (&NoSQLPlugin{}).Run(wrapped, shortTimeout, target)
+		assert.NoError(t, err)
+		assert.Nil(t, svc)
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -760,6 +824,16 @@ func TestNoSQLHTTPPluginRun(t *testing.T) {
 		svc, err := (&NoSQLHTTPPlugin{}).Run(conn, shortTimeout, target)
 		assert.NoError(t, err)
 		assert.Nil(t, svc)
+	})
+
+	t.Run("302 redirect, marker only in Location header with empty body - detected", func(t *testing.T) {
+		raw := "HTTP/1.1 302 Found\r\nLocation: /oracle.kv/redirect\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+		conn, target := scriptedServer(t, writeOnce([]byte(raw)))
+		defer conn.Close()
+
+		svc, err := (&NoSQLHTTPPlugin{}).Run(conn, shortTimeout, target)
+		assert.NoError(t, err)
+		assertDetectionOnly(t, svc, plugins.ProtoOracleNoSQL, nosqlCPE)
 	})
 }
 
@@ -962,11 +1036,14 @@ func TestPluginMetadata(t *testing.T) {
 			falsePorts:   []uint16{5000, 8080, 6624, 1099},
 		},
 		{
-			name:         "NoSQLPlugin",
-			plugin:       &NoSQLPlugin{},
-			wantName:     plugins.ProtoOracleNoSQL,
-			wantType:     plugins.TCP,
-			wantPriority: 900,
+			name:     "NoSQLPlugin",
+			plugin:   &NoSQLPlugin{},
+			wantName: plugins.ProtoOracleNoSQL,
+			wantType: plugins.TCP,
+			// Priority 400, deliberately BELOW javarmi's 500 so NoSQL (ascending
+			// sort) runs FIRST in a full sweep and gets to inspect the registry
+			// listing before javarmi claims the endpoint.
+			wantPriority: 400,
 			truePorts:    []uint16{5000},
 			falsePorts:   []uint16{7574, 8080, 6625},
 		},
@@ -1006,4 +1083,9 @@ func TestPluginMetadata(t *testing.T) {
 		names[tt.plugin.Name()] = true
 	}
 	assert.Len(t, names, len(tests), "all four plugin Name() values must be distinct (registry key uniqueness)")
+
+	// NoSQL must sort BEFORE the generic javarmi plugin (priority 500) so it
+	// gets first look at the registry listing in a full sweep.
+	assert.Less(t, (&NoSQLPlugin{}).Priority(), 500,
+		"NoSQLPlugin priority must be below javarmi's 500 so it dispatches first")
 }

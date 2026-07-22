@@ -228,26 +228,28 @@ func itoa(n int) string {
 // server state (P0-8).
 //
 // The framing follows the classic skeleton-style stub protocol as documented in
-// architecture.md §2a. It is NOT verified against a live rmiregistry capture in
-// this environment; the developer note stands that this framing is best-effort.
+// architecture.md §2a. The call arguments (ObjID + operation index + interface
+// hash) written after the 0xac 0xed 0x00 0x05 ObjectOutputStream header are now
+// carried inside a TC_BLOCKDATA (0x77) record — a 0x77 tag plus a one-byte block
+// length (0x22 = 34) precede those argument bytes — per the reviewer consensus
+// that Java's ObjectInputStream reads those primitives from a block-data record,
+// not raw from the stream. Without it a real rmiregistry could read the first
+// argument byte as an ObjectStreamConstants type code and reject the call before
+// Registry.list() runs.
 //
-// KNOWN GAP (deferred pending live validation): the call arguments (ObjID +
-// operation index + interface hash) written after the 0xac 0xed 0x00 0x05
-// ObjectOutputStream header should be carried inside a TC_BLOCKDATA (0x77) record
-// — i.e. a 0x77 tag plus a one-byte block length must precede those raw argument
-// bytes. As written they are emitted without that wrapper, so a real rmiregistry
-// may read the first argument byte as an ObjectStreamConstants type code, fail to
-// recognize it, and reject the call before Registry.list() ever executes. This is
-// DEFERRED until it can be checked against a live Oracle NoSQL RMI registry
-// capture (adding 0x77 <len> here is the specific thing to validate).
+// STILL UNVALIDATED end-to-end: the block-data framing is applied, but the FULL
+// call (operation-index encoding, interface hash, and the ProtocolAck handshake
+// sequence) has NOT been confirmed against a live Oracle NoSQL rmiregistry
+// capture in this environment. Live validation against a real capture remains the
+// pre-merge confirmation for this vector.
 //
-// The gap is FN-safe, never FP-causing: a rejected or mis-framed call yields no
+// This is FN-safe, never FP-causing: a rejected or mis-framed call yields no
 // listing, so pluginutils.Recv returns []byte{} and Run returns (nil, nil).
 // Detection is gated on the marker regex over a real listing, not on merely
 // eliciting a reply, so a wrongly-framed call can only under-detect. Oracle NoSQL
 // is additionally still detected via the HTTP/8080 (NoSQLHTTPPlugin) path.
 func buildRegistryListCall() []byte {
-	buf := make([]byte, 0, 45)
+	buf := make([]byte, 0, 47)
 	// Client-side EndpointIdentifier written after ProtocolAck: writeUTF("") then
 	// writeInt(0) for the client port.
 	buf = append(buf, 0x00, 0x00)             // writeUTF("") — length 0
@@ -255,6 +257,12 @@ func buildRegistryListCall() []byte {
 	// Call message.
 	buf = append(buf, 0x50)                   // TransportConstants.Call
 	buf = append(buf, 0xac, 0xed, 0x00, 0x05) // ObjectOutputStream stream header
+	// TC_BLOCKDATA framing: Java's ObjectInputStream requires the primitive call
+	// arguments below (ObjID + operation index + interface hash) to be carried
+	// inside a block-data record, not written raw after the stream header. 0x77 is
+	// TransportConstants/ObjectStreamConstants TC_BLOCKDATA; 0x22 is the one-byte
+	// block length = 34 = 22 (ObjID) + 4 (op index) + 8 (interface hash).
+	buf = append(buf, 0x77, 0x22)
 	// ObjID of the RMI registry (well-known ID 0): 22 zero bytes
 	// (objNum long=0, UID.unique int=0, UID.time long=0, UID.count short=0).
 	buf = append(buf, make([]byte, 22)...)
@@ -304,9 +312,13 @@ func (p *NoSQLPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.T
 	endpoint := extractEndpoint(handshakeResp[1:])
 
 	// Round 2: enumerate the registry and scan the raw reply for a NoSQL marker.
+	// On a partial-read error, SendRecv still returns the bytes received before the
+	// error; a large registry listing can carry the NoSQL marker in that truncated
+	// payload, so fall through and scan whatever we got rather than discarding it.
+	// Only an error with no bytes at all is treated as ambiguous.
 	listResp, err := utils.SendRecv(conn, buildRegistryListCall(), timeout)
-	if err != nil {
-		return nil, nil // read error / partial -> treat as ambiguous, not us
+	if err != nil && len(listResp) == 0 {
+		return nil, nil // read error with no data -> ambiguous, not us
 	}
 	if len(listResp) == 0 {
 		return nil, nil // no listing / mis-framed / blocked -> not us
@@ -326,13 +338,18 @@ func (p *NoSQLPlugin) PortPriority(port uint16) bool { return port == 5000 }
 func (p *NoSQLPlugin) Name() string                  { return plugins.ProtoOracleNoSQL }
 func (p *NoSQLPlugin) Type() plugins.Protocol        { return plugins.TCP }
 
-// Priority 900 (matches oracledb). The scheduler sorts priority ASCENDING, so in
-// a full sweep the generic javarmi plugin (Priority 500) actually runs BEFORE
-// this one; that ordering is harmless because NoSQL bails to nil when the marker
-// is absent, leaving javarmi to report generic RMI. What matters here is fast
-// mode: NoSQL is the sole PortPriority claimant of 5000, so it is the one plugin
-// dispatched there and it wins that port regardless of the numeric priority.
-func (p *NoSQLPlugin) Priority() int { return 900 }
+// Priority 400 — deliberately BELOW the generic javarmi plugin (Priority 500).
+// The scheduler sorts priority ASCENDING, so this NoSQL plugin runs FIRST: it
+// gets to inspect the registry listing for the oracle.kv/NoSQL marker before
+// javarmi claims the endpoint. If the marker is absent it returns nil, leaving
+// javarmi (500) to report the generic RMI service. If NoSQL ran AFTER javarmi,
+// javarmi would match the RMI handshake and win (first non-nil result), and an
+// Oracle NoSQL registry would be misidentified as generic RMI — the "bail to
+// nil, let javarmi handle generic RMI" design requires NoSQL to run first.
+// NoSQL still bails to nil quickly on non-NoSQL ports, so running earlier only
+// reorders dispatch and adds no new probes. (Fast mode is unaffected: NoSQL is
+// the sole PortPriority claimant of 5000 and wins that port regardless.)
+func (p *NoSQLPlugin) Priority() int { return 400 }
 
 // ---------------------------------------------------------------------------
 // NoSQL over the HTTP proxy — port 8080 (conservative corroboration only)
@@ -370,8 +387,10 @@ func isOracleNoSQLProxy(resp *http.Response, body string) bool {
 		strings.Contains(loc, "ords") || strings.Contains(loc, "apex") {
 		return false
 	}
+	// Scan both the body and the Location header: a redirect may carry the product
+	// name in Location before any body is sent, so a marker there must still count.
 	for _, marker := range nosqlProxyMarkers {
-		if strings.Contains(lb, marker) {
+		if strings.Contains(lb, marker) || strings.Contains(loc, marker) {
 			return true
 		}
 	}
