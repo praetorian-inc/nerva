@@ -74,7 +74,7 @@ func fxDone() []byte {
 
 // fxBindSuccess => minimal LDAP anonymous bind success (msgID=2, resultCode=0).
 func fxBindSuccess() []byte {
-	return []byte{0x30, 0x0f, 0x02, 0x01, 0x02, 0x61, 0x07, 0x0a, 0x01, 0x00, 0x04, 0x00, 0x04, 0x00}
+	return []byte{0x30, 0x0c, 0x02, 0x01, 0x02, 0x61, 0x07, 0x0a, 0x01, 0x00, 0x04, 0x00, 0x04, 0x00}
 }
 
 // Realistic rootDSE fixtures (values sourced from Oracle docs / rootDSE samples).
@@ -426,7 +426,8 @@ func TestClassify_OrclAttributeEmptyValue_NotOID(t *testing.T) {
 // carries a non-empty value: the entry must still classify as OID (the empty
 // orcldirectoryversion is skipped in favor of the non-empty orclProductVersion),
 // with DirectoryVersion (sourced from orcldirectoryversion) empty and the CPE
-// version defaulting to the wildcard.
+// version recovered from the matched non-empty orcl* attribute
+// (orclProductVersion) rather than defaulting to the wildcard.
 func TestClassify_OrclEmptyValue_FallsThroughToNonEmptyOrclAttr(t *testing.T) {
 	entry := fxEntry(
 		fxPartialAttr("orcldirectoryversion", ""),
@@ -440,8 +441,8 @@ func TestClassify_OrclEmptyValue_FallsThroughToNonEmptyOrclAttr(t *testing.T) {
 	if svc.DirectoryVersion != "" {
 		t.Errorf("DirectoryVersion = %q, want empty (orcldirectoryversion was empty)", svc.DirectoryVersion)
 	}
-	if svc.CPEs[0] != "cpe:2.3:a:oracle:internet_directory:*:*:*:*:*:*:*:*" {
-		t.Errorf("cpe = %q, want wildcard version", svc.CPEs[0])
+	if svc.CPEs[0] != "cpe:2.3:a:oracle:internet_directory:12.2.1.3.0:*:*:*:*:*:*:*" {
+		t.Errorf("cpe = %q, want version recovered from orclProductVersion", svc.CPEs[0])
 	}
 }
 
@@ -610,6 +611,23 @@ func TestFindingEvidence_NoSensitiveData(t *testing.T) {
 			if strings.Contains(f.Evidence, marker) {
 				t.Errorf("finding %q Evidence leaks sensitive data (%q): %q", f.ID, marker, f.Evidence)
 			}
+		}
+	}
+}
+
+// TestExposureFinding_Wording pins the review-fix wording: exposureFinding
+// Descriptions must no longer reference LDAP "naming contexts" (the finding
+// only ever carries the product+version fact, never rootDSE DN data), and must
+// still mention that the directory vendor and version are exposed.
+func TestExposureFinding_Wording(t *testing.T) {
+	for _, product := range []string{"oid", "oud"} {
+		f := exposureFinding(product)
+		lower := strings.ToLower(f.Description)
+		if strings.Contains(lower, "naming context") {
+			t.Errorf("exposureFinding(%q) Description must not mention naming context, got %q", product, f.Description)
+		}
+		if !strings.Contains(lower, "vendor") || !strings.Contains(lower, "version") {
+			t.Errorf("exposureFinding(%q) Description must mention vendor and version, got %q", product, f.Description)
 		}
 	}
 }
@@ -785,6 +803,13 @@ func TestReadTLV_EdgeCases(t *testing.T) {
 		}
 	})
 
+	t.Run("indefinite length form (0x80) rejected", func(t *testing.T) {
+		_, _, _, ok := readTLV([]byte{0x04, 0x80, 0x01, 0x02, 0x03}, 0)
+		if ok {
+			t.Error("expected ok=false for unsupported BER indefinite length 0x80")
+		}
+	})
+
 	t.Run("reserved length form (0x83) rejected", func(t *testing.T) {
 		_, _, _, ok := readTLV([]byte{0x04, 0x83, 0x01, 0x02, 0x03}, 0)
 		if ok {
@@ -914,6 +939,119 @@ func TestParseRootDSE_BreaksOnTruncatedTrailingAttribute(t *testing.T) {
 // detect() network-error branches: bind failure, search failure/timeout, and
 // a well-formed-but-empty rootDSE response.
 // ---------------------------------------------------------------------------
+
+// runMockFragmented behaves like runMock's bind/search handshake, but splits
+// the SEARCH response into three separate TCP writes (entry first half, entry
+// second half, then SearchResultDone) with small sleeps between each write.
+// This exercises detect's bounded read loop (searchComplete), which must
+// accumulate reads across segments rather than assuming a complete
+// SearchResultEntry/SearchResultDone arrives in a single Recv call.
+func runMockFragmented(t *testing.T, entry []byte) (*plugins.ServiceOracleDirectory, bool) {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer listener.Close()
+	port := listener.Addr().(*net.TCPAddr).Port
+
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		buf := make([]byte, 4096)
+		if _, err := conn.Read(buf); err != nil { // anon bind
+			return
+		}
+		_, _ = conn.Write(fxBindSuccess())
+		if _, err := conn.Read(buf); err != nil { // rootDSE search
+			return
+		}
+		mid := len(entry) / 2
+		_, _ = conn.Write(entry[:mid])
+		time.Sleep(20 * time.Millisecond)
+		_, _ = conn.Write(entry[mid:])
+		time.Sleep(20 * time.Millisecond)
+		_, _ = conn.Write(fxDone())
+	}()
+
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 5*time.Second)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	return detect(conn, 2*time.Second)
+}
+
+func TestDetect_FragmentedSearchResponse_OUD(t *testing.T) {
+	svc, ok := runMockFragmented(t, fxOUDEntry())
+	if !ok || svc == nil || svc.Product != "oud" {
+		t.Fatalf("expected OUD detected across a fragmented SEARCH response, got %+v ok=%v", svc, ok)
+	}
+}
+
+func TestDetect_FragmentedSearchResponse_OID(t *testing.T) {
+	svc, ok := runMockFragmented(t, fxOIDEntry())
+	if !ok || svc == nil || svc.Product != "oid" {
+		t.Fatalf("expected OID detected across a fragmented SEARCH response, got %+v ok=%v", svc, ok)
+	}
+}
+
+// TestDetect_EmptyBindResponse_ShortCircuits guards the review-fix
+// short-circuit: when the anonymous bind response is empty (peer accepts the
+// connection, reads the bind request, then never replies so the client's
+// Recv times out and returns empty+nil), detect must return (nil,false)
+// immediately without ever sending the SEARCH request.
+func TestDetect_EmptyBindResponse_ShortCircuits(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer listener.Close()
+	port := listener.Addr().(*net.TCPAddr).Port
+
+	sawSecondRequest := make(chan bool, 1)
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		buf := make([]byte, 4096)
+		if _, err := conn.Read(buf); err != nil { // anon bind request
+			return
+		}
+		// Never respond to the bind. If detect() short-circuits correctly, no
+		// second (search) request will ever arrive on this connection; wait a
+		// short window to confirm silence rather than assuming it.
+		_ = conn.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
+		n, err := conn.Read(buf)
+		sawSecondRequest <- (err == nil && n > 0)
+	}()
+
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 5*time.Second)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	svc, ok := detect(conn, 100*time.Millisecond)
+	if ok || svc != nil {
+		t.Fatalf("expected detect to short-circuit on empty bind response, got %+v ok=%v", svc, ok)
+	}
+
+	select {
+	case got := <-sawSecondRequest:
+		if got {
+			t.Error("expected no second (search) request to be sent after an empty bind response")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for mock server to observe silence")
+	}
+}
 
 func TestDetect_BindFails_ReturnsFalse(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")

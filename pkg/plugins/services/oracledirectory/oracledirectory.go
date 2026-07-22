@@ -118,7 +118,11 @@ func readTLV(buf []byte, i int) (tag byte, content []byte, next int, ok bool) {
 		}
 		l = int(buf[j])<<8 | int(buf[j+1])
 		j += 2
-	case l > 0x82:
+	case l >= 0x80:
+		// Any high-bit-set length byte that is not the supported 0x81/0x82
+		// long forms is malformed/unsupported here: 0x80 is BER indefinite
+		// length (unsupported) and 0x83+ are longer definite forms not
+		// expected in a rootDSE reply.
 		return 0, nil, i, false
 	}
 	if j+l > len(buf) {
@@ -202,9 +206,16 @@ func classify(attrs map[string]string, names []string) (*plugins.ServiceOracleDi
 	// 1) OID: a returned attribute whose name (case-insensitive) begins with "orcl"
 	// AND carries a non-empty value. An echoed/empty key is not a marker.
 	for _, n := range names {
-		if strings.HasPrefix(strings.ToLower(n), "orcl") && attrs[strings.ToLower(n)] != "" {
+		ln := strings.ToLower(n)
+		if strings.HasPrefix(ln, "orcl") && attrs[ln] != "" {
 			raw := attrs["orcldirectoryversion"]
 			cpeVer := firstVersion(raw)
+			if cpeVer == "" {
+				// orcldirectoryversion is empty/absent: fall back to the
+				// matched non-empty orcl* attribute's value (e.g.
+				// orclProductVersion) before defaulting to the wildcard.
+				cpeVer = firstVersion(attrs[ln])
+			}
 			if cpeVer == "" {
 				cpeVer = "*"
 			}
@@ -241,15 +252,79 @@ func productVersion(svc *plugins.ServiceOracleDirectory) string {
 	return firstVersion(svc.VendorVersion)
 }
 
+// Bounds for the rootDSE SEARCH read loop. TCP may split the SearchResultEntry/
+// SearchResultDone across segments, so detect accumulates bytes until the response
+// is complete — but stays bounded (total bytes and iteration count) so a chatty or
+// hostile peer can never drive an unbounded read. Each read inherits pluginutils.Recv's
+// per-call 4096-byte cap and the connection timeout.
+const (
+	maxSearchResponse = 64 * 1024
+	maxSearchReads    = 16
+)
+
+// searchComplete reports whether buf already contains everything detect needs from
+// the SEARCH response: a complete top-level LDAPMessage carrying a SearchResultEntry
+// (protocolOp 0x64), or a SearchResultDone (0x65) marking the end of results. A
+// partially received trailing message (readTLV !ok) yields false so the caller reads
+// more; parsing here mirrors parseRootDSE's top-level walk.
+func searchComplete(buf []byte) bool {
+	pos := 0
+	for pos < len(buf) {
+		tag, msg, next, ok := readTLV(buf, pos)
+		if !ok {
+			return false // truncated trailing message: need more bytes
+		}
+		pos = next
+		if tag != 0x30 {
+			continue
+		}
+		_, _, p2, ok := readTLV(msg, 0) // msgID
+		if !ok {
+			continue
+		}
+		opTag, _, _, ok := readTLV(msg, p2) // protocolOp
+		if !ok {
+			continue
+		}
+		if opTag == 0x64 || opTag == 0x65 {
+			return true
+		}
+	}
+	return false
+}
+
 // detect performs an anonymous bind (best-effort; also confirms the peer speaks LDAP)
 // then a single base-scope rootDSE search, parses the entry, and classifies. Returns
 // (nil,false) if the peer is not an Oracle directory or the response is unusable.
 func detect(conn net.Conn, timeout time.Duration) (*plugins.ServiceOracleDirectory, bool) {
-	if _, err := utils.SendRecv(conn, anonBindRequest(), timeout); err != nil {
+	bindResp, err := utils.SendRecv(conn, anonBindRequest(), timeout)
+	if err != nil {
 		return nil, false
 	}
-	resp, err := utils.SendRecv(conn, buildRootDSESearch(), timeout)
-	if err != nil || len(resp) == 0 {
+	// An empty bind response (e.g. a silent/non-LDAP socket where Recv times out and
+	// returns empty + nil error) means the peer is not speaking LDAP; stop here rather
+	// than spending a second full timeout on the rootDSE search. The plugin runs at
+	// Priority -1 during full TCP scans on non-Oracle ports too.
+	if len(bindResp) == 0 {
+		return nil, false
+	}
+	if err := utils.Send(conn, buildRootDSESearch(), timeout); err != nil {
+		return nil, false
+	}
+	// Accumulate the SEARCH response across TCP segments until it is complete or a
+	// bound is hit. No extra requests or writes are issued (scanning-safe).
+	var resp []byte
+	for reads := 0; reads < maxSearchReads && len(resp) < maxSearchResponse; reads++ {
+		chunk, err := utils.Recv(conn, timeout)
+		if err != nil || len(chunk) == 0 {
+			break // read error, or empty read (timeout/EOF): stop with what we have
+		}
+		resp = append(resp, chunk...)
+		if searchComplete(resp) {
+			break
+		}
+	}
+	if len(resp) == 0 {
 		return nil, false
 	}
 	attrs, names := parseRootDSE(resp)
@@ -267,14 +342,14 @@ func exposureFinding(product string) plugins.SecurityFinding {
 		return plugins.SecurityFinding{
 			ID:          "oracle-oid-exposed",
 			Severity:    plugins.SeverityLow,
-			Description: "Oracle Internet Directory rootDSE is readable over an anonymous LDAP bind; the directory vendor, version, and naming contexts are exposed to unauthenticated clients, aiding targeted exploitation",
+			Description: "Oracle Internet Directory rootDSE is readable over an anonymous LDAP bind; the directory vendor and version are exposed to unauthenticated clients, aiding targeted exploitation",
 			Evidence:    "Oracle Internet Directory rootDSE returned Oracle directory attributes anonymously (no bind credentials)",
 		}
 	}
 	return plugins.SecurityFinding{
 		ID:          "oracle-oud-exposed",
 		Severity:    plugins.SeverityLow,
-		Description: "Oracle Unified Directory rootDSE is readable over an anonymous LDAP bind; the directory vendor, version, and naming contexts are exposed to unauthenticated clients, aiding targeted exploitation",
+		Description: "Oracle Unified Directory rootDSE is readable over an anonymous LDAP bind; the directory vendor and version are exposed to unauthenticated clients, aiding targeted exploitation",
 		Evidence:    "Oracle Unified Directory rootDSE returned vendor and version anonymously (no bind credentials)",
 	}
 }
