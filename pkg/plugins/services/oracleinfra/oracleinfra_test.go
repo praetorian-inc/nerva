@@ -15,6 +15,7 @@
 package oracleinfra
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -344,6 +345,33 @@ func TestFindingDefinitions(t *testing.T) {
 		assert.NotContains(t, strings.ToLower(f.Description), "ipmi")
 		assert.NotContains(t, strings.ToLower(f.Evidence), "ipmi")
 	}
+}
+
+// --- createHTTPClient single-dial guard (unit) ---
+
+// TestCreateHTTPClient_DialContextGuardRefusesSecondDial is a focused unit test
+// for the PR #384 re-review fix: the *http.Transport returned by
+// createHTTPClient hands out its single wrapped net.Conn on the first
+// DialContext call, then refuses (a clean, non-fatal error) any subsequent
+// dial rather than handing the same socket to a second concurrent caller,
+// which would otherwise corrupt the connection / race on it.
+func TestCreateHTTPClient_DialContextGuardRefusesSecondDial(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer server.Close()
+	conn, err := net.DialTimeout("tcp", strings.TrimPrefix(server.URL, "http://"), 5*time.Second)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	client := createHTTPClient(conn, 5*time.Second)
+	transport, ok := client.Transport.(*http.Transport)
+	require.True(t, ok, "createHTTPClient must configure an *http.Transport")
+
+	gotConn, err := transport.DialContext(context.Background(), "tcp", "ignored:0")
+	require.NoError(t, err, "the first dial must succeed and hand out the wrapped conn")
+	assert.Same(t, conn, gotConn)
+
+	_, err = transport.DialContext(context.Background(), "tcp", "ignored:0")
+	require.Error(t, err, "a second dial must be refused rather than handing out the same conn again")
 }
 
 // ---------------------------------------------------------------------------
@@ -784,7 +812,9 @@ func TestVBoxWebPlugin_DetectedViaFault(t *testing.T) {
 
 	assert.Equal(t, plugins.ProtoVirtualBoxWeb, svc.Protocol)
 	assert.Equal(t, "", svc.Version)
-	assert.False(t, svc.AnonymousAccess) // Service-level AnonymousAccess is not set by VBoxWebPlugin
+	// Regression (PR #384 re-review fix): VBoxWebPlugin.Run now sets
+	// service.AnonymousAccess alongside the finding under Misconfigs=true.
+	assert.True(t, svc.AnonymousAccess)
 
 	var payload plugins.ServiceVirtualBoxWeb
 	require.NoError(t, json.Unmarshal(svc.Raw, &payload))
@@ -808,6 +838,7 @@ func TestVBoxWebPlugin_DetectedViaGetVersionSuccess(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, svc)
 	assert.Equal(t, plugins.ProtoVirtualBoxWeb, svc.Protocol)
+	assert.False(t, svc.AnonymousAccess)  // Misconfigs=false -> AnonymousAccess stays false
 	assert.Empty(t, svc.SecurityFindings) // Misconfigs=false -> no findings
 }
 

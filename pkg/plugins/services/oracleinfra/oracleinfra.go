@@ -76,6 +76,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/praetorian-inc/nerva/pkg/plugins"
@@ -128,10 +129,16 @@ func init() {
 // createHTTPClient wraps the already-dialed conn in an http.Client that does not
 // follow redirects (so Location headers can be inspected directly).
 func createHTTPClient(conn net.Conn, timeout time.Duration) *http.Client {
+	// dialed guards against a re-dial: this transport wraps a single, already-dialed
+	// conn, so any second DialContext (e.g. a redirect to another host) must fail.
+	var dialed atomic.Bool
 	return &http.Client{
 		Timeout: timeout,
 		Transport: &http.Transport{
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				if dialed.Swap(true) {
+					return nil, fmt.Errorf("oracleinfra: single-connection transport already dialed")
+				}
 				return conn, nil
 			},
 		},
@@ -609,6 +616,7 @@ func (p *VBoxWebPlugin) Run(conn net.Conn, timeout time.Duration, target plugins
 	}
 	service := plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP)
 	if target.Misconfigs {
+		service.AnonymousAccess = true
 		service.SecurityFindings = append(service.SecurityFindings, vboxFinding())
 	}
 	return service, nil
