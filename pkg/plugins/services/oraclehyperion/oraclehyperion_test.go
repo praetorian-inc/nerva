@@ -193,52 +193,29 @@ func TestExtractTitle(t *testing.T) {
 	}
 }
 
-func TestIsRedirect(t *testing.T) {
-	tests := []struct {
-		name     string
-		code     int
-		expected bool
-	}{
-		{name: "301 moved permanently", code: http.StatusMovedPermanently, expected: true},
-		{name: "302 found", code: http.StatusFound, expected: true},
-		{name: "303 see other", code: http.StatusSeeOther, expected: true},
-		{name: "307 temporary redirect", code: http.StatusTemporaryRedirect, expected: true},
-		{name: "308 permanent redirect", code: http.StatusPermanentRedirect, expected: true},
-		{name: "200 is not a redirect", code: http.StatusOK, expected: false},
-		{name: "404 is not a redirect", code: http.StatusNotFound, expected: false},
-		{name: "500 is not a redirect", code: http.StatusInternalServerError, expected: false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.expected, isRedirect(tt.code))
-		})
-	}
-}
-
 func TestIsAnonymousExposure(t *testing.T) {
 	tests := []struct {
 		name     string
 		status   int
-		location string
 		expected bool
 	}{
-		{name: "200 with no location", status: 200, location: "", expected: true},
-		{name: "204 boundary", status: 204, location: "", expected: true},
-		{name: "299 boundary", status: 299, location: "", expected: true},
-		{name: "302 with location", status: 302, location: "/login", expected: true},
-		{name: "302 without location is not anonymous exposure", status: 302, location: "", expected: false},
-		{name: "301 with location", status: 301, location: "/x", expected: true},
-		{name: "308 with location", status: 308, location: "/somewhere", expected: true},
-		{name: "308 without location is not anonymous exposure", status: 308, location: "", expected: false},
-		{name: "403 branded is not anonymous exposure", status: 403, location: "Hyperion Shared Services", expected: false},
-		{name: "404 is not anonymous exposure", status: 404, location: "", expected: false},
-		{name: "500 is not anonymous exposure", status: 500, location: "", expected: false},
+		{name: "200 OK", status: http.StatusOK, expected: true},
+		{name: "204 boundary", status: 204, expected: true},
+		{name: "299 boundary", status: 299, expected: true},
+		{name: "301 moved permanently is not anonymous exposure", status: http.StatusMovedPermanently, expected: false},
+		{name: "302 found is not anonymous exposure", status: http.StatusFound, expected: false},
+		{name: "303 see other is not anonymous exposure", status: http.StatusSeeOther, expected: false},
+		{name: "307 temporary redirect is not anonymous exposure", status: http.StatusTemporaryRedirect, expected: false},
+		{name: "308 permanent redirect is not anonymous exposure", status: http.StatusPermanentRedirect, expected: false},
+		{name: "401 is not anonymous exposure", status: http.StatusUnauthorized, expected: false},
+		{name: "403 is not anonymous exposure", status: http.StatusForbidden, expected: false},
+		{name: "404 is not anonymous exposure", status: http.StatusNotFound, expected: false},
+		{name: "500 is not anonymous exposure", status: http.StatusInternalServerError, expected: false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.expected, isAnonymousExposure(tt.status, tt.location))
+			assert.Equal(t, tt.expected, isAnonymousExposure(tt.status))
 		})
 	}
 }
@@ -377,17 +354,17 @@ func TestEvaluateHyperion(t *testing.T) {
 			wantAnon:     true,
 		},
 		{
-			name:         "S3 via redirect Location",
+			name:         "S3 via redirect Location is detected without anon exposure",
 			evs:          []hyperionEvidence{hEv("/interop/", http.StatusFound, "/x?app=Hyperion Shared Services", "", "")},
 			wantSS:       true,
 			wantDetected: true,
-			wantAnon:     true,
+			wantAnon:     false,
 		},
 		{
-			name:         "S4 EPM cookie on 302 with Location",
+			name:         "S4 EPM cookie on 302 with Location is detected without anon exposure",
 			evs:          []hyperionEvidence{hEv("/workspace/index.jsp", http.StatusFound, "/login", "", "EPM_ROOT=a; Path=/")},
 			wantDetected: true,
-			wantAnon:     true,
+			wantAnon:     false,
 		},
 		{
 			name:         "S3 branded but on 403 is detected without anon exposure",
@@ -495,7 +472,7 @@ func TestEvaluateEssbaseREST(t *testing.T) {
 		wantAnon     bool
 	}{
 		{
-			name:         "name and 5-group version",
+			name:         "valid JSON name:Essbase with 5-component version",
 			ev:           essbaseRESTEvidence{statusCode: http.StatusOK, body: `{"name":"Essbase","version":"21.6.0.0.0"}`},
 			wantREST:     true,
 			wantVersion:  "21.6.0.0.0",
@@ -503,7 +480,7 @@ func TestEvaluateEssbaseREST(t *testing.T) {
 			wantAnon:     true,
 		},
 		{
-			name:         "name and 4-group version (regex boundary)",
+			name:         "valid JSON name:Essbase with 4-component version",
 			ev:           essbaseRESTEvidence{statusCode: http.StatusOK, body: `{"name":"Essbase","version":"21.2.3.0"}`},
 			wantREST:     true,
 			wantVersion:  "21.2.3.0",
@@ -511,20 +488,7 @@ func TestEvaluateEssbaseREST(t *testing.T) {
 			wantAnon:     true,
 		},
 		{
-			// CURRENT behavior: detection is gated ONLY on the name field, not
-			// on the version regex. A name-only body is still detected, with
-			// version left empty (the CPE builder emits the wildcard version).
-			name:         "name present, version absent: still detected, version stays empty",
-			ev:           essbaseRESTEvidence{statusCode: http.StatusOK, body: `{"name":"Essbase"}`},
-			wantREST:     true,
-			wantVersion:  "",
-			wantDetected: true,
-			wantAnon:     true,
-		},
-		{
-			// essbaseRestVersion now accepts 2-5 dot-separated components
-			// (`(\d+(?:\.\d+){1,4})`), so a 3-component version is captured.
-			name:         "name and 3-group version (now captured)",
+			name:         "valid JSON name:Essbase with 3-component version",
 			ev:           essbaseRESTEvidence{statusCode: http.StatusOK, body: `{"name":"Essbase","version":"21.2.3"}`},
 			wantREST:     true,
 			wantVersion:  "21.2.3",
@@ -532,9 +496,10 @@ func TestEvaluateEssbaseREST(t *testing.T) {
 			wantAnon:     true,
 		},
 		{
-			// 2-component version is the new lower bound (1 initial digit run
-			// plus a minimum of 1 additional `.digits` group).
-			name:         "name and 2-group version (new lower bound)",
+			// 2-component version is the lower bound accepted by
+			// essbaseVersionShape (1 initial digit run plus a minimum of 1
+			// additional `.digits` group).
+			name:         "valid JSON name:Essbase with 2-component version (lower bound)",
 			ev:           essbaseRESTEvidence{statusCode: http.StatusOK, body: `{"name":"Essbase","version":"21.2"}`},
 			wantREST:     true,
 			wantVersion:  "21.2",
@@ -542,11 +507,34 @@ func TestEvaluateEssbaseREST(t *testing.T) {
 			wantAnon:     true,
 		},
 		{
-			// The version capture is restricted to digits/dots immediately
-			// followed by a closing quote; attacker-controlled bytes after the
-			// digits (e.g. CPE separators) make the whole regex miss, so
-			// version stays empty rather than being truncated.
-			name:         "attacker-controlled version with CPE separators fails the digits-only capture",
+			// Detection is gated ONLY on the name field via json.Unmarshal, not
+			// on the version shape. A name-only body is still detected, with
+			// version left empty (the CPE builder emits the wildcard version).
+			name:         "valid JSON name:Essbase, no version: still detected, version stays empty",
+			ev:           essbaseRESTEvidence{statusCode: http.StatusOK, body: `{"name":"Essbase"}`},
+			wantREST:     true,
+			wantVersion:  "",
+			wantDetected: true,
+			wantAnon:     true,
+		},
+		{
+			// A single-component version ("21", no dot) fails
+			// essbaseVersionShape (which requires at least one additional
+			// `.digits` group) and is dropped; detection still succeeds via the
+			// name gate alone.
+			name:         "bad version shape (single component) is dropped, detection still succeeds",
+			ev:           essbaseRESTEvidence{statusCode: http.StatusOK, body: `{"name":"Essbase","version":"21"}`},
+			wantREST:     true,
+			wantVersion:  "",
+			wantDetected: true,
+			wantAnon:     true,
+		},
+		{
+			// essbaseVersionShape is fully anchored (^...$), so
+			// attacker-controlled bytes after the digits (e.g. CPE separators)
+			// make the whole shape check miss; version stays empty rather than
+			// being truncated.
+			name:         "attacker-controlled version with CPE separators fails the version shape",
 			ev:           essbaseRESTEvidence{statusCode: http.StatusOK, body: `{"name":"Essbase","version":"1.2.3.4:*:evil"}`},
 			wantREST:     true,
 			wantVersion:  "",
@@ -554,7 +542,15 @@ func TestEvaluateEssbaseREST(t *testing.T) {
 			wantAnon:     true,
 		},
 		{
-			name:         "no name gate: a generic product string is not sufficient",
+			name:         "valid JSON but non-Essbase name is not detected",
+			ev:           essbaseRESTEvidence{statusCode: http.StatusOK, body: `{"name":"Something"}`},
+			wantREST:     false,
+			wantVersion:  "",
+			wantDetected: false,
+			wantAnon:     false,
+		},
+		{
+			name:         "valid JSON with no name field is not detected",
 			ev:           essbaseRESTEvidence{statusCode: http.StatusOK, body: `{"product":"Essbase 21c"}`},
 			wantREST:     false,
 			wantVersion:  "",
@@ -562,7 +558,17 @@ func TestEvaluateEssbaseREST(t *testing.T) {
 			wantAnon:     false,
 		},
 		{
-			name:         "malformed non-JSON body",
+			// json.Unmarshal fails on a truncated/malformed body, so the name
+			// gate can never be reached.
+			name:         "malformed/truncated JSON body is not detected",
+			ev:           essbaseRESTEvidence{statusCode: http.StatusOK, body: `{"name":"Essbase"`},
+			wantREST:     false,
+			wantVersion:  "",
+			wantDetected: false,
+			wantAnon:     false,
+		},
+		{
+			name:         "non-JSON body is not detected",
 			ev:           essbaseRESTEvidence{statusCode: http.StatusOK, body: `not json`},
 			wantREST:     false,
 			wantVersion:  "",
@@ -570,7 +576,7 @@ func TestEvaluateEssbaseREST(t *testing.T) {
 			wantAnon:     false,
 		},
 		{
-			name:         "empty body",
+			name:         "empty body is not detected",
 			ev:           essbaseRESTEvidence{statusCode: http.StatusOK, body: ``},
 			wantREST:     false,
 			wantVersion:  "",
@@ -586,44 +592,24 @@ func TestEvaluateEssbaseREST(t *testing.T) {
 			wantAnon:     false,
 		},
 		{
-			name:         "name and version on 302 with Location is anon exposure",
+			name:         "name and version on 302 with Location is detected without anon exposure",
 			ev:           essbaseRESTEvidence{statusCode: http.StatusFound, location: "/login", body: `{"name":"Essbase","version":"21.6.0.0.0"}`},
 			wantREST:     true,
 			wantVersion:  "21.6.0.0.0",
 			wantDetected: true,
-			wantAnon:     true,
+			wantAnon:     false,
 		},
 		{
 			// Regression: an HTML page whose body merely happens to contain the
 			// literal substring "name":"Essbase" (e.g. an error/docs page) must
-			// NOT be detected. Without the JSON-envelope gate (a JSON
-			// Content-Type or a body starting with '{'), this text/html response
-			// would previously false-positive on the bare essbaseRestName regex
-			// match.
-			name: "HTML page with embedded name:Essbase substring is not detected (JSON-envelope gate)",
-			ev: essbaseRESTEvidence{
-				statusCode: http.StatusOK,
-				ctype:      "text/html",
-				body:       `<html><body>Error: unknown field "name":"Essbase" in request</body></html>`,
-			},
+			// NOT be detected: json.Unmarshal fails on the non-JSON HTML body,
+			// so the name gate is never reached.
+			name:         "HTML page with embedded name:Essbase substring is not detected",
+			ev:           essbaseRESTEvidence{statusCode: http.StatusOK, body: `<html><body>Error: unknown field "name":"Essbase" in request</body></html>`},
 			wantREST:     false,
 			wantVersion:  "",
 			wantDetected: false,
 			wantAnon:     false,
-		},
-		{
-			// Positive control for the same gate: a JSON Content-Type header
-			// (rather than a body-prefix '{') also satisfies isJSON.
-			name: "JSON Content-Type header satisfies the JSON-envelope gate",
-			ev: essbaseRESTEvidence{
-				statusCode: http.StatusOK,
-				ctype:      "application/json; charset=utf-8",
-				body:       `{"name":"Essbase","version":"21.6.0.0.0"}`,
-			},
-			wantREST:     true,
-			wantVersion:  "21.6.0.0.0",
-			wantDetected: true,
-			wantAnon:     true,
 		},
 	}
 
@@ -1078,13 +1064,12 @@ func TestEssbasePlugin_Run_MalformedJSON(t *testing.T) {
 	assert.Nil(t, service)
 }
 
-// TestEssbasePlugin_Run_HTMLPageEmbeddedNameSubstring is a regression test for
-// the JSON-envelope gate exercised through the real HTTP path (real
-// Content-Type header via detectEssbaseREST, not a hand-built
-// essbaseRESTEvidence). An HTML error/docs page whose body happens to contain
-// the literal substring "name":"Essbase", served with Content-Type: text/html
-// and not starting with '{', must NOT be detected. Before the fix this was a
-// false positive on the bare essbaseRestName regex match.
+// TestEssbasePlugin_Run_HTMLPageEmbeddedNameSubstring is a regression test
+// exercised through the real HTTP path (via detectEssbaseREST, not a
+// hand-built essbaseRESTEvidence). An HTML error/docs page whose body happens
+// to contain the literal substring "name":"Essbase" must NOT be detected:
+// json.Unmarshal fails on the non-JSON HTML body, so the name gate is never
+// reached.
 func TestEssbasePlugin_Run_HTMLPageEmbeddedNameSubstring(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -1202,9 +1187,9 @@ func TestHyperion_Gating_Misconfigs3xxLocation(t *testing.T) {
 
 	service, err := runPlugin(t, &HyperionPlugin{}, server.URL, true)
 	require.NoError(t, err)
-	require.NotNil(t, service)
-	assert.True(t, service.AnonymousAccess)
-	require.Len(t, service.SecurityFindings, 1)
+	require.NotNil(t, service, "the EPM cookie on a 302 still proves detection")
+	assert.False(t, service.AnonymousAccess, "a redirect is no longer anonymous access")
+	assert.Empty(t, service.SecurityFindings)
 }
 
 func TestHyperion_Gating_Misconfigs403Marker(t *testing.T) {
@@ -1453,7 +1438,20 @@ func TestHyperionPlugin_Run_RedirectNotFollowed(t *testing.T) {
 // values, to avoid -race flakiness.
 const agentTestTimeout = 300 * time.Millisecond
 
+// enableEssbaseAgent flips essbaseAgentEnabled to true for the duration of the
+// calling test, restoring the original value on cleanup. essbaseAgentEnabled
+// DEFAULTS TO FALSE (LAB-5054/PR#383), so any EssbaseAgentPlugin.Run()-level
+// test that needs to exercise the classifier past the enabled-gate must opt
+// in explicitly via this helper.
+func enableEssbaseAgent(t *testing.T) {
+	t.Helper()
+	original := essbaseAgentEnabled
+	essbaseAgentEnabled = func() bool { return true }
+	t.Cleanup(func() { essbaseAgentEnabled = original })
+}
+
 func TestEssbaseAgent_Run_SilentServer(t *testing.T) {
+	enableEssbaseAgent(t)
 	port := startAgentLoopback(t, func(conn net.Conn) {
 		defer conn.Close()
 		buf := make([]byte, 64)
@@ -1475,6 +1473,7 @@ func TestEssbaseAgent_Run_SilentServer(t *testing.T) {
 }
 
 func TestEssbaseAgent_Run_BinaryBlob(t *testing.T) {
+	enableEssbaseAgent(t)
 	port := startAgentLoopback(t, func(conn net.Conn) {
 		defer conn.Close()
 		buf := make([]byte, 64)
@@ -1503,6 +1502,7 @@ func TestEssbaseAgent_Run_BinaryBlob(t *testing.T) {
 }
 
 func TestEssbaseAgent_Run_HTTPResponse(t *testing.T) {
+	enableEssbaseAgent(t)
 	port := startAgentLoopback(t, func(conn net.Conn) {
 		defer conn.Close()
 		buf := make([]byte, 64)
@@ -1520,6 +1520,7 @@ func TestEssbaseAgent_Run_HTTPResponse(t *testing.T) {
 }
 
 func TestEssbaseAgent_Run_ASCIIBanner(t *testing.T) {
+	enableEssbaseAgent(t)
 	port := startAgentLoopback(t, func(conn net.Conn) {
 		defer conn.Close()
 		buf := make([]byte, 64)
@@ -1537,6 +1538,7 @@ func TestEssbaseAgent_Run_ASCIIBanner(t *testing.T) {
 }
 
 func TestEssbaseAgent_Run_BinaryBlob_MisconfigsTrue(t *testing.T) {
+	enableEssbaseAgent(t)
 	port := startAgentLoopback(t, func(conn net.Conn) {
 		defer conn.Close()
 		buf := make([]byte, 64)
@@ -1564,6 +1566,7 @@ func TestEssbaseAgent_Run_BinaryBlob_MisconfigsTrue(t *testing.T) {
 // (including the ReadError that results from an EOF on an immediately-closed
 // peer) and always returns (nil, nil), never (nil, err).
 func TestEssbaseAgent_Run_ConnectionClosedImmediately(t *testing.T) {
+	enableEssbaseAgent(t)
 	port := startAgentLoopback(t, func(conn net.Conn) {
 		_ = conn.Close()
 	})
@@ -1604,15 +1607,18 @@ func TestEssbaseAgent_Run_DisabledByEssbaseAgentEnabled(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-// TestEssbaseAgent_Run_EnabledByDefaultStillDetects confirms the default
-// (essbaseAgentEnabled == true) path is unaffected by the kill-switch and
-// still detects a genuinely binary reply, given a target on EssbaseAgentPort
-// (dialAgent fixes target.Address.Port() at 1423, satisfying the LAB-5054/
-// PR#383 port gate). This complements
-// TestEssbaseAgent_Run_DisabledByEssbaseAgentEnabled to prove the toggle only
-// suppresses detection when explicitly flipped off.
-func TestEssbaseAgent_Run_EnabledByDefaultStillDetects(t *testing.T) {
-	require.True(t, essbaseAgentEnabled(), "essbaseAgentEnabled must default to true")
+// TestEssbaseAgent_Run_DefaultDisabled_NoDetection confirms the DEFAULT
+// (essbaseAgentEnabled == false, LAB-5054/PR#383) path returns (nil, nil)
+// immediately, even for a reply that would otherwise be classified as the
+// Agent by isEssbaseAgent (a genuinely binary blob), given a target on
+// EssbaseAgentPort (dialAgent fixes target.Address.Port() at 1423, satisfying
+// the port gate). The 1423 Agent heuristic ships OFF by default because there
+// is no confirmed positive wire signature; see
+// TestEssbaseAgent_Run_DisabledByEssbaseAgentEnabled for the explicit-disable
+// path and TestEssbaseAgent_Run_BinaryBlob for the explicit opt-in that still
+// exercises the classifier.
+func TestEssbaseAgent_Run_DefaultDisabled_NoDetection(t *testing.T) {
+	require.False(t, essbaseAgentEnabled(), "essbaseAgentEnabled must default to false")
 
 	port := startAgentLoopback(t, func(conn net.Conn) {
 		defer conn.Close()
@@ -1626,8 +1632,8 @@ func TestEssbaseAgent_Run_EnabledByDefaultStillDetects(t *testing.T) {
 	plugin := &EssbaseAgentPlugin{}
 	service, err := plugin.Run(conn, agentTestTimeout, target)
 
-	require.NoError(t, err)
-	require.NotNil(t, service)
+	assert.Nil(t, service, "Run must return nil by default, even for an otherwise-detecting binary reply")
+	assert.NoError(t, err)
 }
 
 // TestEssbaseAgent_Run_PortGate_NonAgentPortSuppressed is a regression test
@@ -1635,12 +1641,12 @@ func TestEssbaseAgent_Run_EnabledByDefaultStillDetects(t *testing.T) {
 // return (nil, nil) when target.Address.Port() is anything other than
 // EssbaseAgentPort (1423), even for a reply that would otherwise be
 // classified as the Agent by isEssbaseAgent (a genuinely binary blob), and
-// even though essbaseAgentEnabled defaults to true. This proves the port gate
-// closes the false-positive window where slow-lane TCP scans
+// even when essbaseAgentEnabled is explicitly enabled. This proves the port
+// gate closes the false-positive window where slow-lane TCP scans
 // (pkg/scan/simple_scan.go) invoke every plugin's Run regardless of
 // PortPriority, applying the weak binary-reply heuristic to arbitrary ports.
 func TestEssbaseAgent_Run_PortGate_NonAgentPortSuppressed(t *testing.T) {
-	require.True(t, essbaseAgentEnabled(), "essbaseAgentEnabled must default to true")
+	enableEssbaseAgent(t)
 
 	port := startAgentLoopback(t, func(conn net.Conn) {
 		defer conn.Close()

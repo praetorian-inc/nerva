@@ -64,6 +64,7 @@ package oraclehyperion
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -103,7 +104,7 @@ const (
 	EssbaseAgentPort = 1423
 
 	// maxResponseSize caps how much of each HTTP body is read.
-	maxResponseSize = int64(10 * 1024 * 1024)
+	maxResponseSize = int64(1 * 1024 * 1024) // 1 MiB: EPM markers appear early; bounds per-probe memory
 
 	// minAgentResponse is the length floor for a plausible binary Essbase Agent
 	// reply. Anything shorter (including an empty read from silence) is not a signal.
@@ -119,14 +120,20 @@ const (
 // cross-cutting miss. RE2 (linear-time), compiled once at package scope.
 var titlePattern = regexp.MustCompile(`(?is)<title[^>]*>(.*?)</title>`)
 
-// Essbase 21c REST /about regexes, compiled once. essbaseRestName is the gate:
-// the version is trusted only when the server-generated "name":"Essbase" field is
-// present in the same body. The version capture is restricted to digits and dots so
-// attacker-controlled bytes cannot inject CPE separators (see buildEssbaseCPE).
-var (
-	essbaseRestName    = regexp.MustCompile(`(?i)"name"\s*:\s*"Essbase"`)
-	essbaseRestVersion = regexp.MustCompile(`(?i)"version"\s*:\s*"(\d+(?:\.\d+){1,4})"`)
-)
+// essbaseAbout is the narrow projection of the Essbase 21c REST /about document.
+// The body is parsed with encoding/json into this fixed struct (never a regex over
+// the raw text), so a truncated/malformed JSON body or an HTML page that merely
+// contains the "name":"Essbase" substring cannot satisfy the gate.
+type essbaseAbout struct {
+	Name    string `json:"name"`
+	Version string `json:"version"`
+}
+
+// essbaseVersionShape restricts an accepted /about "version" to a digits/dots shape
+// so attacker-controlled bytes cannot inject CPE separators (see buildEssbaseCPE).
+// Version is best-effort and decoupled from detection: a version failing this shape
+// is dropped, detection still succeeds, and the CPE version stays wildcard.
+var essbaseVersionShape = regexp.MustCompile(`^\d+(?:\.\d+){1,4}$`)
 
 // HyperionPlugin detects the Oracle Hyperion EPM web tier over plain HTTP.
 type HyperionPlugin struct{}
@@ -211,31 +218,12 @@ func extractTitle(body string) string {
 	return ""
 }
 
-// isRedirect reports whether an HTTP status code is a redirect the plugin cares
-// about.
-func isRedirect(code int) bool {
-	return code == http.StatusMovedPermanently ||
-		code == http.StatusFound ||
-		code == http.StatusSeeOther ||
-		code == http.StatusTemporaryRedirect ||
-		code == http.StatusPermanentRedirect
-}
-
-// isAnonymousExposure reports whether a branded response actually demonstrates
-// unauthenticated reachability (P0-6). Detection may assert the product on a branded
-// response at any status, but AnonymousAccess / the SecurityFinding may only be set
-// when the branded evidence rode a 2xx, or a 3xx that carries a Location (a login
-// redirect is anonymous-reachability evidence). A branded 403/404/500 proves the
-// product is present but proves the OPPOSITE of anonymous access, so it must not
-// drive a finding.
-func isAnonymousExposure(statusCode int, location string) bool {
-	if statusCode >= 200 && statusCode < 300 {
-		return true
-	}
-	if isRedirect(statusCode) && location != "" {
-		return true
-	}
-	return false
+// isAnonymousExposure reports whether a marker-bearing response shows the product
+// reachable WITHOUT authentication. Only a 2xx success qualifies: a redirect (even
+// to a login page) means auth is being enforced, and a 4xx/5xx is not access - those
+// still identify the product but must not set AnonymousAccess or the exposure finding.
+func isAnonymousExposure(statusCode int) bool {
+	return statusCode >= 200 && statusCode < 300
 }
 
 // --- Oracle Hyperion EPM web tier ---
@@ -337,7 +325,7 @@ func evaluateHyperion(evs []hyperionEvidence) (sharedServices, planning, aps, de
 
 		if strong {
 			detected = true
-			if isAnonymousExposure(ev.statusCode, ev.location) {
+			if isAnonymousExposure(ev.statusCode) {
 				anonExposure = true
 			}
 		}
@@ -430,35 +418,36 @@ type essbaseRESTEvidence struct {
 	statusCode int
 	location   string
 	body       string
-	ctype      string
 }
 
 // evaluateEssbaseREST decides whether the /about response is a genuine Essbase 21c
-// REST document. DETECTION (P0) requires BOTH a JSON envelope AND the server-generated
-// "name":"Essbase" gate: the response must be JSON (a JSON Content-Type, or a body that
-// begins with '{') AND carry the "name":"Essbase" key/value. This JSON-envelope gate
-// prevents any HTML/docs/error page that merely contains the literal "name":"Essbase"
-// substring from being misclassified as Essbase. A bare 200 with HTML, a 401/403 with
-// no JSON, or a plain echo of the reflectable /essbase/rest/v1/about path fails one or
-// both conditions, so none of them assert the product (P0-8, P0-10).
+// REST document. DETECTION (P0) requires the body to parse as JSON into essbaseAbout
+// AND to carry a server-generated "name" of exactly "Essbase". The body is decoded
+// with encoding/json (into a fixed narrow struct, over an io.LimitReader-capped
+// body), so a truncated/malformed body like `{"name":"Essbase"` or an HTML page that
+// merely contains the "name":"Essbase" substring cannot pass. A bare 200 with HTML, a
+// 401/403 with no JSON, or a plain echo of the reflectable /essbase/rest/v1/about path
+// all fail the parse or the name gate, so none of them assert the product (P0-8, P0-10).
 //
 // VERSION (P1) is parsed SEPARATELY as best-effort and is deliberately decoupled from
-// detection: when a clean [0-9.]-shaped "version" is present in the same body it is
-// returned (feeding the oracle:essbase CPE and service.Version); when it is absent
-// detection STILL succeeds and version stays "" (buildEssbaseCPE emits the wildcard
-// cpe:2.3:a:oracle:essbase:*:...). The [0-9.]-only capture is the CPE-injection guard.
+// detection: only a clean digits/dots-shaped about.Version (essbaseVersionShape) is
+// returned (feeding the oracle:essbase CPE and service.Version); when it is absent or
+// malformed detection STILL succeeds and version stays "" (buildEssbaseCPE emits the
+// wildcard cpe:2.3:a:oracle:essbase:*:...). The shape check is the CPE-injection guard.
 func evaluateEssbaseREST(ev essbaseRESTEvidence) (rest bool, version string, detected, anonExposure bool) {
-	isJSON := strings.Contains(strings.ToLower(ev.ctype), "json") ||
-		strings.HasPrefix(strings.TrimSpace(ev.body), "{")
-	if !isJSON || !essbaseRestName.MatchString(ev.body) {
+	var about essbaseAbout
+	if err := json.Unmarshal([]byte(ev.body), &about); err != nil {
+		return false, "", false, false
+	}
+	if !strings.EqualFold(strings.TrimSpace(about.Name), "Essbase") {
 		return false, "", false, false
 	}
 	rest = true
 	detected = true
-	if m := essbaseRestVersion.FindStringSubmatch(ev.body); len(m) >= 2 {
-		version = m[1] // best-effort; absent version leaves the CPE wildcard
+	if essbaseVersionShape.MatchString(about.Version) {
+		version = about.Version // best-effort; malformed/absent leaves the CPE wildcard
 	}
-	anonExposure = isAnonymousExposure(ev.statusCode, ev.location)
+	anonExposure = isAnonymousExposure(ev.statusCode)
 	return rest, version, detected, anonExposure
 }
 
@@ -474,7 +463,6 @@ func detectEssbaseREST(client *http.Client, baseURL, host string) (rest bool, ve
 		statusCode: resp.StatusCode,
 		location:   resp.Header.Get("Location"),
 		body:       string(body),
-		ctype:      resp.Header.Get("Content-Type"),
 	}
 	_ = resp.Body.Close()
 	return evaluateEssbaseREST(ev)
@@ -482,7 +470,7 @@ func detectEssbaseREST(client *http.Client, baseURL, host string) (rest bool, ve
 
 // buildEssbaseCPE returns the CPE for Oracle Essbase. oracle:essbase is a confirmed
 // NVD token (verified 2026-07-22: 7 results, e.g. essbase:21.2, essbase:21.7.3.0.0).
-// The version is already digits/dots-validated by essbaseRestVersion, or "" (wildcard)
+// The version is already digits/dots-validated by essbaseVersionShape, or "" (wildcard)
 // on the agent path, so it cannot inject CPE separators (P0-5).
 func buildEssbaseCPE(version string) []string {
 	v := "*"
@@ -730,10 +718,12 @@ func (p *EssbaseTLSPlugin) Priority() int          { return -1 } // Runs before 
 
 // --- EssbaseAgentPlugin (TCP 1423, best-effort) ---
 
-// essbaseAgentEnabled gates the best-effort 1423 Agent probe. There is no
-// confirmed positive Essbase-agent signature, so this is a heuristic; flip to
-// `func() bool { return false }` to disable it entirely if field FPs appear.
-var essbaseAgentEnabled = func() bool { return true }
+// essbaseAgentEnabled gates the best-effort 1423 Agent probe. DISABLED BY
+// DEFAULT: there is no confirmed positive Essbase-agent wire signature, so the
+// binary heuristic would risk false positives on unrelated binary services.
+// Flip to `func() bool { return true }` to enable it once a live capture yields
+// a real magic-byte signature. Essbase is still detected via the HTTP REST tier.
+var essbaseAgentEnabled = func() bool { return false }
 
 // Run performs the best-effort, low-confidence Essbase Agent listener probe. It sends
 // ONE benign probe and does ONE bounded read via utils.SendRecv (a fixed 4096-byte
