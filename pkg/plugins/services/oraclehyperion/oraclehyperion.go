@@ -91,6 +91,8 @@ const (
 	// DefaultHyperionPort is the default EPM Workspace port fronted by Oracle HTTP
 	// Server (OHS).
 	DefaultHyperionPort = 19000
+	// DefaultHyperionSecurePort is the SSL EPM Workspace port (non-SSL is 19000).
+	DefaultHyperionSecurePort = 19443
 	// DefaultEssbaseRESTPort / EssbaseRESTPortAlt are the Essbase 21c REST web-tier
 	// ports. They are split by transport: 9000 serves plaintext (non-SSL) REST and is
 	// claimed by the plaintext EssbasePlugin, while 9001 serves secured (HTTPS) REST
@@ -656,10 +658,12 @@ func (p *HyperionTLSPlugin) Run(conn net.Conn, timeout time.Duration, target plu
 	return service, nil
 }
 
-func (p *HyperionTLSPlugin) PortPriority(port uint16) bool { return port == 443 }
-func (p *HyperionTLSPlugin) Name() string                  { return OracleHyperion }
-func (p *HyperionTLSPlugin) Type() plugins.Protocol        { return plugins.TCPTLS }
-func (p *HyperionTLSPlugin) Priority() int                 { return -1 } // Runs before generic HTTPS so it can claim Hyperion on shared ports (e.g. 443)
+func (p *HyperionTLSPlugin) PortPriority(port uint16) bool {
+	return port == 443 || port == DefaultHyperionSecurePort
+}
+func (p *HyperionTLSPlugin) Name() string           { return OracleHyperion }
+func (p *HyperionTLSPlugin) Type() plugins.Protocol { return plugins.TCPTLS }
+func (p *HyperionTLSPlugin) Priority() int          { return -1 } // Runs before generic HTTPS so it can claim Hyperion on shared ports (e.g. 443)
 
 // --- EssbasePlugin (TCP, 21c REST) ---
 

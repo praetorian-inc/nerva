@@ -1672,6 +1672,7 @@ func TestPluginMetadata(t *testing.T) {
 		assert.True(t, p.PortPriority(DefaultHyperionPort))
 		assert.False(t, p.PortPriority(443))
 		assert.False(t, p.PortPriority(80))
+		assert.False(t, p.PortPriority(DefaultHyperionSecurePort))
 	})
 
 	t.Run("HyperionTLSPlugin", func(t *testing.T) {
@@ -1682,6 +1683,7 @@ func TestPluginMetadata(t *testing.T) {
 		assert.True(t, p.PortPriority(443))
 		assert.False(t, p.PortPriority(DefaultHyperionPort))
 		assert.False(t, p.PortPriority(80))
+		assert.True(t, p.PortPriority(DefaultHyperionSecurePort))
 	})
 
 	t.Run("EssbasePlugin", func(t *testing.T) {
