@@ -169,6 +169,10 @@ const (
 	ProtoOracleGoldenGate  = "oracle_goldengate"
 	ProtoOracleForms       = "oracle_forms"
 	ProtoOracleReports     = "oracle_reports"
+	ProtoOracleILOM        = "oracle_ilom"
+	ProtoOracleODI         = "oracle_odi"
+	ProtoOracleOLVM        = "oracle_olvm"
+	ProtoVirtualBoxWeb     = "virtualbox_web"
 	ProtoPCOM              = "pcom"
 	ProtoPFCP              = "pfcp"
 	ProtoPinecone          = "pinecone"
@@ -513,6 +517,14 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoOracleReports:
 		var p ServiceOracleReports
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoOracleILOM, ProtoOracleODI, ProtoOracleOLVM:
+		var p ServiceOracleInfra
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoVirtualBoxWeb:
+		var p ServiceVirtualBoxWeb
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoOMRONFINS:
@@ -1640,6 +1652,40 @@ type ServiceOracleReports struct {
 }
 
 func (e ServiceOracleReports) Type() string { return ProtoOracleReports }
+
+// ServiceOracleInfra is the shared union payload for the Oracle infrastructure
+// bundle HTTP detector (ILOM, Oracle Data Integrator, OLVM). The emitted
+// technology is discriminated dynamically by Product via Type() (GlassFish
+// precedent). Version (ILOM firmware, ODI/OLVM version when known) flows through
+// CreateServiceFrom into service.Version; Firmware is retained on the struct
+// because it also drives the ILOM CPE.
+type ServiceOracleInfra struct {
+	Product  string   `json:"product"`            // "ilom" | "odi" | "olvm"
+	Firmware string   `json:"firmware,omitempty"` // ILOM Redfish Manager FirmwareVersion
+	Redfish  bool     `json:"redfish,omitempty"`  // ILOM: Redfish service root present
+	Console  bool     `json:"console,omitempty"`  // ODI: /odiconsole/ present
+	CPEs     []string `json:"cpes,omitempty"`
+}
+
+// Type discriminates the emitted technology from the Product field.
+func (e ServiceOracleInfra) Type() string {
+	switch e.Product {
+	case "odi":
+		return ProtoOracleODI
+	case "olvm":
+		return ProtoOracleOLVM
+	default:
+		return ProtoOracleILOM
+	}
+}
+
+// ServiceVirtualBoxWeb is the payload for the VirtualBox web service
+// (vboxwebsrv) SOAP endpoint on 18083.
+type ServiceVirtualBoxWeb struct {
+	CPEs []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceVirtualBoxWeb) Type() string { return ProtoVirtualBoxWeb }
 
 type ServicePCOM struct {
 	Model     string   `json:"model,omitempty"`

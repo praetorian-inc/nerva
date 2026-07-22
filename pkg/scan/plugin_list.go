@@ -110,6 +110,7 @@ import (
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/oraclegoldengate"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/oraclehttp"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/oracleidentity"
+	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/oracleinfra"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/oracleords"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/pcworx"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/peoplesoft"
