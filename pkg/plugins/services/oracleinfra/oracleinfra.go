@@ -41,7 +41,8 @@ Detection (each product requires a product-specific Oracle marker):
     only (surfaced via CheckTLS under --misconfigs), never a standalone trigger.
 
   ODI: GET /oraclediagent/agentping requiring an ODI-specific token (a bare 200
-    is not sufficient), and GET /odiconsole/ (Oracle-branded title or ADF /afr/).
+    is not sufficient), and GET /odiconsole/ (non-404 with an "Oracle Data
+    Integrator" title; the generic ADF /afr/ prefix alone is not sufficient).
 
   OLVM: GET /ovirt-engine/ + /ovirt-engine/api, requiring an ovirt-engine
     presence marker AND Oracle/OLVM branding. A generic upstream oVirt / RHV
@@ -49,8 +50,10 @@ Detection (each product requires a product-specific Oracle marker):
 
   VirtualBox: a single unauthenticated, read-only IVirtualBox_getVersion SOAP
     POST (empty object reference); identified by the vbox namespace
-    http://www.virtualbox.org/ in the SOAP fault. Never logon/session/state
-    change, never credentials.
+    http://www.virtualbox.org/ TOGETHER WITH a vbox-specific response/fault
+    element (getVersionResponse, or an InvalidObjectFault / RuntimeFault vbox
+    fault) that a request-echoing SOAP server would not add. Never
+    logon/session/state change, never credentials.
 
 Scanning safety: all HTTP probes are read-only GETs to fixed paths with
 no-redirect and LimitReader-bounded bodies; the VirtualBox probe is a single
@@ -324,12 +327,13 @@ func parseODIVersion(body string) string {
 	return ""
 }
 
-// isODIConsole reports whether the /odiconsole/ response is Oracle-branded (an
-// Oracle Data Integrator title or an ADF /afr/ static reference). A bare 200 is
-// insufficient.
-func isODIConsole(title, body string) bool {
-	return strings.Contains(strings.ToLower(title), "oracle data integrator") ||
-		strings.Contains(body, "/afr/")
+// isODIConsole reports whether the /odiconsole/ response carries the
+// ODI-specific "Oracle Data Integrator" title (case-insensitive). The generic
+// ADF /afr/ static prefix is emitted by EVERY Oracle ADF/WebLogic app, so it is
+// NOT accepted on its own; only the ODI title classifies. The caller additionally
+// requires a non-404 status (a branded ADF 404 page must not classify).
+func isODIConsole(title string) bool {
+	return strings.Contains(strings.ToLower(title), "oracle data integrator")
 }
 
 // detectODI probes the standalone-agent liveness endpoint and the ODI Console.
@@ -348,7 +352,7 @@ func detectODI(client *http.Client, baseURL, host string) (version string, conso
 	if resp, err := doGet(client, baseURL+"/odiconsole/", host); err == nil {
 		status := resp.StatusCode
 		body := readBody(resp)
-		if isODIConsole(extractTitle(body), body) {
+		if status != http.StatusNotFound && isODIConsole(extractTitle(body)) {
 			detected = true
 			console = true
 			if isSuccessStatus(status) {
@@ -480,16 +484,22 @@ func runInfra(conn net.Conn, timeout time.Duration, target plugins.Target, tls b
 	return nil, nil
 }
 
-// finishInfra builds the service and, under --misconfigs, appends the product
-// exposure finding, sets AnonymousAccess only on a genuine 2xx, and (TLS only)
-// appends the generic TLS checks. Shared by both transport variants (DRY).
+// finishInfra builds the service and, under --misconfigs, sets AnonymousAccess
+// and appends the product exposure finding only on a genuine 2xx (anon), and
+// (TLS only) appends the generic TLS checks. Shared by both transport variants
+// (DRY).
 func finishInfra(conn net.Conn, target plugins.Target, payload plugins.ServiceOracleInfra, version string, tls bool, transport plugins.Protocol, anon bool, finding plugins.SecurityFinding) *plugins.Service {
 	service := plugins.CreateServiceFrom(target, payload, tls, version, transport)
 	if target.Misconfigs {
+		// AnonymousAccess and the "responded without credentials" exposure
+		// finding are asserted only when the surface actually answered
+		// anonymously on a 2xx. A product detected from a 401 challenge or a
+		// non-404 (auth-gated) response still emits the service (detection/CPE)
+		// but does not claim anonymous access.
 		if anon {
 			service.AnonymousAccess = true
+			service.SecurityFindings = append(service.SecurityFindings, finding)
 		}
-		service.SecurityFindings = append(service.SecurityFindings, finding)
 		if tls {
 			service.SecurityFindings = append(service.SecurityFindings, plugins.CheckTLS(conn)...)
 		}
@@ -534,22 +544,26 @@ const vboxSOAPBody = `<?xml version="1.0" encoding="UTF-8"?>
 </SOAP-ENV:Envelope>`
 
 // matchVBoxSOAP reports whether a response body carries the VirtualBox SOAP
-// namespace TOGETHER WITH a SOAP response/fault element that only a genuine
-// vboxwebsrv reply emits. The vbox namespace alone is insufficient: it is also
-// present in the request we POST (see vboxSOAPBody's xmlns:vbox declaration),
-// so a server that merely echoes our request body would otherwise match.
-// Requiring a response-only element (a getVersion response, a SOAP Fault, or a
-// returnval/faultstring) that our request never contains defeats that
-// echo-of-request self-reflection. A generic gSOAP / SOAP 500 without the vbox
-// namespace still does not match.
+// namespace TOGETHER WITH a vbox-SPECIFIC response/fault element that only a
+// genuine vboxwebsrv reply emits. The vbox namespace alone is insufficient: it
+// is also present in the request we POST (see vboxSOAPBody's xmlns:vbox
+// declaration), so a server that merely echoes our request body — including a
+// generic SOAP Fault that reflects our submitted XML in its fault detail — would
+// otherwise match. Generic SOAP tokens (Fault/faultstring/returnval) are
+// therefore NOT accepted: a request-echoing SOAP server carries our vbox
+// namespace plus its own generic Fault/faultstring wrapper. Instead we require a
+// vbox-specific element that our request never contains and a generic
+// fault-with-echo would not add: the getVersion response element, or a documented
+// vboxwebsrv fault type (InvalidObjectFault / RuntimeFault; see
+// protocol-research.md §4). A generic gSOAP / SOAP 500 without the vbox namespace
+// still does not match.
 func matchVBoxSOAP(body string) bool {
 	if !strings.Contains(body, "http://www.virtualbox.org/") {
 		return false
 	}
 	return strings.Contains(body, "getVersionResponse") ||
-		strings.Contains(body, "Fault") ||
-		strings.Contains(body, "returnval") ||
-		strings.Contains(body, "faultstring")
+		strings.Contains(body, "InvalidObjectFault") ||
+		strings.Contains(body, "RuntimeFault")
 }
 
 // detectVBoxWeb sends the single read-only getVersion SOAP POST and matches the

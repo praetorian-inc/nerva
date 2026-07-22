@@ -208,10 +208,14 @@ func TestParseODIVersion(t *testing.T) {
 }
 
 func TestIsODIConsole(t *testing.T) {
-	assert.True(t, isODIConsole("Oracle Data Integrator Console", ""))
-	assert.True(t, isODIConsole("", `<script src="/afr/partition/x"></script>`))
-	assert.False(t, isODIConsole("System Administration", "<html></html>"))
-	assert.False(t, isODIConsole("", ""))
+	assert.True(t, isODIConsole("Oracle Data Integrator Console"))
+	// Regression (review fix): isODIConsole dropped the body arg and no longer
+	// accepts the generic ADF /afr/ static prefix on its own -- it is emitted
+	// by every Oracle ADF/WebLogic app, so a title-like string carrying only
+	// "/afr/" must NOT classify as the ODI console.
+	assert.False(t, isODIConsole("/afr/partition/x"))
+	assert.False(t, isODIConsole("System Administration"))
+	assert.False(t, isODIConsole(""))
 }
 
 func TestHasOvirtPresence(t *testing.T) {
@@ -274,6 +278,7 @@ func TestEvaluateOLVM(t *testing.T) {
 func TestMatchVBoxSOAP(t *testing.T) {
 	assert.True(t, matchVBoxSOAP(`<vbox:IVirtualBox_getVersionResponse xmlns:vbox="http://www.virtualbox.org/"><returnval>7.0.14</returnval></vbox:IVirtualBox_getVersionResponse>`))
 	assert.True(t, matchVBoxSOAP(`<SOAP-ENV:Fault xmlns:vbox="http://www.virtualbox.org/"><faultstring>vbox:InvalidObjectFault</faultstring></SOAP-ENV:Fault>`))
+	assert.True(t, matchVBoxSOAP(`<SOAP-ENV:Fault xmlns:vbox="http://www.virtualbox.org/"><faultstring>vbox:RuntimeFault</faultstring></SOAP-ENV:Fault>`))
 	assert.False(t, matchVBoxSOAP(`<SOAP-ENV:Fault>generic gSOAP error</SOAP-ENV:Fault>`))
 	assert.False(t, matchVBoxSOAP(""))
 	// Regression (LAB-5055 self-reflection fix): the vbox namespace alone is
@@ -281,6 +286,14 @@ func TestMatchVBoxSOAP(t *testing.T) {
 	// (vboxSOAPBody), so a server that merely echoes our request verbatim
 	// (namespace present, no response/fault element) must NOT match.
 	assert.False(t, matchVBoxSOAP(vboxSOAPBody))
+	// Regression (review fix): the vbox namespace TOGETHER WITH a generic
+	// SOAP-ENV:Fault/faultstring -- but NO vbox-specific element
+	// (getVersionResponse/InvalidObjectFault/RuntimeFault) -- must NOT match.
+	// This is the core "request-echoing SOAP server" regression: a server that
+	// wraps our submitted vbox namespace in its own generic fault handler
+	// (rather than emitting a vbox-specific fault type) must not be classified
+	// as VirtualBox.
+	assert.False(t, matchVBoxSOAP(`<SOAP-ENV:Fault xmlns:vbox="http://www.virtualbox.org/"><faultstring>Internal Server Error</faultstring></SOAP-ENV:Fault>`))
 }
 
 func TestCPEBuilders(t *testing.T) {
@@ -532,6 +545,28 @@ func TestInfraPlugin_ODI_ConsoleOnlyOracleTitle(t *testing.T) {
 	assert.True(t, payload.Console)
 }
 
+// TestInfraPlugin_ODI_ConsoleBranded404NotDetected is a regression test for the
+// isODIConsole/detectODI review fix: a branded ADF 404 error page (carrying the
+// "Oracle Data Integrator" title text on a 404 status) must not be classified
+// as ODI -- detectODI now requires a non-404 status on the console path.
+func TestInfraPlugin_ODI_ConsoleBranded404NotDetected(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/odiconsole/":
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprint(w, `<html><head><title>Oracle Data Integrator Console</title></head><body>404 Not Found</body></html>`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	conn, target := dialTestServer(t, srv, false)
+	svc, err := (&InfraPlugin{}).Run(conn, 5*time.Second, target)
+	require.NoError(t, err)
+	assert.Nil(t, svc, "a branded ADF 404 page on /odiconsole/ must not be classified as ODI")
+}
+
 func TestInfraPlugin_ODIBareStatusWithoutTokenNotDetected(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -594,6 +629,37 @@ func TestInfraPlugin_ODI_AgentPingOracleDIAgentToken(t *testing.T) {
 	require.NotNil(t, svc)
 	assert.Equal(t, plugins.ProtoOracleODI, svc.Protocol)
 	assert.True(t, svc.AnonymousAccess)
+}
+
+// TestInfraPlugin_ODI_NonSuccessTokenResponseAnonFalse is a regression test for
+// the finishInfra review fix: a product detected via a non-404/non-2xx
+// (auth-gated) token response still emits the service and CPE, but
+// AnonymousAccess must remain false and no exposure finding must be appended.
+func TestInfraPlugin_ODI_NonSuccessTokenResponseAnonFalse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/oraclediagent/agentping":
+			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprint(w, `ODI-1battery agent alive`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	conn, target := dialTestServer(t, srv, true)
+	svc, err := (&InfraPlugin{}).Run(conn, 5*time.Second, target)
+	require.NoError(t, err)
+	require.NotNil(t, svc, "a non-404/non-2xx token response must still emit the service/CPE")
+
+	assert.Equal(t, plugins.ProtoOracleODI, svc.Protocol)
+	assert.False(t, svc.AnonymousAccess)
+
+	var payload plugins.ServiceOracleInfra
+	require.NoError(t, json.Unmarshal(svc.Raw, &payload))
+	require.Len(t, payload.CPEs, 1)
+
+	assert.Empty(t, svc.SecurityFindings, "no exposure finding when the response was not a genuine 2xx")
 }
 
 // --- OLVM ---
@@ -666,6 +732,40 @@ func TestInfraPlugin_UpstreamOVirtNotOLVM(t *testing.T) {
 	svc, err := (&InfraTLSPlugin{}).Run(conn, 5*time.Second, target)
 	require.NoError(t, err)
 	assert.Nil(t, svc, "generic upstream oVirt without Oracle/OLVM branding must not be classified as OLVM")
+}
+
+// TestInfraPlugin_OLVM_401ChallengeAnonFalse is a regression test for the
+// finishInfra review fix: OLVM detected via a 401 API challenge (presence)
+// plus Oracle/OLVM branding -- but not a genuine 2xx on the root surface --
+// still emits the service and CPE, but AnonymousAccess must remain false and
+// no exposure finding must be appended.
+func TestInfraPlugin_OLVM_401ChallengeAnonFalse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/ovirt-engine/":
+			w.WriteHeader(http.StatusUnauthorized)
+			fmt.Fprint(w, `<html><head><title>Oracle Linux Virtualization Manager</title></head></html>`)
+		case "/ovirt-engine/api":
+			w.WriteHeader(http.StatusUnauthorized)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	conn, target := dialTestServer(t, srv, true)
+	svc, err := (&InfraPlugin{}).Run(conn, 5*time.Second, target)
+	require.NoError(t, err)
+	require.NotNil(t, svc, "a 401 challenge + branding must still emit the service/CPE")
+
+	assert.Equal(t, plugins.ProtoOracleOLVM, svc.Protocol)
+	assert.False(t, svc.AnonymousAccess)
+
+	var payload plugins.ServiceOracleInfra
+	require.NoError(t, json.Unmarshal(svc.Raw, &payload))
+	require.Len(t, payload.CPEs, 1)
+
+	assert.Empty(t, svc.SecurityFindings, "no exposure finding when the root surface answered with a 401 challenge")
 }
 
 // --- VirtualBox web service ---
