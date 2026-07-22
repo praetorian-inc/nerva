@@ -507,6 +507,8 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoOracleEssbase:
 		var p ServiceOracleEssbase
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
 	case ProtoGlassFish, ProtoPayara:
 		var p ServiceGlassFish
 		_ = json.Unmarshal(e.Raw, &p)

@@ -1467,7 +1467,7 @@ func TestPluginMetadata(t *testing.T) {
 		assert.Equal(t, plugins.TCP, p.Type())
 		assert.Equal(t, -1, p.Priority())
 		assert.True(t, p.PortPriority(DefaultEssbaseRESTPort))
-		assert.True(t, p.PortPriority(EssbaseRESTPortAlt))
+		assert.False(t, p.PortPriority(EssbaseRESTPortAlt))
 		assert.False(t, p.PortPriority(443))
 		assert.False(t, p.PortPriority(80))
 	})
@@ -1479,7 +1479,7 @@ func TestPluginMetadata(t *testing.T) {
 		assert.Equal(t, -1, p.Priority())
 		assert.True(t, p.PortPriority(443))
 		assert.False(t, p.PortPriority(DefaultEssbaseRESTPort))
-		assert.False(t, p.PortPriority(EssbaseRESTPortAlt))
+		assert.True(t, p.PortPriority(EssbaseRESTPortAlt))
 	})
 
 	t.Run("EssbaseAgentPlugin", func(t *testing.T) {
