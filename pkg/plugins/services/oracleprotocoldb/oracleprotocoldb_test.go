@@ -22,7 +22,10 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/netip"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -275,6 +278,49 @@ func (c *splitReadConn) Read(b []byte) (int, error) {
 func httpOnce(statusLine, body string) func(net.Conn) {
 	raw := fmt.Sprintf("%s\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s", statusLine, len(body), body)
 	return writeOnce([]byte(raw))
+}
+
+// coherenceClientAndBaseURL spins up scriptedServer(t, behavior) and wraps the
+// dialed client conn in createCoherenceHTTPClient (the keep-alive client
+// shared by both Coherence HTTP plugins), returning the client plus baseURL
+// (built the same way Run() builds it: "http://"+conn.RemoteAddr()) so
+// detectCoherenceMetrics/detectCoherenceManagement can be exercised directly
+// with a single scripted round-trip. The caller still owns conn and must
+// defer conn.Close(), mirroring every other loopback helper in this file.
+func coherenceClientAndBaseURL(t *testing.T, behavior func(net.Conn)) (*http.Client, string, net.Conn) {
+	t.Helper()
+	conn, _ := scriptedServer(t, behavior)
+	client := createCoherenceHTTPClient(conn, shortTimeout)
+	return client, "http://" + conn.RemoteAddr().String(), conn
+}
+
+// dialHTTPTestServer dials an httptest.Server's address directly and returns
+// the raw client conn plus a matching Target. The conn is fed into
+// createCoherenceHTTPClient's DialContext exactly as
+// CoherenceHTTPPlugin/CoherenceHTTPTLSPlugin.Run feed it the framework-dialed
+// conn. httptest.Server is a real net/http server, so it natively answers
+// several sequential GETs over the ONE resulting keep-alive connection - the
+// Coherence HTTP detectors issue up to three (metrics, then the two
+// management paths) - without any hand-rolled request/response scripting.
+// Mirrors the identical helper already used by oraclegoldengate_test.go /
+// oracleidentity_test.go for their own HTTP-plugin Run() tests.
+func dialHTTPTestServer(t *testing.T, serverURL string) (net.Conn, plugins.Target) {
+	t.Helper()
+	hostPort := strings.TrimPrefix(serverURL, "http://")
+	host, portStr, err := net.SplitHostPort(hostPort)
+	require.NoError(t, err)
+	port, err := strconv.Atoi(portStr)
+	require.NoError(t, err)
+	addr := netip.AddrPortFrom(netip.MustParseAddr(host), uint16(port))
+
+	conn, err := net.DialTimeout("tcp", hostPort, 5*time.Second)
+	require.NoError(t, err)
+
+	target := plugins.Target{
+		Host:    addr.Addr().String(),
+		Address: addr,
+	}
+	return conn, target
 }
 
 // ---------------------------------------------------------------------------
@@ -1431,4 +1477,633 @@ func TestPluginMetadata(t *testing.T) {
 	// gets first look at the registry listing in a full sweep.
 	assert.Less(t, (&NoSQLPlugin{}).Priority(), 500,
 		"NoSQLPlugin priority must be below javarmi's 500 so it dispatches first")
+}
+
+// ---------------------------------------------------------------------------
+// Section 2.10: TestBuildCoherenceCPE / TestParseCoherenceManagement -
+// pure-function unit tests for the Coherence HTTP detectors' CPE assembly and
+// JSON marker rule.
+// ---------------------------------------------------------------------------
+
+func TestBuildCoherenceCPE(t *testing.T) {
+	assert.Equal(t, "cpe:2.3:a:oracle:coherence:22.06.10:*:*:*:*:*:*:*", buildCoherenceCPE("22.06.10"))
+	assert.Equal(t, "cpe:2.3:a:oracle:coherence:*:*:*:*:*:*:*:*", buildCoherenceCPE(""))
+}
+
+func TestParseCoherenceManagement(t *testing.T) {
+	tests := []struct {
+		name        string
+		body        string
+		wantOK      bool
+		wantVersion string
+		wantCluster string
+		wantLicense string
+	}{
+		{
+			"version + clusterName - detected",
+			`{"version":"22.06.10","clusterName":"root's cluster"}`,
+			true, "22.06.10", "root's cluster", "",
+		},
+		{
+			"version + licenseMode - detected",
+			`{"version":"22.06.10","licenseMode":"Development"}`,
+			true, "22.06.10", "", "Development",
+		},
+		{
+			"version + links[].href containing management/coherence, no clusterName/licenseMode - detected",
+			`{"version":"22.06.10","links":[{"rel":"self","href":"http://host:30000/management/coherence/cluster"}]}`,
+			true, "22.06.10", "", "",
+		},
+		{
+			"version present but no marker at all - not detected",
+			`{"version":"22.06.10","running":true}`,
+			false, "", "", "",
+		},
+		{
+			"marker present but no version - not detected",
+			`{"clusterName":"root's cluster","licenseMode":"Development"}`,
+			false, "", "", "",
+		},
+		{
+			"HTML body, not JSON - not detected",
+			`<html><body>Not JSON</body></html>`,
+			false, "", "", "",
+		},
+		{
+			"empty body - not detected",
+			``,
+			false, "", "", "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			res, ok := parseCoherenceManagement([]byte(tt.body))
+			assert.Equal(t, tt.wantOK, ok)
+			assert.Equal(t, tt.wantVersion, res.version)
+			assert.Equal(t, tt.wantCluster, res.clusterName)
+			assert.Equal(t, tt.wantLicense, res.licenseMode)
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Section 2.11: TestDetectCoherenceMetrics / TestDetectCoherenceManagement -
+// single-vector unit tests (loopback), isolating each HTTP vector from the
+// other before the full Run() matrix below.
+// ---------------------------------------------------------------------------
+
+// Real-capture-derived fixtures (Coherence CE 22.06.10, live validation - see
+// package doc and detectCoherenceHTTP's doc comment).
+const (
+	coherenceMetricsViaVendorBody = `vendor:coherence_cluster_size{cluster="root's cluster", version="22.06.10"} 1` + "\n"
+	// coherenceMetricsViaRoleOnlyBody deliberately contains NO "vendor:coherence_"
+	// substring anywhere, so it fires only the role="CoherenceServer" marker and
+	// the version stays unparsed.
+	coherenceMetricsViaRoleOnlyBody = "jvm_info{version=\"17\"} 1\n" +
+		`Coherence_Node_MemberIdentity{role="CoherenceServer"} 1` + "\n"
+	coherenceGenericPrometheusBody  = "go_gc_duration_seconds{quantile=\"0\"} 0\nprocess_cpu_seconds_total 1.2\n"
+	coherenceManagementFullPositive = `{"licenseMode":"Development","clusterSize":1,"version":"22.06.10","running":true,` +
+		`"clusterName":"root's cluster","members":["Member(Id=1, Role=CoherenceServer)"],` +
+		`"links":[{"rel":"self","href":"http://host:30000/management/coherence/cluster"}]}`
+)
+
+func TestDetectCoherenceMetrics(t *testing.T) {
+	t.Run("vendor:coherence_ marker present - detected, version parsed", func(t *testing.T) {
+		client, baseURL, conn := coherenceClientAndBaseURL(t, httpOnce("HTTP/1.1 200 OK", coherenceMetricsViaVendorBody))
+		defer conn.Close()
+
+		res, ok := detectCoherenceMetrics(client, baseURL, "")
+		require.True(t, ok)
+		assert.Equal(t, "22.06.10", res.version)
+		assert.Equal(t, "", res.clusterName)
+		assert.Equal(t, "", res.licenseMode)
+	})
+
+	t.Run(`role="CoherenceServer" marker only, no vendor:coherence_ prefix - detected, version empty`, func(t *testing.T) {
+		client, baseURL, conn := coherenceClientAndBaseURL(t, httpOnce("HTTP/1.1 200 OK", coherenceMetricsViaRoleOnlyBody))
+		defer conn.Close()
+
+		res, ok := detectCoherenceMetrics(client, baseURL, "")
+		require.True(t, ok)
+		assert.Equal(t, "", res.version)
+	})
+
+	t.Run("generic prometheus metrics, no Coherence marker - not detected", func(t *testing.T) {
+		client, baseURL, conn := coherenceClientAndBaseURL(t, httpOnce("HTTP/1.1 200 OK", coherenceGenericPrometheusBody))
+		defer conn.Close()
+
+		_, ok := detectCoherenceMetrics(client, baseURL, "")
+		assert.False(t, ok)
+	})
+
+	t.Run("404 response carrying a Coherence marker in the body - not detected (status filtered before body parse)", func(t *testing.T) {
+		client, baseURL, conn := coherenceClientAndBaseURL(t, httpOnce("HTTP/1.1 404 Not Found", coherenceMetricsViaVendorBody))
+		defer conn.Close()
+
+		_, ok := detectCoherenceMetrics(client, baseURL, "")
+		assert.False(t, ok)
+	})
+
+	t.Run("connection closed immediately - transport error, not detected", func(t *testing.T) {
+		client, baseURL, conn := coherenceClientAndBaseURL(t, closeImmediately)
+		defer conn.Close()
+
+		_, ok := detectCoherenceMetrics(client, baseURL, "")
+		assert.False(t, ok)
+	})
+}
+
+func TestDetectCoherenceManagement(t *testing.T) {
+	t.Run("cluster path positive on first try - detected via a single GET", func(t *testing.T) {
+		client, baseURL, conn := coherenceClientAndBaseURL(t, httpOnce("HTTP/1.1 200 OK", coherenceManagementFullPositive))
+		defer conn.Close()
+
+		res, ok := detectCoherenceManagement(client, baseURL, "")
+		require.True(t, ok)
+		assert.Equal(t, "22.06.10", res.version)
+		assert.Equal(t, "root's cluster", res.clusterName)
+		assert.Equal(t, "Development", res.licenseMode)
+	})
+
+	t.Run("cluster path 404, /management/coherence fallback positive - detected across two GETs", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/management/coherence/cluster":
+				w.WriteHeader(http.StatusNotFound)
+			case "/management/coherence":
+				fmt.Fprint(w, coherenceManagementFullPositive)
+			default:
+				w.WriteHeader(http.StatusNotFound)
+			}
+		}))
+		defer server.Close()
+
+		conn, _ := dialHTTPTestServer(t, server.URL)
+		defer conn.Close()
+		client := createCoherenceHTTPClient(conn, shortTimeout)
+		baseURL := "http://" + conn.RemoteAddr().String()
+
+		res, ok := detectCoherenceManagement(client, baseURL, "")
+		require.True(t, ok)
+		assert.Equal(t, "22.06.10", res.version)
+	})
+
+	t.Run("both management paths return 404 - not detected", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+		}))
+		defer server.Close()
+
+		conn, _ := dialHTTPTestServer(t, server.URL)
+		defer conn.Close()
+		client := createCoherenceHTTPClient(conn, shortTimeout)
+		baseURL := "http://" + conn.RemoteAddr().String()
+
+		_, ok := detectCoherenceManagement(client, baseURL, "")
+		assert.False(t, ok)
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Section 3.6: TestCoherenceHTTPPluginRun (loopback, httptest.Server -
+// CoherenceHTTPPlugin, plaintext HTTP)
+// ---------------------------------------------------------------------------
+
+func TestCoherenceHTTPPluginRun(t *testing.T) {
+	t.Run("metrics vendor:coherence_ marker - detected, version parsed, CPE carries version", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/metrics":
+				fmt.Fprint(w, coherenceMetricsViaVendorBody)
+			default:
+				w.WriteHeader(http.StatusNotFound)
+			}
+		}))
+		defer server.Close()
+
+		conn, target := dialHTTPTestServer(t, server.URL)
+		defer conn.Close()
+
+		svc, err := (&CoherenceHTTPPlugin{}).Run(conn, shortTimeout, target)
+		require.NoError(t, err)
+		require.NotNil(t, svc)
+		assert.Equal(t, plugins.ProtoOracleCoherence, svc.Protocol)
+		assert.Equal(t, "22.06.10", svc.Version)
+		assert.False(t, svc.TLS)
+
+		var payload plugins.ServiceOracleCoherence
+		require.NoError(t, json.Unmarshal(svc.Raw, &payload))
+		assert.True(t, payload.ViaHTTP)
+		assert.Equal(t, "", payload.ClusterName)
+		assert.Equal(t, "", payload.LicenseMode)
+		require.Len(t, payload.CPEs, 1)
+		assert.Equal(t, "cpe:2.3:a:oracle:coherence:22.06.10:*:*:*:*:*:*:*", payload.CPEs[0])
+	})
+
+	t.Run(`metrics role="CoherenceServer" marker only - detected, version empty, CPE wildcarded`, func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/metrics":
+				fmt.Fprint(w, coherenceMetricsViaRoleOnlyBody)
+			default:
+				w.WriteHeader(http.StatusNotFound)
+			}
+		}))
+		defer server.Close()
+
+		conn, target := dialHTTPTestServer(t, server.URL)
+		defer conn.Close()
+
+		svc, err := (&CoherenceHTTPPlugin{}).Run(conn, shortTimeout, target)
+		require.NoError(t, err)
+		require.NotNil(t, svc)
+		assert.Equal(t, "", svc.Version)
+
+		var payload plugins.ServiceOracleCoherence
+		require.NoError(t, json.Unmarshal(svc.Raw, &payload))
+		require.Len(t, payload.CPEs, 1)
+		assert.Equal(t, "cpe:2.3:a:oracle:coherence:*:*:*:*:*:*:*:*", payload.CPEs[0])
+	})
+
+	t.Run("metrics fails, management/cluster positive with clusterName+licenseMode - detected via fallback vector, metrics tried first", func(t *testing.T) {
+		var metricsHit, clusterHit bool
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/metrics":
+				metricsHit = true
+				fmt.Fprint(w, coherenceGenericPrometheusBody)
+			case "/management/coherence/cluster":
+				clusterHit = true
+				fmt.Fprint(w, coherenceManagementFullPositive)
+			default:
+				w.WriteHeader(http.StatusNotFound)
+			}
+		}))
+		defer server.Close()
+
+		conn, target := dialHTTPTestServer(t, server.URL)
+		defer conn.Close()
+
+		svc, err := (&CoherenceHTTPPlugin{}).Run(conn, shortTimeout, target)
+		require.NoError(t, err)
+		require.NotNil(t, svc)
+		assert.True(t, metricsHit, "metrics vector must be tried")
+		assert.True(t, clusterHit, "management vector must be tried after metrics fails")
+		assert.Equal(t, "22.06.10", svc.Version)
+
+		var payload plugins.ServiceOracleCoherence
+		require.NoError(t, json.Unmarshal(svc.Raw, &payload))
+		assert.Equal(t, "root's cluster", payload.ClusterName)
+		assert.Equal(t, "Development", payload.LicenseMode)
+	})
+
+	t.Run("metrics 404, management/cluster 404, management fallback positive - detected across all three GETs in order", func(t *testing.T) {
+		var order []string
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			order = append(order, r.URL.Path)
+			switch r.URL.Path {
+			case "/management/coherence":
+				fmt.Fprint(w, coherenceManagementFullPositive)
+			default:
+				w.WriteHeader(http.StatusNotFound)
+			}
+		}))
+		defer server.Close()
+
+		conn, target := dialHTTPTestServer(t, server.URL)
+		defer conn.Close()
+
+		svc, err := (&CoherenceHTTPPlugin{}).Run(conn, shortTimeout, target)
+		require.NoError(t, err)
+		require.NotNil(t, svc)
+		assert.Equal(t, []string{"/metrics", "/management/coherence/cluster", "/management/coherence"}, order,
+			"metrics must be tried before management, and the canonical /cluster path before the fallback path")
+		assert.Equal(t, "22.06.10", svc.Version)
+	})
+
+	t.Run("metrics and both management paths fail - not detected", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+		}))
+		defer server.Close()
+
+		conn, target := dialHTTPTestServer(t, server.URL)
+		defer conn.Close()
+
+		svc, err := (&CoherenceHTTPPlugin{}).Run(conn, shortTimeout, target)
+		require.NoError(t, err)
+		assert.Nil(t, svc)
+	})
+
+	t.Run("detection is not port-gated - fires on a custom port via the metrics vector", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/metrics":
+				fmt.Fprint(w, coherenceMetricsViaVendorBody)
+			default:
+				w.WriteHeader(http.StatusNotFound)
+			}
+		}))
+		defer server.Close()
+
+		conn, target := dialHTTPTestServer(t, server.URL)
+		defer conn.Close()
+		// Neither coherenceMetricsPort (9612) nor coherenceMgmtPort (30000).
+		target.Address = netip.AddrPortFrom(target.Address.Addr(), 9999)
+
+		svc, err := (&CoherenceHTTPPlugin{}).Run(conn, shortTimeout, target)
+		require.NoError(t, err)
+		require.NotNil(t, svc, "classification must not be port-gated")
+	})
+
+	t.Run("Misconfigs=true - AnonymousAccess and oracle-coherence-exposed finding", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/metrics":
+				fmt.Fprint(w, coherenceMetricsViaVendorBody)
+			default:
+				w.WriteHeader(http.StatusNotFound)
+			}
+		}))
+		defer server.Close()
+
+		conn, target := dialHTTPTestServer(t, server.URL)
+		defer conn.Close()
+		target.Misconfigs = true
+
+		svc, err := (&CoherenceHTTPPlugin{}).Run(conn, shortTimeout, target)
+		require.NoError(t, err)
+		require.NotNil(t, svc)
+		assert.True(t, svc.AnonymousAccess)
+		require.Len(t, svc.SecurityFindings, 1)
+		assert.Equal(t, "oracle-coherence-exposed", svc.SecurityFindings[0].ID)
+		assert.Equal(t, plugins.SeverityLow, svc.SecurityFindings[0].Severity)
+	})
+
+	t.Run("Misconfigs=false - no AnonymousAccess, no SecurityFindings", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/metrics":
+				fmt.Fprint(w, coherenceMetricsViaVendorBody)
+			default:
+				w.WriteHeader(http.StatusNotFound)
+			}
+		}))
+		defer server.Close()
+
+		conn, target := dialHTTPTestServer(t, server.URL)
+		defer conn.Close()
+		target.Misconfigs = false
+
+		svc, err := (&CoherenceHTTPPlugin{}).Run(conn, shortTimeout, target)
+		require.NoError(t, err)
+		require.NotNil(t, svc)
+		assert.False(t, svc.AnonymousAccess)
+		assert.Empty(t, svc.SecurityFindings)
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Section 3.6b: TestCoherenceHTTPPluginRun_ManagementAfterMetricsClose -
+// regression for the connection-handling fix documented in
+// detectCoherenceHTTP's doc comment: on a real Coherence management node
+// (Helidon), GET /metrics returns 404 and the server closes the TCP
+// connection immediately after that response, so the management vector must
+// NOT reuse the now-dead framework-injected conn - it must self-dial a FRESH
+// connection to target.Address. httptest.Server (used by every other
+// CoherenceHTTPPlugin.Run test above) keeps its keep-alive connection open
+// and therefore cannot reproduce the close; this test uses a raw
+// net.Listener with a scripted accept loop so the FIRST accepted connection
+// (the framework-injected one) can 404-then-close while every LATER accepted
+// connection (the self-dialed one) answers the management probe. Pre-fix,
+// the management vector would run over the dead injected conn, read an
+// empty reply, and Run would return nil; this test fails on that code and
+// passes once the self-dial is in place.
+// ---------------------------------------------------------------------------
+
+func TestCoherenceHTTPPluginRun_ManagementAfterMetricsClose(t *testing.T) {
+	// notFoundClose models Helidon's /metrics 404: the framework-injected
+	// conn always receives this on its one and only request, then the server
+	// closes the socket.
+	notFoundClose := []byte("HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n")
+
+	// acceptLoop starts a raw 127.0.0.1:0 listener whose FIRST accepted
+	// connection always gets notFoundClose (modeling the dead metrics conn),
+	// and every LATER accepted connection gets buildFreshResp(addr) (modeling
+	// the management vector's self-dial back to the same listener, since
+	// target.Address points at it). It returns the dialed framework conn
+	// (the first-accepted one) and a matching Target.
+	acceptLoop := func(t *testing.T, buildFreshResp func(addr string) []byte) (net.Conn, plugins.Target) {
+		t.Helper()
+
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = ln.Close() })
+
+		addrPort, ok := ln.Addr().(*net.TCPAddr)
+		require.True(t, ok, "listener address is not TCP")
+		freshResp := buildFreshResp(addrPort.String())
+
+		go func() {
+			accepted := 0
+			for {
+				c, aerr := ln.Accept()
+				if aerr != nil {
+					return
+				}
+				accepted++
+				isFirst := accepted == 1
+				go func(c net.Conn, isFirst bool) {
+					defer c.Close()
+					buf := make([]byte, 4096)
+					_, _ = c.Read(buf)
+					if isFirst {
+						_, _ = c.Write(notFoundClose)
+						return
+					}
+					_, _ = c.Write(freshResp)
+				}(c, isFirst)
+			}
+		}()
+
+		target := plugins.Target{
+			Host:       addrPort.IP.String(),
+			Address:    netip.MustParseAddrPort(addrPort.String()),
+			Misconfigs: true,
+		}
+
+		conn, err := net.DialTimeout("tcp", addrPort.String(), 5*time.Second)
+		require.NoError(t, err)
+		return conn, target
+	}
+
+	t.Run("metrics 404s and closes the injected conn - management self-dials a fresh conn to the same target and detects", func(t *testing.T) {
+		conn, target := acceptLoop(t, func(addr string) []byte {
+			body := fmt.Sprintf(
+				`{"licenseMode":"Development","clusterSize":1,"version":"22.06.10","running":true,"clusterName":"root's cluster","members":["Member(Id=1, ... Role=CoherenceServer)"],"links":[{"rel":"self","href":"http://%s/management/coherence/cluster"}]}`,
+				addr,
+			)
+			return []byte(fmt.Sprintf(
+				"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n%s",
+				len(body), body,
+			))
+		})
+		defer conn.Close()
+
+		svc, err := (&CoherenceHTTPPlugin{}).Run(conn, shortTimeout, target)
+		require.NoError(t, err)
+		require.NotNil(t, svc, "management vector must self-dial a fresh conn instead of reusing the dead metrics conn")
+		assert.Equal(t, plugins.ProtoOracleCoherence, svc.Protocol)
+		assert.Equal(t, "22.06.10", svc.Version)
+
+		var payload plugins.ServiceOracleCoherence
+		require.NoError(t, json.Unmarshal(svc.Raw, &payload))
+		assert.True(t, payload.ViaHTTP)
+		assert.Equal(t, "root's cluster", payload.ClusterName)
+		assert.Equal(t, "Development", payload.LicenseMode)
+	})
+
+	t.Run("metrics 404s and closes, fresh self-dial ALSO 404s for management - not detected", func(t *testing.T) {
+		conn, target := acceptLoop(t, func(addr string) []byte { return notFoundClose })
+		defer conn.Close()
+
+		svc, err := (&CoherenceHTTPPlugin{}).Run(conn, shortTimeout, target)
+		require.NoError(t, err)
+		assert.Nil(t, svc)
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Section 3.7: TestCoherenceHTTPTLSPluginRun (loopback, httptest.Server -
+// CoherenceHTTPTLSPlugin; CheckTLS is a documented no-op on a non-*tls.Conn -
+// see oracledirectory_test.go's identical TLS-parity pattern - so
+// detection/protocol parity is what is under test here, not certificate
+// inspection).
+// ---------------------------------------------------------------------------
+
+func TestCoherenceHTTPTLSPluginRun(t *testing.T) {
+	t.Run("positive detection - TLS flag set, protocol parity with the plain TCP variant", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/metrics":
+				fmt.Fprint(w, coherenceMetricsViaVendorBody)
+			default:
+				w.WriteHeader(http.StatusNotFound)
+			}
+		}))
+		defer server.Close()
+
+		conn, target := dialHTTPTestServer(t, server.URL)
+		defer conn.Close()
+
+		svc, err := (&CoherenceHTTPTLSPlugin{}).Run(conn, shortTimeout, target)
+		require.NoError(t, err)
+		require.NotNil(t, svc)
+		assert.True(t, svc.TLS)
+		assert.Equal(t, plugins.ProtoOracleCoherence, svc.Protocol,
+			"parity with plain TCP: same product Type() despite the distinct oracle_coherence_http registry Name()")
+		assert.Equal(t, "22.06.10", svc.Version)
+	})
+
+	t.Run("Misconfigs=true - exposed finding present; CheckTLS append path exercised without panic on a non-TLS conn", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/metrics":
+				fmt.Fprint(w, coherenceMetricsViaVendorBody)
+			default:
+				w.WriteHeader(http.StatusNotFound)
+			}
+		}))
+		defer server.Close()
+
+		conn, target := dialHTTPTestServer(t, server.URL)
+		defer conn.Close()
+		target.Misconfigs = true
+
+		svc, err := (&CoherenceHTTPTLSPlugin{}).Run(conn, shortTimeout, target)
+		require.NoError(t, err)
+		require.NotNil(t, svc)
+		assert.True(t, svc.AnonymousAccess)
+		require.NotEmpty(t, svc.SecurityFindings)
+		assert.Equal(t, "oracle-coherence-exposed", svc.SecurityFindings[0].ID)
+	})
+
+	t.Run("not detected - no marker on any vector", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+		}))
+		defer server.Close()
+
+		conn, target := dialHTTPTestServer(t, server.URL)
+		defer conn.Close()
+
+		svc, err := (&CoherenceHTTPTLSPlugin{}).Run(conn, shortTimeout, target)
+		require.NoError(t, err)
+		assert.Nil(t, svc)
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Section 4b: TestCoherenceHTTPPluginMetadata - PortPriority/Name/Type/
+// Priority for both HTTP variants. Kept separate from TestPluginMetadata
+// above: that table's "all Name() values distinct" invariant intentionally
+// does not hold here, since the plaintext/TLS HTTP variants share
+// oracleCoherenceHTTPName by design (differentiated by Protocol, not Name -
+// see oracleCoherenceHTTPName's doc comment).
+// ---------------------------------------------------------------------------
+
+func TestCoherenceHTTPPluginMetadata(t *testing.T) {
+	tests := []struct {
+		name         string
+		plugin       plugins.Plugin
+		wantType     plugins.Protocol
+		wantPriority int
+	}{
+		{"CoherenceHTTPPlugin", &CoherenceHTTPPlugin{}, plugins.TCP, -1},
+		{"CoherenceHTTPTLSPlugin", &CoherenceHTTPTLSPlugin{}, plugins.TCPTLS, -1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, oracleCoherenceHTTPName, tt.plugin.Name())
+			assert.Equal(t, tt.wantType, tt.plugin.Type())
+			assert.Equal(t, tt.wantPriority, tt.plugin.Priority())
+			assert.True(t, tt.plugin.PortPriority(coherenceMetricsPort), "PortPriority(9612) expected true")
+			assert.True(t, tt.plugin.PortPriority(coherenceMgmtPort), "PortPriority(30000) expected true")
+			assert.False(t, tt.plugin.PortPriority(coherencePort), "PortPriority(7574) expected false")
+			assert.False(t, tt.plugin.PortPriority(nosqlHTTPPort), "PortPriority(8080) expected false")
+		})
+	}
+
+	// The two HTTP variants deliberately share Name() (distinguished by
+	// Protocol). That name is, in turn, deliberately DISTINCT from the
+	// byte-heuristic CoherencePlugin's Name() (plugins.ProtoOracleCoherence) so
+	// the {Name, Protocol} registry key stays unique across all three
+	// Coherence plugins even though all three emit the same
+	// ServiceOracleCoherence product type.
+	assert.NotEqual(t, plugins.ProtoOracleCoherence, oracleCoherenceHTTPName)
+}
+
+// ---------------------------------------------------------------------------
+// Section 5: TestCoherencePluginsRegistered - registration/regression check.
+// Both the HTTP plugin (TCP + TCPTLS) and the byte-heuristic 7574 plugin must
+// exist in the package-level registry, and the heuristic's own behavior
+// (TestCoherencePluginRun above) is unaffected by the HTTP plugins' addition.
+// ---------------------------------------------------------------------------
+
+func TestCoherencePluginsRegistered(t *testing.T) {
+	tcpNames := make(map[string]bool)
+	for _, p := range plugins.Plugins[plugins.TCP] {
+		tcpNames[p.Name()] = true
+	}
+	tlsNames := make(map[string]bool)
+	for _, p := range plugins.Plugins[plugins.TCPTLS] {
+		tlsNames[p.Name()] = true
+	}
+
+	assert.True(t, tcpNames[oracleCoherenceHTTPName], "oracle_coherence_http must be registered under TCP")
+	assert.True(t, tlsNames[oracleCoherenceHTTPName], "oracle_coherence_http must be registered under TCPTLS")
+	assert.True(t, tcpNames[plugins.ProtoOracleCoherence],
+		"the oracle_coherence byte-heuristic plugin (port 7574) must remain registered under TCP")
 }

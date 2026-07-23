@@ -1617,11 +1617,18 @@ type ServiceOracleOIM struct {
 
 func (e ServiceOracleOIM) Type() string { return ProtoOracleOIM }
 
-// ServiceOracleCoherence identifies an Oracle Coherence data-grid node
-// (best-effort binary detection on the 7574 cluster/NameService port). No
-// version is exposed on the wire, so CPE is versionless.
+// ServiceOracleCoherence identifies an Oracle Coherence data-grid node. It is
+// emitted by two paths: the high-confidence HTTP detectors (ViaHTTP set — the
+// Prometheus /metrics endpoint and Management-over-REST, which expose an exact
+// version and cluster metadata) and the best-effort binary heuristic on the
+// 7574 cluster/NameService port (ViaHTTP unset — no version on the wire, so its
+// CPE is versionless). ClusterName and LicenseMode are populated only from the
+// Management-over-REST JSON.
 type ServiceOracleCoherence struct {
-	CPEs []string `json:"cpes,omitempty"`
+	ViaHTTP     bool     `json:"via_http,omitempty"`     // detected via the metrics/management HTTP surface
+	ClusterName string   `json:"cluster_name,omitempty"` // Management-over-REST clusterName
+	LicenseMode string   `json:"license_mode,omitempty"` // Management-over-REST licenseMode (e.g. "Development")
+	CPEs        []string `json:"cpes,omitempty"`
 }
 
 func (e ServiceOracleCoherence) Type() string { return ProtoOracleCoherence }

@@ -13,22 +13,36 @@
 // limitations under the License.
 
 /*
-Package oracleprotocoldb provides best-effort binary TCP fingerprinting for
-three proprietary Oracle data-grid / database protocols that expose no ASCII
-banner and no network-facing version string (LAB-5056). It registers four TCP
-plugins from a single init():
+Package oracleprotocoldb fingerprints several proprietary Oracle data-grid /
+database protocols (LAB-5056). It registers six plugins from a single init():
 
-  - CoherencePlugin  (oracle_coherence,   port 7574) — best-effort POF-shape heuristic
+  - CoherenceHTTPPlugin    (oracle_coherence, ports 9612/30000) — PRIMARY,
+    high-confidence Coherence detector over cleartext HTTP: the Prometheus
+    /metrics endpoint (vendor:coherence_* markers) and Management-over-REST
+    (/management/coherence/cluster JSON). Both expose an exact version and, for
+    management, cluster metadata. Not port-gated — the markers are unambiguous, so
+    the ports are only the fast-mode PortPriority defaults.
+  - CoherenceHTTPTLSPlugin (oracle_coherence, ports 9612/30000) — the same
+    high-confidence HTTP detector over a TLS-wrapped connection.
+  - CoherencePlugin        (oracle_coherence, port 7574) — LOW-CONFIDENCE,
+    best-effort binary POF-shape heuristic on the TCMP cluster/NameService port.
+    Real Coherence CE 7574 is silent to naive probes, so this vector cannot
+    reliably detect a live node; the HTTP detectors above are the reliable path.
+    It is gated behind coherenceHeuristicEnabled and biased hard to false-negative.
   - NoSQLPlugin      (oracle_nosql,        port 5000) — JRMP handshake + registry list()
     oracle.kv class-token marker
   - NoSQLHTTPPlugin  (oracle_nosql_http,   port 8080) — HTTP proxy product-name markers on
     any port (8080 is only the fast-mode PortPriority default, not a gate)
   - TimesTenPlugin   (oracle_timesten, ports 6624/6625) — malformed-HTTP reject signature
 
-Detection-only: none of these plugins emits a SecurityFinding, sets
-AnonymousAccess, or reports a version (all CPEs are versionless wildcards). Mere
-presence of a data service is not a misconfiguration, mirroring the sibling
-binary-protocol plugins oracledb, javarmi, and activemq.
+The binary detectors (Coherence 7574 heuristic, NoSQL, TimesTen) are
+detection-only: they emit no SecurityFinding, set no AnonymousAccess, and report
+no version (all their CPEs are versionless wildcards), mirroring the sibling
+binary-protocol plugins oracledb, javarmi, and activemq. The Coherence HTTP
+detectors additionally report the parsed version (in the CPE version component and
+Service.Version) and, under target.Misconfigs, an exposed-surface SecurityFinding
+with AnonymousAccess, mirroring the sibling Oracle HTTP plugins (oracleidentity,
+oraclegoldengate).
 
 Security invariants (all four plugins):
   - Every read goes through pluginutils.SendRecv/Recv (fixed 4 KB buffer per Read,
@@ -57,7 +71,9 @@ package oracleprotocoldb
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/binary"
+	"encoding/json"
 	"io"
 	"net"
 	"net/http"
@@ -75,10 +91,28 @@ const (
 	// unique, but both plugins emit the same ServiceOracleNoSQL product type.
 	oracleNoSQLHTTPName = "oracle_nosql_http"
 
+	// oracleCoherenceHTTPName is the registry Name() shared by both HTTP Coherence
+	// plugins (plaintext and TLS). It is distinct from the byte-heuristic plugin's
+	// name (ProtoOracleCoherence) so the {Name, Protocol} registry key is unique —
+	// the TCP heuristic already owns {TCP, oracle_coherence} — but all three
+	// plugins still emit the same ServiceOracleCoherence product type
+	// (ProtoOracleCoherence). The plaintext/TLS variants can share this one name
+	// because they differ by Protocol (TCP vs TCPTLS), mirroring the sibling
+	// oracleidentity OAM/OIM TCP+TLS variants.
+	oracleCoherenceHTTPName = "oracle_coherence_http"
+
 	// coherencePort is the Coherence NameService (cluster) port. The deliberately
 	// loose POF heuristic is only allowed to assert on this port (see
 	// CoherencePlugin.Run); PortPriority uses the same const.
 	coherencePort = 7574
+
+	// coherenceMetricsPort / coherenceMgmtPort are the Coherence Prometheus
+	// metrics and Management-over-REST default ports. They only govern fast-mode
+	// ordering via the HTTP plugins' PortPriority; HTTP classification is NOT
+	// port-gated — it rests solely on unambiguous Coherence markers (see
+	// detectCoherenceHTTP), so custom-port deployments are detected too.
+	coherenceMetricsPort = 9612
+	coherenceMgmtPort    = 30000
 
 	// coherenceMaxFrame bounds the length of a response the Coherence heuristic
 	// will consider a plausible NameService handshake frame (not a bulk stream).
@@ -156,6 +190,15 @@ var (
 	// application express" product names.
 	ordsApexRejectRe = regexp.MustCompile(
 		`\bords\b|\bapex\b|oracle rest data services|oracle application express`)
+
+	// coherenceMetricsVersionRe extracts the exact Coherence version from the
+	// version="X" label of a Prometheus vendor:coherence_ metric line (e.g.
+	// `vendor:coherence_cluster_size{cluster="...", version="22.06.10"} 1`). The
+	// [^\n]{0,512} span keeps the match confined to the single metric line that
+	// carries the vendor:coherence_ marker, and every quantifier is bounded per
+	// P1-3 (RE2 is backtracking-free, so this is ReDoS-immune).
+	coherenceMetricsVersionRe = regexp.MustCompile(
+		`vendor:coherence_[^\n]{0,512}version="([0-9][0-9.]{0,32})"`)
 )
 
 // nosqlProxyMarkers are lowercase NoSQL-Database-Proxy-specific tokens. A bare
@@ -179,12 +222,16 @@ var coherenceProbe = []byte{0x00}
 // timesTenProbe is the nmap GenericLines probe (two CRLFs). Inert.
 var timesTenProbe = []byte{0x0d, 0x0a, 0x0d, 0x0a}
 
+type CoherenceHTTPPlugin struct{}
+type CoherenceHTTPTLSPlugin struct{}
 type CoherencePlugin struct{}
 type NoSQLPlugin struct{}
 type NoSQLHTTPPlugin struct{}
 type TimesTenPlugin struct{}
 
 func init() {
+	plugins.RegisterPlugin(&CoherenceHTTPPlugin{})
+	plugins.RegisterPlugin(&CoherenceHTTPTLSPlugin{})
 	plugins.RegisterPlugin(&CoherencePlugin{})
 	plugins.RegisterPlugin(&NoSQLPlugin{})
 	plugins.RegisterPlugin(&NoSQLHTTPPlugin{})
@@ -682,16 +729,356 @@ func (p *TimesTenPlugin) Type() plugins.Protocol        { return plugins.TCP }
 func (p *TimesTenPlugin) Priority() int                 { return 900 }
 
 // ---------------------------------------------------------------------------
-// Coherence — port 7574 — MOST CONSERVATIVE, best-effort heuristic
+// Coherence over HTTP — ports 9612 (metrics) / 30000 (management) — PRIMARY,
+// HIGH-CONFIDENCE vectors
 // ---------------------------------------------------------------------------
+//
+// These are the reliable Coherence detectors. Live validation against a real
+// Coherence CE 22.06.10 node confirmed two unmistakable HTTP surfaces:
+//
+//  1. Prometheus metrics (default port 9612): GET /metrics returns text/plain
+//     lines like `vendor:coherence_cluster_size{cluster="...", version="22.06.10"} 1`.
+//     The vendor:coherence_ metric-name prefix (and/or role="CoherenceServer") is
+//     definitive, and the version="X" label carries the exact version.
+//  2. Management-over-REST (default port 30000): GET /management/coherence/cluster
+//     returns JSON with a version field plus Coherence markers (clusterName,
+//     licenseMode, a links[].href containing management/coherence).
+//
+// Classification rests SOLELY on those unambiguous markers, so both detectors are
+// FP-safe on ANY port and need no port gate — the ports above are only the
+// fast-mode PortPriority defaults. A bare 200 with no marker is never classified.
 
-// coherenceHeuristicEnabled gates the ENTIRE Coherence heuristic. There is no
-// confirmed public byte-level Coherence signature; this detector is best-effort
-// and may under-detect real nodes (that is intentional — a false negative is
-// preferred over a false positive). It is a package var (not a plain func) so it
-// stays the one-line disable switch: if field false-positives ever appear, set it
-// to `func() bool { return false }` to disable oracle_coherence detection with
-// zero other changes — and, being a var, a test can also flip it.
+// coherenceHTTPResult carries the metadata parsed from a positive HTTP detection.
+type coherenceHTTPResult struct {
+	version     string // exact Coherence version (metrics version= label or management JSON)
+	clusterName string // Management-over-REST clusterName (empty for the metrics vector)
+	licenseMode string // Management-over-REST licenseMode (empty for the metrics vector)
+}
+
+// coherenceMgmtResponse is the subset of the Management-over-REST cluster JSON
+// this plugin reads. Only these fields are decoded; the rest of the document is
+// ignored. JSON (unlike the RMI path) is safe to decode: encoding/json never
+// executes attacker-controlled types.
+type coherenceMgmtResponse struct {
+	Version     string `json:"version"`
+	ClusterName string `json:"clusterName"`
+	LicenseMode string `json:"licenseMode"`
+	Links       []struct {
+		Href string `json:"href"`
+	} `json:"links"`
+}
+
+// createCoherenceHTTPClient wraps a single net.Conn in an http.Client that does
+// not follow redirects. Keep-alives are LEFT ENABLED so the management vector can
+// issue its two sequential GETs (the canonical /management/coherence/cluster path
+// then the /management/coherence fallback) over the one conn — mirrors the sibling
+// oracleidentity / oraclegoldengate HTTP clients. It is used both for the metrics
+// probe (over the framework-injected conn) and for the management probe (over a
+// freshly self-dialed conn); the two probes never share a connection (see
+// detectCoherenceHTTP).
+func createCoherenceHTTPClient(conn net.Conn, timeout time.Duration) *http.Client {
+	return &http.Client{
+		Timeout: timeout,
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				return conn, nil
+			},
+		},
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+}
+
+// drainAndClose fully drains (bounded by maxHTTPBodySize) and then closes an HTTP
+// response body. Draining before Close is what lets net/http return the
+// connection to a clean, reusable state; a bare Close on an unread body leaves the
+// connection state indeterminate and can corrupt a later probe on that same conn.
+func drainAndClose(resp *http.Response) {
+	if resp == nil || resp.Body == nil {
+		return
+	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxHTTPBodySize))
+	_ = resp.Body.Close()
+}
+
+// doGet issues a GET with the nerva User-Agent and, when host is non-empty, a
+// target Host header for name-based virtual hosts (the conn is still dialed by IP
+// via the client's transport). Mirrors the sibling Oracle HTTP plugins.
+func doGet(client *http.Client, url string, host string) (*http.Response, error) {
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", httpUserAgent)
+	if host != "" {
+		req.Host = host
+	}
+	return client.Do(req)
+}
+
+// isSuccessStatus reports whether an HTTP status code is a 2xx success.
+func isSuccessStatus(code int) bool {
+	return code >= 200 && code < 300
+}
+
+// buildCoherenceCPE returns the Coherence CPE, filling the version component with
+// the parsed version when known and wildcarding it otherwise. String
+// concatenation avoids an fmt dependency (see itoa).
+func buildCoherenceCPE(version string) string {
+	if version == "" {
+		version = "*"
+	}
+	return "cpe:2.3:a:oracle:coherence:" + version + ":*:*:*:*:*:*:*"
+}
+
+// coherenceExposedFinding reports that an unauthenticated Coherence metrics /
+// management HTTP surface is reachable. Emitted only under target.Misconfigs,
+// mirroring the sibling oracleidentity findings. Evidence carries no response
+// bytes.
+func coherenceExposedFinding() plugins.SecurityFinding {
+	return plugins.SecurityFinding{
+		ID:          "oracle-coherence-exposed",
+		Severity:    plugins.SeverityLow,
+		Description: "Oracle Coherence management/metrics HTTP surface is reachable without authentication; the Coherence Prometheus metrics and Management-over-REST endpoints are exposed to the network",
+		Evidence:    "Oracle Coherence metrics/management endpoints responded without credentials",
+	}
+}
+
+// detectCoherenceMetrics probes the Prometheus /metrics endpoint. It fires on the
+// definitive vendor:coherence_ metric-name prefix (or the role="CoherenceServer"
+// label) and, when present, parses the exact version from the version= label of a
+// vendor:coherence_ line. FN-safe: any transport error or missing marker yields
+// (…, false).
+func detectCoherenceMetrics(client *http.Client, baseURL, host string) (coherenceHTTPResult, bool) {
+	resp, err := doGet(client, baseURL+"/metrics", host)
+	if err != nil {
+		return coherenceHTTPResult{}, false
+	}
+	defer drainAndClose(resp)
+	if !isSuccessStatus(resp.StatusCode) {
+		return coherenceHTTPResult{}, false
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxHTTPBodySize))
+	text := string(body)
+	if !strings.Contains(text, "vendor:coherence_") &&
+		!strings.Contains(text, `role="CoherenceServer"`) {
+		return coherenceHTTPResult{}, false
+	}
+	res := coherenceHTTPResult{}
+	if m := coherenceMetricsVersionRe.FindStringSubmatch(text); len(m) >= 2 {
+		res.version = m[1]
+	}
+	return res, true
+}
+
+// detectCoherenceManagement probes Management-over-REST. It fires on JSON that
+// carries a version field AND a Coherence marker (clusterName, licenseMode, or a
+// links[].href containing management/coherence), parsing version, clusterName and
+// licenseMode. The canonical /management/coherence/cluster path is tried first,
+// then the /management/coherence fallback. FN-safe: any transport/JSON error or
+// missing marker yields (…, false).
+func detectCoherenceManagement(client *http.Client, baseURL, host string) (coherenceHTTPResult, bool) {
+	for _, path := range []string{"/management/coherence/cluster", "/management/coherence"} {
+		resp, err := doGet(client, baseURL+path, host)
+		if err != nil {
+			continue // non-fatal: try the fallback path
+		}
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxHTTPBodySize))
+		success := isSuccessStatus(resp.StatusCode)
+		drainAndClose(resp)
+		if !success {
+			continue
+		}
+		if res, ok := parseCoherenceManagement(body); ok {
+			return res, true
+		}
+	}
+	return coherenceHTTPResult{}, false
+}
+
+// parseCoherenceManagement decodes the management JSON and applies the marker
+// rule: a version field must be present AND at least one Coherence marker
+// (clusterName, licenseMode, or a links[].href containing management/coherence).
+// A bare JSON document with a version but no Coherence marker is deliberately not
+// classified.
+func parseCoherenceManagement(body []byte) (coherenceHTTPResult, bool) {
+	var m coherenceMgmtResponse
+	if err := json.Unmarshal(body, &m); err != nil {
+		return coherenceHTTPResult{}, false
+	}
+	if m.Version == "" {
+		return coherenceHTTPResult{}, false
+	}
+	marker := m.ClusterName != "" || m.LicenseMode != ""
+	if !marker {
+		for _, l := range m.Links {
+			if strings.Contains(l.Href, "management/coherence") {
+				marker = true
+				break
+			}
+		}
+	}
+	if !marker {
+		return coherenceHTTPResult{}, false
+	}
+	return coherenceHTTPResult{
+		version:     m.Version,
+		clusterName: m.ClusterName,
+		licenseMode: m.LicenseMode,
+	}, true
+}
+
+// detectCoherenceHTTP runs the two HTTP vectors in the fixed metrics-before-
+// management order, returning the parsed metadata and whether Coherence was
+// positively identified.
+//
+// The metrics vector runs over the framework-injected conn (it exposes the
+// version in a single GET). The management vector does NOT reuse that conn: on a
+// Coherence management node (Helidon) the /metrics probe returns 404 and the
+// server closes the TCP connection immediately after that response, so a
+// follow-up management GET reusing the same conn would land on a dead connection
+// and read an empty reply. The management probe therefore self-dials a fresh
+// connection to the target (mirroring the weblogic console corroborator), keeping
+// it independent of whatever state the metrics probe left the injected conn in.
+func detectCoherenceHTTP(conn net.Conn, timeout time.Duration, target plugins.Target, useTLS bool) (coherenceHTTPResult, bool) {
+	metricsClient := createCoherenceHTTPClient(conn, timeout)
+	baseURL := "http://" + conn.RemoteAddr().String()
+	if res, ok := detectCoherenceMetrics(metricsClient, baseURL, target.Host); ok {
+		return res, true
+	}
+	return detectCoherenceManagementFresh(target, timeout, useTLS)
+}
+
+// detectCoherenceManagementFresh runs the Management-over-REST vector on a
+// short-lived connection self-dialed to the target, so it cannot be poisoned by a
+// preceding /metrics probe that closed the framework conn. It is a no-op (…,
+// false) when the target has no concrete routable address (e.g. an unspecified
+// 0.0.0.0 from a proxied or unresolved scan), matching the weblogic self-dial
+// gate rather than misdialing.
+func detectCoherenceManagementFresh(target plugins.Target, timeout time.Duration, useTLS bool) (coherenceHTTPResult, bool) {
+	if !canSelfDialCoherence(target) {
+		return coherenceHTTPResult{}, false
+	}
+	conn, err := dialCoherenceConn(target, timeout, useTLS)
+	if err != nil {
+		return coherenceHTTPResult{}, false
+	}
+	defer func() { _ = conn.Close() }()
+	client := createCoherenceHTTPClient(conn, timeout)
+	baseURL := "http://" + conn.RemoteAddr().String()
+	return detectCoherenceManagement(client, baseURL, target.Host)
+}
+
+// canSelfDialCoherence reports whether the target has a concrete, routable address
+// for the management self-dial. When the address is unspecified we skip the
+// management vector rather than misdial a wrong local address or leak scan traffic
+// (mirrors weblogic's canSelfDialConsole).
+func canSelfDialCoherence(target plugins.Target) bool {
+	a := target.Address.Addr()
+	return a.IsValid() && !a.IsUnspecified()
+}
+
+// dialCoherenceConn opens a fresh short-lived connection to the target for the
+// management probe. The TLS variant mirrors the scanner's read-only cert posture
+// (skip-verify) since the certificate is only used for fingerprinting (mirrors
+// weblogic's dialConsoleConn).
+func dialCoherenceConn(target plugins.Target, timeout time.Duration, useTLS bool) (net.Conn, error) {
+	addr := target.Address.String()
+	if useTLS {
+		d := &net.Dialer{Timeout: timeout}
+		return tls.DialWithDialer(d, "tcp", addr, &tls.Config{
+			InsecureSkipVerify: true, // #nosec G402 -- fingerprinting; certificate is not trusted
+			ServerName:         target.Host,
+		})
+	}
+	return net.DialTimeout("tcp", addr, timeout)
+}
+
+// buildCoherenceHTTPService assembles the Service for a positive HTTP detection,
+// shared by the plaintext and TLS variants. tls selects the transport and, under
+// target.Misconfigs, an exposed-surface finding (plus TLS findings for the TLS
+// variant) is attached with AnonymousAccess, mirroring the sibling Oracle HTTP
+// plugins.
+func buildCoherenceHTTPService(conn net.Conn, target plugins.Target, res coherenceHTTPResult, useTLS bool) *plugins.Service {
+	payload := plugins.ServiceOracleCoherence{
+		ViaHTTP:     true,
+		ClusterName: res.clusterName,
+		LicenseMode: res.licenseMode,
+		CPEs:        []string{buildCoherenceCPE(res.version)},
+	}
+	transport := plugins.TCP
+	if useTLS {
+		transport = plugins.TCPTLS
+	}
+	service := plugins.CreateServiceFrom(target, payload, useTLS, res.version, transport)
+	if target.Misconfigs {
+		service.AnonymousAccess = true
+		service.SecurityFindings = append(service.SecurityFindings, coherenceExposedFinding())
+		if useTLS {
+			service.SecurityFindings = append(service.SecurityFindings, plugins.CheckTLS(conn)...)
+		}
+	}
+	return service
+}
+
+func (p *CoherenceHTTPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
+	res, detected := detectCoherenceHTTP(conn, timeout, target, false)
+	if !detected {
+		return nil, nil
+	}
+	return buildCoherenceHTTPService(conn, target, res, false), nil
+}
+
+func (p *CoherenceHTTPPlugin) PortPriority(port uint16) bool {
+	return port == coherenceMetricsPort || port == coherenceMgmtPort
+}
+func (p *CoherenceHTTPPlugin) Name() string           { return oracleCoherenceHTTPName }
+func (p *CoherenceHTTPPlugin) Type() plugins.Protocol { return plugins.TCP }
+
+// Priority -1 (matches the sibling Oracle HTTP plugins) so it can pre-empt the
+// generic HTTP fingerprinter on shared metrics/management ports and only claims
+// on an unambiguous Coherence marker.
+func (p *CoherenceHTTPPlugin) Priority() int { return -1 }
+
+func (p *CoherenceHTTPTLSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
+	res, detected := detectCoherenceHTTP(conn, timeout, target, true)
+	if !detected {
+		return nil, nil
+	}
+	return buildCoherenceHTTPService(conn, target, res, true), nil
+}
+
+func (p *CoherenceHTTPTLSPlugin) PortPriority(port uint16) bool {
+	return port == coherenceMetricsPort || port == coherenceMgmtPort
+}
+func (p *CoherenceHTTPTLSPlugin) Name() string           { return oracleCoherenceHTTPName }
+func (p *CoherenceHTTPTLSPlugin) Type() plugins.Protocol { return plugins.TCPTLS }
+func (p *CoherenceHTTPTLSPlugin) Priority() int          { return -1 }
+
+// ---------------------------------------------------------------------------
+// Coherence — port 7574 — LOW-CONFIDENCE, best-effort binary heuristic (FALLBACK)
+// ---------------------------------------------------------------------------
+//
+// This is NOT the reliable Coherence vector. Live validation showed a real
+// Coherence CE 22.06.10 node is SILENT on 7574 (the TCMP cluster/NameService
+// port) to naive probes and closes the connection, so this heuristic cannot
+// detect a live CE node. The HTTP metrics/management detectors above are the
+// dependable path; this heuristic is retained only as a best-effort fallback for
+// deployments that might answer the POF probe, and is biased hard to
+// false-negative. It runs only on port 7574 (see CoherencePlugin.Run) — disjoint
+// from the HTTP detectors' 9612/30000 — so it can never override a positive HTTP
+// detection.
+
+// coherenceHeuristicEnabled gates the ENTIRE 7574 byte heuristic. There is no
+// confirmed public byte-level Coherence signature and real CE nodes are silent on
+// 7574, so this detector is LOW-CONFIDENCE best-effort and may under-detect real
+// nodes (that is intentional — a false negative is preferred over a false
+// positive; the HTTP metrics/management vectors are the reliable detectors). It
+// is a package var (not a plain func) so it stays the one-line disable switch: if
+// field false-positives ever appear, set it to `func() bool { return false }` to
+// disable the 7574 heuristic with zero other changes — and, being a var, a test
+// can also flip it. It does NOT affect the HTTP detectors.
 var coherenceHeuristicEnabled = func() bool { return true }
 
 // looksLikeTLS reports a TLS record header (handshake, TLS 1.x).
