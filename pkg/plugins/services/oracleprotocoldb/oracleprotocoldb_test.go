@@ -169,6 +169,34 @@ func ackThenListing(ack, listing []byte) func(net.Conn) {
 	}
 }
 
+// ackThenSplitListing drains round 1, writes ack, drains round 2, then writes
+// the listing across TWO separate conn.Write calls: a marker-free prefix
+// followed by a suffix carrying the NoSQL marker. pluginutils.Recv performs
+// exactly one conn.Read() per call into a fixed 4096-byte buffer (requests.go),
+// so a prefix >4096 bytes guarantees the first Recv in NoSQLPlugin's round-2
+// read loop can only return (part of) the marker-free prefix; the marker only
+// becomes visible in the accumulated buffer once the loop consumes a second
+// Recv. This deterministically exercises the multi-read accumulation path
+// (no timing/sleep dependency): Read never returns more than the buffer size
+// regardless of how much of the two Writes has already arrived in the kernel
+// socket buffer.
+func ackThenSplitListing(ack, prefix, suffix []byte) func(net.Conn) {
+	return func(conn net.Conn) {
+		defer conn.Close()
+		drainOnce(conn)
+		if _, err := conn.Write(ack); err != nil {
+			return
+		}
+		drainOnce(conn)
+		if _, err := conn.Write(prefix); err != nil {
+			return
+		}
+		if len(suffix) > 0 {
+			_, _ = conn.Write(suffix)
+		}
+	}
+}
+
 // ackThenCloseBeforeRound2 writes the round-1 ack, then closes without ever
 // responding to round 2 (models a server that resets after the handshake).
 func ackThenCloseBeforeRound2(ack []byte) func(net.Conn) {
@@ -388,6 +416,14 @@ func TestIsOracleNoSQLProxy(t *testing.T) {
 		{"marker: oracle.kv", httpRespWithLocation(""), "oracle.kv", true},
 		{"marker: kvstore", httpRespWithLocation(""), "kvstore", true},
 		{"marker: nosql proxy", httpRespWithLocation(""), "nosql proxy", true},
+		{
+			"regression PR #385: 'ords' word-boundary fix - 'records' contains bare substring 'ords' but must not be rejected",
+			httpRespWithLocation(""), "Oracle NoSQL proxy records", true,
+		},
+		{
+			"regression PR #385: 'ords' word-boundary fix - 'keywords' contains bare substring 'ords' but must not be rejected",
+			httpRespWithLocation(""), "keywords: kvproxy", true,
+		},
 		{"bare 200, no marker", httpRespWithLocation(""), "<html>OK</html>", false},
 		{"marker + ords in body - ORDS reject precedes marker loop", httpRespWithLocation(""), "oracle nosql ords", false},
 		{"apex in body - APEX reject", httpRespWithLocation(""), "apex login", false},
@@ -423,6 +459,11 @@ func TestIsTimesTenHTTPReject(t *testing.T) {
 			true,
 		},
 		{"exact prefix, no tail", []byte("HTTP/1.0 400 msg=Bad%20Request&rc="), true},
+		{
+			"regression PR #385: HTTP/1.1 tolerance - exact prefix + binary tail",
+			append([]byte("HTTP/1.1 400 msg=Bad%20Request&rc="), 0x01, 0x02, 0x00),
+			true,
+		},
 		{"no rc= shape", []byte("HTTP/1.0 400 Bad Request"), false},
 		{"well-formed generic 400", []byte("HTTP/1.1 400 Bad Request\r\nServer: x\r\n\r\n"), false},
 		{"empty", []byte{}, false},
@@ -721,6 +762,21 @@ func TestNoSQLPluginRun(t *testing.T) {
 		assert.Nil(t, svc)
 	})
 
+	t.Run("ack then listing split across two Recv reads - marker only in 2nd segment - detected", func(t *testing.T) {
+		// Prefix is a marker-free noise segment larger than the pluginutils.Recv
+		// single-Read cap (4096 bytes, see ackThenSplitListing), forcing the
+		// bounded read loop to accumulate across (at least) two Recv reads
+		// before the oracle.kv marker in the suffix becomes visible.
+		prefix := bytes.Repeat([]byte{0xac, 0xed, 0x00, 0x05}, 1200) // 4800 bytes, no marker
+		suffix := []byte("oracle.kv.impl.api.KVStoreImpl")
+		conn, target := scriptedServer(t, ackThenSplitListing(ack, prefix, suffix))
+		defer conn.Close()
+
+		svc, err := (&NoSQLPlugin{}).Run(conn, shortTimeout, target)
+		require.NoError(t, err)
+		assertDetectionOnly(t, svc, plugins.ProtoOracleNoSQL, nosqlCPE)
+	})
+
 	t.Run("round-2 partial read with error, marker in partial bytes - still detected", func(t *testing.T) {
 		// ackThenHoldRound2 keeps the underlying conn open and draining so the
 		// round-2 Write succeeds; the round-2 Read is intercepted before it ever
@@ -885,6 +941,41 @@ func TestTimesTenPluginRun(t *testing.T) {
 		defer conn.Close()
 
 		svc, err := (&TimesTenPlugin{}).Run(conn, shortTimeout, target)
+		assert.NoError(t, err)
+		assert.Nil(t, svc)
+	})
+
+	t.Run("round-1 partial read with error, TimesTen reject prefix in partial bytes - still detected", func(t *testing.T) {
+		// TimesTen is a single round-trip (probe write, one Recv), so the
+		// injected error/partial-bytes pair happens on the very first (and
+		// only) Read call. Mirrors NoSQLPlugin's round-2 partial-read case:
+		// on a connection reset mid-read, pluginutils.Recv still returns the
+		// bytes received before the error, and Run must evaluate them rather
+		// than discarding them.
+		conn, target := scriptedServer(t, holdOpen)
+		defer conn.Close()
+		resp := append([]byte("HTTP/1.0 400 msg=Bad%20Request&rc="), 0x01, 0x02, 0x00)
+		wrapped := &partialThenErrorConn{
+			Conn:          conn,
+			errorOnCall:   1, // TimesTen's only Read call
+			injectPartial: resp,
+		}
+
+		svc, err := (&TimesTenPlugin{}).Run(wrapped, shortTimeout, target)
+		assert.NoError(t, err)
+		assertDetectionOnly(t, svc, plugins.ProtoOracleTimesTen, timesTenCPE)
+	})
+
+	t.Run("round-1 read error with empty buffer - ambiguous, not detected", func(t *testing.T) {
+		conn, target := scriptedServer(t, holdOpen)
+		defer conn.Close()
+		wrapped := &partialThenErrorConn{
+			Conn:          conn,
+			errorOnCall:   1,
+			injectPartial: nil, // no bytes at all alongside the error
+		}
+
+		svc, err := (&TimesTenPlugin{}).Run(wrapped, shortTimeout, target)
 		assert.NoError(t, err)
 		assert.Nil(t, svc)
 	})

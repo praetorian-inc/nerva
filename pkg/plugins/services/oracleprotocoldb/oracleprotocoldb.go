@@ -85,6 +85,16 @@ const (
 	// maxHTTPBodySize caps how much of the HTTP proxy response body is read.
 	maxHTTPBodySize = int64(64 * 1024)
 
+	// maxRegistryListResponse / maxRegistryListReads bound the RMI registry list()
+	// read loop (round 2). TCP may split the listing across segments, and a large
+	// listing can exceed a single ~4 KB Recv, so the reply is accumulated until the
+	// NoSQL marker is seen — but stays bounded (total bytes and iteration count) so a
+	// chatty or hostile peer can never drive an unbounded read. Mirrors the
+	// oracledirectory (LDAP) rootDSE read loop; each read inherits pluginutils.Recv's
+	// per-call 4096-byte cap and the connection timeout.
+	maxRegistryListResponse = 64 * 1024
+	maxRegistryListReads    = 16
+
 	// jrmpProtocolAck is the JRMP ProtocolAck byte (re-derived from
 	// javarmi/rmi.go:77 — TransportConstants).
 	jrmpProtocolAck = 0x4e
@@ -107,6 +117,16 @@ var (
 	// nosqlClassRe matches an oracle.kv / oracle.kv.impl class token that leaks
 	// into a serialized list() reply. Quantifier bounded per P1-3.
 	nosqlClassRe = regexp.MustCompile(`oracle\.kv(?:\.impl)?[\w.$]{0,128}`)
+
+	// ordsApexRejectRe matches the Oracle REST Data Services / APEX surface (a
+	// different Oracle product, handled by oracleords) as ORDS/APEX-SPECIFIC tokens,
+	// NOT as a bare substring: a plain strings.Contains(body,"ords") wrongly rejects
+	// ordinary words like "records" or "keywords" (a false negative). The \b word
+	// boundaries keep "ords"/"apex" specific while still matching the "/ords/" and
+	// "/apex/" URL paths and the full "oracle rest data services" / "oracle
+	// application express" product names.
+	ordsApexRejectRe = regexp.MustCompile(
+		`\bords\b|\bapex\b|oracle rest data services|oracle application express`)
 )
 
 // nosqlProxyMarkers are lowercase NoSQL-Database-Proxy-specific tokens. A bare
@@ -311,20 +331,34 @@ func (p *NoSQLPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.T
 	// A valid ack alone is generic RMI, NOT NoSQL — continue to the list() marker.
 	endpoint := extractEndpoint(handshakeResp[1:])
 
-	// Round 2: enumerate the registry and scan the raw reply for a NoSQL marker.
-	// On a partial-read error, SendRecv still returns the bytes received before the
-	// error; a large registry listing can carry the NoSQL marker in that truncated
-	// payload, so fall through and scan whatever we got rather than discarding it.
-	// Only an error with no bytes at all is treated as ambiguous.
-	listResp, err := utils.SendRecv(conn, buildRegistryListCall(), timeout)
-	if err != nil && len(listResp) == 0 {
-		return nil, nil // read error with no data -> ambiguous, not us
+	// Round 2: enumerate the registry and scan the raw reply for a NoSQL marker. The
+	// list() reply can arrive across several TCP segments and may exceed a single
+	// ~4 KB Recv, so accumulate into a bounded buffer and test the marker against the
+	// whole buffer rather than a single read. On a partial-read error, Recv still
+	// returns the bytes received before the error, so those are appended and scanned
+	// too before stopping. The loop is bounded by a total-byte cap and an iteration
+	// cap so a chatty or hostile peer can never drive an unbounded read; no extra
+	// requests are issued (the round-1 handshake and the list() request bytes are
+	// unchanged). This mirrors the oracledirectory (LDAP) rootDSE read loop.
+	if err := utils.Send(conn, buildRegistryListCall(), timeout); err != nil {
+		return nil, nil // write error -> no evidence, not us
 	}
-	if len(listResp) == 0 {
-		return nil, nil // no listing / mis-framed / blocked -> not us
+	var listResp []byte
+	for reads := 0; reads < maxRegistryListReads && len(listResp) < maxRegistryListResponse; reads++ {
+		chunk, err := utils.Recv(conn, timeout)
+		listResp = append(listResp, chunk...)
+		if isOracleNoSQLListing(listResp) {
+			break // NoSQL marker present in the accumulated buffer -> done
+		}
+		if err != nil || len(chunk) == 0 {
+			break // partial-read error (bytes already scanned) or silence/EOF -> stop
+		}
 	}
 	if !isOracleNoSQLListing(listResp) {
-		return nil, nil // generic RMI (let javarmi report it)
+		// No listing / generic RMI / mis-framed / blocked / silence -> not us. An empty
+		// buffer also lands here (isOracleNoSQLListing returns false), so the ambiguous
+		// "error with no bytes" case is covered too. Let javarmi report generic RMI.
+		return nil, nil
 	}
 
 	payload := plugins.ServiceOracleNoSQL{
@@ -382,9 +416,11 @@ func createHTTPClient(conn net.Conn, timeout time.Duration) *http.Client {
 func isOracleNoSQLProxy(resp *http.Response, body string) bool {
 	lb := strings.ToLower(body)
 	loc := strings.ToLower(resp.Header.Get("Location"))
-	// Reject Oracle REST Data Services / APEX (handled by oracleords).
-	if strings.Contains(lb, "ords") || strings.Contains(lb, "apex") ||
-		strings.Contains(loc, "ords") || strings.Contains(loc, "apex") {
+	// Reject Oracle REST Data Services / APEX (handled by oracleords). Match an
+	// ORDS/APEX-SPECIFIC token (see ordsApexRejectRe), not a bare "ords" substring —
+	// otherwise ordinary words like "records"/"keywords" in a genuine NoSQL response
+	// would be wrongly rejected.
+	if ordsApexRejectRe.MatchString(lb) || ordsApexRejectRe.MatchString(loc) {
 		return false
 	}
 	// Scan both the body and the Location header: a redirect may carry the product
@@ -439,19 +475,27 @@ func (p *NoSQLHTTPPlugin) Priority() int { return -1 }
 // TimesTen — ports 6624 (corroboration) / 6625 (primary confirmed vector)
 // ---------------------------------------------------------------------------
 
-// isTimesTenHTTPReject reports whether a reply to the \r\n\r\n probe begins with
-// the exact TimesTen httpd malformed-reject prefix (nmap p/TimesTen httpd/). A
-// well-formed generic HTTP 400 (with Server:/Content-Type: headers) never
-// produces this "msg=Bad%20Request&rc=<binary>" shape, so the prefix alone
-// rejects generic HTTP.
+// isTimesTenHTTPReject reports whether a reply to the \r\n\r\n probe carries the
+// distinctive TimesTen httpd malformed-reject shape (nmap p/TimesTen httpd/): an
+// "HTTP/1.x" status line together with the "msg=Bad%20Request&rc=<binary>" token.
+// The status line is matched as HTTP/1. (not HTTP/1.0) so a future daemon that
+// answers over HTTP/1.1 still matches, while the required msg=Bad%20Request&rc=
+// token keeps this TimesTen-specific: a well-formed generic HTTP 400 (with
+// Server:/Content-Type: headers) never produces that shape.
 func isTimesTenHTTPReject(resp []byte) bool {
-	return bytes.HasPrefix(resp, []byte("HTTP/1.0 400 msg=Bad%20Request&rc="))
+	return bytes.HasPrefix(resp, []byte("HTTP/1.")) &&
+		bytes.Contains(resp, []byte("msg=Bad%20Request&rc="))
 }
 
 func (p *TimesTenPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
 	resp, err := utils.SendRecv(conn, timesTenProbe, timeout)
-	if err != nil {
-		return nil, nil // peer close / refused / write / read error -> no evidence, not us
+	// On a partial-read error, SendRecv still returns the bytes received before the
+	// error; the distinctive "HTTP/1. ... msg=Bad%20Request&rc=" reject prefix may
+	// already be in those partial bytes, so evaluate whatever we got rather than
+	// discarding it (mirrors the NoSQL round-2 partial-read handling). Only an error
+	// with no bytes at all is treated as silence.
+	if err != nil && len(resp) == 0 {
+		return nil, nil // read/write error with no data -> no evidence, not us
 	}
 	if len(resp) == 0 {
 		return nil, nil // silence -> not us
