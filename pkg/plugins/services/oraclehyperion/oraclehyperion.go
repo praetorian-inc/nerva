@@ -16,7 +16,7 @@
 Oracle Hyperion / Essbase (EPM) Fingerprinting (LAB-5054)
 
 This package detects two Oracle Enterprise Performance Management (EPM)
-technologies. Five plugins are registered from a single init():
+technologies. Four plugins are registered from a single init():
 
 Oracle Hyperion EPM web tier (Name "oracle_hyperion"): HyperionPlugin (TCP) and
 HyperionTLSPlugin (TLS). The plugins issue GET requests to the Workspace landing
@@ -45,13 +45,11 @@ product.
   body it feeds the CPE and service.Version; when absent, detection still succeeds and
   the CPE version is wildcard.
 
-  EssbaseAgentPlugin (TCP, port 1423) is a CONSERVATIVE, BEST-EFFORT detector of the
-  Essbase Agent (AGENTPORT) listener. The Agent wire protocol is Oracle-proprietary
-  with no published magic byte, so there is no positive signature. The plugin sends
-  ONE minimal benign probe, performs ONE bounded read, and asserts only on a
-  non-empty, non-HTTP, non-printable-ASCII binary reply (negative discriminators).
-  It NEVER asserts on a bare open port or on silence (see isEssbaseAgent), claims no
-  version, and sets neither AnonymousAccess nor a SecurityFinding.
+  (A best-effort TCP/1423 Essbase Agent detector was intentionally removed: the Agent
+  wire protocol is Oracle-proprietary with no published magic byte, so there is no
+  confirmed positive signature to assert on. Essbase remains fully detected via the
+  21c REST tier above. An agent probe is deferred to a follow-up ticket for when a
+  live capture yields a real signature.)
 
 Version:
   The Essbase 21c REST /about surface supplies an exact version WHEN its body carries
@@ -62,7 +60,6 @@ Version:
 package oraclehyperion
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -74,20 +71,11 @@ import (
 	"time"
 
 	"github.com/praetorian-inc/nerva/pkg/plugins"
-	utils "github.com/praetorian-inc/nerva/pkg/plugins/pluginutils"
 )
 
 const (
 	OracleHyperion = "oracle_hyperion"
 	OracleEssbase  = "oracle_essbase"
-	// OracleEssbaseAgent is the registry NAME for the best-effort TCP/1423 agent
-	// plugin. It is deliberately distinct from OracleEssbase: the framework keys the
-	// plugin registry on {Name, Protocol} (plugins.CreatePluginID), so two TCP
-	// plugins cannot share a Name (a duplicate key panics at init). The DETECTED
-	// PRODUCT is still oracle_essbase - that identity comes from the emitted
-	// ServiceOracleEssbase.Type() (ProtoOracleEssbase), not from this registry name.
-	// See the deviation note in the file header / capability-developer.md.
-	OracleEssbaseAgent = "oracle_essbase_agent"
 
 	// DefaultHyperionPort is the default EPM Workspace port fronted by Oracle HTTP
 	// Server (OHS).
@@ -100,18 +88,9 @@ const (
 	// and is claimed by the TLS EssbaseTLSPlugin.
 	DefaultEssbaseRESTPort = 9000
 	EssbaseRESTPortAlt     = 9001
-	// EssbaseAgentPort is the fixed, well-known Essbase Agent (AGENTPORT) listener.
-	EssbaseAgentPort = 1423
 
 	// maxResponseSize caps how much of each HTTP body is read.
 	maxResponseSize = int64(1 * 1024 * 1024) // 1 MiB: EPM markers appear early; bounds per-probe memory
-
-	// minAgentResponse is the length floor for a plausible binary Essbase Agent
-	// reply. Anything shorter (including an empty read from silence) is not a signal.
-	minAgentResponse = 4
-	// binaryContentRatio is the minimum fraction of non-printable bytes required for
-	// hasBinaryContent to treat a response as genuinely binary (not an ASCII fluke).
-	binaryContentRatio = 0.25
 )
 
 // titlePattern extracts the contents of an HTML <title> element. The pattern is
@@ -147,15 +126,11 @@ type EssbasePlugin struct{}
 // EssbaseTLSPlugin detects the Oracle Essbase 21c REST tier over TLS.
 type EssbaseTLSPlugin struct{}
 
-// EssbaseAgentPlugin is a best-effort detector of the Essbase Agent (TCP 1423).
-type EssbaseAgentPlugin struct{}
-
 func init() {
 	plugins.RegisterPlugin(&HyperionPlugin{})
 	plugins.RegisterPlugin(&HyperionTLSPlugin{})
 	plugins.RegisterPlugin(&EssbasePlugin{})
 	plugins.RegisterPlugin(&EssbaseTLSPlugin{})
-	plugins.RegisterPlugin(&EssbaseAgentPlugin{})
 }
 
 // --- shared HTTP helpers (mirrors oracleidentity.go) ---
@@ -471,8 +446,9 @@ func detectEssbaseREST(client *http.Client, baseURL, host string) (rest bool, ve
 
 // buildEssbaseCPE returns the CPE for Oracle Essbase. oracle:essbase is a confirmed
 // NVD token (verified 2026-07-22: 7 results, e.g. essbase:21.2, essbase:21.7.3.0.0).
-// The version is already digits/dots-validated by essbaseVersionShape, or "" (wildcard)
-// on the agent path, so it cannot inject CPE separators (P0-5).
+// The version is already digits/dots-validated by essbaseVersionShape, or ""
+// (wildcard) when the /about body carries no version, so it cannot inject CPE
+// separators (P0-5).
 func buildEssbaseCPE(version string) []string {
 	v := "*"
 	if version != "" {
@@ -490,103 +466,6 @@ func essbaseRestFinding() plugins.SecurityFinding {
 		Description: "Oracle Essbase 21c REST API (/essbase/rest/v1/about) is reachable without authentication",
 		Evidence:    "Oracle Essbase REST /about returned an Essbase-branded JSON document without credentials",
 	}
-}
-
-// --- Oracle Essbase Agent (TCP 1423, best-effort) ---
-
-// buildEssbaseAgentProbe returns a minimal, benign probe. Its purpose is a NEGATIVE
-// discriminator, not a semantic handshake: an HTTP server answers with an ASCII
-// "HTTP/..." status line and a line-oriented banner service greets in ASCII, and
-// neither shape qualifies as an Essbase Agent (see isEssbaseAgent). No magic-byte
-// Essbase handshake is known (the Agent protocol is proprietary and undocumented), so
-// no length-prefixed frame, no credentials, and no ESSLANG negotiation are ever sent
-// (P0-9e). One benign write, one bounded read, close.
-func buildEssbaseAgentProbe() []byte {
-	return []byte("GET / HTTP/1.0\r\n\r\n")
-}
-
-// hasHTTPPrefix reports whether a response begins with an HTTP status line.
-func hasHTTPPrefix(b []byte) bool {
-	return bytes.HasPrefix(b, []byte("HTTP/"))
-}
-
-// isPrintableASCII reports whether every byte is printable ASCII or common
-// whitespace (tab/CR/LF). A fully-printable response is a text/banner service, not
-// the binary Agent.
-func isPrintableASCII(b []byte) bool {
-	for _, c := range b {
-		if c >= 0x20 && c <= 0x7E {
-			continue
-		}
-		if c == 0x09 || c == 0x0A || c == 0x0D {
-			continue
-		}
-		return false
-	}
-	return true
-}
-
-// hasBinaryContent reports whether a meaningful fraction of bytes are outside the
-// printable/whitespace set - a conservative "this is genuinely binary" gate rather
-// than a single-byte fluke.
-func hasBinaryContent(b []byte) bool {
-	if len(b) == 0 {
-		return false
-	}
-	nonPrintable := 0
-	for _, c := range b {
-		if c >= 0x20 && c <= 0x7E {
-			continue
-		}
-		if c == 0x09 || c == 0x0A || c == 0x0D {
-			continue
-		}
-		nonPrintable++
-	}
-	return float64(nonPrintable)/float64(len(b)) >= binaryContentRatio
-}
-
-// isEssbaseAgent is the CONSERVATIVE, BEST-EFFORT, LOW-CONFIDENCE classifier for the
-// Essbase Agent listener. There is no published magic byte for the proprietary Agent
-// protocol, so this asserts only on negative discriminators plus a length floor.
-//
-// It returns true ONLY for a non-empty, non-HTTP, non-printable-ASCII binary reply.
-// It NEVER asserts on:
-//   - an empty response (len 0) - which is exactly what utils.Recv returns for a
-//     read timeout or a connection refused (requests.go:77-80). A bare open/held-but-
-//     silent port is therefore unrepresentable as a positive here (P0-9a, P0-9b).
-//   - a response shorter than minAgentResponse bytes,
-//   - a TLS handshake/alert record (0x16/0x15 0x03 ...), the common vector where a
-//     TLS-fronted service on 1423 answers the plaintext probe with a binary TLS record,
-//   - an SSH banner ("SSH-..."), the common vector where an SSH service on 1423 greets,
-//   - an HTTP status line (a web server on 1423),
-//   - a fully printable-ASCII response (an FTP/SMTP/SSH/telnet-style banner greeter).
-//
-// Residual FP risk (P2-3): an unrelated proprietary binary service bound to 1423 that
-// answers a stray GET with binary would also match. This is accepted only because
-// 1423 is an uncommon, PortPriority-scoped port. If field false positives are
-// observed, the sanctioned mitigation is to make this function return false
-// unconditionally until a live capture yields a real magic-byte signature.
-func isEssbaseAgent(response []byte) bool {
-	if len(response) < minAgentResponse {
-		return false // empty / silence / RST / too short -> NOT detected
-	}
-	if len(response) >= 3 && (response[0] == 0x16 || response[0] == 0x15) && response[1] == 0x03 {
-		return false // TLS handshake/alert record, not the Agent
-	}
-	if bytes.HasPrefix(response, []byte("SSH-")) {
-		return false // SSH banner, not the Agent
-	}
-	if hasHTTPPrefix(response) {
-		return false // web server, not the Agent
-	}
-	if isPrintableASCII(response) {
-		return false // text/banner service, not the Agent
-	}
-	if !hasBinaryContent(response) {
-		return false // require a real fraction of non-printable bytes
-	}
-	return true
 }
 
 // --- HyperionPlugin (TCP) ---
@@ -716,64 +595,3 @@ func (p *EssbaseTLSPlugin) PortPriority(port uint16) bool {
 func (p *EssbaseTLSPlugin) Name() string           { return OracleEssbase }
 func (p *EssbaseTLSPlugin) Type() plugins.Protocol { return plugins.TCPTLS }
 func (p *EssbaseTLSPlugin) Priority() int          { return -1 } // Runs before generic HTTPS so it can claim Essbase on shared ports (e.g. 443)
-
-// --- EssbaseAgentPlugin (TCP 1423, best-effort) ---
-
-// EssbaseAgentProbeEnabled is the production configuration switch for the
-// best-effort 1423 Essbase Agent probe. DISABLED BY DEFAULT: there is no
-// confirmed positive Essbase-agent wire signature, so enabling the binary
-// heuristic risks false positives on unrelated binary services. An embedding
-// application may set oraclehyperion.EssbaseAgentProbeEnabled = true to opt in
-// (e.g. once a live capture yields a real magic-byte signature). Essbase is
-// still detected via the HTTP REST tier regardless of this setting.
-var EssbaseAgentProbeEnabled = false
-
-// Run performs the best-effort, low-confidence Essbase Agent listener probe. It sends
-// ONE benign probe and does ONE bounded read via utils.SendRecv (a fixed 4096-byte
-// buffer with a read deadline, a single conn.Read, no goroutine - requests.go:60-87),
-// then asserts oracle_essbase ONLY on a non-empty, non-HTTP, non-printable-ASCII
-// binary reply. Silence, an empty read, an HTTP/ASCII reply, a bare open port, and any
-// probe error (connection refused/closed/RST, write failure, or read timeout) all map
-// to (nil, nil) - never (nil, err) - matching the HTTP plugins' "no evidence, swallow"
-// convention (P0-9). No version, no AnonymousAccess, and no SecurityFinding are ever
-// produced on this path: confidence is too low to make a security claim, and nothing
-// was accessed or authenticated.
-func (p *EssbaseAgentPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
-	if !EssbaseAgentProbeEnabled {
-		return nil, nil
-	}
-	// Slow-lane TCP scans (pkg/scan/simple_scan.go) invoke every plugin's Run
-	// regardless of PortPriority. The Agent classifier is a weak best-effort
-	// binary heuristic, so restrict it to the fixed well-known Agent port (1423)
-	// to avoid false-positives on unrelated binary services on other ports.
-	if target.Address.Port() != EssbaseAgentPort {
-		return nil, nil
-	}
-	resp, err := utils.SendRecv(conn, buildEssbaseAgentProbe(), timeout)
-	if err != nil {
-		// Refused / closed / RST / read error -> no evidence, not an error.
-		// utils.SendRecv already collapses timeout and connection-refused reads to
-		// (empty, nil), but a write failure or a closed-connection read surfaces a
-		// WriteError/ReadError here; swallow it to match the HTTP plugins' "empty
-		// response is silence, not failure" convention (P0-9). Never (nil, err).
-		return nil, nil
-	}
-	if !isEssbaseAgent(resp) {
-		return nil, nil // covers empty/silence/HTTP/ASCII/short
-	}
-	payload := plugins.ServiceOracleEssbase{
-		AgentListener: true,
-		CPEs:          buildEssbaseCPE(""),
-	}
-	return plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP), nil
-}
-
-func (p *EssbaseAgentPlugin) PortPriority(port uint16) bool { return port == EssbaseAgentPort }
-
-// Name returns the distinct registry name OracleEssbaseAgent (NOT OracleEssbase):
-// the registry keys on {Name, Protocol}, and this TCP plugin would otherwise collide
-// with the TCP EssbasePlugin. The product this plugin emits is still oracle_essbase
-// (via ServiceOracleEssbase.Type()).
-func (p *EssbaseAgentPlugin) Name() string           { return OracleEssbaseAgent }
-func (p *EssbaseAgentPlugin) Type() plugins.Protocol { return plugins.TCP }
-func (p *EssbaseAgentPlugin) Priority() int          { return 900 }

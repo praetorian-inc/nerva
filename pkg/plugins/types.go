@@ -1620,12 +1620,12 @@ type ServiceOracleHyperion struct {
 func (e ServiceOracleHyperion) Type() string { return ProtoOracleHyperion }
 
 type ServiceOracleEssbase struct {
-	REST          bool     `json:"rest,omitempty"`           // 21c REST /essbase/rest/v1/about present (HTTP)
-	AgentListener bool     `json:"agent_listener,omitempty"` // best-effort TCP 1423 agent listener presence
-	CPEs          []string `json:"cpes,omitempty"`
+	REST bool     `json:"rest,omitempty"` // 21c REST /essbase/rest/v1/about present (HTTP)
+	CPEs []string `json:"cpes,omitempty"`
 }
 
 func (e ServiceOracleEssbase) Type() string { return ProtoOracleEssbase }
+
 type ServiceGlassFish struct {
 	Product      string   `json:"product"`                 // "glassfish", "eclipse", or "payara"
 	Server       string   `json:"server,omitempty"`        // raw Server header
