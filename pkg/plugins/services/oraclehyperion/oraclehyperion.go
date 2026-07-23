@@ -66,6 +66,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -109,10 +110,12 @@ type essbaseAbout struct {
 }
 
 // essbaseVersionShape restricts an accepted /about "version" to a digits/dots shape
-// so attacker-controlled bytes cannot inject CPE separators (see buildEssbaseCPE).
-// Version is best-effort and decoupled from detection: a version failing this shape
-// is dropped, detection still succeeds, and the CPE version stays wildcard.
-var essbaseVersionShape = regexp.MustCompile(`^\d+(?:\.\d+){1,4}$`)
+// (two or more dot-separated numeric components; no upper bound so a future 6-part
+// version is not dropped) so attacker-controlled bytes cannot inject CPE separators
+// (see buildEssbaseCPE). Version is best-effort and decoupled from detection: a
+// version failing this shape is dropped, detection still succeeds, and the CPE
+// version stays wildcard.
+var essbaseVersionShape = regexp.MustCompile(`^\d+(?:\.\d+){1,}$`)
 
 // HyperionPlugin detects the Oracle Hyperion EPM web tier over plain HTTP.
 type HyperionPlugin struct{}
@@ -279,6 +282,15 @@ func evaluateHyperion(evs []hyperionEvidence) (sharedServices, planning, aps, de
 	for _, ev := range evs {
 		strong := false
 
+		// A redirect Location may URL-encode marker text (e.g. spaces as %20), so
+		// decode a copy for the location-based marker checks. On decode failure the
+		// raw value is kept. The body is NEVER decoded here: a body containing '%'
+		// sequences must not be mangled.
+		loc := ev.location
+		if dec, err := url.QueryUnescape(loc); err == nil {
+			loc = dec
+		}
+
 		// S1: branded Workspace <title>.
 		if hasWorkspaceTitleMarker(ev.title) {
 			strong = true
@@ -290,7 +302,7 @@ func evaluateHyperion(evs []hyperionEvidence) (sharedServices, planning, aps, de
 		// S3: Foundation / Shared Services brand pair (body, title, or redirect
 		// Location). Also flags the SharedServices enrichment.
 		if hasSharedServicesMarker(ev.body) || hasSharedServicesMarker(ev.title) ||
-			hasSharedServicesMarker(ev.location) {
+			hasSharedServicesMarker(loc) {
 			strong = true
 			sharedServices = true
 		}

@@ -299,6 +299,27 @@ func TestEvaluateHyperion(t *testing.T) {
 			wantAnon:     false,
 		},
 		{
+			// Regression (LAB-5054 follow-up): evaluateHyperion now URL-decodes
+			// ev.location before the Shared Services marker check, so a
+			// percent-encoded redirect Location (spaces as %20) still matches
+			// even though the raw bytes never contain the literal "Shared
+			// Services" substring.
+			name:         "S3 via URL-encoded redirect Location (percent-encoded spaces) is detected without anon exposure",
+			evs:          []hyperionEvidence{hEv("/interop/", http.StatusFound, "/interop/?app=Hyperion%20Shared%20Services", "", "")},
+			wantSS:       true,
+			wantDetected: true,
+			wantAnon:     false,
+		},
+		{
+			// Negative counterpart: a percent-encoded redirect Location that
+			// decodes to nothing but a reflected probe path (no Shared Services
+			// marker text) must not be detected merely because it carries '%'
+			// escapes.
+			name:         "percent-encoded redirect Location with only the reflected probe path is not detected",
+			evs:          []hyperionEvidence{hEv("/interop/", http.StatusFound, "/interop/%3Fpath%3Dworkspace", "", "")},
+			wantDetected: false,
+		},
+		{
 			name:         "S4 EPM cookie on 302 with Location is detected without anon exposure",
 			evs:          []hyperionEvidence{hEv("/workspace/index.jsp", http.StatusFound, "/login", "", "EPM_ROOT=a; Path=/")},
 			wantDetected: true,
@@ -409,6 +430,17 @@ func TestEvaluateEssbaseREST(t *testing.T) {
 		wantDetected bool
 		wantAnon     bool
 	}{
+		{
+			// Regression (LAB-5054 follow-up): essbaseVersionShape was widened
+			// from a capped `{1,4}` repeat to an unbounded `{1,}` repeat so a
+			// 6-component version is no longer dropped.
+			name:         "valid JSON name:Essbase with 6-component version (unbounded shape accepts an extra component)",
+			ev:           essbaseRESTEvidence{statusCode: http.StatusOK, body: `{"name":"Essbase","version":"21.6.0.0.0.1"}`},
+			wantREST:     true,
+			wantVersion:  "21.6.0.0.0.1",
+			wantDetected: true,
+			wantAnon:     true,
+		},
 		{
 			name:         "valid JSON name:Essbase with 5-component version",
 			ev:           essbaseRESTEvidence{statusCode: http.StatusOK, body: `{"name":"Essbase","version":"21.6.0.0.0"}`},
@@ -603,6 +635,14 @@ func TestBuildEssbaseCPE(t *testing.T) {
 			name:     "version embedded exactly",
 			version:  "21.6.0.0.0",
 			expected: []string{"cpe:2.3:a:oracle:essbase:21.6.0.0.0:*:*:*:*:*:*:*"},
+		},
+		{
+			// Regression (LAB-5054 follow-up): a 6-component version (now
+			// accepted by the unbounded essbaseVersionShape) embeds into the CPE
+			// exactly like any other shape-validated version.
+			name:     "6-component version embedded exactly",
+			version:  "21.6.0.0.0.1",
+			expected: []string{"cpe:2.3:a:oracle:essbase:21.6.0.0.0.1:*:*:*:*:*:*:*"},
 		},
 	}
 
