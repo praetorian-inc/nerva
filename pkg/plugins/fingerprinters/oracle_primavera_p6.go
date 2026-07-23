@@ -147,14 +147,9 @@ func (f *OraclePrimaveraP6Fingerprinter) Fingerprint(resp *http.Response, body [
 	// Version extraction from login footer.
 	version := ""
 	if matches := p6VersionRegex.FindStringSubmatch(bodyStr); matches != nil {
-		v := matches[1]
-		// Guard against CPE metacharacters.
-		if !strings.ContainsAny(v, ":*?") {
-			version = v
-		}
-		build := matches[2]
-		if build != "" {
-			metadata["build"] = build
+		version = matches[1]
+		if matches[2] != "" {
+			metadata["build"] = matches[2]
 		}
 		metadata["version_note"] = "extracted from login page footer"
 	}
@@ -174,8 +169,10 @@ func p6DetectionMethod(hasP6Title, hasP6Logo, hasP6Branding bool) string {
 		return "p6_title"
 	case hasP6Logo:
 		return "p6_logo"
-	default:
+	case hasP6Branding:
 		return "p6_branding"
+	default:
+		return ""
 	}
 }
 

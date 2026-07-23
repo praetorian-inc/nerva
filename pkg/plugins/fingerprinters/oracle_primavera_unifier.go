@@ -25,7 +25,8 @@ Detection probes GET /bluedoor and matches any of these signals in the response:
 
   - hasUnifierTitle: case-insensitive <title> containing "Primavera Unifier Login"
   - hasUnifierBranding: body contains the product name "Primavera Unifier"
-  - hasCodeVersion: body contains the JSON config field "codeVersion"
+  - hasCodeVersion: body matches the Unifier-specific codeVersion format
+    ("codeVersion":"<version>-b-<build>")
 
 # Reflection Safety
 
@@ -126,8 +127,8 @@ func (f *OraclePrimaveraUnifierFingerprinter) Fingerprint(resp *http.Response, b
 	// Signal 2: product name in body.
 	hasUnifierBranding := strings.Contains(bodyStr, "Primavera Unifier")
 
-	// Signal 3: JSON codeVersion config field unique to the Unifier login page.
-	hasCodeVersion := strings.Contains(bodyStr, `"codeVersion":`)
+	// Signal 3: Unifier-specific codeVersion JSON format (version-b-build).
+	hasCodeVersion := unifierCodeVersionRegex.MatchString(bodyStr)
 
 	if !hasUnifierTitle && !hasUnifierBranding && !hasCodeVersion {
 		return nil, nil
@@ -142,21 +143,15 @@ func (f *OraclePrimaveraUnifierFingerprinter) Fingerprint(resp *http.Response, b
 	// Version extraction: try HTML format first, then JSON codeVersion.
 	var version string
 	if m := unifierVersionRegex.FindStringSubmatch(bodyStr); m != nil {
-		v := m[1]
-		if !strings.ContainsAny(v, ":*?") {
-			version = v
-			metadata["build"] = m[2]
-			metadata["version_note"] = "extracted from login page"
-		}
+		version = m[1]
+		metadata["build"] = m[2]
+		metadata["version_note"] = "extracted from login page"
 	}
 	if version == "" {
 		if m := unifierCodeVersionRegex.FindStringSubmatch(bodyStr); m != nil {
-			v := m[1]
-			if !strings.ContainsAny(v, ":*?") {
-				version = v
-				metadata["build"] = m[2]
-				metadata["version_note"] = "extracted from login page"
-			}
+			version = m[1]
+			metadata["build"] = m[2]
+			metadata["version_note"] = "extracted from login page"
 		}
 	}
 
@@ -175,8 +170,10 @@ func unifierDetectionMethod(hasUnifierTitle, hasUnifierBranding, hasCodeVersion 
 		return "unifier_title"
 	case hasUnifierBranding:
 		return "unifier_branding"
-	default:
+	case hasCodeVersion:
 		return "code_version"
+	default:
+		return ""
 	}
 }
 

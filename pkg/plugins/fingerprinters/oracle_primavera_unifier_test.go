@@ -211,6 +211,22 @@ func TestOraclePrimaveraUnifierFingerprinter_Fingerprint_CodeVersionOnly(t *test
 	assert.Equal(t, "code_version", result.Metadata["detection_method"])
 }
 
+func TestOraclePrimaveraUnifierFingerprinter_Fingerprint_GenericCodeVersionNegative(t *testing.T) {
+	// A generic SPA page with a "codeVersion" key that does NOT match the
+	// Unifier-specific format must not trigger detection.
+	body := `<html><body><script>var config={"codeVersion":"3.2.1","appName":"MyApp"};</script></body></html>`
+	fp := &OraclePrimaveraUnifierFingerprinter{}
+	resp := &http.Response{
+		StatusCode: 200,
+		Header:     make(http.Header),
+	}
+	resp.Header.Set("Content-Type", "text/html")
+
+	result, err := fp.Fingerprint(resp, []byte(body))
+	require.NoError(t, err)
+	assert.Nil(t, result, "generic codeVersion without Unifier format must not detect")
+}
+
 func TestOraclePrimaveraUnifierFingerprinter_Fingerprint_JSONVersionFallback(t *testing.T) {
 	// Body has codeVersion JSON but NO HTML version string — must fall back to JSON.
 	body := `<html><head><title>Primavera Unifier Login</title></head>
