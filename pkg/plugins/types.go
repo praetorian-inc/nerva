@@ -502,6 +502,8 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoOracleWebCenter:
 		var p ServiceOracleWebCenter
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
 	case ProtoGlassFish, ProtoPayara:
 		var p ServiceGlassFish
 		_ = json.Unmarshal(e.Raw, &p)
@@ -1609,6 +1611,7 @@ type ServiceOracleWebCenter struct {
 }
 
 func (e ServiceOracleWebCenter) Type() string { return ProtoOracleWebCenter }
+
 type ServiceGlassFish struct {
 	Product      string   `json:"product"`                 // "glassfish", "eclipse", or "payara"
 	Server       string   `json:"server,omitempty"`        // raw Server header
