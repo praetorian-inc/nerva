@@ -29,11 +29,19 @@ presence of a data service is not a misconfiguration, mirroring the sibling
 binary-protocol plugins oracledb, javarmi, and activemq.
 
 Security invariants (all four plugins):
-  - Every response is read once via pluginutils.SendRecv/Recv (fixed 4 KB buffer,
-    single Read, deadline; []byte{} on timeout/refused -> treated as silence).
-  - Round-trips are capped: TimesTen 1, Coherence 1, NoSQL-RMI <=2, NoSQL-HTTP 1.
-    There are no read loops and no self-dialed sockets; the framework owns and
-    closes the conn.
+  - Every read goes through pluginutils.SendRecv/Recv (fixed 4 KB buffer per Read,
+    deadline; []byte{} on timeout/refused -> treated as silence). Some paths do a
+    small BOUNDED read-accumulation to tolerate TCP segmentation (a valid ack or
+    reject can be split across segments): the NoSQL round-1 JRMP handshake reads at
+    most 3 times and the TimesTen probe at most 2 times, each only while the bytes so
+    far stay consistent with the target shape; the NoSQL round-2 registry list() loop
+    reads until the marker appears or the buffer is exhausted. Coherence and NoSQL-HTTP
+    still read once.
+  - Requests are capped: TimesTen 1, Coherence 1, NoSQL-RMI <=2, NoSQL-HTTP 1. Every
+    read loop is bounded by ONE absolute deadline (time.Now().Add(timeout), NOT a fresh
+    per-read timeout, so a drip-feeding peer cannot amplify the wall-clock) plus a
+    read/iteration cap; the round-2 list() loop additionally has a total-byte cap. There
+    are no self-dialed sockets; the framework owns and closes the conn.
   - Attacker-controlled response bytes are NEVER Java-deserialized. The RMI
     registry list() reply is scanned as raw bytes with anchored RE2 regexes.
   - Every index / slice / binary.BigEndian access is length-guarded so a short or
@@ -238,6 +246,47 @@ func isValidRMIResponse(response []byte) bool {
 	return true
 }
 
+// couldBePartialRMIAck reports whether resp is a non-empty prefix still consistent
+// with an as-yet-incomplete JRMP ProtocolAck — i.e. isValidRMIResponse fails ONLY
+// because more bytes are needed, not because resp positively contradicts the ack
+// shape. TCP may split the fixed-size ack across segments, so a single Recv can
+// return a valid ack's leading prefix; this predicate decides whether accumulating
+// one more bounded read is worthwhile. It never widens acceptance (isValidRMIResponse
+// still makes the final call), so detection stays FN-safe: a mis-read only under-detects.
+func couldBePartialRMIAck(resp []byte) bool {
+	if len(resp) == 0 {
+		return false
+	}
+	// First byte, once present, must be the ProtocolAck; anything else is not RMI and
+	// reading more bytes cannot change that.
+	if resp[0] != jrmpProtocolAck {
+		return false
+	}
+	// Too short to even hold the 2-byte endpoint length field -> could still complete.
+	if len(resp) < 3 {
+		return true
+	}
+	// Endpoint length field must be in the sane hostname range; out of range contradicts.
+	claimedLength := binary.BigEndian.Uint16(resp[1:3])
+	if claimedLength < 3 || claimedLength > 253 {
+		return false
+	}
+	// If the full structural length is already present, isValidRMIResponse failed for a
+	// non-length reason (non-printable endpoint bytes) -> more reads won't help.
+	requiredLength := 1 + 2 + int(claimedLength) + 2 + 2
+	if len(resp) >= requiredLength {
+		return false
+	}
+	// The endpoint bytes received so far must be printable ASCII; a non-printable byte
+	// contradicts the ack shape.
+	for _, b := range resp[3:] {
+		if b < 32 || b > 126 {
+			return false
+		}
+	}
+	return true
+}
+
 // extractEndpoint parses the "host:port" endpoint from a JRMP ProtocolAck body
 // (javarmi/rmi.go:266-293). Length-guarded; returns "" when it cannot parse.
 func extractEndpoint(data []byte) string {
@@ -346,9 +395,22 @@ func hasNoSQLClassToken(reply []byte) bool {
 // hasNoSQLBindingTriad reports the looser <store>:<resourceId>:<InterfaceType>
 // binding-name triad. It is FP-prone off the NoSQL RMI port (a generic RMI registry
 // can expose a colliding enum-shaped role such as service:node:ADMIN), so callers
-// port-gate it — see oracleNoSQLListingMatches / NoSQLPlugin.Run.
+// port-gate it — see oracleNoSQLListingMatches / NoSQLPlugin.Run. The triad alone is
+// NOT sufficient to classify: oracleNoSQLListingMatches additionally requires an
+// `oracle` family token (hasOracleFamilyToken) in the same reply, so a generic RMI
+// registry with a colon-triad binding never classifies on any port.
 func hasNoSQLBindingTriad(reply []byte) bool {
 	return len(reply) > 0 && nosqlBindingRe.Match(reply)
+}
+
+// hasOracleFamilyToken reports a case-insensitive `oracle` token anywhere in the raw
+// (never deserialized) reply. It is the additional Oracle-family marker the binding
+// triad path requires so a generic RMI registry — whose bindings can share the
+// word:word:ENUM shape (e.g. service:node:ADMIN) — is never misclassified as
+// oracle_nosql on any port. The reliable oracle.kv class token (hasNoSQLClassToken)
+// still classifies alone; it contains "oracle" anyway.
+func hasOracleFamilyToken(reply []byte) bool {
+	return bytes.Contains(bytes.ToLower(reply), []byte("oracle"))
 }
 
 // isOracleNoSQLListing reports whether a raw (never deserialized) RMI registry
@@ -364,16 +426,18 @@ func isOracleNoSQLListing(reply []byte) bool {
 // oracleNoSQLListingMatches is the FP-safe classifier used by NoSQLPlugin.Run. The
 // oracle.kv class token is specific and reliable, so it classifies on ANY port; the
 // looser binding triad only classifies when bindingAllowed (the connected port is
-// nosqlRMIPort). Confining the loose triad to 5000 keeps a generic non-NoSQL RMI
-// registry — whose bindings can share the word:word:ENUM shape — from being
-// misclassified as oracle_nosql and (at priority 400) preempting the generic javarmi
-// plugin (priority 500). Kept separate from isOracleNoSQLListing so the pure marker
-// union stays directly unit-testable.
+// nosqlRMIPort) AND an `oracle` family token is present in the same reply
+// (hasOracleFamilyToken). Requiring the extra oracle marker on the triad path is the
+// permanent fix for the recurring generic-RMI false positive (e.g. service:node:ADMIN
+// on 5000): the colon-triad shape alone — even port-gated — is no longer enough, so a
+// generic non-NoSQL RMI registry can never be misclassified as oracle_nosql or (at
+// priority 400) preempt the generic javarmi plugin (priority 500). Kept separate from
+// isOracleNoSQLListing so the pure marker union stays directly unit-testable.
 func oracleNoSQLListingMatches(reply []byte, bindingAllowed bool) bool {
 	if hasNoSQLClassToken(reply) {
 		return true
 	}
-	return bindingAllowed && hasNoSQLBindingTriad(reply)
+	return bindingAllowed && hasNoSQLBindingTriad(reply) && hasOracleFamilyToken(reply)
 }
 
 func (p *NoSQLPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
@@ -384,6 +448,31 @@ func (p *NoSQLPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.T
 	}
 	if len(handshakeResp) == 0 {
 		return nil, nil // silence -> not us
+	}
+	// TCP may split the fixed-size JRMP ProtocolAck across segments, so a single Recv
+	// can return a valid ack's leading prefix that isValidRMIResponse rejects purely for
+	// being too short, dropping a real RMI endpoint. While the bytes so far stay
+	// consistent with an incomplete ack (couldBePartialRMIAck), accumulate a small,
+	// bounded number of extra reads under ONE absolute deadline (mirrors the round-2
+	// loop) so a drip-feeding peer cannot reset the timeout per read. FN-safe: a
+	// positively contradicting shape stops immediately, and a mis-read only under-detects.
+	if !isValidRMIResponse(handshakeResp) {
+		deadline := time.Now().Add(timeout)
+		// At most 2 extra reads (<=3 total) — enough to reassemble a split ack without
+		// turning this into an unbounded read.
+		for reads := 0; reads < 2 &&
+			!isValidRMIResponse(handshakeResp) &&
+			couldBePartialRMIAck(handshakeResp); reads++ {
+			remaining := time.Until(deadline)
+			if remaining <= 0 {
+				break
+			}
+			chunk, rerr := utils.Recv(conn, remaining)
+			handshakeResp = append(handshakeResp, chunk...)
+			if rerr != nil || len(chunk) == 0 {
+				break // partial-read error (bytes already appended) or silence/EOF -> stop
+			}
+		}
 	}
 	if !isValidRMIResponse(handshakeResp) {
 		return nil, nil // not RMI at all
@@ -409,9 +498,19 @@ func (p *NoSQLPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.T
 	if err := utils.Send(conn, buildRegistryListCall(), timeout); err != nil {
 		return nil, nil // write error -> no evidence, not us
 	}
+	// ONE absolute deadline for the WHOLE loop. Passing the full timeout to every Recv
+	// would let a drip-feeding peer reset the clock on each of up to maxRegistryListReads
+	// iterations and occupy a worker for ~maxRegistryListReads*timeout. Instead each Recv
+	// gets only the time still remaining, so the loop's total wall-clock is bounded by
+	// ~timeout. The byte-cap and iteration-cap below are unchanged.
+	deadline := time.Now().Add(timeout)
 	var listResp []byte
 	for reads := 0; reads < maxRegistryListReads && len(listResp) < maxRegistryListResponse; reads++ {
-		chunk, err := utils.Recv(conn, timeout)
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			break // whole-loop deadline exhausted -> stop
+		}
+		chunk, err := utils.Recv(conn, remaining)
 		listResp = append(listResp, chunk...)
 		if oracleNoSQLListingMatches(listResp, bindingAllowed) {
 			break // NoSQL marker present in the accumulated buffer -> done
@@ -447,8 +546,15 @@ func (p *NoSQLPlugin) Type() plugins.Protocol        { return plugins.TCP }
 // Oracle NoSQL registry would be misidentified as generic RMI — the "bail to
 // nil, let javarmi handle generic RMI" design requires NoSQL to run first.
 // NoSQL still bails to nil quickly on non-NoSQL ports, so running earlier only
-// reorders dispatch and adds no new probes. (Fast mode is unaffected: NoSQL is
-// the sole PortPriority claimant of 5000 and wins that port regardless.)
+// reorders dispatch and adds no new probes.
+//
+// IMPORTANT: the "bail to nil, javarmi reports the generic RMI registry" fallback
+// only holds in FULL-SWEEP mode, where the engine runs every plugin on every open
+// port (so javarmi also runs on 5000). In FAST mode plugins run on their PortPriority
+// default ports only, and 5000 is NOT one of javarmi's default ports (its
+// commonRMIPorts are 1098/1099/9999/10000/10001/10099). So in fast mode a non-NoSQL
+// RMI registry on 5000 is probed only by this plugin; when it bails to nil nothing
+// else claims the port and there is simply no result — javarmi does not report it.
 func (p *NoSQLPlugin) Priority() int { return 400 }
 
 // ---------------------------------------------------------------------------
@@ -585,6 +691,21 @@ func isTimesTenHTTPReject(resp []byte) bool {
 		bytes.Contains(resp, []byte("msg=Bad%20Request&rc="))
 }
 
+// couldBeTimesTenRejectPrefix reports whether resp is still consistent with the
+// leading bytes of a TimesTen httpd malformed-reject: either resp already begins with
+// the "HTTP/1." status line (the distinctive msg=Bad%20Request&rc= token may just not
+// have arrived yet), or resp is itself a prefix of "HTTP/1." (the status line was
+// split mid-token). Used to decide whether accumulating one more bounded read is
+// worthwhile. FN-safe: it never widens acceptance (isTimesTenHTTPReject makes the
+// final call), so a mis-read only under-detects.
+func couldBeTimesTenRejectPrefix(resp []byte) bool {
+	prefix := []byte("HTTP/1.")
+	if len(resp) < len(prefix) {
+		return bytes.HasPrefix(prefix, resp)
+	}
+	return bytes.HasPrefix(resp, prefix)
+}
+
 func (p *TimesTenPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
 	resp, _ := utils.SendRecv(conn, timesTenProbe, timeout)
 	// On a partial-read error, SendRecv still returns the bytes received before the
@@ -594,6 +715,28 @@ func (p *TimesTenPlugin) Run(conn net.Conn, timeout time.Duration, target plugin
 	// empty-buffer check covers both silence and an error with no bytes at all.
 	if len(resp) == 0 {
 		return nil, nil // silence / error with no bytes -> not us
+	}
+	// TCP may split the reject so the "HTTP/1." status line and the distinctive
+	// msg=Bad%20Request&rc= token land in separate segments. While the bytes so far
+	// stay consistent with a reject prefix (couldBeTimesTenRejectPrefix), accumulate a
+	// small, bounded number of extra reads under ONE absolute deadline (mirrors the
+	// NoSQL round-2 loop) so a drip-feeding peer cannot reset the timeout per read.
+	// FN-safe: a mis-read only under-detects.
+	if !isTimesTenHTTPReject(resp) && couldBeTimesTenRejectPrefix(resp) {
+		deadline := time.Now().Add(timeout)
+		for reads := 0; reads < 2 &&
+			!isTimesTenHTTPReject(resp) &&
+			couldBeTimesTenRejectPrefix(resp); reads++ {
+			remaining := time.Until(deadline)
+			if remaining <= 0 {
+				break
+			}
+			chunk, rerr := utils.Recv(conn, remaining)
+			resp = append(resp, chunk...)
+			if rerr != nil || len(chunk) == 0 {
+				break // partial-read error (bytes already appended) or silence/EOF -> stop
+			}
+		}
 	}
 	if !isTimesTenHTTPReject(resp) {
 		return nil, nil // generic 400 / TLS / binary garbage -> not us

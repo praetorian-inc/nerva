@@ -250,6 +250,27 @@ func (c *partialThenErrorConn) Read(b []byte) (int, error) {
 	return c.Conn.Read(b)
 }
 
+// splitReadConn wraps a net.Conn so its FIRST Read call is capped to at most
+// maxFirst bytes, deterministically forcing a multi-Read accumulation (FIX
+// 1/3's bounded round-1 handshake / TimesTen reject-prefix accumulation
+// loops) rather than relying on OS-level TCP-segment timing, which does not
+// reliably split a single small Write across loopback reads. All later Read
+// calls, and every other net.Conn method, forward unchanged to the embedded
+// conn.
+type splitReadConn struct {
+	net.Conn
+	calls    int
+	maxFirst int
+}
+
+func (c *splitReadConn) Read(b []byte) (int, error) {
+	c.calls++
+	if c.calls == 1 && len(b) > c.maxFirst {
+		return c.Conn.Read(b[:c.maxFirst])
+	}
+	return c.Conn.Read(b)
+}
+
 // httpOnce drains the client's HTTP request and writes back a raw HTTP
 // response built from statusLine and body.
 func httpOnce(statusLine, body string) func(net.Conn) {
@@ -302,6 +323,47 @@ func TestIsValidRMIResponse(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.expected, isValidRMIResponse(tt.response))
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Section 2.1b: TestCouldBePartialRMIAck (FIX 1/3 round-1 accumulation guard)
+// ---------------------------------------------------------------------------
+
+func TestCouldBePartialRMIAck(t *testing.T) {
+	validAck := buildValidAck("172.18.0.1", 64612)
+
+	tests := []struct {
+		name     string
+		resp     []byte
+		expected bool
+	}{
+		{"empty", []byte{}, false},
+		{"wrong first byte - not ProtocolAck", []byte{0x4f}, false},
+		{"1 byte, correct ProtocolAck - too short to hold length field", []byte{jrmpProtocolAck}, true},
+		{"2 bytes, correct ProtocolAck - still too short", []byte{jrmpProtocolAck, 0x00}, true},
+		{"claimed length too small (<3) - contradicts", []byte{jrmpProtocolAck, 0x00, 0x02}, false},
+		{"claimed length too large (>253) - contradicts", []byte{jrmpProtocolAck, 0x01, 0x00}, false},
+		{
+			"full structural length already present - isValidRMIResponse failed for a non-length reason",
+			validAck, false,
+		},
+		{
+			"partial endpoint bytes so far are all printable - could still complete",
+			validAck[:13], // ProtocolAck + 2-byte length + 10-byte host, before the null separator
+			true,
+		},
+		{
+			"partial endpoint bytes contain a non-printable byte - contradicts",
+			[]byte{jrmpProtocolAck, 0x00, 0x05, 0xff, 0xfe},
+			false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, couldBePartialRMIAck(tt.resp))
 		})
 	}
 }
@@ -406,13 +468,36 @@ func TestOracleNoSQLListingMatches(t *testing.T) {
 		bindingAllowed bool
 		expected       bool
 	}{
-		{"binding triad, bindingAllowed=true - detected", []byte("store:rg1:ADMIN"), true, true},
+		{
+			// FIX 2: the loose binding triad alone is no longer sufficient, even
+			// bindingAllowed - it must ALSO carry an oracle family token in the
+			// same reply. This mixes a realistic Oracle NoSQL Registry.list()
+			// reply shape (product name alongside the raw binding name) rather
+			// than the triad in isolation.
+			"binding triad + oracle family token, bindingAllowed=true - detected",
+			[]byte("Oracle NoSQL Registry store:rg1:ADMIN"), true, true,
+		},
 		{"binding triad, bindingAllowed=false - not detected (port-gated)", []byte("store:rg1:ADMIN"), false, false},
 		{"oracle.kv class token, bindingAllowed=true - detected", []byte("oracle.kv"), true, true},
 		{"oracle.kv class token, bindingAllowed=false - detected regardless (cross-port marker)", []byte("oracle.kv"), false, true},
 		{
 			"generic RMI role collides with a real enum member (service:node:ADMIN), bindingAllowed=false - not detected: FP protection is the port gate, not the regex",
 			[]byte("service:node:ADMIN"), false, false,
+		},
+		{
+			// FIX 2 regression: closes the false-positive vector where a generic
+			// RMI registry binding (service:node:ADMIN) on the NoSQL RMI port
+			// (bindingAllowed=true) was misclassified as oracle_nosql. The triad
+			// shape alone - even port-gated - is no longer enough without an
+			// oracle family token in the same reply.
+			"FIX 2 regression: binding triad with NO oracle token, bindingAllowed=true - not detected",
+			[]byte("service:node:ADMIN"), true, false,
+		},
+		{
+			// Same FIX 2 regression using the exact store:rg1:ADMIN triad shape
+			// from the positive fixture above, but without any oracle token.
+			"FIX 2 regression: store:rg1:ADMIN triad with NO oracle token, bindingAllowed=true - not detected",
+			[]byte("store:rg1:ADMIN"), true, false,
 		},
 	}
 
@@ -579,6 +664,32 @@ func TestIsTimesTenHTTPReject(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.expected, isTimesTenHTTPReject(tt.input))
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Section 2.5b: TestCouldBeTimesTenRejectPrefix (FIX 1/3 TimesTen
+// accumulation guard)
+// ---------------------------------------------------------------------------
+
+func TestCouldBeTimesTenRejectPrefix(t *testing.T) {
+	tests := []struct {
+		name     string
+		resp     []byte
+		expected bool
+	}{
+		{"empty - trivially a prefix of HTTP/1.", []byte{}, true},
+		{"exact prefix so far", []byte("HTTP/1."), true},
+		{"strict prefix of the reject prefix", []byte("HTT"), true},
+		{"already begins with the full status line", []byte("HTTP/1.0 400 "), true},
+		{"contradicts - wrong leading bytes entirely", []byte("SSH-2.0"), false},
+		{"contradicts - same length, diverges mid-prefix", []byte("HTTP/2.0"), false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, couldBeTimesTenRejectPrefix(tt.resp))
 		})
 	}
 }
@@ -780,7 +891,16 @@ func TestItoa(t *testing.T) {
 func TestNoSQLPluginRun(t *testing.T) {
 	ack := buildValidAck("10.0.0.5", 5000)
 	classMarkerListing := append([]byte{0xac, 0xed, 0x00, 0x05}, []byte("oracle.kv.impl.api.KVStoreImpl")...)
-	triadListing := []byte("store:sn1:MAIN")
+	// FIX 2: the loose binding triad alone no longer classifies - the reply
+	// must ALSO carry an oracle family token, so this mixes a realistic
+	// Oracle NoSQL Registry.list() reply shape (product name alongside the
+	// raw binding name) rather than the triad in isolation.
+	triadListing := []byte("Oracle NoSQL Registry store:sn1:MAIN")
+	// triadNoOracleListing is the FIX 2 false-positive vector: a binding triad
+	// with NO oracle family token anywhere in the reply (a generic RMI
+	// registry binding that happens to collide with a real InterfaceType enum
+	// member).
+	triadNoOracleListing := []byte("service:node:ADMIN")
 	genericListing := []byte("jmxrmi org.jnp.interfaces.NamingContext")
 	invalidAck := buildValidAck("10.0.0.5", 5000)
 	invalidAck[0] = 0x4f
@@ -797,6 +917,37 @@ func TestNoSQLPluginRun(t *testing.T) {
 		require.NoError(t, json.Unmarshal(svc.Raw, &payload))
 		assert.Equal(t, "10.0.0.5:5000", payload.Endpoint)
 		assert.False(t, payload.ViaHTTP)
+	})
+
+	t.Run("round-1 JRMP ack split across two reads - detected", func(t *testing.T) {
+		// FIX 1/3: TCP may split the fixed-size JRMP ProtocolAck across
+		// segments, so Run accumulates up to 2 extra bounded reads while the
+		// bytes-so-far stay consistent with an incomplete ack
+		// (couldBePartialRMIAck). splitReadConn deterministically caps the
+		// very first Read to 1 byte - far short of the full ack - forcing Run
+		// to exercise that accumulation loop instead of relying on real
+		// TCP-segment timing.
+		conn, target := scriptedServer(t, ackThenListing(ack, classMarkerListing))
+		defer conn.Close()
+		wrapped := &splitReadConn{Conn: conn, maxFirst: 1}
+
+		svc, err := (&NoSQLPlugin{}).Run(wrapped, shortTimeout, target)
+		require.NoError(t, err)
+		assertDetectionOnly(t, svc, plugins.ProtoOracleNoSQL, nosqlCPE)
+	})
+
+	t.Run("round-1 ack truncated to 1 byte then connection closes - accumulation gives up, not detected", func(t *testing.T) {
+		// FIX 3: the round-1 accumulation loop stops as soon as an extra Recv
+		// comes back with an error or no bytes (a reset/EOF mid-accumulation),
+		// rather than looping further. A single ProtocolAck byte followed by a
+		// close is still "could be partial" (too short to hold the length
+		// field), so this exercises that give-up branch deterministically.
+		conn, target := scriptedServer(t, writeOnce([]byte{jrmpProtocolAck}))
+		defer conn.Close()
+
+		svc, err := (&NoSQLPlugin{}).Run(conn, shortTimeout, target)
+		assert.NoError(t, err)
+		assert.Nil(t, svc)
 	})
 
 	t.Run("ack then binding-triad listing - detected", func(t *testing.T) {
@@ -821,6 +972,22 @@ func TestNoSQLPluginRun(t *testing.T) {
 		conn, target := scriptedServer(t, ackThenListing(ack, triadListing))
 		defer conn.Close()
 		target.Address = netip.AddrPortFrom(target.Address.Addr(), 9999)
+
+		svc, err := (&NoSQLPlugin{}).Run(conn, shortTimeout, target)
+		assert.NoError(t, err)
+		assert.Nil(t, svc)
+	})
+
+	t.Run("ack then binding-triad listing with NO oracle token on nosqlRMIPort - not detected (FIX 2 FP fix)", func(t *testing.T) {
+		// Regression for FIX 2: the loose <store>:<resourceId>:<InterfaceType>
+		// binding triad is no longer sufficient on its own, even when
+		// port-gated to nosqlRMIPort - it must ALSO carry an oracle family
+		// token in the same reply. This closes the false-positive vector where
+		// a generic RMI registry binding (service:node:ADMIN) on port 5000 was
+		// misclassified as oracle_nosql.
+		conn, target := scriptedServer(t, ackThenListing(ack, triadNoOracleListing))
+		defer conn.Close()
+		target.Address = netip.AddrPortFrom(target.Address.Addr(), nosqlRMIPort)
 
 		svc, err := (&NoSQLPlugin{}).Run(conn, shortTimeout, target)
 		assert.NoError(t, err)
@@ -1055,6 +1222,24 @@ func TestTimesTenPluginRun(t *testing.T) {
 		defer conn.Close()
 
 		svc, err := (&TimesTenPlugin{}).Run(conn, shortTimeout, target)
+		assert.NoError(t, err)
+		assertDetectionOnly(t, svc, plugins.ProtoOracleTimesTen, timesTenCPE)
+	})
+
+	t.Run("reject prefix split across two reads - detected", func(t *testing.T) {
+		// FIX 1/3: TCP may split the "HTTP/1. ... msg=Bad%20Request&rc=" reject
+		// across segments, so Run accumulates up to 2 extra bounded reads while
+		// the bytes-so-far stay consistent with a reject prefix
+		// (couldBeTimesTenRejectPrefix). splitReadConn deterministically caps
+		// the very first Read to 3 bytes ("HTT") - a strict prefix of "HTTP/1."
+		// - forcing Run to exercise that accumulation loop instead of relying
+		// on real TCP-segment timing.
+		resp := append([]byte("HTTP/1.0 400 msg=Bad%20Request&rc="), 0x01, 0x02, 0x00)
+		conn, target := scriptedServer(t, writeOnce(resp))
+		defer conn.Close()
+		wrapped := &splitReadConn{Conn: conn, maxFirst: 3}
+
+		svc, err := (&TimesTenPlugin{}).Run(wrapped, shortTimeout, target)
 		assert.NoError(t, err)
 		assertDetectionOnly(t, svc, plugins.ProtoOracleTimesTen, timesTenCPE)
 	})
