@@ -389,6 +389,25 @@ func TestOracleOTMFingerprinter_Fingerprint_CopyrightExtraction(t *testing.T) {
 	assert.NotEmpty(t, result.Metadata["version_note"])
 }
 
+func TestOracleOTMFingerprinter_Fingerprint_CopyrightExtractionThreeYears(t *testing.T) {
+	// Three comma-separated years — the regex must skip all leading years and
+	// capture the last one (2016).
+	body := `<html><head><title>Oracle Logistics</title></head>
+<body>
+<div class="copyright">Copyright &#169 2001&#44; 2010&#44; 2016&#44; Oracle and/or its affiliates.</div>
+</body></html>`
+
+	fp := &OracleOTMFingerprinter{}
+	resp := makeOTMResponse()
+
+	result, err := fp.Fingerprint(resp, []byte(body))
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	assert.Equal(t, "2016", result.Metadata["copyright_year"])
+	assert.NotEmpty(t, result.Metadata["version_note"])
+}
+
 func TestOracleOTMFingerprinter_Fingerprint_NoCopyright(t *testing.T) {
 	// Detection signal present but no copyright footer → no copyright_year / version_note keys.
 	body := `<html><head><title>Oracle Logistics</title></head>

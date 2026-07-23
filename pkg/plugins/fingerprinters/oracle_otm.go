@@ -77,7 +77,7 @@ var otmTitleRegex = regexp.MustCompile(`(?i)<title[^>]*>\s*Oracle Logistics\s*</
 // The regex skips the copyright symbol (©, &#169;?, &copy;, (c)) then captures
 // the trailing 4-digit year in a range like "2001, 2016".
 var otmCopyrightYearRegex = regexp.MustCompile(
-	`(?i)Copyright\s*(?:&#169;?|&copy;|©|\(c\))?\s*(?:\d{4}\s*(?:&#44;|,)\s*)?(\d{4})`,
+	`(?i)Copyright\s*(?:&#169;?|&copy;|©|\(c\))?\s*(?:\d{4}\s*(?:&#44;|,)\s*)*(\d{4})`,
 )
 
 // OracleOTMFingerprinter detects Oracle Transportation Management (OTM / G-Log)
