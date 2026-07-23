@@ -84,14 +84,24 @@ func (f *OracleSimphonyFingerprinter) ProbeEndpoint() string {
 	return "/EGateway/EGateway.asmx"
 }
 
-// Match returns true for 2xx–4xx responses with text/xml or text/html content.
-// ASMX endpoints may return text/xml (WSDL) or text/html (service description).
+// ProbeAccept requests XML or HTML, matching what ASMX endpoints return for
+// service descriptions and WSDL documents.
+func (f *OracleSimphonyFingerprinter) ProbeAccept() string {
+	return "text/xml, text/html"
+}
+
+// Match returns true for 2xx–4xx responses with XML or HTML content.
+// ASMX endpoints may return text/xml, application/xml, application/soap+xml
+// (WSDL / SOAP), or text/html (service description page).
 func (f *OracleSimphonyFingerprinter) Match(resp *http.Response) bool {
 	if resp.StatusCode < 200 || resp.StatusCode >= 500 {
 		return false
 	}
 	ct := strings.ToLower(resp.Header.Get("Content-Type"))
-	return strings.Contains(ct, "text/xml") || strings.Contains(ct, "text/html")
+	return strings.Contains(ct, "text/xml") ||
+		strings.Contains(ct, "text/html") ||
+		strings.Contains(ct, "application/xml") ||
+		strings.Contains(ct, "application/soap+xml")
 }
 
 // Fingerprint detects Oracle Hospitality Simphony from the EGateway ASMX response.
@@ -100,7 +110,7 @@ func (f *OracleSimphonyFingerprinter) Fingerprint(resp *http.Response, body []by
 	// Defense-in-depth: cap body to 2 MiB to prevent runaway allocation.
 	const maxBody = 2 * 1024 * 1024
 	if len(body) > maxBody {
-		return nil, nil
+		body = body[:maxBody]
 	}
 
 	bodyStr := string(body)
@@ -115,7 +125,7 @@ func (f *OracleSimphonyFingerprinter) Fingerprint(resp *http.Response, body []by
 	hasProcessDime := strings.Contains(bodyStr, "ProcessDimeRequest")
 
 	// Signal 4: Product-specific HTTP server name (case-insensitive header match).
-	hasMicrosServer := strings.EqualFold(resp.Header.Get("Server"), "mCommerceMobileWebServer")
+	hasMicrosServer := strings.Contains(strings.ToLower(resp.Header.Get("Server")), "mcommercemobilewebserver")
 
 	detected := hasMicrosNS || hasEGatewaySoap || hasProcessDime || hasMicrosServer
 	if !detected {
@@ -152,8 +162,10 @@ func simphonyDetectionMethod(hasMicrosNS, hasEGatewaySoap, hasProcessDime, hasMi
 		return "egateway_soap_port"
 	case hasProcessDime:
 		return "process_dime_operation"
-	default:
+	case hasMicrosServer:
 		return "server_header"
+	default:
+		return ""
 	}
 }
 

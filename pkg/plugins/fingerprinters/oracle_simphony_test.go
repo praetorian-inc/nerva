@@ -35,6 +35,11 @@ func TestOracleSimphonyFingerprinter_ProbeEndpoint(t *testing.T) {
 	assert.Equal(t, "/EGateway/EGateway.asmx", fp.ProbeEndpoint())
 }
 
+func TestOracleSimphonyFingerprinter_ProbeAccept(t *testing.T) {
+	fp := &OracleSimphonyFingerprinter{}
+	assert.Equal(t, "text/xml, text/html", fp.ProbeAccept())
+}
+
 // ── Match ─────────────────────────────────────────────────────────────────────
 
 func TestOracleSimphonyFingerprinter_Match(t *testing.T) {
@@ -66,6 +71,18 @@ func TestOracleSimphonyFingerprinter_Match(t *testing.T) {
 			name:        "200 TEXT/XML mixed case → true",
 			statusCode:  200,
 			contentType: "TEXT/XML",
+			want:        true,
+		},
+		{
+			name:        "200 application/xml → true",
+			statusCode:  200,
+			contentType: "application/xml",
+			want:        true,
+		},
+		{
+			name:        "200 application/soap+xml → true",
+			statusCode:  200,
+			contentType: "application/soap+xml; charset=utf-8",
 			want:        true,
 		},
 		{
@@ -365,12 +382,29 @@ func TestOracleSimphonyFingerprinter_Fingerprint_BodyCapGuard(t *testing.T) {
 		Header:     make(http.Header),
 	}
 	resp.Header.Set("Content-Type", "text/xml")
-	// Build a body > 2 MiB that contains a valid marker — must still return nil.
+	// Build a body > 2 MiB with the marker past the cap — truncation removes it.
 	prefix := strings.Repeat("x", 2*1024*1024)
 	bigBody := []byte(prefix + "EGatewaySoap")
 	result, err := fp.Fingerprint(resp, bigBody)
 	assert.Nil(t, result)
 	assert.Nil(t, err)
+}
+
+func TestOracleSimphonyFingerprinter_Fingerprint_BodyCapTruncation(t *testing.T) {
+	fp := &OracleSimphonyFingerprinter{}
+	resp := &http.Response{
+		StatusCode: 200,
+		Header:     make(http.Header),
+	}
+	resp.Header.Set("Content-Type", "text/xml")
+	// Marker within the first 2 MiB, padding pushes total past 2 MiB.
+	marker := "EGatewaySoap"
+	padding := strings.Repeat("x", 2*1024*1024)
+	bigBody := []byte(marker + padding)
+	result, err := fp.Fingerprint(resp, bigBody)
+	require.NoError(t, err)
+	require.NotNil(t, result, "marker within cap must still be detected after truncation")
+	assert.Equal(t, "egateway_soap_port", result.Metadata["detection_method"])
 }
 
 func TestOracleSimphonyFingerprinter_Fingerprint_ServerHeaderCaseInsensitive(t *testing.T) {
@@ -385,6 +419,20 @@ func TestOracleSimphonyFingerprinter_Fingerprint_ServerHeaderCaseInsensitive(t *
 	result, err := fp.Fingerprint(resp, []byte("<html><body>generic</body></html>"))
 	require.NoError(t, err)
 	require.NotNil(t, result, "EqualFold match on Server header must detect")
+	assert.Equal(t, "server_header", result.Metadata["detection_method"])
+}
+
+func TestOracleSimphonyFingerprinter_Fingerprint_ServerHeaderVersionSuffix(t *testing.T) {
+	fp := &OracleSimphonyFingerprinter{}
+	resp := &http.Response{
+		StatusCode: 200,
+		Header:     make(http.Header),
+	}
+	resp.Header.Set("Content-Type", "text/xml")
+	resp.Header.Set("Server", "mCommerceMobileWebServer/1.0")
+	result, err := fp.Fingerprint(resp, []byte("<html><body>generic</body></html>"))
+	require.NoError(t, err)
+	require.NotNil(t, result, "Server header with version suffix must still detect")
 	assert.Equal(t, "server_header", result.Metadata["detection_method"])
 }
 
