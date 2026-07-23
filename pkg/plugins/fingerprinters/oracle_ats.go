@@ -46,10 +46,11 @@ import (
 	"strings"
 )
 
-// oatsVersionRegex matches version strings like "Version 13.3.0.1" or bare
-// four-component versions such as "12.4.0.2".
+// oatsVersionRegex matches version strings like "Version 13.3.0.1".
+// The "Version" prefix provides necessary context; bare four-component
+// numbers are not matched to avoid capturing IP addresses or unrelated values.
 var oatsVersionRegex = regexp.MustCompile(
-	`(?i)Version\s+(\d+(?:\.\d+){1,3})|(\d+\.\d+\.\d+\.\d+)`,
+	`(?i)Version\s+(\d+(?:\.\d+){1,3})`,
 )
 
 // OracleATSFingerprinter detects Oracle Application Testing Suite via the
@@ -157,26 +158,13 @@ func (f *OracleATSFingerprinter) Fingerprint(resp *http.Response, body []byte) (
 }
 
 // extractOATSVersion attempts to find a version string in the page body.
-// Returns an empty string when no version is found or the found string
-// contains CPE metacharacters.
+// Returns an empty string when no version is found.
 func extractOATSVersion(body string) string {
 	matches := oatsVersionRegex.FindStringSubmatch(body)
-	if matches == nil {
+	if matches == nil || matches[1] == "" {
 		return ""
 	}
-
-	// Group 1 is from "Version \d+..." pattern; group 2 is bare four-component.
-	version := matches[1]
-	if version == "" {
-		version = matches[2]
-	}
-
-	// CPE metacharacter guard — reject versions that would corrupt the CPE.
-	if strings.ContainsAny(version, ":*?") {
-		return ""
-	}
-
-	return version
+	return matches[1]
 }
 
 // buildOracleATSCPE constructs a CPE 2.3 string for Oracle Application Testing Suite.

@@ -247,6 +247,24 @@ func TestOracleATSFingerprinter_Fingerprint_NoVersion(t *testing.T) {
 	assert.Contains(t, result.CPEs, "cpe:2.3:a:oracle:application_testing_suite:*:*:*:*:*:*:*:*")
 }
 
+func TestOracleATSFingerprinter_Fingerprint_IPAddressNotExtractedAsVersion(t *testing.T) {
+	fp := &OracleATSFingerprinter{}
+	resp := makeOATSResponse(200, "text/html")
+
+	// Body has an IP address and a JS library version, but no "Version X.X.X" — must not extract a version.
+	body := `<html><body>
+<h1>Oracle Load Testing</h1>
+<p>Server: 10.0.0.1</p>
+<script src="jquery-3.6.0.0.js"></script>
+</body></html>`
+	result, err := fp.Fingerprint(resp, []byte(body))
+
+	require.NoError(t, err)
+	require.NotNil(t, result, "OATS detection must still fire via branding")
+	assert.Empty(t, result.Version, "IP address or JS library version must not be extracted as OATS version")
+	assert.Contains(t, result.CPEs[0], ":*:", "CPE must use wildcard when no Version prefix found")
+}
+
 func TestOracleATSFingerprinter_Fingerprint_CPEMetacharacterGuard(t *testing.T) {
 	// The version regex only matches digit/dot sequences, so `:`, `*`, and `?`
 	// cannot appear in the extracted string under normal input. The guard is
@@ -254,17 +272,11 @@ func TestOracleATSFingerprinter_Fingerprint_CPEMetacharacterGuard(t *testing.T) 
 	// strings that contain metacharacters directly (not via regex capture).
 	tests := []struct {
 		name    string
-		rawBody string // passed directly to extractOATSVersion
+		rawBody string
 	}{
-		// `:` appears between digits — regex stops at `:`, so group 1 = ""
-		// and group 2 (bare 4-component) won't match "13:3.0.1" either.
-		// The guard would fire if somehow a colon were present; test via a
-		// crafted bare-version string that the regex does match (edge case).
-		{name: "colon in extracted version", rawBody: "13:3.0.1"},
-		// Bare four-component with `*` — regex stops before `*`.
-		{name: "asterisk stops regex before match", rawBody: "*.3.0.1"},
-		// `?` is not a digit so regex won't capture it.
-		{name: "question mark stops regex", rawBody: "13.?.0.1"},
+		{name: "no Version prefix", rawBody: "13.3.0.1"},
+		{name: "IP address", rawBody: "10.0.0.1"},
+		{name: "colon in text", rawBody: "Version 13:3.0.1"},
 	}
 
 	for _, tt := range tests {
