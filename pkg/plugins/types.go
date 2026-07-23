@@ -163,6 +163,8 @@ const (
 	ProtoPeopleSoft        = "oracle_peoplesoft"
 	ProtoOracleOAM         = "oracle_oam"
 	ProtoOracleOIM         = "oracle_oim"
+	ProtoOracleOUD         = "oracle_oud"
+	ProtoOracleOID         = "oracle_oid"
 	ProtoOracleHTTPServer  = "oracle_http_server"
 	ProtoOracleWebCenter   = "oracle_webcenter"
 	ProtoGlassFish         = "oracle_glassfish"
@@ -170,6 +172,7 @@ const (
 	ProtoOracleGoldenGate  = "oracle_goldengate"
 	ProtoOracleForms       = "oracle_forms"
 	ProtoOracleReports     = "oracle_reports"
+	ProtoOracleWebLogic    = "oracle_weblogic"
 	ProtoPCOM              = "pcom"
 	ProtoPFCP              = "pfcp"
 	ProtoPinecone          = "pinecone"
@@ -496,6 +499,10 @@ func (e Service) Metadata() Metadata {
 		var p ServiceOracleOIM
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
+	case ProtoOracleOUD, ProtoOracleOID:
+		var p ServiceOracleDirectory
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
 	case ProtoOracleHTTPServer:
 		var p ServiceOracleHTTPServer
 		_ = json.Unmarshal(e.Raw, &p)
@@ -518,6 +525,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoOracleReports:
 		var p ServiceOracleReports
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoOracleWebLogic:
+		var p ServiceWebLogic
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoOMRONFINS:
@@ -1596,6 +1607,22 @@ type ServiceOracleOIM struct {
 
 func (e ServiceOracleOIM) Type() string { return ProtoOracleOIM }
 
+type ServiceOracleDirectory struct {
+	Product          string   `json:"product"`                     // "oud" or "oid"
+	VendorName       string   `json:"vendor_name,omitempty"`       // OUD: "Oracle Corporation"
+	VendorVersion    string   `json:"vendor_version,omitempty"`    // OUD: raw vendorVersion "Oracle Unified Directory <ver>"
+	DirectoryVersion string   `json:"directory_version,omitempty"` // OID: raw orcldirectoryversion
+	CPEs             []string `json:"cpes,omitempty"`
+}
+
+// Type dynamically discriminates OID from OUD by the Product field (GlassFish precedent).
+func (e ServiceOracleDirectory) Type() string {
+	if e.Product == "oid" {
+		return ProtoOracleOID
+	}
+	return ProtoOracleOUD
+}
+
 type ServiceOracleHTTPServer struct {
 	Server           string   `json:"server,omitempty"`
 	Vendor           string   `json:"vendor,omitempty"`
@@ -1652,6 +1679,16 @@ type ServiceOracleReports struct {
 }
 
 func (e ServiceOracleReports) Type() string { return ProtoOracleReports }
+
+type ServiceWebLogic struct {
+	T3           bool     `json:"t3,omitempty"`            // server answered the T3 handshake
+	T3Version    string   `json:"t3_version,omitempty"`    // raw version from the HELO line, e.g. "12.2.1.3.0"
+	AdminConsole bool     `json:"admin_console,omitempty"` // /console/login/LoginForm.jsp matched
+	ConsoleTitle string   `json:"console_title,omitempty"` // the <title> observed on the console page
+	CPEs         []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceWebLogic) Type() string { return ProtoOracleWebLogic }
 
 type ServicePCOM struct {
 	Model     string   `json:"model,omitempty"`
