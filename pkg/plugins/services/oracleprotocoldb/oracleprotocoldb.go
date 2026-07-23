@@ -19,8 +19,10 @@ banner and no network-facing version string (LAB-5056). It registers four TCP
 plugins from a single init():
 
   - CoherencePlugin  (oracle_coherence,   port 7574) — best-effort POF-shape heuristic
-  - NoSQLPlugin      (oracle_nosql,        port 5000) — JRMP handshake + registry list() marker
-  - NoSQLHTTPPlugin  (oracle_nosql_http,   port 8080) — conservative HTTP proxy corroboration
+  - NoSQLPlugin      (oracle_nosql,        port 5000) — JRMP handshake + registry list()
+    oracle.kv class-token marker
+  - NoSQLHTTPPlugin  (oracle_nosql_http,   port 8080) — HTTP proxy product-name markers on
+    any port (8080 is only the fast-mode PortPriority default, not a gate)
   - TimesTenPlugin   (oracle_timesten, ports 6624/6625) — malformed-HTTP reject signature
 
 Detection-only: none of these plugins emits a SecurityFinding, sets
@@ -82,16 +84,16 @@ const (
 	// will consider a plausible NameService handshake frame (not a bulk stream).
 	coherenceMaxFrame = 512
 
-	// nosqlRMIPort is the Oracle NoSQL RMI registry default port. FP-safe gate:
-	// the loose <store>:<resourceId>:<InterfaceType> binding triad is only trusted
-	// here (see NoSQLPlugin.Run / oracleNoSQLListingMatches); the reliable oracle.kv
-	// class token counts on any port. Mirrors CoherencePlugin's coherencePort gate.
+	// nosqlRMIPort is the Oracle NoSQL RMI registry default port. It only governs
+	// fast-mode ordering via NoSQLPlugin.PortPriority; classification is NOT
+	// port-gated — the unambiguous oracle.kv class token is the sole discriminator on
+	// any port (see NoSQLPlugin.Run / oracleNoSQLListingMatches).
 	nosqlRMIPort = 5000
 
-	// nosqlHTTPPort is the Oracle NoSQL Database Proxy default port. FP-safe gate:
-	// NoSQLHTTPPlugin detection is confined to this port (see NoSQLHTTPPlugin.Run) so
-	// an unrelated /V2/health beacon — or any other endpoint — reached in a full sweep
-	// is never mislabeled oracle_nosql. Mirrors CoherencePlugin's coherencePort gate.
+	// nosqlHTTPPort is the Oracle NoSQL Database Proxy default port. It only governs
+	// fast-mode ordering via NoSQLHTTPPlugin.PortPriority; HTTP classification is NOT
+	// port-gated — it rests solely on unambiguous product-name markers, so 80/443/custom
+	// deployments are detected too (see NoSQLHTTPPlugin.Run / isOracleNoSQLProxy).
 	nosqlHTTPPort = 8080
 
 	// registryInterfaceHash is the well-known RMI RegistryImpl interface hash
@@ -127,35 +129,22 @@ const (
 // Package-scope RE2 patterns compiled once (P1-3). RE2 has no backtracking, so
 // these are ReDoS-immune; quantifiers are additionally bounded.
 var (
-	// nosqlBindingRe matches an Oracle NoSQL registry binding NAME. Registry.list()
-	// returns binding NAMES (not bound-object classes), so the oracle.kv class token
-	// (nosqlClassRe) usually does not appear and cannot be relied on alone. Real
-	// Oracle NoSQL binding names have the shape <store>:<resourceId>:<InterfaceType>,
-	// where the final colon-segment is the Java InterfaceType enum rendered in
-	// UPPERCASE by RegistryUtils.bindingName (e.g. myStore:rg1-rn1:ADMIN, :MAIN,
-	// :MONITOR, :LOGIN, :TRUSTED_LOGIN).
-	//
-	// FP-safe (a): the final segment is an ANCHORED ALLOWLIST of the DOCUMENTED
-	// Oracle NoSQL InterfaceType enum members ONLY — not any [A-Z][A-Z_]{2,} token.
-	// The prior loose form matched ANY word:word:UPPERCASE binding, so a generic
-	// non-NoSQL RMI registry with a novel uppercase role (e.g. x:y:FOO, svc:n:CACHE)
-	// was misclassified as oracle_nosql — and because NoSQLPlugin runs at priority 400
-	// (ahead of javarmi 500) it silently preempted the correct generic-RMI result.
-	//
-	// FP-safe (b): a generic RMI registry can still legitimately expose a binding
-	// whose final segment collides with a real enum member (e.g. service:node:ADMIN),
-	// which no regex can distinguish from a true NoSQL binding. So this loose triad is
-	// ADDITIONALLY port-gated to nosqlRMIPort by the caller (see NoSQLPlugin.Run via
-	// oracleNoSQLListingMatches); nosqlClassRe (oracle.kv) stays the reliable
-	// cross-port marker and is NOT port-gated. The leading/trailing \b anchor the
-	// word:word:ENUM triad on word boundaries; \b after the alternation keeps the enum
-	// a complete token (so MAINTENANCE / ADMINX do not match). Detection stays
-	// marker-gated and FN-safe.
-	nosqlBindingRe = regexp.MustCompile(
-		`\b[\w.-]{1,63}:[\w.-]{1,63}:(?:ADMIN|MAIN|MONITOR|LOGIN|TRUSTED_LOGIN)\b`)
-
 	// nosqlClassRe matches an oracle.kv / oracle.kv.impl class token that leaks
-	// into a serialized list() reply. Quantifier bounded per P1-3.
+	// into a serialized list() reply. Quantifier bounded per P1-3. This is the SOLE
+	// discriminator for RMI NoSQL classification (see oracleNoSQLListingMatches).
+	//
+	// DESIGN DECISION — binding-name triads are intentionally NOT used for
+	// classification. An Oracle NoSQL registry binding NAME has the shape
+	// <store>:<resourceId>:<InterfaceType> (the final segment an UPPERCASE Java
+	// InterfaceType enum member such as ADMIN/MAIN/MONITOR/LOGIN/TRUSTED_LOGIN). That
+	// word:word:ENUM shape is NOT Oracle-specific: a generic non-NoSQL RMI registry can
+	// legitimately expose a colliding role (e.g. service:node:ADMIN), which no regex can
+	// distinguish from a true NoSQL binding. Any triad-based heuristic therefore
+	// oscillates — flagged false-positive one review round, false-negative the next — so
+	// it is deliberately removed. Detection rests ONLY on the unambiguous oracle.kv class
+	// token. A binding-only listing (no class token present) is deliberately NOT
+	// classified: FN-safe (a real NoSQL registry whose reply happens to omit the class
+	// token is left to javarmi as generic RMI) and FP-free (no ambiguous marker exists).
 	nosqlClassRe = regexp.MustCompile(`oracle\.kv(?:\.impl)?[\w.$]{0,128}`)
 
 	// ordsApexRejectRe matches the Oracle REST Data Services / APEX surface (a
@@ -342,14 +331,13 @@ func itoa(n int) string {
 // call (operation-index encoding, interface hash, and the ProtocolAck handshake
 // sequence) has NOT been confirmed against a live Oracle NoSQL rmiregistry
 // capture in this environment. Live validation against a real capture remains the
-// pre-merge confirmation for this vector. The response-side markers (nosqlBindingRe's
-// <store>:<resourceId>:<UPPERCASE-InterfaceType> binding triad and the /V2/health
-// beacon JSON accepted by isOracleNoSQLProxy) are likewise Oracle-doc-derived and
-// still merit the same live-capture confirmation. Pending that capture they are held
-// FP-safe: the binding triad's final segment is now allowlisted to the documented
-// InterfaceType enum members and is port-gated to nosqlRMIPort, and the /V2/health
-// beacon branch is gated to nosqlHTTPPort + HTTP 200 (see nosqlBindingRe and
-// isOracleNoSQLProxy).
+// pre-merge confirmation for this vector. The response-side marker (the oracle.kv
+// class token accepted by oracleNoSQLListingMatches) is Oracle-specific and
+// unambiguous, so it classifies on any port with no port gate. Binding-name triads
+// are deliberately NOT used for classification: their word:word:ENUM shape is not
+// Oracle-specific and oscillates between false positives and negatives (see
+// nosqlClassRe). Likewise the HTTP path keys only on unambiguous product-name markers
+// (see isOracleNoSQLProxy), never on a health beacon.
 //
 // This is FN-safe, never FP-causing: a rejected or mis-framed call yields no
 // listing, so pluginutils.Recv returns []byte{} and Run returns (nil, nil).
@@ -387,57 +375,22 @@ func buildRegistryListCall() []byte {
 // ---------------------------------------------------------------------------
 
 // hasNoSQLClassToken reports the reliable oracle.kv / oracle.kv.impl class token.
-// It is specific enough to trust on ANY port (see oracleNoSQLListingMatches).
+// It is the sole, unambiguous NoSQL discriminator and is trusted on ANY port
+// (see oracleNoSQLListingMatches).
 func hasNoSQLClassToken(reply []byte) bool {
 	return len(reply) > 0 && nosqlClassRe.Match(reply)
 }
 
-// hasNoSQLBindingTriad reports the looser <store>:<resourceId>:<InterfaceType>
-// binding-name triad. It is FP-prone off the NoSQL RMI port (a generic RMI registry
-// can expose a colliding enum-shaped role such as service:node:ADMIN), so callers
-// port-gate it — see oracleNoSQLListingMatches / NoSQLPlugin.Run. The triad alone is
-// NOT sufficient to classify: oracleNoSQLListingMatches additionally requires an
-// `oracle` family token (hasOracleFamilyToken) in the same reply, so a generic RMI
-// registry with a colon-triad binding never classifies on any port.
-func hasNoSQLBindingTriad(reply []byte) bool {
-	return len(reply) > 0 && nosqlBindingRe.Match(reply)
-}
-
-// hasOracleFamilyToken reports a case-insensitive `oracle` token anywhere in the raw
-// (never deserialized) reply. It is the additional Oracle-family marker the binding
-// triad path requires so a generic RMI registry — whose bindings can share the
-// word:word:ENUM shape (e.g. service:node:ADMIN) — is never misclassified as
-// oracle_nosql on any port. The reliable oracle.kv class token (hasNoSQLClassToken)
-// still classifies alone; it contains "oracle" anyway.
-func hasOracleFamilyToken(reply []byte) bool {
-	return bytes.Contains(bytes.ToLower(reply), []byte("oracle"))
-}
-
-// isOracleNoSQLListing reports whether a raw (never deserialized) RMI registry
-// list() reply carries ANY Oracle-NoSQL-specific marker: an oracle.kv class token
-// or a <store>:<base>:<iface> binding triad. A bare JRMP ack, an empty listing,
-// or only generic names (jmxrmi, org.jnp.*, JBoss/HornetQ) return false so the
-// generic javarmi plugin reports it instead. This is the PORT-AGNOSTIC marker
-// union; production detection is FP-safe / port-gated via oracleNoSQLListingMatches.
-func isOracleNoSQLListing(reply []byte) bool {
-	return hasNoSQLClassToken(reply) || hasNoSQLBindingTriad(reply)
-}
-
-// oracleNoSQLListingMatches is the FP-safe classifier used by NoSQLPlugin.Run. The
-// oracle.kv class token is specific and reliable, so it classifies on ANY port; the
-// looser binding triad only classifies when bindingAllowed (the connected port is
-// nosqlRMIPort) AND an `oracle` family token is present in the same reply
-// (hasOracleFamilyToken). Requiring the extra oracle marker on the triad path is the
-// permanent fix for the recurring generic-RMI false positive (e.g. service:node:ADMIN
-// on 5000): the colon-triad shape alone — even port-gated — is no longer enough, so a
-// generic non-NoSQL RMI registry can never be misclassified as oracle_nosql or (at
-// priority 400) preempt the generic javarmi plugin (priority 500). Kept separate from
-// isOracleNoSQLListing so the pure marker union stays directly unit-testable.
-func oracleNoSQLListingMatches(reply []byte, bindingAllowed bool) bool {
-	if hasNoSQLClassToken(reply) {
-		return true
-	}
-	return bindingAllowed && hasNoSQLBindingTriad(reply) && hasOracleFamilyToken(reply)
+// oracleNoSQLListingMatches is the classifier used by NoSQLPlugin.Run. Classification
+// rests SOLELY on the unambiguous oracle.kv class token, which is Oracle-specific on
+// any port. Binding-name triads are intentionally NOT consulted: their
+// <store>:<resourceId>:<InterfaceType> shape is not Oracle-specific and produced
+// oscillating false positives/negatives (a generic RMI registry can expose a colliding
+// role such as service:node:ADMIN — see nosqlClassRe). A binding-only listing that
+// carries no class token is deliberately left unclassified, so the generic javarmi
+// plugin reports it as generic RMI instead — FN-safe and FP-free.
+func oracleNoSQLListingMatches(reply []byte) bool {
+	return hasNoSQLClassToken(reply)
 }
 
 func (p *NoSQLPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
@@ -480,12 +433,6 @@ func (p *NoSQLPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.T
 	// A valid ack alone is generic RMI, NOT NoSQL — continue to the list() marker.
 	endpoint := extractEndpoint(handshakeResp[1:])
 
-	// FP-safe: the reliable oracle.kv class token classifies on any port, but the
-	// looser binding triad is only trusted on the NoSQL RMI default port so a generic
-	// RMI registry on another port (whose bindings can share the word:word:ENUM shape)
-	// cannot be misclassified as oracle_nosql. Mirrors CoherencePlugin's port gate.
-	bindingAllowed := target.Address.Port() == nosqlRMIPort
-
 	// Round 2: enumerate the registry and scan the raw reply for a NoSQL marker. The
 	// list() reply can arrive across several TCP segments and may exceed a single
 	// ~4 KB Recv, so accumulate into a bounded buffer and test the marker against the
@@ -512,17 +459,18 @@ func (p *NoSQLPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.T
 		}
 		chunk, err := utils.Recv(conn, remaining)
 		listResp = append(listResp, chunk...)
-		if oracleNoSQLListingMatches(listResp, bindingAllowed) {
+		if oracleNoSQLListingMatches(listResp) {
 			break // NoSQL marker present in the accumulated buffer -> done
 		}
 		if err != nil || len(chunk) == 0 {
 			break // partial-read error (bytes already scanned) or silence/EOF -> stop
 		}
 	}
-	if !oracleNoSQLListingMatches(listResp, bindingAllowed) {
+	if !oracleNoSQLListingMatches(listResp) {
 		// No listing / generic RMI / mis-framed / blocked / silence -> not us. An empty
-		// buffer also lands here (isOracleNoSQLListing returns false), so the ambiguous
-		// "error with no bytes" case is covered too. Let javarmi report generic RMI.
+		// buffer also lands here (oracleNoSQLListingMatches returns false), so the
+		// ambiguous "error with no bytes" case is covered too. Let javarmi report
+		// generic RMI.
 		return nil, nil
 	}
 
@@ -583,11 +531,11 @@ func createHTTPClient(conn net.Conn, timeout time.Duration) *http.Client {
 }
 
 // isOracleNoSQLProxy reports whether an HTTP response corroborates an Oracle
-// NoSQL Database Proxy. It requires a NoSQL-proxy-specific token (never a bare
-// 200) and explicitly rejects the ORDS/APEX surface, which is a different product.
-// As a second positive signal, a /V2/health response carrying the documented JSON
-// health beacon (a "beacon" key together with a GREEN/RED/YELLOW status) also
-// corroborates the proxy — HTTP 200 alone is never sufficient.
+// NoSQL Database Proxy. Classification rests SOLELY on unambiguous product-name
+// markers (nosqlProxyMarkers), matched in the body or the Location header; a bare
+// 200 with no marker present is never classified. It explicitly rejects the
+// ORDS/APEX surface, a different Oracle product handled by oracleords. A response
+// carrying only health/status data (no product token) is deliberately not classified.
 func isOracleNoSQLProxy(resp *http.Response, body string) bool {
 	lb := strings.ToLower(body)
 	loc := strings.ToLower(resp.Header.Get("Location"))
@@ -605,43 +553,20 @@ func isOracleNoSQLProxy(resp *http.Response, body string) bool {
 			return true
 		}
 	}
-	// Positive /V2/health beacon signal (Codex P2): Oracle documents the NoSQL proxy
-	// answering GET /V2/health with a JSON health beacon such as
-	// {"beacon":"GREEN","info":"ALL OK"} — none of the product-name markers above
-	// appear in that body, so a healthy stock proxy on 8080 would otherwise be missed.
-	// FP-safe: this branch classifies ONLY when ALL of (a) the connected port is
-	// nosqlHTTPPort — enforced by NoSQLHTTPPlugin.Run before this runs, so a full-sweep
-	// hit on some other port's /V2/health is never reached; (b) the HTTP status is 200;
-	// and (c) the /V2/health path body carries BOTH the "beacon" key AND a
-	// GREEN/RED/YELLOW status, so this is unmistakably the proxy health shape — never a
-	// bare 200, and never a stray "beacon" mention on its own. The path is read from the
-	// populated client Request (nil when a bare *http.Response is constructed, e.g. in
-	// unit tests). HTTP status is used only as an additional guard, never keyed on alone.
-	if resp.StatusCode == http.StatusOK &&
-		resp.Request != nil && resp.Request.URL != nil &&
-		resp.Request.URL.Path == "/V2/health" &&
-		strings.Contains(lb, "beacon") &&
-		(strings.Contains(lb, "green") || strings.Contains(lb, "red") || strings.Contains(lb, "yellow")) {
-		return true
-	}
 	return false
 }
 
 func (p *NoSQLHTTPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
-	// Port gate: confine the ENTIRE NoSQL HTTP probe to the proxy default port. In
-	// full-sweep scans the engine runs every plugin on every open port (PortPriority
-	// only governs fast-mode ordering), so without this gate the /V2/health beacon
-	// branch — and even the product-name marker path — could fire against an unrelated
-	// HTTP service on some other port and mislabel it oracle_nosql. Mirrors
-	// CoherencePlugin's coherencePort confinement.
-	if target.Address.Port() != nosqlHTTPPort {
-		return nil, nil
-	}
-
 	client := createHTTPClient(conn, timeout)
 	baseURL := "http://" + conn.RemoteAddr().String()
 
-	req, err := http.NewRequest("GET", baseURL+"/V2/health", nil)
+	// Probe the root path: the proxy's landing/error response body and any redirect
+	// Location surface the product-name markers (nosqlProxyMarkers) that
+	// isOracleNoSQLProxy keys on. /V2/health returns only a status body with no product
+	// token, so it is deliberately NOT used. Detection rests solely on those unambiguous
+	// markers, so it is FP-safe on ANY port and needs no port gate — 80/443/custom-port
+	// deployments are detected too.
+	req, err := http.NewRequest("GET", baseURL+"/", nil)
 	if err != nil {
 		return nil, nil
 	}

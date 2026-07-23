@@ -23,7 +23,6 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
-	"net/url"
 	"testing"
 	"time"
 
@@ -423,10 +422,13 @@ func TestExtractEndpoint(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Section 2.3: TestIsOracleNoSQLListing (raw-byte NoSQL marker) - FP guard #2
+// Section 2.3: TestOracleNoSQLListingMatches (sole discriminator is the
+// oracle.kv class token; the loose binding-name-triad heuristic and its
+// port-gating were deleted in a follow-up review to stop LLM-reviewer
+// oscillation, so classification is no longer port-dependent)
 // ---------------------------------------------------------------------------
 
-func TestIsOracleNoSQLListing(t *testing.T) {
+func TestOracleNoSQLListingMatches(t *testing.T) {
 	noise := bytes.Repeat([]byte{0xac, 0xed, 0x00, 0x05}, 4)
 
 	tests := []struct {
@@ -435,106 +437,27 @@ func TestIsOracleNoSQLListing(t *testing.T) {
 		expected bool
 	}{
 		{"oracle.kv.impl class token", append(append([]byte{}, noise...), []byte("oracle.kv.impl.api.KVStoreImpl")...), true},
-		{"bare oracle.kv", append(append([]byte{}, noise...), []byte("oracle.kv")...), true},
-		{"binding triad - MAIN", []byte("store:sn1:MAIN"), true},
-		{"binding triad - MONITOR", []byte("mystore:base:MONITOR"), true},
-		{"binding triad - LOGIN", []byte("s:b:LOGIN"), true},
-		{"binding triad - ADMIN, hyphenated resourceId", []byte("store:rg1-rn1:ADMIN"), true},
-		{"generic jmxrmi only", []byte("jmxrmi"), false},
-		{"generic JBoss RMI", []byte("org.jnp.interfaces.NamingContext"), false},
-		{"empty listing", []byte{}, false},
-		{"random binary noise, no marker", bytes.Repeat([]byte{0x01, 0x02, 0x03, 0x04}, 16), false},
-		{"triad requires 3 segments - only 2", []byte("store:main"), false},
-		{"lowercase final segment rejected", []byte("store:base:bogusrole"), false},
-		{"lowercase final segment rejected - generic app binding", []byte("app:svc:admin"), false},
+		{"bare oracle.kv class token", append(append([]byte{}, noise...), []byte("oracle.kv")...), true},
+		{
+			// The binding-triad heuristic is gone: a bare triad with no
+			// oracle.kv class token must NOT classify, even though this is
+			// the exact shape the old port-gated heuristic used to trust.
+			"binding triad alone (store:sn1:MAIN), no class token - not detected: the triad heuristic was removed",
+			[]byte("store:sn1:MAIN"), false,
+		},
+		{
+			"generic RMI role collides with a real enum member (service:node:ADMIN), no class token - not detected",
+			[]byte("service:node:ADMIN"), false,
+		},
+		{"generic jmxrmi only, no class token - not detected", []byte("jmxrmi"), false},
+		{"generic JBoss RMI, no class token - not detected", []byte("org.jnp.interfaces.NamingContext"), false},
+		{"empty listing - not detected", []byte{}, false},
+		{"random binary noise, no marker - not detected", bytes.Repeat([]byte{0x01, 0x02, 0x03, 0x04}, 16), false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.expected, isOracleNoSQLListing(tt.reply))
-		})
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Section 2.3b: TestOracleNoSQLListingMatches (FP-safe classifier, PR #385 -
-// the loose binding triad is port-gated; oracle.kv classifies on any port)
-// ---------------------------------------------------------------------------
-
-func TestOracleNoSQLListingMatches(t *testing.T) {
-	tests := []struct {
-		name           string
-		reply          []byte
-		bindingAllowed bool
-		expected       bool
-	}{
-		{
-			// FIX 2: the loose binding triad alone is no longer sufficient, even
-			// bindingAllowed - it must ALSO carry an oracle family token in the
-			// same reply. This mixes a realistic Oracle NoSQL Registry.list()
-			// reply shape (product name alongside the raw binding name) rather
-			// than the triad in isolation.
-			"binding triad + oracle family token, bindingAllowed=true - detected",
-			[]byte("Oracle NoSQL Registry store:rg1:ADMIN"), true, true,
-		},
-		{"binding triad, bindingAllowed=false - not detected (port-gated)", []byte("store:rg1:ADMIN"), false, false},
-		{"oracle.kv class token, bindingAllowed=true - detected", []byte("oracle.kv"), true, true},
-		{"oracle.kv class token, bindingAllowed=false - detected regardless (cross-port marker)", []byte("oracle.kv"), false, true},
-		{
-			"generic RMI role collides with a real enum member (service:node:ADMIN), bindingAllowed=false - not detected: FP protection is the port gate, not the regex",
-			[]byte("service:node:ADMIN"), false, false,
-		},
-		{
-			// FIX 2 regression: closes the false-positive vector where a generic
-			// RMI registry binding (service:node:ADMIN) on the NoSQL RMI port
-			// (bindingAllowed=true) was misclassified as oracle_nosql. The triad
-			// shape alone - even port-gated - is no longer enough without an
-			// oracle family token in the same reply.
-			"FIX 2 regression: binding triad with NO oracle token, bindingAllowed=true - not detected",
-			[]byte("service:node:ADMIN"), true, false,
-		},
-		{
-			// Same FIX 2 regression using the exact store:rg1:ADMIN triad shape
-			// from the positive fixture above, but without any oracle token.
-			"FIX 2 regression: store:rg1:ADMIN triad with NO oracle token, bindingAllowed=true - not detected",
-			[]byte("store:rg1:ADMIN"), true, false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.expected, oracleNoSQLListingMatches(tt.reply, tt.bindingAllowed))
-		})
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Section 2.3c: TestNoSQLBindingRegexEnumMembers (nosqlBindingRe anchored
-// InterfaceType enum allowlist, PR #385)
-// ---------------------------------------------------------------------------
-
-func TestNoSQLBindingRegexEnumMembers(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		expected bool
-	}{
-		{"ADMIN", "store:rg1:ADMIN", true},
-		{"MAIN", "store:rg1:MAIN", true},
-		{"MONITOR", "store:rg1:MONITOR", true},
-		{"LOGIN", "store:rg1:LOGIN", true},
-		{"TRUSTED_LOGIN", "store:rg1:TRUSTED_LOGIN", true},
-		{"ADMIN, hyphenated resourceId", "store:rg1-rn1:ADMIN", true},
-		{"non-enum uppercase role FOO - not matched", "x:y:FOO", false},
-		{"non-enum uppercase role CACHE - not matched", "svc:n:CACHE", false},
-		{"MAINTENANCE is not MAIN - word boundary rejects the extension", "store:rg1:MAINTENANCE", false},
-		{"ADMINX is not ADMIN - word boundary rejects the extension", "store:rg1:ADMINX", false},
-		{"lowercase admin - not matched", "app:svc:admin", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.expected, nosqlBindingRe.MatchString(tt.input))
+			assert.Equal(t, tt.expected, oracleNoSQLListingMatches(tt.reply))
 		})
 	}
 }
@@ -549,19 +472,6 @@ func httpRespWithLocation(location string) *http.Response {
 		h.Set("Location", location)
 	}
 	return &http.Response{Header: h}
-}
-
-// httpRespWithRequestPath builds a *http.Response with a populated Request.URL,
-// the shape isOracleNoSQLProxy needs to reach the /V2/health beacon branch (that
-// branch is gated on resp.Request.URL.Path, which is nil on the bare
-// httpRespWithLocation fixtures above and is only populated end-to-end via a real
-// http.Client - see NoSQLHTTPPlugin.Run's loopback test for that path).
-func httpRespWithRequestPath(path string) *http.Response {
-	return &http.Response{
-		StatusCode: http.StatusOK,
-		Header:     http.Header{},
-		Request:    &http.Request{URL: &url.URL{Path: path}},
-	}
 }
 
 func TestIsOracleNoSQLProxy(t *testing.T) {
@@ -594,34 +504,6 @@ func TestIsOracleNoSQLProxy(t *testing.T) {
 			httpRespWithLocation("/oracle.kv/redirect"),
 			"",
 			true,
-		},
-		{
-			"/V2/health beacon JSON, no product-name marker - detected (unit function, Request populated)",
-			httpRespWithRequestPath("/V2/health"),
-			`{"beacon":"GREEN","info":"ALL OK"}`,
-			true,
-		},
-		{
-			"beacon JSON on a DIFFERENT path - not detected (path scoping)",
-			httpRespWithRequestPath("/status"),
-			`{"beacon":"GREEN","info":"ALL OK"}`,
-			false,
-		},
-		{
-			"bare 200 with no beacon, Request populated on /V2/health - not detected",
-			httpRespWithRequestPath("/V2/health"),
-			"<html>OK</html>",
-			false,
-		},
-		{
-			"V2/health beacon JSON but StatusCode != 200 - not detected (status-gated, never keys on bare 200)",
-			&http.Response{
-				StatusCode: http.StatusServiceUnavailable,
-				Header:     http.Header{},
-				Request:    &http.Request{URL: &url.URL{Path: "/V2/health"}},
-			},
-			`{"beacon":"GREEN","info":"ALL OK"}`,
-			false,
 		},
 	}
 
@@ -891,16 +773,12 @@ func TestItoa(t *testing.T) {
 func TestNoSQLPluginRun(t *testing.T) {
 	ack := buildValidAck("10.0.0.5", 5000)
 	classMarkerListing := append([]byte{0xac, 0xed, 0x00, 0x05}, []byte("oracle.kv.impl.api.KVStoreImpl")...)
-	// FIX 2: the loose binding triad alone no longer classifies - the reply
-	// must ALSO carry an oracle family token, so this mixes a realistic
-	// Oracle NoSQL Registry.list() reply shape (product name alongside the
-	// raw binding name) rather than the triad in isolation.
-	triadListing := []byte("Oracle NoSQL Registry store:sn1:MAIN")
-	// triadNoOracleListing is the FIX 2 false-positive vector: a binding triad
-	// with NO oracle family token anywhere in the reply (a generic RMI
-	// registry binding that happens to collide with a real InterfaceType enum
-	// member).
-	triadNoOracleListing := []byte("service:node:ADMIN")
+	// bindingTriadOnlyListing is a bare <store>:<resourceId>:<InterfaceType>
+	// binding name with NO oracle.kv class token anywhere in the reply. The
+	// binding-triad heuristic (and its port gate) was deleted in a follow-up
+	// review to stop LLM-reviewer oscillation, so this must NOT classify
+	// regardless of port.
+	bindingTriadOnlyListing := []byte("service:node:ADMIN")
 	genericListing := []byte("jmxrmi org.jnp.interfaces.NamingContext")
 	invalidAck := buildValidAck("10.0.0.5", 5000)
 	invalidAck[0] = 0x4f
@@ -950,42 +828,26 @@ func TestNoSQLPluginRun(t *testing.T) {
 		assert.Nil(t, svc)
 	})
 
-	t.Run("ack then binding-triad listing - detected", func(t *testing.T) {
-		// Regression for the review fix in PR #385: the loose binding triad is
-		// only trusted on nosqlRMIPort (5000), so the target port must match.
-		conn, target := scriptedServer(t, ackThenListing(ack, triadListing))
-		defer conn.Close()
-		target.Address = netip.AddrPortFrom(target.Address.Addr(), nosqlRMIPort)
-
-		svc, err := (&NoSQLPlugin{}).Run(conn, shortTimeout, target)
-		require.NoError(t, err)
-		assertDetectionOnly(t, svc, plugins.ProtoOracleNoSQL, nosqlCPE)
-
-		var payload plugins.ServiceOracleNoSQL
-		require.NoError(t, json.Unmarshal(svc.Raw, &payload))
-		assert.Equal(t, "10.0.0.5:5000", payload.Endpoint)
-	})
-
-	t.Run("ack then binding-triad listing on non-5000 port - not detected (port-gated)", func(t *testing.T) {
-		// Companion negative for the above: the exact same triad listing, but on
-		// a port other than nosqlRMIPort, must NOT classify as oracle_nosql.
-		conn, target := scriptedServer(t, ackThenListing(ack, triadListing))
+	t.Run("ack then oracle.kv listing on a non-5000 port - detected (classification is not port-gated)", func(t *testing.T) {
+		// Classification rests solely on the oracle.kv class token, which is
+		// trusted on ANY port now that the port-gated binding-triad special
+		// case was deleted. Prove detection still fires when the target port
+		// is not the nosqlRMIPort default.
+		conn, target := scriptedServer(t, ackThenListing(ack, classMarkerListing))
 		defer conn.Close()
 		target.Address = netip.AddrPortFrom(target.Address.Addr(), 9999)
 
 		svc, err := (&NoSQLPlugin{}).Run(conn, shortTimeout, target)
-		assert.NoError(t, err)
-		assert.Nil(t, svc)
+		require.NoError(t, err)
+		assertDetectionOnly(t, svc, plugins.ProtoOracleNoSQL, nosqlCPE)
 	})
 
-	t.Run("ack then binding-triad listing with NO oracle token on nosqlRMIPort - not detected (FIX 2 FP fix)", func(t *testing.T) {
-		// Regression for FIX 2: the loose <store>:<resourceId>:<InterfaceType>
-		// binding triad is no longer sufficient on its own, even when
-		// port-gated to nosqlRMIPort - it must ALSO carry an oracle family
-		// token in the same reply. This closes the false-positive vector where
-		// a generic RMI registry binding (service:node:ADMIN) on port 5000 was
-		// misclassified as oracle_nosql.
-		conn, target := scriptedServer(t, ackThenListing(ack, triadNoOracleListing))
+	t.Run("ack then binding-triad listing with no oracle.kv class token - not detected (triad heuristic removed)", func(t *testing.T) {
+		// The <store>:<resourceId>:<InterfaceType> binding-triad heuristic was
+		// deleted: a bare triad with no oracle.kv class token must not
+		// classify, even on nosqlRMIPort where the old port-gated heuristic
+		// used to trust it.
+		conn, target := scriptedServer(t, ackThenListing(ack, bindingTriadOnlyListing))
 		defer conn.Close()
 		target.Address = netip.AddrPortFrom(target.Address.Addr(), nosqlRMIPort)
 
@@ -1101,8 +963,9 @@ func TestNoSQLPluginRun(t *testing.T) {
 
 func TestNoSQLHTTPPluginRun(t *testing.T) {
 	t.Run("200 OK with Oracle NoSQL Database Proxy body - detected", func(t *testing.T) {
-		// Regression for the review fix in PR #385: NoSQLHTTPPlugin.Run is now
-		// gated to nosqlHTTPPort (8080), so the target port must match.
+		// Run probes the root path "/" (not /V2/health) and classifies solely
+		// on nosqlProxyMarkers; confirms detection on the plugin's own default
+		// port (8080).
 		conn, target := scriptedServer(t, httpOnce("HTTP/1.1 200 OK", "Oracle NoSQL Database Proxy"))
 		defer conn.Close()
 		target.Address = netip.AddrPortFrom(target.Address.Addr(), nosqlHTTPPort)
@@ -1117,22 +980,13 @@ func TestNoSQLHTTPPluginRun(t *testing.T) {
 		assert.Equal(t, "", payload.Endpoint)
 	})
 
-	t.Run("200 OK with Oracle NoSQL Database Proxy body on non-8080 port - not detected (port-gated)", func(t *testing.T) {
-		// Companion negative: the exact same detecting body, but on a port
-		// other than nosqlHTTPPort, must NOT classify as oracle_nosql.
-		conn, target := scriptedServer(t, httpOnce("HTTP/1.1 200 OK", "Oracle NoSQL Database Proxy"))
-		defer conn.Close()
-		target.Address = netip.AddrPortFrom(target.Address.Addr(), 9999)
-
-		svc, err := (&NoSQLHTTPPlugin{}).Run(conn, shortTimeout, target)
-		assert.NoError(t, err)
-		assert.Nil(t, svc)
-	})
-
-	t.Run("200 OK with kvproxy body - detected", func(t *testing.T) {
+	t.Run("200 OK with kvproxy body on a non-8080 port - detected (classification is not port-gated)", func(t *testing.T) {
+		// Classification rests solely on nosqlProxyMarkers and is no longer
+		// gated to nosqlHTTPPort, so 80/443/custom-port deployments must be
+		// detected too.
 		conn, target := scriptedServer(t, httpOnce("HTTP/1.1 200 OK", "kvproxy"))
 		defer conn.Close()
-		target.Address = netip.AddrPortFrom(target.Address.Addr(), nosqlHTTPPort)
+		target.Address = netip.AddrPortFrom(target.Address.Addr(), 9999)
 
 		svc, err := (&NoSQLHTTPPlugin{}).Run(conn, shortTimeout, target)
 		assert.NoError(t, err)
@@ -1146,21 +1000,6 @@ func TestNoSQLHTTPPluginRun(t *testing.T) {
 		svc, err := (&NoSQLHTTPPlugin{}).Run(conn, shortTimeout, target)
 		assert.NoError(t, err)
 		assert.Nil(t, svc)
-	})
-
-	t.Run("200 OK on /V2/health with beacon JSON, no product-name marker - detected", func(t *testing.T) {
-		// Run always requests GET /V2/health (see NoSQLHTTPPlugin.Run), so this
-		// loopback round-trip is the only way to reach isOracleNoSQLProxy's
-		// resp.Request-gated beacon branch with a real populated Request/URL - a
-		// bare *http.Response built by hand (as in TestIsOracleNoSQLProxy) has a
-		// nil Request and can never exercise it.
-		conn, target := scriptedServer(t, httpOnce("HTTP/1.1 200 OK", `{"beacon":"GREEN","info":"ALL OK"}`))
-		defer conn.Close()
-		target.Address = netip.AddrPortFrom(target.Address.Addr(), nosqlHTTPPort)
-
-		svc, err := (&NoSQLHTTPPlugin{}).Run(conn, shortTimeout, target)
-		assert.NoError(t, err)
-		assertDetectionOnly(t, svc, plugins.ProtoOracleNoSQL, nosqlCPE)
 	})
 
 	t.Run("body contains ords - not detected", func(t *testing.T) {
