@@ -172,7 +172,7 @@ const (
 	ProtoOracleForms       = "oracle_forms"
 	ProtoOracleReports     = "oracle_reports"
 	ProtoOracleWebLogic    = "oracle_weblogic"
-	ProtoOracleAgilePLM   = "oracle_agile_plm"
+	ProtoOracleAgilePLM    = "oracle_agile_plm"
 	ProtoPCOM              = "pcom"
 	ProtoPFCP              = "pfcp"
 	ProtoPinecone          = "pinecone"

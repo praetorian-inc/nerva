@@ -49,7 +49,7 @@ Version Extraction:
 
 CPE Format:
 
-  cpe:2.3:a:oracle:agile_plm:{version}:*:*:*:*:*:*:*
+  cpe:2.3:a:oracle:agile_plm_framework:{version}:*:*:*:*:*:*:*
 
   Verified against CVE-2024-21287 (unauthenticated file disclosure). When
   version is unknown the version field is the wildcard "*".
@@ -76,6 +76,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/praetorian-inc/nerva/pkg/plugins"
@@ -88,13 +89,10 @@ const (
 
 // versionPattern matches Agile PLM version strings in the login page footer,
 // e.g. "9.3.6 (Build 47)" or "9.3.1.2 (Build 09)".
-var versionPattern = regexp.MustCompile(`(\d+\.\d+(?:\.\d+){0,2})\s*\(Build\s+(\d+)\)`)
+var versionPattern = regexp.MustCompile(`(?:^|[^\d.])(\d+\.\d+(?:\.\d+){0,2})\s*\(Build\s+(\d+)\)`)
 
 // validVersionPattern validates that a dotted-numeric version has 2-4 segments.
 var validVersionPattern = regexp.MustCompile(`^\d+\.\d+(?:\.\d+){0,2}$`)
-
-// titlePattern extracts the contents of an HTML <title> element.
-var titlePattern = regexp.MustCompile(`(?is)<title>(.*?)</title>`)
 
 // AgilePLMPlugin detects Oracle Agile PLM over plain TCP connections.
 type AgilePLMPlugin struct{}
@@ -110,10 +108,14 @@ func init() {
 // createHTTPClient creates an http.Client that wraps the provided net.Conn and
 // does not follow redirects (so Location headers can be inspected directly).
 func createHTTPClient(conn net.Conn, timeout time.Duration) *http.Client {
+	var dialed atomic.Bool
 	return &http.Client{
 		Timeout: timeout,
 		Transport: &http.Transport{
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				if dialed.Swap(true) {
+					return nil, fmt.Errorf("oracleagile: single-connection transport already dialed")
+				}
 				return conn, nil
 			},
 		},
@@ -138,19 +140,10 @@ func doGet(client *http.Client, url string, host string) (*http.Response, error)
 	return client.Do(req)
 }
 
-// extractTitle returns the trimmed contents of the first <title> element, if any.
-func extractTitle(body string) string {
-	if m := titlePattern.FindStringSubmatch(body); len(m) >= 2 {
-		return strings.TrimSpace(m[1])
-	}
-	return ""
-}
-
 // agileEvidence captures the inspectable parts of the Agile PLM probe response.
 type agileEvidence struct {
 	statusCode int
 	body       string
-	server     string
 }
 
 // hasAgileMarker reports whether a body carries a non-reflective Oracle Agile
@@ -203,7 +196,6 @@ func detectAgile(client *http.Client, baseURL string, host string) agileEvidence
 	ev := agileEvidence{
 		statusCode: resp.StatusCode,
 		body:       string(body),
-		server:     resp.Header.Get("Server"),
 	}
 	_ = resp.Body.Close()
 	return ev
@@ -216,7 +208,7 @@ func buildAgilePLMCPE(version string) string {
 	if validVersionPattern.MatchString(version) {
 		v = version
 	}
-	return fmt.Sprintf("cpe:2.3:a:oracle:agile_plm:%s:*:*:*:*:*:*:*", v)
+	return fmt.Sprintf("cpe:2.3:a:oracle:agile_plm_framework:%s:*:*:*:*:*:*:*", v)
 }
 
 func agileFinding() plugins.SecurityFinding {

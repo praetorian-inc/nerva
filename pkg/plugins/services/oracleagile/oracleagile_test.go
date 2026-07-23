@@ -114,10 +114,10 @@ func TestHasAgileMarker(t *testing.T) {
 
 func TestExtractAgileVersion(t *testing.T) {
 	tests := []struct {
-		name          string
-		body          string
-		wantVersion   string
-		wantBuild     string
+		name        string
+		body        string
+		wantVersion string
+		wantBuild   string
 	}{
 		{
 			name:        "9.3.6 (Build 47)",
@@ -149,6 +149,12 @@ func TestExtractAgileVersion(t *testing.T) {
 			wantVersion: "",
 			wantBuild:   "",
 		},
+		{
+			name:        "five-segment version rejects partial match",
+			body:        `Version 9.3.6.0.0 (Build 47)`,
+			wantVersion: "",
+			wantBuild:   "",
+		},
 	}
 
 	for _, tt := range tests {
@@ -173,17 +179,17 @@ func TestBuildAgilePLMCPE(t *testing.T) {
 		{
 			name:     "known version 9.3.6",
 			version:  "9.3.6",
-			expected: "cpe:2.3:a:oracle:agile_plm:9.3.6:*:*:*:*:*:*:*",
+			expected: "cpe:2.3:a:oracle:agile_plm_framework:9.3.6:*:*:*:*:*:*:*",
 		},
 		{
 			name:     "empty version produces wildcard CPE",
 			version:  "",
-			expected: "cpe:2.3:a:oracle:agile_plm:*:*:*:*:*:*:*:*",
+			expected: "cpe:2.3:a:oracle:agile_plm_framework:*:*:*:*:*:*:*:*",
 		},
 		{
 			name:     "four-segment version 9.3.1.2",
 			version:  "9.3.1.2",
-			expected: "cpe:2.3:a:oracle:agile_plm:9.3.1.2:*:*:*:*:*:*:*",
+			expected: "cpe:2.3:a:oracle:agile_plm_framework:9.3.1.2:*:*:*:*:*:*:*",
 		},
 	}
 
@@ -196,51 +202,16 @@ func TestBuildAgilePLMCPE(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Unit tests for extractTitle
-// ---------------------------------------------------------------------------
-
-func TestExtractTitle(t *testing.T) {
-	tests := []struct {
-		name     string
-		body     string
-		expected string
-	}{
-		{
-			name:     "simple title",
-			body:     `<html><head><title>Oracle Agile PLM</title></head></html>`,
-			expected: "Oracle Agile PLM",
-		},
-		{
-			name:     "no title element",
-			body:     `<html><head></head><body>content</body></html>`,
-			expected: "",
-		},
-		{
-			name:     "empty body",
-			body:     "",
-			expected: "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := extractTitle(tt.body)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-// ---------------------------------------------------------------------------
 // Unit tests for evaluateAgile
 // ---------------------------------------------------------------------------
 
 func TestEvaluateAgile(t *testing.T) {
 	tests := []struct {
-		name          string
-		ev            agileEvidence
-		wantDetected  bool
-		wantVersion   string
-		wantBuild     string
+		name         string
+		ev           agileEvidence
+		wantDetected bool
+		wantVersion  string
+		wantBuild    string
 	}{
 		{
 			name: "200 with branded body marker is detected with version extracted",
