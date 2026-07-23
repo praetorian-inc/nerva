@@ -172,6 +172,8 @@ const (
 	ProtoOracleForms       = "oracle_forms"
 	ProtoOracleReports     = "oracle_reports"
 	ProtoOracleWebLogic    = "oracle_weblogic"
+	ProtoOracleOUAF        = "oracle_ouaf"
+	ProtoOracleUTA         = "oracle_uta"
 	ProtoPCOM              = "pcom"
 	ProtoPFCP              = "pfcp"
 	ProtoPinecone          = "pinecone"
@@ -524,6 +526,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoOracleWebLogic:
 		var p ServiceWebLogic
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoOracleOUAF, ProtoOracleUTA:
+		var p ServiceOracleOUAF
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoOMRONFINS:
@@ -1677,6 +1683,20 @@ type ServiceWebLogic struct {
 }
 
 func (e ServiceWebLogic) Type() string { return ProtoOracleWebLogic }
+
+type ServiceOracleOUAF struct {
+	OUAF  bool     `json:"ouaf,omitempty"`
+	UTA   bool     `json:"uta,omitempty"`
+	Title string   `json:"title,omitempty"`
+	CPEs  []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceOracleOUAF) Type() string {
+	if !e.OUAF && e.UTA {
+		return ProtoOracleUTA
+	}
+	return ProtoOracleOUAF
+}
 
 type ServicePCOM struct {
 	Model     string   `json:"model,omitempty"`
