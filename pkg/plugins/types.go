@@ -163,6 +163,8 @@ const (
 	ProtoPeopleSoft        = "oracle_peoplesoft"
 	ProtoOracleOAM         = "oracle_oam"
 	ProtoOracleOIM         = "oracle_oim"
+	ProtoOracleOUD         = "oracle_oud"
+	ProtoOracleOID         = "oracle_oid"
 	ProtoOracleHTTPServer  = "oracle_http_server"
 	ProtoGlassFish         = "oracle_glassfish"
 	ProtoPayara            = "payara"
@@ -509,6 +511,8 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoOracleTimesTen:
 		var p ServiceOracleTimesTen
+	case ProtoOracleOUD, ProtoOracleOID:
+		var p ServiceOracleDirectory
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoOracleHTTPServer:
@@ -1640,6 +1644,22 @@ type ServiceOracleTimesTen struct {
 }
 
 func (e ServiceOracleTimesTen) Type() string { return ProtoOracleTimesTen }
+
+type ServiceOracleDirectory struct {
+	Product          string   `json:"product"`                     // "oud" or "oid"
+	VendorName       string   `json:"vendor_name,omitempty"`       // OUD: "Oracle Corporation"
+	VendorVersion    string   `json:"vendor_version,omitempty"`    // OUD: raw vendorVersion "Oracle Unified Directory <ver>"
+	DirectoryVersion string   `json:"directory_version,omitempty"` // OID: raw orcldirectoryversion
+	CPEs             []string `json:"cpes,omitempty"`
+}
+
+// Type dynamically discriminates OID from OUD by the Product field (GlassFish precedent).
+func (e ServiceOracleDirectory) Type() string {
+	if e.Product == "oid" {
+		return ProtoOracleOID
+	}
+	return ProtoOracleOUD
+}
 
 type ServiceOracleHTTPServer struct {
 	Server           string   `json:"server,omitempty"`
