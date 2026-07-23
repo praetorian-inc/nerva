@@ -511,6 +511,8 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoOracleTimesTen:
 		var p ServiceOracleTimesTen
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
 	case ProtoOracleOUD, ProtoOracleOID:
 		var p ServiceOracleDirectory
 		_ = json.Unmarshal(e.Raw, &p)
