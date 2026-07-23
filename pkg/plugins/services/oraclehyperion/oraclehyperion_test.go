@@ -1562,16 +1562,16 @@ func TestHyperionPlugin_Run_RedirectNotFollowed(t *testing.T) {
 // values, to avoid -race flakiness.
 const agentTestTimeout = 300 * time.Millisecond
 
-// enableEssbaseAgent flips essbaseAgentEnabled to true for the duration of the
-// calling test, restoring the original value on cleanup. essbaseAgentEnabled
-// DEFAULTS TO FALSE (LAB-5054/PR#383), so any EssbaseAgentPlugin.Run()-level
-// test that needs to exercise the classifier past the enabled-gate must opt
-// in explicitly via this helper.
+// enableEssbaseAgent flips EssbaseAgentProbeEnabled to true for the duration
+// of the calling test, restoring the original value on cleanup.
+// EssbaseAgentProbeEnabled DEFAULTS TO FALSE (LAB-5054/PR#383), so any
+// EssbaseAgentPlugin.Run()-level test that needs to exercise the classifier
+// past the enabled-gate must opt in explicitly via this helper.
 func enableEssbaseAgent(t *testing.T) {
 	t.Helper()
-	original := essbaseAgentEnabled
-	essbaseAgentEnabled = func() bool { return true }
-	t.Cleanup(func() { essbaseAgentEnabled = original })
+	orig := EssbaseAgentProbeEnabled
+	EssbaseAgentProbeEnabled = true
+	t.Cleanup(func() { EssbaseAgentProbeEnabled = orig })
 }
 
 func TestEssbaseAgent_Run_SilentServer(t *testing.T) {
@@ -1704,16 +1704,17 @@ func TestEssbaseAgent_Run_ConnectionClosedImmediately(t *testing.T) {
 }
 
 // TestEssbaseAgent_Run_DisabledByEssbaseAgentEnabled is a regression test for
-// the essbaseAgentEnabled kill-switch: when it is flipped to false, Run must
-// return (nil, nil) immediately, even for a reply that would otherwise be
-// classified as the Agent by isEssbaseAgent (a genuinely binary blob). The
+// the EssbaseAgentProbeEnabled kill-switch: when it is flipped to false, Run
+// must return (nil, nil) immediately, even for a reply that would otherwise
+// be classified as the Agent by isEssbaseAgent (a genuinely binary blob). The
 // target built by dialAgent has Address.Port() == EssbaseAgentPort, so the
 // port gate added in LAB-5054/PR#383 is satisfied and the nil result here is
-// attributable to the essbaseAgentEnabled toggle alone, not the port gate.
+// attributable to the EssbaseAgentProbeEnabled toggle alone, not the port
+// gate.
 func TestEssbaseAgent_Run_DisabledByEssbaseAgentEnabled(t *testing.T) {
-	original := essbaseAgentEnabled
-	essbaseAgentEnabled = func() bool { return false }
-	t.Cleanup(func() { essbaseAgentEnabled = original })
+	orig := EssbaseAgentProbeEnabled
+	EssbaseAgentProbeEnabled = false
+	t.Cleanup(func() { EssbaseAgentProbeEnabled = orig })
 
 	port := startAgentLoopback(t, func(conn net.Conn) {
 		defer conn.Close()
@@ -1727,12 +1728,12 @@ func TestEssbaseAgent_Run_DisabledByEssbaseAgentEnabled(t *testing.T) {
 	plugin := &EssbaseAgentPlugin{}
 	service, err := plugin.Run(conn, agentTestTimeout, target)
 
-	assert.Nil(t, service, "Run must return nil when essbaseAgentEnabled is false, even for an otherwise-detecting reply")
+	assert.Nil(t, service, "Run must return nil when EssbaseAgentProbeEnabled is false, even for an otherwise-detecting reply")
 	assert.NoError(t, err)
 }
 
 // TestEssbaseAgent_Run_DefaultDisabled_NoDetection confirms the DEFAULT
-// (essbaseAgentEnabled == false, LAB-5054/PR#383) path returns (nil, nil)
+// (EssbaseAgentProbeEnabled == false, LAB-5054/PR#383) path returns (nil, nil)
 // immediately, even for a reply that would otherwise be classified as the
 // Agent by isEssbaseAgent (a genuinely binary blob), given a target on
 // EssbaseAgentPort (dialAgent fixes target.Address.Port() at 1423, satisfying
@@ -1742,7 +1743,7 @@ func TestEssbaseAgent_Run_DisabledByEssbaseAgentEnabled(t *testing.T) {
 // path and TestEssbaseAgent_Run_BinaryBlob for the explicit opt-in that still
 // exercises the classifier.
 func TestEssbaseAgent_Run_DefaultDisabled_NoDetection(t *testing.T) {
-	require.False(t, essbaseAgentEnabled(), "essbaseAgentEnabled must default to false")
+	require.False(t, EssbaseAgentProbeEnabled, "EssbaseAgentProbeEnabled must default to false")
 
 	port := startAgentLoopback(t, func(conn net.Conn) {
 		defer conn.Close()
@@ -1765,8 +1766,8 @@ func TestEssbaseAgent_Run_DefaultDisabled_NoDetection(t *testing.T) {
 // return (nil, nil) when target.Address.Port() is anything other than
 // EssbaseAgentPort (1423), even for a reply that would otherwise be
 // classified as the Agent by isEssbaseAgent (a genuinely binary blob), and
-// even when essbaseAgentEnabled is explicitly enabled. This proves the port
-// gate closes the false-positive window where slow-lane TCP scans
+// even when EssbaseAgentProbeEnabled is explicitly enabled. This proves the
+// port gate closes the false-positive window where slow-lane TCP scans
 // (pkg/scan/simple_scan.go) invoke every plugin's Run regardless of
 // PortPriority, applying the weak binary-reply heuristic to arbitrary ports.
 func TestEssbaseAgent_Run_PortGate_NonAgentPortSuppressed(t *testing.T) {

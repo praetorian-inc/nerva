@@ -719,12 +719,14 @@ func (p *EssbaseTLSPlugin) Priority() int          { return -1 } // Runs before 
 
 // --- EssbaseAgentPlugin (TCP 1423, best-effort) ---
 
-// essbaseAgentEnabled gates the best-effort 1423 Agent probe. DISABLED BY
-// DEFAULT: there is no confirmed positive Essbase-agent wire signature, so the
-// binary heuristic would risk false positives on unrelated binary services.
-// Flip to `func() bool { return true }` to enable it once a live capture yields
-// a real magic-byte signature. Essbase is still detected via the HTTP REST tier.
-var essbaseAgentEnabled = func() bool { return false }
+// EssbaseAgentProbeEnabled is the production configuration switch for the
+// best-effort 1423 Essbase Agent probe. DISABLED BY DEFAULT: there is no
+// confirmed positive Essbase-agent wire signature, so enabling the binary
+// heuristic risks false positives on unrelated binary services. An embedding
+// application may set oraclehyperion.EssbaseAgentProbeEnabled = true to opt in
+// (e.g. once a live capture yields a real magic-byte signature). Essbase is
+// still detected via the HTTP REST tier regardless of this setting.
+var EssbaseAgentProbeEnabled = false
 
 // Run performs the best-effort, low-confidence Essbase Agent listener probe. It sends
 // ONE benign probe and does ONE bounded read via utils.SendRecv (a fixed 4096-byte
@@ -737,7 +739,7 @@ var essbaseAgentEnabled = func() bool { return false }
 // produced on this path: confidence is too low to make a security claim, and nothing
 // was accessed or authenticated.
 func (p *EssbaseAgentPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
-	if !essbaseAgentEnabled() {
+	if !EssbaseAgentProbeEnabled {
 		return nil, nil
 	}
 	// Slow-lane TCP scans (pkg/scan/simple_scan.go) invoke every plugin's Run
