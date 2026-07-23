@@ -282,16 +282,18 @@ func evaluateHyperion(evs []hyperionEvidence) (sharedServices, planning, aps, de
 	for _, ev := range evs {
 		strong := false
 
-		// A redirect Location may URL-encode marker text (e.g. spaces as %20), so
-		// decode a copy for the location-based marker checks. PathUnescape (not
-		// QueryUnescape) is used because a Location is a URL path: it still turns
-		// %20 into a space but leaves a literal '+' intact, whereas QueryUnescape
-		// would wrongly rewrite '+' to a space. On decode failure the raw value is
-		// kept. The body is NEVER decoded here: a body containing '%' sequences must
-		// not be mangled.
+		// Decode the redirect Location with correct URL semantics before marker
+		// matching: url.Parse yields a %-decoded path that keeps a literal '+'
+		// (paths don't form-encode), while the query string uses '+' for space, so
+		// it is QueryUnescape'd separately. Falls back to the raw Location on a parse
+		// error. (Resolves the path-'+' vs query-'+' decode edge flagged in review.)
 		loc := ev.location
-		if dec, err := url.PathUnescape(loc); err == nil {
-			loc = dec
+		if u, err := url.Parse(ev.location); err == nil {
+			decodedQuery := u.RawQuery
+			if dq, qerr := url.QueryUnescape(u.RawQuery); qerr == nil {
+				decodedQuery = dq
+			}
+			loc = u.Path + " " + decodedQuery
 		}
 
 		// S1: branded Workspace <title>.

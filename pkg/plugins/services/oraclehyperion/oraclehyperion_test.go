@@ -320,16 +320,28 @@ func TestEvaluateHyperion(t *testing.T) {
 			wantDetected: false,
 		},
 		{
-			// Regression (LAB-5054): evaluateHyperion decodes ev.location with
-			// url.PathUnescape, not url.QueryUnescape. A literal '+' in a URL
-			// PATH is not a space-encoding convention (that's a query-string
-			// rule), so PathUnescape must leave it alone. If QueryUnescape were
-			// used instead, "Hyperion+Shared+Services" would decode to "Hyperion
-			// Shared Services" and wrongly match; with PathUnescape the '+'
-			// stays literal, so the marker's required space never appears and
-			// detection must stay false.
-			name:         "literal '+' in redirect Location is not decoded to a space",
+			// Regression (LAB-5054 follow-up): evaluateHyperion now url.Parse's
+			// ev.location and decodes the PATH and QUERY separately. A '+' that
+			// falls in the QUERY string (this location's "?app=..." segment) is
+			// a query space-encoding convention, so it IS decoded to a space via
+			// url.QueryUnescape and the Shared Services marker now matches. This
+			// supersedes the previous PathUnescape-only behavior, which wrongly
+			// left every '+' - including query-string ones - undecoded.
+			name:         "'+' in the QUERY portion of a redirect Location is decoded to a space (detected)",
 			evs:          []hyperionEvidence{hEv("/interop/", http.StatusFound, "/interop/?app=Hyperion+Shared+Services", "", "")},
+			wantSS:       true,
+			wantDetected: true,
+			wantAnon:     false,
+		},
+		{
+			// Negative counterpart: a literal '+' in the PATH portion of a
+			// redirect Location (no query string at all) must stay literal.
+			// Paths do not use '+' as a space-encoding convention (that is a
+			// query-string-only rule), so url.Parse's decoded u.Path keeps the
+			// '+' verbatim, the marker's required space never appears, and
+			// detection must stay false.
+			name:         "literal '+' in the PATH portion of a redirect Location is not decoded to a space",
+			evs:          []hyperionEvidence{hEv("/interop/", http.StatusFound, "/interop/Hyperion+Shared+Services", "", "")},
 			wantDetected: false,
 		},
 		{
