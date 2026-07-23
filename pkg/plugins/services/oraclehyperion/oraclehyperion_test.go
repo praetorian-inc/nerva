@@ -537,6 +537,37 @@ func TestEvaluateEssbaseREST(t *testing.T) {
 			wantAnon:     true,
 		},
 		{
+			// Regression (LAB-5054 review, Gemini): the decoupled best-effort
+			// version field is json.RawMessage, so a server that returns a NUMERIC
+			// "version" (rather than a string) no longer fails json.Unmarshal and
+			// abort core product detection. Essbase is still detected; the numeric
+			// version is dropped (essbaseVersion yields "" for a non-string token).
+			name:         "numeric version does not abort detection; version dropped",
+			ev:           essbaseRESTEvidence{statusCode: http.StatusOK, body: `{"name":"Essbase","version":21}`},
+			wantREST:     true,
+			wantVersion:  "",
+			wantDetected: true,
+			wantAnon:     true,
+		},
+		{
+			// A non-string JSON version of any shape (here an object) is likewise
+			// tolerated: detection succeeds, version is dropped.
+			name:         "object version does not abort detection; version dropped",
+			ev:           essbaseRESTEvidence{statusCode: http.StatusOK, body: `{"name":"Essbase","version":{"major":21}}`},
+			wantREST:     true,
+			wantVersion:  "",
+			wantDetected: true,
+			wantAnon:     true,
+		},
+		{
+			name:         "null version does not abort detection; version dropped",
+			ev:           essbaseRESTEvidence{statusCode: http.StatusOK, body: `{"name":"Essbase","version":null}`},
+			wantREST:     true,
+			wantVersion:  "",
+			wantDetected: true,
+			wantAnon:     true,
+		},
+		{
 			name:         "valid JSON but non-Essbase name is not detected",
 			ev:           essbaseRESTEvidence{statusCode: http.StatusOK, body: `{"name":"Something"}`},
 			wantREST:     false,

@@ -104,9 +104,15 @@ var titlePattern = regexp.MustCompile(`(?is)<title[^>]*>(.*?)</title>`)
 // The body is parsed with encoding/json into this fixed struct (never a regex over
 // the raw text), so a truncated/malformed JSON body or an HTML page that merely
 // contains the "name":"Essbase" substring cannot satisfy the gate.
+//
+// Version is json.RawMessage, not string, on purpose: it is a best-effort field
+// DECOUPLED from detection, so a type mismatch on it (e.g. a server that returns a
+// numeric "version": 21 rather than a string) must not fail the whole json.Unmarshal
+// and abort core product detection. RawMessage accepts any JSON token without a
+// UnmarshalTypeError; the string is then extracted separately (see essbaseVersion).
 type essbaseAbout struct {
-	Name    string `json:"name"`
-	Version string `json:"version"`
+	Name    string          `json:"name"`
+	Version json.RawMessage `json:"version"`
 }
 
 // essbaseVersionShape restricts an accepted /about "version" to a digits/dots shape
@@ -447,11 +453,27 @@ func evaluateEssbaseREST(ev essbaseRESTEvidence) (rest bool, version string, det
 	}
 	rest = true
 	detected = true
-	if essbaseVersionShape.MatchString(about.Version) {
-		version = about.Version // best-effort; malformed/absent leaves the CPE wildcard
+	if v := essbaseVersion(about.Version); essbaseVersionShape.MatchString(v) {
+		version = v // best-effort; malformed/absent/non-string leaves the CPE wildcard
 	}
 	anonExposure = isAnonymousExposure(ev.statusCode)
 	return rest, version, detected, anonExposure
+}
+
+// essbaseVersion extracts the version as a string from the decoupled best-effort
+// /about "version" field. The field is only ever a JSON string in practice; if the
+// server returns any other JSON type (number, object, null) or it is absent, this
+// yields "" so detection is unaffected and the CPE version stays wildcard. The
+// returned string is still shape-validated by essbaseVersionShape before use.
+func essbaseVersion(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return ""
+	}
+	return s
 }
 
 // detectEssbaseREST fetches /essbase/rest/v1/about and evaluates the response. The
