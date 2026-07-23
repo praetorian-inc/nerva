@@ -15,6 +15,7 @@
 package oraclehyperion
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -1350,6 +1351,129 @@ func TestEssbaseTLSPlugin_Run_Gating(t *testing.T) {
 	assert.True(t, service.AnonymousAccess)
 	require.Len(t, service.SecurityFindings, 1)
 	assert.Equal(t, "oracle-essbase-rest-exposed", service.SecurityFindings[0].ID)
+}
+
+// tlsDialTarget starts a REAL TLS connection against an httptest.NewTLSServer
+// and builds the plugins.Target a scanner would hand to a TLSPlugin. In
+// production the scanner completes the TLS handshake itself and invokes
+// Run() with an already-established *tls.Conn; the plugin's HTTP client then
+// speaks plaintext HTTP framing over that connection (see
+// createHTTPClient's DialContext, which always returns the caller-supplied
+// conn verbatim, TLS or not). Misconfigs is always true here so that
+// CheckTLS(conn) - which type-asserts conn.(*tls.Conn) - actually runs
+// against a live tls.Conn instead of hitting its plain-conn nil short-circuit.
+func tlsDialTarget(t *testing.T, serverURL string) (*tls.Conn, plugins.Target) {
+	t.Helper()
+	hostPort := strings.TrimPrefix(serverURL, "https://")
+	host, portStr, err := net.SplitHostPort(hostPort)
+	require.NoError(t, err)
+	port, err := strconv.Atoi(portStr)
+	require.NoError(t, err)
+	addr := netip.AddrPortFrom(netip.MustParseAddr(host), uint16(port))
+
+	tlsConn, err := tls.Dial("tcp", hostPort, &tls.Config{InsecureSkipVerify: true})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = tlsConn.Close() })
+
+	target := plugins.Target{
+		Host:       addr.Addr().String(),
+		Address:    addr,
+		Misconfigs: true,
+	}
+	return tlsConn, target
+}
+
+// hasFindingID reports whether findings contains an entry with the given ID.
+func hasFindingID(findings []plugins.SecurityFinding, id string) bool {
+	for _, f := range findings {
+		if f.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// TestHyperionTLSPlugin_Run_RealTLSConn is regression coverage for the
+// reviewer-flagged gap in PR #383/LAB-5054: TestHyperionTLSPlugin_Run_Positive
+// and TestHyperionTLSPlugin_Run_Gating above only prove the TLS metadata
+// flags (TLS==true, Transport=="tcptls") over a PLAINTEXT httptest.NewServer
+// conn, never a real *tls.Conn. This test drives HyperionTLSPlugin.Run
+// against an httptest.NewTLSServer over a real tls.Dial connection, so both
+// the HTTP-over-TLS transport (createHTTPClient's Transport reusing the
+// *tls.Conn across the multiple GETs detectHyperion issues) and the
+// CheckTLS(conn) type assertion (conn.(*tls.Conn)) are actually exercised,
+// not merely the CreateServiceFrom metadata plumbing.
+func TestHyperionTLSPlugin_Run_RealTLSConn(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/workspace/index.jsp":
+			fmt.Fprint(w, `<title>Enterprise Performance Management System Workspace</title>`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	tlsConn, target := tlsDialTarget(t, server.URL)
+
+	service, err := (&HyperionTLSPlugin{}).Run(tlsConn, 5*time.Second, target)
+	require.NoError(t, err)
+	require.NotNil(t, service, "detection must succeed over a real *tls.Conn, proving the HTTP-over-TLS transport works")
+	assert.True(t, service.TLS)
+	assert.Equal(t, "tcptls", service.Transport)
+
+	var payload plugins.ServiceOracleHyperion
+	require.NoError(t, json.Unmarshal(service.Raw, &payload))
+	assert.Len(t, payload.CPEs, 1)
+
+	// Misconfigs=true + a 200 OK anonymous response + a real *tls.Conn means
+	// both the anonymous-exposure finding AND CheckTLS(conn)'s findings (if
+	// any, given httptest's self-signed cert) are appended. Deliberately not
+	// asserting on the exact set/count of CheckTLS findings - only that the
+	// call path completed and the exposure finding it appends alongside is
+	// still present.
+	assert.True(t, service.AnonymousAccess)
+	assert.True(t, hasFindingID(service.SecurityFindings, "oracle-hyperion-exposed"),
+		"the anonymous-exposure finding must be present alongside whatever CheckTLS(conn) appended")
+}
+
+// TestEssbaseTLSPlugin_Run_RealTLSConn mirrors
+// TestHyperionTLSPlugin_Run_RealTLSConn for EssbaseTLSPlugin: it drives
+// Run() against an httptest.NewTLSServer over a real tls.Dial connection so
+// the HTTP-over-TLS transport and CheckTLS(conn)'s conn.(*tls.Conn) type
+// assertion are exercised for the Essbase REST detection path too, not just
+// the plaintext-conn TLS metadata coverage in
+// TestEssbaseTLSPlugin_Run_Positive / TestEssbaseTLSPlugin_Run_Gating above.
+func TestEssbaseTLSPlugin_Run_RealTLSConn(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/essbase/rest/v1/about":
+			fmt.Fprint(w, `{"name":"Essbase","version":"21.2.3.0.0"}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	tlsConn, target := tlsDialTarget(t, server.URL)
+
+	service, err := (&EssbaseTLSPlugin{}).Run(tlsConn, 5*time.Second, target)
+	require.NoError(t, err)
+	require.NotNil(t, service, "detection must succeed over a real *tls.Conn, proving the HTTP-over-TLS transport works")
+	assert.True(t, service.TLS)
+	assert.Equal(t, "tcptls", service.Transport)
+	assert.Equal(t, "21.2.3.0.0", service.Version)
+
+	var payload plugins.ServiceOracleEssbase
+	require.NoError(t, json.Unmarshal(service.Raw, &payload))
+	assert.True(t, payload.REST)
+
+	// Same reasoning as the Hyperion counterpart above: assert the call path
+	// through CheckTLS(conn) completed and the exposure finding survives
+	// alongside it, without over-asserting CheckTLS's own finding contents.
+	assert.True(t, service.AnonymousAccess)
+	assert.True(t, hasFindingID(service.SecurityFindings, "oracle-essbase-rest-exposed"),
+		"the anonymous-exposure finding must be present alongside whatever CheckTLS(conn) appended")
 }
 
 // ---------------------------------------------------------------------------

@@ -297,8 +297,9 @@ func hasEPMCookie(setCookies []string) bool {
 // evaluateHyperion inspects collected responses and decides whether the host is the
 // Oracle Hyperion EPM web tier. Detection asserts on ANY strong non-reflective
 // signal (S1-S4); Planning/APS are corroborating enrichment only and never set
-// detected. anonExposure reports whether at least one strong signal rode a
-// 2xx/3xx-with-Location response (P0-6).
+// detected. anonExposure reports whether at least one strong signal rode a 2xx
+// success response (P0-6); a redirect (even to a login page) means auth is being
+// enforced and does not set anonExposure (see isAnonymousExposure).
 func evaluateHyperion(evs []hyperionEvidence) (sharedServices, planning, aps, detected, anonExposure bool) {
 	for _, ev := range evs {
 		strong := false
