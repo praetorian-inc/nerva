@@ -49,10 +49,10 @@ CPE formats (all three emitted on detection):
 
 Version (best-effort):
 
-  Acme Packet version strings look like SCZ8.4.0, ECZ9.1.0, nnSCZ740, or
-  generic 9.0.0. Version extraction tries an Acme-style token first, then
-  falls back to a plain three-part dotted version. Version "" (unknown) is
-  expected and acceptable.
+  Acme Packet version strings look like SCZ8.4.0, ECZ9.1.0, etc.
+  Version extraction matches Acme-style tokens only; no generic fallback
+  is used to avoid false matches on unrelated numbers. Version "" (unknown)
+  is expected and acceptable.
 */
 
 package oraclesbc
@@ -65,6 +65,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/praetorian-inc/nerva/pkg/plugins"
@@ -75,16 +76,14 @@ const (
 	maxResponseSize = int64(10 * 1024 * 1024)
 )
 
-// titlePattern extracts the contents of an HTML <title> element.
-var titlePattern = regexp.MustCompile(`(?is)<title>(.*?)</title>`)
-
 // sbcVersionAcme matches Acme Packet version tokens such as SCZ8.4.0, ECZ9.1.0,
 // nnSCZ740, SCZ740, etc. The leading optional digits handle older numeric-prefix
 // formats.
 var sbcVersionAcme = regexp.MustCompile(`(?i)([SE]C[XZ]?\d+\.\d+\.\d+[A-Za-z0-9.]*)`)
 
-// sbcVersionGeneric is a fallback that matches any three-part dotted version.
-var sbcVersionGeneric = regexp.MustCompile(`\d+\.\d+\.\d+`)
+// acmePrefixPattern matches the alphabetic prefix on an Acme version token
+// (e.g. "SCZ", "ECZ") for stripping during CPE normalization.
+var acmePrefixPattern = regexp.MustCompile(`(?i)^[A-Za-z]+`)
 
 // sbcEvidence captures the inspectable parts of a single probe response.
 type sbcEvidence struct {
@@ -140,27 +139,21 @@ func hasAcmePacketMarker(s string) bool {
 		strings.Contains(lower, "oracle communications")
 }
 
-// extractTitle returns the trimmed contents of the first <title> element,
-// if any.
-func extractTitle(body string) string {
-	if m := titlePattern.FindStringSubmatch(body); len(m) >= 2 {
-		return strings.TrimSpace(m[1])
-	}
-	return ""
-}
-
 // extractSBCVersion attempts best-effort version extraction from an HTML body.
-// It tries the Acme-style token (e.g. SCZ8.4.0, ECZ9.1.0) first, then falls
-// back to a plain three-part dotted version (e.g. 9.0.0). Returns "" when no
-// version is found; this is expected and acceptable.
+// It matches Acme-style tokens only (e.g. SCZ8.4.0, ECZ9.1.0). Returns ""
+// when no version is found; this is expected and acceptable.
 func extractSBCVersion(body string) string {
 	if m := sbcVersionAcme.FindString(body); m != "" {
 		return m
 	}
-	if m := sbcVersionGeneric.FindString(body); m != "" {
-		return m
-	}
 	return ""
+}
+
+// normalizeSBCVersion strips the Acme prefix (SCZ, ECZ, etc.) from a version
+// token so it can be used in CPEs. E.g. "SCZ8.4.0" -> "8.4.0", "ECZ9.1.0" -> "9.1.0".
+// Returns the input unchanged if no prefix is found.
+func normalizeSBCVersion(version string) string {
+	return acmePrefixPattern.ReplaceAllString(version, "")
 }
 
 // evaluateSBC inspects evidence collected from the REST and root probes and
@@ -209,15 +202,19 @@ func evaluateSBC(rest, root sbcEvidence) (version string, restAPI bool, detected
 // createHTTPClient creates an http.Client that wraps the provided net.Conn and
 // does not follow redirects (so Location headers can be inspected directly).
 func createHTTPClient(conn net.Conn, timeout time.Duration) *http.Client {
+	var dialed atomic.Bool
 	return &http.Client{
 		Timeout: timeout,
 		Transport: &http.Transport{
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				if dialed.Swap(true) {
+					return nil, fmt.Errorf("oraclesbc: single-connection transport already dialed")
+				}
 				return conn, nil
 			},
 		},
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse // Don't follow redirects
+			return http.ErrUseLastResponse
 		},
 	}
 }
@@ -248,7 +245,7 @@ func doGet(client *http.Client, url string, host string) (*http.Response, error)
 // version-agnostic: all probed paths contain "auth/token", so the
 // strings.Contains(rest.path, "auth/token") check in evaluateSBC remains correct
 // for whichever path is selected.
-func detectSBC(client *http.Client, baseURL string, host string) (version string, restAPI bool, detected bool) {
+func detectSBC(client *http.Client, baseURL string, host string) (version string, restAPI bool, detected bool, rootAccessible bool) {
 	restVersionPaths := []string{
 		"/rest/v1.0/auth/token",
 		"/rest/v1.1/auth/token",
@@ -291,13 +288,16 @@ func detectSBC(client *http.Client, baseURL string, host string) (version string
 		_ = resp.Body.Close()
 	}
 
-	return evaluateSBC(rest, root)
+	version, restAPI, detected = evaluateSBC(rest, root)
+	rootAccessible = root.statusCode >= 200 && root.statusCode < 300
+	return
 }
 
 // buildSBCCPEs returns all three Oracle SBC/E-SBC/ECB CPEs. When version is "",
-// the version field is the wildcard "*".
+// the version field is the wildcard "*". Acme-prefixed tokens (e.g. "SCZ8.4.0")
+// are normalized to plain dotted versions (e.g. "8.4.0") to match NVD CPE entries.
 func buildSBCCPEs(version string) []string {
-	ver := version
+	ver := normalizeSBCVersion(version)
 	if ver == "" {
 		ver = "*"
 	}
@@ -334,7 +334,7 @@ func (p *SBCPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 	client := createHTTPClient(conn, timeout)
 	baseURL := fmt.Sprintf("http://%s", conn.RemoteAddr().String())
 
-	version, restAPI, detected := detectSBC(client, baseURL, target.Host)
+	version, restAPI, detected, rootAccessible := detectSBC(client, baseURL, target.Host)
 	if !detected {
 		return nil, nil
 	}
@@ -346,7 +346,7 @@ func (p *SBCPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 	}
 	service := plugins.CreateServiceFrom(target, payload, false, version, plugins.TCP)
 	if target.Misconfigs {
-		service.AnonymousAccess = true
+		service.AnonymousAccess = rootAccessible
 		service.SecurityFindings = append(service.SecurityFindings, sbcFinding())
 	}
 	return service, nil
@@ -361,7 +361,7 @@ func (p *SBCTLSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.
 	client := createHTTPClient(conn, timeout)
 	baseURL := fmt.Sprintf("http://%s", conn.RemoteAddr().String())
 
-	version, restAPI, detected := detectSBC(client, baseURL, target.Host)
+	version, restAPI, detected, rootAccessible := detectSBC(client, baseURL, target.Host)
 	if !detected {
 		return nil, nil
 	}
@@ -373,7 +373,7 @@ func (p *SBCTLSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.
 	}
 	service := plugins.CreateServiceFrom(target, payload, true, version, plugins.TCPTLS)
 	if target.Misconfigs {
-		service.AnonymousAccess = true
+		service.AnonymousAccess = rootAccessible
 		service.SecurityFindings = append(service.SecurityFindings, sbcFinding())
 		service.SecurityFindings = append(service.SecurityFindings, plugins.CheckTLS(conn)...)
 	}

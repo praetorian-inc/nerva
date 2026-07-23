@@ -195,51 +195,6 @@ func TestHasAcmePacketMarker(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Unit tests — extractTitle
-// ---------------------------------------------------------------------------
-
-func TestExtractTitle(t *testing.T) {
-	tests := []struct {
-		name     string
-		body     string
-		expected string
-	}{
-		{
-			name:     "normal title",
-			body:     `<html><head><title>Acme Packet SBC Login</title></head></html>`,
-			expected: "Acme Packet SBC Login",
-		},
-		{
-			name:     "title with surrounding whitespace",
-			body:     "<html><head><title>  SBC Management  </title></head></html>",
-			expected: "SBC Management",
-		},
-		{
-			name:     "no title element",
-			body:     `<html><head></head><body>hello</body></html>`,
-			expected: "",
-		},
-		{
-			name:     "empty body",
-			body:     "",
-			expected: "",
-		},
-		{
-			name:     "multiline title — case-insensitive match",
-			body:     "<HTML><HEAD><TITLE>\n  Acme SBC\n  </TITLE></HEAD></HTML>",
-			expected: "Acme SBC",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := extractTitle(tt.body)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-// ---------------------------------------------------------------------------
 // Unit tests — extractSBCVersion
 // ---------------------------------------------------------------------------
 
@@ -265,9 +220,9 @@ func TestExtractSBCVersion(t *testing.T) {
 			expected: "SCZ7.4.0",
 		},
 		{
-			name:     "generic dotted version fallback",
+			name:     "generic dotted version no longer matched",
 			body:     `<p>Firmware 9.0.0 release</p>`,
-			expected: "9.0.0",
+			expected: "",
 		},
 		{
 			name:     "no version present returns empty string",
@@ -304,6 +259,36 @@ func TestBuildSBCCPEs(t *testing.T) {
 		assert.Contains(t, cpes[1], "enterprise_session_border_controller:*")
 		assert.Contains(t, cpes[2], "enterprise_communications_broker:*")
 	})
+
+	t.Run("with Acme-prefixed version normalizes for CPE", func(t *testing.T) {
+		cpes := buildSBCCPEs("SCZ8.4.0")
+		require.Len(t, cpes, 3)
+		assert.Contains(t, cpes[0], "communications_session_border_controller:8.4.0")
+		assert.Contains(t, cpes[1], "enterprise_session_border_controller:8.4.0")
+		assert.Contains(t, cpes[2], "enterprise_communications_broker:8.4.0")
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Unit tests — normalizeSBCVersion
+// ---------------------------------------------------------------------------
+
+func TestNormalizeSBCVersion(t *testing.T) {
+	tests := []struct {
+		name     string
+		version  string
+		expected string
+	}{
+		{name: "SCZ prefix removed", version: "SCZ8.4.0", expected: "8.4.0"},
+		{name: "ECZ prefix removed", version: "ECZ9.1.0", expected: "9.1.0"},
+		{name: "already normalized", version: "8.4.0", expected: "8.4.0"},
+		{name: "empty string", version: "", expected: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, normalizeSBCVersion(tt.version))
+		})
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -648,11 +633,11 @@ func TestSBCPlugin_Run(t *testing.T) {
 		assert.True(t, sbcService.RestAPI, "RestAPI should be true when 401 challenge present")
 		require.Len(t, sbcService.CPEs, 3)
 		assert.Contains(t, sbcService.CPEs[0], "communications_session_border_controller")
-		assert.Contains(t, sbcService.CPEs[0], "SCZ8.4.0")
+		assert.Contains(t, sbcService.CPEs[0], "8.4.0")
 		assert.Contains(t, sbcService.CPEs[1], "enterprise_session_border_controller")
-		assert.Contains(t, sbcService.CPEs[1], "SCZ8.4.0")
+		assert.Contains(t, sbcService.CPEs[1], "8.4.0")
 		assert.Contains(t, sbcService.CPEs[2], "enterprise_communications_broker")
-		assert.Contains(t, sbcService.CPEs[2], "SCZ8.4.0")
+		assert.Contains(t, sbcService.CPEs[2], "8.4.0")
 		assert.Equal(t, "oracle_sbc", service.Protocol)
 	})
 
