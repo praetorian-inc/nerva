@@ -395,6 +395,66 @@ func TestIsOracleNoSQLListing(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Section 2.3b: TestOracleNoSQLListingMatches (FP-safe classifier, PR #385 -
+// the loose binding triad is port-gated; oracle.kv classifies on any port)
+// ---------------------------------------------------------------------------
+
+func TestOracleNoSQLListingMatches(t *testing.T) {
+	tests := []struct {
+		name           string
+		reply          []byte
+		bindingAllowed bool
+		expected       bool
+	}{
+		{"binding triad, bindingAllowed=true - detected", []byte("store:rg1:ADMIN"), true, true},
+		{"binding triad, bindingAllowed=false - not detected (port-gated)", []byte("store:rg1:ADMIN"), false, false},
+		{"oracle.kv class token, bindingAllowed=true - detected", []byte("oracle.kv"), true, true},
+		{"oracle.kv class token, bindingAllowed=false - detected regardless (cross-port marker)", []byte("oracle.kv"), false, true},
+		{
+			"generic RMI role collides with a real enum member (service:node:ADMIN), bindingAllowed=false - not detected: FP protection is the port gate, not the regex",
+			[]byte("service:node:ADMIN"), false, false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, oracleNoSQLListingMatches(tt.reply, tt.bindingAllowed))
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Section 2.3c: TestNoSQLBindingRegexEnumMembers (nosqlBindingRe anchored
+// InterfaceType enum allowlist, PR #385)
+// ---------------------------------------------------------------------------
+
+func TestNoSQLBindingRegexEnumMembers(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected bool
+	}{
+		{"ADMIN", "store:rg1:ADMIN", true},
+		{"MAIN", "store:rg1:MAIN", true},
+		{"MONITOR", "store:rg1:MONITOR", true},
+		{"LOGIN", "store:rg1:LOGIN", true},
+		{"TRUSTED_LOGIN", "store:rg1:TRUSTED_LOGIN", true},
+		{"ADMIN, hyphenated resourceId", "store:rg1-rn1:ADMIN", true},
+		{"non-enum uppercase role FOO - not matched", "x:y:FOO", false},
+		{"non-enum uppercase role CACHE - not matched", "svc:n:CACHE", false},
+		{"MAINTENANCE is not MAIN - word boundary rejects the extension", "store:rg1:MAINTENANCE", false},
+		{"ADMINX is not ADMIN - word boundary rejects the extension", "store:rg1:ADMINX", false},
+		{"lowercase admin - not matched", "app:svc:admin", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, nosqlBindingRe.MatchString(tt.input))
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Section 2.4: TestIsOracleNoSQLProxy (HTTP corroboration) - FP guard
 // ---------------------------------------------------------------------------
 
@@ -413,8 +473,9 @@ func httpRespWithLocation(location string) *http.Response {
 // http.Client - see NoSQLHTTPPlugin.Run's loopback test for that path).
 func httpRespWithRequestPath(path string) *http.Response {
 	return &http.Response{
-		Header:  http.Header{},
-		Request: &http.Request{URL: &url.URL{Path: path}},
+		StatusCode: http.StatusOK,
+		Header:     http.Header{},
+		Request:    &http.Request{URL: &url.URL{Path: path}},
 	}
 }
 
@@ -465,6 +526,16 @@ func TestIsOracleNoSQLProxy(t *testing.T) {
 			"bare 200 with no beacon, Request populated on /V2/health - not detected",
 			httpRespWithRequestPath("/V2/health"),
 			"<html>OK</html>",
+			false,
+		},
+		{
+			"V2/health beacon JSON but StatusCode != 200 - not detected (status-gated, never keys on bare 200)",
+			&http.Response{
+				StatusCode: http.StatusServiceUnavailable,
+				Header:     http.Header{},
+				Request:    &http.Request{URL: &url.URL{Path: "/V2/health"}},
+			},
+			`{"beacon":"GREEN","info":"ALL OK"}`,
 			false,
 		},
 	}
@@ -729,8 +800,11 @@ func TestNoSQLPluginRun(t *testing.T) {
 	})
 
 	t.Run("ack then binding-triad listing - detected", func(t *testing.T) {
+		// Regression for the review fix in PR #385: the loose binding triad is
+		// only trusted on nosqlRMIPort (5000), so the target port must match.
 		conn, target := scriptedServer(t, ackThenListing(ack, triadListing))
 		defer conn.Close()
+		target.Address = netip.AddrPortFrom(target.Address.Addr(), nosqlRMIPort)
 
 		svc, err := (&NoSQLPlugin{}).Run(conn, shortTimeout, target)
 		require.NoError(t, err)
@@ -739,6 +813,18 @@ func TestNoSQLPluginRun(t *testing.T) {
 		var payload plugins.ServiceOracleNoSQL
 		require.NoError(t, json.Unmarshal(svc.Raw, &payload))
 		assert.Equal(t, "10.0.0.5:5000", payload.Endpoint)
+	})
+
+	t.Run("ack then binding-triad listing on non-5000 port - not detected (port-gated)", func(t *testing.T) {
+		// Companion negative for the above: the exact same triad listing, but on
+		// a port other than nosqlRMIPort, must NOT classify as oracle_nosql.
+		conn, target := scriptedServer(t, ackThenListing(ack, triadListing))
+		defer conn.Close()
+		target.Address = netip.AddrPortFrom(target.Address.Addr(), 9999)
+
+		svc, err := (&NoSQLPlugin{}).Run(conn, shortTimeout, target)
+		assert.NoError(t, err)
+		assert.Nil(t, svc)
 	})
 
 	t.Run("ack then generic listing - not detected, let javarmi claim", func(t *testing.T) {
@@ -848,8 +934,11 @@ func TestNoSQLPluginRun(t *testing.T) {
 
 func TestNoSQLHTTPPluginRun(t *testing.T) {
 	t.Run("200 OK with Oracle NoSQL Database Proxy body - detected", func(t *testing.T) {
+		// Regression for the review fix in PR #385: NoSQLHTTPPlugin.Run is now
+		// gated to nosqlHTTPPort (8080), so the target port must match.
 		conn, target := scriptedServer(t, httpOnce("HTTP/1.1 200 OK", "Oracle NoSQL Database Proxy"))
 		defer conn.Close()
+		target.Address = netip.AddrPortFrom(target.Address.Addr(), nosqlHTTPPort)
 
 		svc, err := (&NoSQLHTTPPlugin{}).Run(conn, shortTimeout, target)
 		assert.NoError(t, err)
@@ -861,9 +950,22 @@ func TestNoSQLHTTPPluginRun(t *testing.T) {
 		assert.Equal(t, "", payload.Endpoint)
 	})
 
+	t.Run("200 OK with Oracle NoSQL Database Proxy body on non-8080 port - not detected (port-gated)", func(t *testing.T) {
+		// Companion negative: the exact same detecting body, but on a port
+		// other than nosqlHTTPPort, must NOT classify as oracle_nosql.
+		conn, target := scriptedServer(t, httpOnce("HTTP/1.1 200 OK", "Oracle NoSQL Database Proxy"))
+		defer conn.Close()
+		target.Address = netip.AddrPortFrom(target.Address.Addr(), 9999)
+
+		svc, err := (&NoSQLHTTPPlugin{}).Run(conn, shortTimeout, target)
+		assert.NoError(t, err)
+		assert.Nil(t, svc)
+	})
+
 	t.Run("200 OK with kvproxy body - detected", func(t *testing.T) {
 		conn, target := scriptedServer(t, httpOnce("HTTP/1.1 200 OK", "kvproxy"))
 		defer conn.Close()
+		target.Address = netip.AddrPortFrom(target.Address.Addr(), nosqlHTTPPort)
 
 		svc, err := (&NoSQLHTTPPlugin{}).Run(conn, shortTimeout, target)
 		assert.NoError(t, err)
@@ -887,6 +989,7 @@ func TestNoSQLHTTPPluginRun(t *testing.T) {
 		// nil Request and can never exercise it.
 		conn, target := scriptedServer(t, httpOnce("HTTP/1.1 200 OK", `{"beacon":"GREEN","info":"ALL OK"}`))
 		defer conn.Close()
+		target.Address = netip.AddrPortFrom(target.Address.Addr(), nosqlHTTPPort)
 
 		svc, err := (&NoSQLHTTPPlugin{}).Run(conn, shortTimeout, target)
 		assert.NoError(t, err)
@@ -933,6 +1036,7 @@ func TestNoSQLHTTPPluginRun(t *testing.T) {
 		raw := "HTTP/1.1 302 Found\r\nLocation: /oracle.kv/redirect\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
 		conn, target := scriptedServer(t, writeOnce([]byte(raw)))
 		defer conn.Close()
+		target.Address = netip.AddrPortFrom(target.Address.Addr(), nosqlHTTPPort)
 
 		svc, err := (&NoSQLHTTPPlugin{}).Run(conn, shortTimeout, target)
 		assert.NoError(t, err)
