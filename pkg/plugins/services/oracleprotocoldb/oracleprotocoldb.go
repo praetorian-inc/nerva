@@ -33,12 +33,12 @@ binary-protocol plugins oracledb, javarmi, and activemq.
 Security invariants (all four plugins):
   - Every read goes through pluginutils.SendRecv/Recv (fixed 4 KB buffer per Read,
     deadline; []byte{} on timeout/refused -> treated as silence). Some paths do a
-    small BOUNDED read-accumulation to tolerate TCP segmentation (a valid ack or
-    reject can be split across segments): the NoSQL round-1 JRMP handshake reads at
-    most 3 times and the TimesTen probe at most 2 times, each only while the bytes so
-    far stay consistent with the target shape; the NoSQL round-2 registry list() loop
-    reads until the marker appears or the buffer is exhausted. Coherence and NoSQL-HTTP
-    still read once.
+    small BOUNDED read-accumulation to tolerate TCP segmentation (a valid ack,
+    reject, or POF frame can be split across segments): the NoSQL round-1 JRMP
+    handshake, the TimesTen probe, and the Coherence POF handshake each read at most 3
+    times total, only while the bytes so far stay consistent with the target shape; the
+    NoSQL round-2 registry list() loop reads until the marker appears or the buffer is
+    exhausted. NoSQL-HTTP still reads once.
   - Requests are capped: TimesTen 1, Coherence 1, NoSQL-RMI <=2, NoSQL-HTTP 1. Every
     read loop is bounded by ONE absolute deadline (time.Now().Add(timeout), NOT a fresh
     per-read timeout, so a drip-feeding peer cannot amplify the wall-clock) plus a
@@ -832,6 +832,50 @@ func isLikelyCoherencePOF(resp []byte) bool {
 	return int64(consumed)+declaredLength == int64(len(resp))
 }
 
+// couldBeCoherencePOFPrefix reports whether resp is a non-empty prefix still
+// consistent with an as-yet-incomplete POF frame — i.e. isLikelyCoherencePOF
+// fails ONLY because more bytes are needed, not because resp positively
+// contradicts the POF shape. TCP may split the small NameService handshake frame
+// across segments, so a single Recv can return the frame's leading bytes; this
+// predicate decides whether accumulating one more bounded read is worthwhile. It
+// never widens acceptance (isLikelyCoherencePOF still makes the final call), so
+// detection stays FN-safe: a mis-read only under-detects.
+func couldBeCoherencePOFPrefix(resp []byte) bool {
+	if len(resp) == 0 {
+		return false
+	}
+	// Already longer than a plausible handshake frame -> not a partial frame.
+	if len(resp) > coherenceMaxFrame {
+		return false
+	}
+	// Shapes that positively contradict Coherence can never become a POF frame by
+	// reading more bytes.
+	if looksLikeTLS(resp) || looksLikeSSH(resp) || looksLikeHTTP(resp) || looksLikeJRMP(resp) {
+		return false
+	}
+	if bytes.Contains(resp, []byte("Coherence")) {
+		return false
+	}
+	if isMostlyPrintable(resp) {
+		return false
+	}
+	declaredLength, consumed, ok := decodePackedInt(resp)
+	if !ok {
+		// The POF packed-int length prefix itself is not yet fully present (split
+		// mid-integer) -> more bytes may complete it. A genuinely malformed/overflowing
+		// prefix simply never satisfies isLikelyCoherencePOF, and the read cap bounds
+		// the wasted reads.
+		return true
+	}
+	if declaredLength <= 0 || declaredLength > int64(coherenceMaxFrame) {
+		return false // out-of-range length contradicts the shape
+	}
+	// Still short of the framed length -> a later TCP segment may complete it. An
+	// exact match is already positive (isLikelyCoherencePOF true, so we are not here),
+	// and an overshoot is a contradiction, so only a strict shortfall keeps reading.
+	return int64(len(resp)) < int64(consumed)+declaredLength
+}
+
 func (p *CoherencePlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
 	// Port gate: the POF heuristic is deliberately loose, so confine WHERE it may
 	// assert to the Coherence port. In full-sweep scans the engine runs every
@@ -857,6 +901,29 @@ func (p *CoherencePlugin) Run(conn net.Conn, timeout time.Duration, target plugi
 	// above still apply first.
 	if len(resp) == 0 {
 		return nil, nil // silence / error with no bytes -> not us
+	}
+	// TCP may split the POF handshake frame so its length prefix and body land in
+	// separate segments. While the bytes so far stay consistent with an incomplete
+	// POF frame (couldBeCoherencePOFPrefix), accumulate a small, bounded number of
+	// extra reads under ONE absolute deadline (mirrors the TimesTen/NoSQL loops) so a
+	// drip-feeding peer cannot reset the timeout per read. FN-safe: a mis-read only
+	// under-detects. The port gate and coherenceHeuristicEnabled kill switch above
+	// still apply first.
+	if !isLikelyCoherencePOF(resp) && couldBeCoherencePOFPrefix(resp) {
+		deadline := time.Now().Add(timeout)
+		for reads := 0; reads < 2 &&
+			!isLikelyCoherencePOF(resp) &&
+			couldBeCoherencePOFPrefix(resp); reads++ {
+			remaining := time.Until(deadline)
+			if remaining <= 0 {
+				break
+			}
+			chunk, rerr := utils.Recv(conn, remaining)
+			resp = append(resp, chunk...)
+			if rerr != nil || len(chunk) == 0 {
+				break // partial-read error (bytes already appended) or silence/EOF -> stop
+			}
+		}
 	}
 	if !isLikelyCoherencePOF(resp) {
 		return nil, nil // ambiguous / other protocol / no positive POF signal -> not us

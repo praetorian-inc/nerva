@@ -576,6 +576,27 @@ func TestCouldBeTimesTenRejectPrefix(t *testing.T) {
 	}
 }
 
+func TestCouldBeCoherencePOFPrefix(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    []byte
+		expected bool
+	}{
+		{"empty", nil, false},
+		{"incomplete frame (body not yet complete)", []byte{0x03, 0x00}, true},
+		{"complete exact frame is not a prefix", []byte{0x03, 0x00, 0x01, 0x02}, false},
+		{"overshoot contradicts", []byte{0x01, 0x00, 0x01, 0x02}, false},
+		{"TLS contradicts", []byte{0x16, 0x03, 0x01, 0x00}, false},
+		{"JRMP contradicts", []byte{jrmpProtocolAck, 0x00, 0x09}, false},
+		{"printable banner contradicts", []byte("hello world"), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, couldBeCoherencePOFPrefix(tt.input))
+		})
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Section 2.6: TestDecodePackedInt (POF signed packed int)
 // ---------------------------------------------------------------------------
@@ -1275,6 +1296,23 @@ func TestCoherencePluginRun(t *testing.T) {
 		svc, err := (&CoherencePlugin{}).Run(wrapped, shortTimeout, target)
 		assert.NoError(t, err)
 		assert.Nil(t, svc)
+	})
+
+	t.Run("split POF frame across reads - accumulated and detected", func(t *testing.T) {
+		// Regression for the review fix in PR #385: TCP may deliver the POF handshake
+		// frame across multiple reads. CoherencePlugin.Run must accumulate a small,
+		// bounded number of extra reads (couldBeCoherencePOFPrefix) rather than
+		// rejecting a valid frame seen only in part on the first Recv. splitReadConn
+		// caps the first Read to 2 bytes so the 4-byte fixture is guaranteed to arrive
+		// across two reads (real loopback timing does not reliably split a small Write).
+		conn, target := scriptedServer(t, writeOnce([]byte{0x03, 0x00, 0x01, 0x02}))
+		defer conn.Close()
+		target.Address = netip.AddrPortFrom(target.Address.Addr(), coherencePort)
+		wrapped := &splitReadConn{Conn: conn, maxFirst: 2}
+
+		svc, err := (&CoherencePlugin{}).Run(wrapped, shortTimeout, target)
+		assert.NoError(t, err)
+		assertDetectionOnly(t, svc, plugins.ProtoOracleCoherence, coherenceCPE)
 	})
 }
 
