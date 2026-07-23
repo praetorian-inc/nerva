@@ -283,11 +283,14 @@ func evaluateHyperion(evs []hyperionEvidence) (sharedServices, planning, aps, de
 		strong := false
 
 		// A redirect Location may URL-encode marker text (e.g. spaces as %20), so
-		// decode a copy for the location-based marker checks. On decode failure the
-		// raw value is kept. The body is NEVER decoded here: a body containing '%'
-		// sequences must not be mangled.
+		// decode a copy for the location-based marker checks. PathUnescape (not
+		// QueryUnescape) is used because a Location is a URL path: it still turns
+		// %20 into a space but leaves a literal '+' intact, whereas QueryUnescape
+		// would wrongly rewrite '+' to a space. On decode failure the raw value is
+		// kept. The body is NEVER decoded here: a body containing '%' sequences must
+		// not be mangled.
 		loc := ev.location
-		if dec, err := url.QueryUnescape(loc); err == nil {
+		if dec, err := url.PathUnescape(loc); err == nil {
 			loc = dec
 		}
 
@@ -404,7 +407,6 @@ func hyperionFinding() plugins.SecurityFinding {
 // essbaseRESTEvidence captures the inspectable parts of the /about probe response.
 type essbaseRESTEvidence struct {
 	statusCode int
-	location   string
 	body       string
 }
 
@@ -449,7 +451,6 @@ func detectEssbaseREST(client *http.Client, baseURL, host string) (rest bool, ve
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
 	ev := essbaseRESTEvidence{
 		statusCode: resp.StatusCode,
-		location:   resp.Header.Get("Location"),
 		body:       string(body),
 	}
 	_ = resp.Body.Close()

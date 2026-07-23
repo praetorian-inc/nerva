@@ -320,6 +320,19 @@ func TestEvaluateHyperion(t *testing.T) {
 			wantDetected: false,
 		},
 		{
+			// Regression (LAB-5054): evaluateHyperion decodes ev.location with
+			// url.PathUnescape, not url.QueryUnescape. A literal '+' in a URL
+			// PATH is not a space-encoding convention (that's a query-string
+			// rule), so PathUnescape must leave it alone. If QueryUnescape were
+			// used instead, "Hyperion+Shared+Services" would decode to "Hyperion
+			// Shared Services" and wrongly match; with PathUnescape the '+'
+			// stays literal, so the marker's required space never appears and
+			// detection must stay false.
+			name:         "literal '+' in redirect Location is not decoded to a space",
+			evs:          []hyperionEvidence{hEv("/interop/", http.StatusFound, "/interop/?app=Hyperion+Shared+Services", "", "")},
+			wantDetected: false,
+		},
+		{
 			name:         "S4 EPM cookie on 302 with Location is detected without anon exposure",
 			evs:          []hyperionEvidence{hEv("/workspace/index.jsp", http.StatusFound, "/login", "", "EPM_ROOT=a; Path=/")},
 			wantDetected: true,
@@ -562,8 +575,8 @@ func TestEvaluateEssbaseREST(t *testing.T) {
 			wantAnon:     false,
 		},
 		{
-			name:         "name and version on 302 with Location is detected without anon exposure",
-			ev:           essbaseRESTEvidence{statusCode: http.StatusFound, location: "/login", body: `{"name":"Essbase","version":"21.6.0.0.0"}`},
+			name:         "name and version on 302 is detected without anon exposure",
+			ev:           essbaseRESTEvidence{statusCode: http.StatusFound, body: `{"name":"Essbase","version":"21.6.0.0.0"}`},
 			wantREST:     true,
 			wantVersion:  "21.6.0.0.0",
 			wantDetected: true,
