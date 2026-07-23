@@ -23,6 +23,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"testing"
 	"time"
 
@@ -373,15 +374,17 @@ func TestIsOracleNoSQLListing(t *testing.T) {
 	}{
 		{"oracle.kv.impl class token", append(append([]byte{}, noise...), []byte("oracle.kv.impl.api.KVStoreImpl")...), true},
 		{"bare oracle.kv", append(append([]byte{}, noise...), []byte("oracle.kv")...), true},
-		{"binding triad - main", []byte("store:sn1:main"), true},
-		{"binding triad - monitor", []byte("mystore:base:monitor"), true},
-		{"binding triad - trusted_login", []byte("s:b:trusted_login"), true},
+		{"binding triad - MAIN", []byte("store:sn1:MAIN"), true},
+		{"binding triad - MONITOR", []byte("mystore:base:MONITOR"), true},
+		{"binding triad - LOGIN", []byte("s:b:LOGIN"), true},
+		{"binding triad - ADMIN, hyphenated resourceId", []byte("store:rg1-rn1:ADMIN"), true},
 		{"generic jmxrmi only", []byte("jmxrmi"), false},
 		{"generic JBoss RMI", []byte("org.jnp.interfaces.NamingContext"), false},
 		{"empty listing", []byte{}, false},
 		{"random binary noise, no marker", bytes.Repeat([]byte{0x01, 0x02, 0x03, 0x04}, 16), false},
 		{"triad requires 3 segments - only 2", []byte("store:main"), false},
-		{"iface not in allowlist", []byte("store:base:bogusrole"), false},
+		{"lowercase final segment rejected", []byte("store:base:bogusrole"), false},
+		{"lowercase final segment rejected - generic app binding", []byte("app:svc:admin"), false},
 	}
 
 	for _, tt := range tests {
@@ -401,6 +404,18 @@ func httpRespWithLocation(location string) *http.Response {
 		h.Set("Location", location)
 	}
 	return &http.Response{Header: h}
+}
+
+// httpRespWithRequestPath builds a *http.Response with a populated Request.URL,
+// the shape isOracleNoSQLProxy needs to reach the /V2/health beacon branch (that
+// branch is gated on resp.Request.URL.Path, which is nil on the bare
+// httpRespWithLocation fixtures above and is only populated end-to-end via a real
+// http.Client - see NoSQLHTTPPlugin.Run's loopback test for that path).
+func httpRespWithRequestPath(path string) *http.Response {
+	return &http.Response{
+		Header:  http.Header{},
+		Request: &http.Request{URL: &url.URL{Path: path}},
+	}
 }
 
 func TestIsOracleNoSQLProxy(t *testing.T) {
@@ -433,6 +448,24 @@ func TestIsOracleNoSQLProxy(t *testing.T) {
 			httpRespWithLocation("/oracle.kv/redirect"),
 			"",
 			true,
+		},
+		{
+			"/V2/health beacon JSON, no product-name marker - detected (unit function, Request populated)",
+			httpRespWithRequestPath("/V2/health"),
+			`{"beacon":"GREEN","info":"ALL OK"}`,
+			true,
+		},
+		{
+			"beacon JSON on a DIFFERENT path - not detected (path scoping)",
+			httpRespWithRequestPath("/status"),
+			`{"beacon":"GREEN","info":"ALL OK"}`,
+			false,
+		},
+		{
+			"bare 200 with no beacon, Request populated on /V2/health - not detected",
+			httpRespWithRequestPath("/V2/health"),
+			"<html>OK</html>",
+			false,
 		},
 	}
 
@@ -676,7 +709,7 @@ func TestItoa(t *testing.T) {
 func TestNoSQLPluginRun(t *testing.T) {
 	ack := buildValidAck("10.0.0.5", 5000)
 	classMarkerListing := append([]byte{0xac, 0xed, 0x00, 0x05}, []byte("oracle.kv.impl.api.KVStoreImpl")...)
-	triadListing := []byte("store:sn1:main")
+	triadListing := []byte("store:sn1:MAIN")
 	genericListing := []byte("jmxrmi org.jnp.interfaces.NamingContext")
 	invalidAck := buildValidAck("10.0.0.5", 5000)
 	invalidAck[0] = 0x4f
@@ -844,6 +877,20 @@ func TestNoSQLHTTPPluginRun(t *testing.T) {
 		svc, err := (&NoSQLHTTPPlugin{}).Run(conn, shortTimeout, target)
 		assert.NoError(t, err)
 		assert.Nil(t, svc)
+	})
+
+	t.Run("200 OK on /V2/health with beacon JSON, no product-name marker - detected", func(t *testing.T) {
+		// Run always requests GET /V2/health (see NoSQLHTTPPlugin.Run), so this
+		// loopback round-trip is the only way to reach isOracleNoSQLProxy's
+		// resp.Request-gated beacon branch with a real populated Request/URL - a
+		// bare *http.Response built by hand (as in TestIsOracleNoSQLProxy) has a
+		// nil Request and can never exercise it.
+		conn, target := scriptedServer(t, httpOnce("HTTP/1.1 200 OK", `{"beacon":"GREEN","info":"ALL OK"}`))
+		defer conn.Close()
+
+		svc, err := (&NoSQLHTTPPlugin{}).Run(conn, shortTimeout, target)
+		assert.NoError(t, err)
+		assertDetectionOnly(t, svc, plugins.ProtoOracleNoSQL, nosqlCPE)
 	})
 
 	t.Run("body contains ords - not detected", func(t *testing.T) {
@@ -1059,6 +1106,45 @@ func TestCoherencePluginRun(t *testing.T) {
 		target.Address = netip.AddrPortFrom(target.Address.Addr(), 9999)
 
 		svc, err := (&CoherencePlugin{}).Run(conn, shortTimeout, target)
+		assert.NoError(t, err)
+		assert.Nil(t, svc)
+	})
+
+	t.Run("round-1 partial read with error (respond-then-EOF), positive POF fixture in partial bytes - still detected", func(t *testing.T) {
+		// Regression for the review fix in PR #385: a server that writes the POF
+		// handshake frame and then immediately closes surfaces io.EOF alongside
+		// those bytes on a single conn.Read (pluginutils.Recv's "partial read: N
+		// bytes before error" branch). CoherencePlugin.Run must evaluate those
+		// bytes rather than discarding them on any non-empty read error. Real
+		// loopback timing does not reliably combine a data delivery and a close
+		// into one syscall (see partialThenErrorConn's doc comment), so this is
+		// injected deterministically exactly as TestTimesTenPluginRun's
+		// equivalent partial-read case does.
+		conn, target := scriptedServer(t, holdOpen)
+		defer conn.Close()
+		target.Address = netip.AddrPortFrom(target.Address.Addr(), coherencePort)
+		wrapped := &partialThenErrorConn{
+			Conn:          conn,
+			errorOnCall:   1, // Coherence's only Read call
+			injectPartial: []byte{0x03, 0x00, 0x01, 0x02},
+		}
+
+		svc, err := (&CoherencePlugin{}).Run(wrapped, shortTimeout, target)
+		assert.NoError(t, err)
+		assertDetectionOnly(t, svc, plugins.ProtoOracleCoherence, coherenceCPE)
+	})
+
+	t.Run("round-1 read error with empty buffer - ambiguous, not detected", func(t *testing.T) {
+		conn, target := scriptedServer(t, holdOpen)
+		defer conn.Close()
+		target.Address = netip.AddrPortFrom(target.Address.Addr(), coherencePort)
+		wrapped := &partialThenErrorConn{
+			Conn:          conn,
+			errorOnCall:   1,
+			injectPartial: nil, // no bytes at all alongside the error
+		}
+
+		svc, err := (&CoherencePlugin{}).Run(wrapped, shortTimeout, target)
 		assert.NoError(t, err)
 		assert.Nil(t, svc)
 	})

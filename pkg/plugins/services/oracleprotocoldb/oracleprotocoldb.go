@@ -107,12 +107,21 @@ const (
 // Package-scope RE2 patterns compiled once (P1-3). RE2 has no backtracking, so
 // these are ReDoS-immune; quantifiers are additionally bounded.
 var (
-	// nosqlBindingRe matches an Oracle NoSQL registry binding name of the form
-	// <store>:<base>:<iface>, where iface is one of the NoSQL interface types
-	// (RegistryUtils.java). trusted_login precedes login so the alternation is
-	// greedy-safe; the trailing \b keeps ordering correctness-independent.
+	// nosqlBindingRe matches an Oracle NoSQL registry binding NAME. Registry.list()
+	// returns binding NAMES (not bound-object classes), so the oracle.kv class token
+	// (nosqlClassRe) usually does not appear and cannot be relied on alone. Real
+	// Oracle NoSQL binding names have the shape <store>:<resourceId>:<InterfaceType>,
+	// where the final colon-segment is the Java InterfaceType enum rendered in
+	// UPPERCASE by RegistryUtils.bindingName (e.g. myStore:rg1-rn1:ADMIN, :MAIN,
+	// :MONITOR, :LOGIN). Keying the final segment on an uppercase enum-style token
+	// ([A-Z][A-Z_]{2,}) is both MORE accurate — it catches the real registries the
+	// prior case-sensitive lowercase admin/login/main list missed — and MORE specific:
+	// it no longer false-matches generic lowercase app bindings like app:svc:admin.
+	// The leading/trailing \b anchor the word:word:UPPERCASE_ENUM triad on word
+	// boundaries. Detection stays marker-gated / FN-safe; nosqlClassRe (oracle.kv)
+	// remains an additional accepted marker for serialized replies that do leak it.
 	nosqlBindingRe = regexp.MustCompile(
-		`\b[\w.-]{1,63}:[\w.-]{1,63}:(?:trusted_login|main|monitor|admin|login|test)\b`)
+		`\b[\w.-]{1,63}:[\w.-]{1,63}:[A-Z][A-Z_]{2,}\b`)
 
 	// nosqlClassRe matches an oracle.kv / oracle.kv.impl class token that leaks
 	// into a serialized list() reply. Quantifier bounded per P1-3.
@@ -261,7 +270,10 @@ func itoa(n int) string {
 // call (operation-index encoding, interface hash, and the ProtocolAck handshake
 // sequence) has NOT been confirmed against a live Oracle NoSQL rmiregistry
 // capture in this environment. Live validation against a real capture remains the
-// pre-merge confirmation for this vector.
+// pre-merge confirmation for this vector. The response-side markers (nosqlBindingRe's
+// <store>:<resourceId>:<UPPERCASE-InterfaceType> binding triad and the /V2/health
+// beacon JSON accepted by isOracleNoSQLProxy) are likewise Oracle-doc-derived and
+// still merit the same live-capture confirmation.
 //
 // This is FN-safe, never FP-causing: a rejected or mis-framed call yields no
 // listing, so pluginutils.Recv returns []byte{} and Run returns (nil, nil).
@@ -413,6 +425,9 @@ func createHTTPClient(conn net.Conn, timeout time.Duration) *http.Client {
 // isOracleNoSQLProxy reports whether an HTTP response corroborates an Oracle
 // NoSQL Database Proxy. It requires a NoSQL-proxy-specific token (never a bare
 // 200) and explicitly rejects the ORDS/APEX surface, which is a different product.
+// As a second positive signal, a /V2/health response carrying the documented JSON
+// health beacon (a "beacon" key together with a GREEN/RED/YELLOW status) also
+// corroborates the proxy — HTTP 200 alone is never sufficient.
 func isOracleNoSQLProxy(resp *http.Response, body string) bool {
 	lb := strings.ToLower(body)
 	loc := strings.ToLower(resp.Header.Get("Location"))
@@ -429,6 +444,21 @@ func isOracleNoSQLProxy(resp *http.Response, body string) bool {
 		if strings.Contains(lb, marker) || strings.Contains(loc, marker) {
 			return true
 		}
+	}
+	// Positive /V2/health beacon signal (Codex P2): Oracle documents the NoSQL proxy
+	// answering GET /V2/health with a JSON health beacon such as
+	// {"beacon":"GREEN","info":"ALL OK"} — none of the product-name markers above
+	// appear in that body, so a healthy stock proxy on 8080 would otherwise be missed.
+	// Scope this strictly to the /V2/health path (read from the populated client
+	// Request; nil when a bare *http.Response is constructed, e.g. in unit tests) and
+	// require BOTH the "beacon" key AND a GREEN/RED/YELLOW status so this is
+	// unmistakably the proxy health shape — never a bare 200, and never a stray
+	// "beacon" mention on its own. HTTP status alone is deliberately not keyed on.
+	if resp.Request != nil && resp.Request.URL != nil &&
+		resp.Request.URL.Path == "/V2/health" &&
+		strings.Contains(lb, "beacon") &&
+		(strings.Contains(lb, "green") || strings.Contains(lb, "red") || strings.Contains(lb, "yellow")) {
+		return true
 	}
 	return false
 }
@@ -488,17 +518,14 @@ func isTimesTenHTTPReject(resp []byte) bool {
 }
 
 func (p *TimesTenPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
-	resp, err := utils.SendRecv(conn, timesTenProbe, timeout)
+	resp, _ := utils.SendRecv(conn, timesTenProbe, timeout)
 	// On a partial-read error, SendRecv still returns the bytes received before the
 	// error; the distinctive "HTTP/1. ... msg=Bad%20Request&rc=" reject prefix may
 	// already be in those partial bytes, so evaluate whatever we got rather than
-	// discarding it (mirrors the NoSQL round-2 partial-read handling). Only an error
-	// with no bytes at all is treated as silence.
-	if err != nil && len(resp) == 0 {
-		return nil, nil // read/write error with no data -> no evidence, not us
-	}
+	// discarding it (mirrors the NoSQL round-2 partial-read handling). A single
+	// empty-buffer check covers both silence and an error with no bytes at all.
 	if len(resp) == 0 {
-		return nil, nil // silence -> not us
+		return nil, nil // silence / error with no bytes -> not us
 	}
 	if !isTimesTenHTTPReject(resp) {
 		return nil, nil // generic 400 / TLS / binary garbage -> not us
@@ -684,12 +711,16 @@ func (p *CoherencePlugin) Run(conn net.Conn, timeout time.Duration, target plugi
 		return nil, nil
 	}
 
-	resp, err := utils.SendRecv(conn, coherenceProbe, timeout)
-	if err != nil {
-		return nil, nil // peer close / refused / write / read error -> no evidence, not us
-	}
+	resp, _ := utils.SendRecv(conn, coherenceProbe, timeout)
+	// On a partial-read error, SendRecv still returns the bytes received before the
+	// error; a valid POF handshake frame may already be present when the server
+	// responds and then closes (Recv surfaces io.EOF alongside those bytes). Evaluate
+	// whatever we got regardless of the error and bail only on an empty buffer, so a
+	// server that answers then closes is not discarded (mirrors the TimesTen/NoSQL
+	// partial-read handling). The port gate and coherenceHeuristicEnabled kill switch
+	// above still apply first.
 	if len(resp) == 0 {
-		return nil, nil // silence -> not us
+		return nil, nil // silence / error with no bytes -> not us
 	}
 	if !isLikelyCoherencePOF(resp) {
 		return nil, nil // ambiguous / other protocol / no positive POF signal -> not us
