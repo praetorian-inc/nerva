@@ -88,6 +88,12 @@ func TestOracleCommerceFingerprinter_Match(t *testing.T) {
 			cookies:    []string{"atg_session_id=abc123; Path=/"},
 			want:       true,
 		},
+		{
+			name:       "200 with unrelated cookie containing atg_session_id substring → false",
+			statusCode: 200,
+			cookies:    []string{"UNRELATED_ATG_SESSION_ID=abc123; Path=/"},
+			want:       false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -197,6 +203,19 @@ func TestOracleCommerceFingerprinter_Fingerprint_NoSignals(t *testing.T) {
 	assert.Nil(t, result)
 }
 
+func TestOracleCommerceFingerprinter_Fingerprint_DynUserIDOnlyNegative(t *testing.T) {
+	fp := &OracleCommerceFingerprinter{}
+	resp := &http.Response{
+		StatusCode: 200,
+		Header:     make(http.Header),
+	}
+	resp.Header.Add("Set-Cookie", "DYN_USER_ID=user1; Path=/")
+
+	result, err := fp.Fingerprint(resp, []byte(""))
+	require.NoError(t, err)
+	assert.Nil(t, result, "DYN_USER_ID alone must not trigger detection (not a standalone signal)")
+}
+
 // TestOracleCommerceFingerprinter_Fingerprint_MalformedBase64 verifies that
 // detection still fires when the header is present but the base64 is invalid.
 // The header presence alone constitutes detection; version should be empty.
@@ -215,8 +234,6 @@ func TestOracleCommerceFingerprinter_Fingerprint_MalformedBase64(t *testing.T) {
 	assert.Equal(t, "atg_version_header", result.Metadata["detection_method"])
 }
 
-// TestOracleCommerceFingerprinter_Fingerprint_BodyCapGuard verifies that a
-// body larger than 2 MiB causes Fingerprint to return nil.
 func TestOracleCommerceFingerprinter_Fingerprint_BodyCapGuard(t *testing.T) {
 	fp := &OracleCommerceFingerprinter{}
 	resp := &http.Response{
@@ -228,7 +245,10 @@ func TestOracleCommerceFingerprinter_Fingerprint_BodyCapGuard(t *testing.T) {
 	oversizedBody := []byte(strings.Repeat("A", 2*1024*1024+1))
 	result, err := fp.Fingerprint(resp, oversizedBody)
 	require.NoError(t, err)
-	assert.Nil(t, result, "Fingerprint must return nil when body exceeds 2 MiB")
+	require.NotNil(t, result, "header/cookie detection must not be blocked by body cap")
+	assert.Equal(t, "11.2", result.Version)
+	_, hasBodySignals := result.Metadata["corroborating_paths"]
+	assert.False(t, hasBodySignals, "body signals must be skipped for oversized body")
 }
 
 // TestOracleCommerceFingerprinter_Fingerprint_CPEMetacharGuard verifies that
@@ -250,6 +270,11 @@ func TestOracleCommerceFingerprinter_Fingerprint_CPEMetacharGuard(t *testing.T) 
 		{
 			name:    "version with asterisk → wildcard CPE",
 			version: "11.*",
+			wantCPE: "cpe:2.3:a:oracle:commerce_platform:*:*:*:*:*:*:*:*",
+		},
+		{
+			name:    "version with question mark → wildcard CPE",
+			version: "11.?",
 			wantCPE: "cpe:2.3:a:oracle:commerce_platform:*:*:*:*:*:*:*:*",
 		},
 		{
