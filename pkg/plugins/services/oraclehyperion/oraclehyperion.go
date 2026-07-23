@@ -143,12 +143,23 @@ func init() {
 // attacker-chosen redirect target is ever fetched).
 //
 // The scanner provides a single net.Conn; detectHyperion/detectEssbaseREST reuse
-// it across their sequential probes. If the server sends "Connection: close" (or
-// closes) after an early probe, later probes fail and are skipped (non-fatal), so
-// the highest-signal path (the Workspace title on the first probe) is ordered
-// first. Re-dialing per probe is intentionally avoided: the conn may already be
-// TLS-wrapped (the TLS variants), and this matches the merged oracleidentity
-// precedent.
+// it across their sequential probes. BOTH reviewers (Claude + Codex) acknowledge
+// this multi-probe-over-one-conn reuse as a real production degradation, not a
+// theoretical one: if the server sends "Connection: close" (or closes) after an
+// early probe, or a body exceeds maxResponseSize and is closed before EOF, the
+// underlying conn is spent and probes 2-4 fail and are skipped (non-fatal). To
+// keep detection robust under that degradation, the highest-signal path (the
+// Workspace title on the first probe) is ordered first.
+//
+// The limitation is deliberately NOT fixed at the plugin level: the scanner OWNS
+// this single connection (possibly through a proxy), so re-dialing fresh
+// connections from inside the plugin would bypass the proxy path entirely — the
+// exact target-vs-proxy address problem corrected in the Run methods, where the
+// request authority is built from target.Address rather than conn.RemoteAddr().
+// A re-dial here would also lose any TLS wrapping already applied to the conn (the
+// TLS variants). A proper fix — per-probe redial through the scanner's own dialer,
+// or engine-level multi-conn support — belongs at the engine level, not here. This
+// matches the merged oracleidentity precedent.
 func createHTTPClient(conn net.Conn, timeout time.Duration) *http.Client {
 	return &http.Client{
 		Timeout: timeout,
@@ -487,7 +498,7 @@ func essbaseRestFinding() plugins.SecurityFinding {
 
 func (p *HyperionPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
 	client := createHTTPClient(conn, timeout)
-	baseURL := fmt.Sprintf("http://%s", conn.RemoteAddr().String())
+	baseURL := fmt.Sprintf("http://%s", target.Address.String())
 
 	ss, planning, aps, detected, anonExposure := detectHyperion(client, baseURL, target.Host)
 	if !detected {
@@ -517,7 +528,7 @@ func (p *HyperionPlugin) Priority() int                 { return -1 } // Runs be
 
 func (p *HyperionTLSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
 	client := createHTTPClient(conn, timeout)
-	baseURL := fmt.Sprintf("http://%s", conn.RemoteAddr().String())
+	baseURL := fmt.Sprintf("http://%s", target.Address.String())
 
 	ss, planning, aps, detected, anonExposure := detectHyperion(client, baseURL, target.Host)
 	if !detected {
@@ -552,7 +563,7 @@ func (p *HyperionTLSPlugin) Priority() int          { return -1 } // Runs before
 
 func (p *EssbasePlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
 	client := createHTTPClient(conn, timeout)
-	baseURL := fmt.Sprintf("http://%s", conn.RemoteAddr().String())
+	baseURL := fmt.Sprintf("http://%s", target.Address.String())
 
 	rest, version, detected, anonExposure := detectEssbaseREST(client, baseURL, target.Host)
 	if !detected {
@@ -582,7 +593,7 @@ func (p *EssbasePlugin) Priority() int          { return -1 } // Runs before gen
 
 func (p *EssbaseTLSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
 	client := createHTTPClient(conn, timeout)
-	baseURL := fmt.Sprintf("http://%s", conn.RemoteAddr().String())
+	baseURL := fmt.Sprintf("http://%s", target.Address.String())
 
 	rest, version, detected, anonExposure := detectEssbaseREST(client, baseURL, target.Host)
 	if !detected {
