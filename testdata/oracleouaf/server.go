@@ -2,7 +2,7 @@
 //
 // MODE env var controls what the container simulates:
 //   "ouaf"     - OUAF login surface only (port 6501)
-//   "uta"      - UTA login surface only (port 8080)
+//   "uta"      - UTA login surface only (port 6500)
 //   "both"     - OUAF + UTA on the same host (port 6501)
 package main
 

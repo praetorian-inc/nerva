@@ -31,16 +31,25 @@ Detection Strategy (best-effort, non-fatal errors):
 
   OUAF detection — a host is classified as OUAF when ANY of these signals
   are present:
-    - A response under /ouaf/ contains "Oracle Utilities", "loginPage",
-      "j_security_check", or "cis.jsp" (case-insensitive body check)
-    - A redirect (301/302/303/307) Location header points to a /ouaf/ path
+    - A response under /ouaf/ contains "Oracle Utilities" or
+      "j_security_check" (product-specific body markers)
     - The /ouaf/rest endpoint returns a non-404 response containing
       "application" (JSON REST API surface)
+    - A redirect (301/302/303/307/308) Location header points to a /ouaf/ path
+
+  The bare substrings "loginpage" and "cis.jsp" are deliberately NOT used as
+  standalone signals; soft-404 or access-denied pages commonly echo the
+  requested URI, which would cause false positives.
 
   UTA detection — a host is classified as UTA when:
     - /uta/login.html returns a non-404 response containing
-      "Testing Accelerator" or "Oracle Utilities" (body or title)
+      "Testing Accelerator" (UTA-specific marker)
     - A redirect Location header points to a /uta/ path
+
+  The generic phrase "Oracle Utilities" alone on a /uta/ path is NOT
+  sufficient for UTA detection; an OUAF-branded fallback page could produce
+  a false positive. Only the UTA-specific "Testing Accelerator" marker is
+  authoritative.
 
   Per-product differentiation (CCB vs MDM) is NOT resolvable unauthenticated;
   the plugin reports "OUAF" generically.
@@ -71,6 +80,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/praetorian-inc/nerva/pkg/plugins"
@@ -104,14 +114,20 @@ func init() {
 }
 
 // createHTTPClient creates an http.Client that wraps the provided net.Conn.
-// This enables multiple HTTP requests over the same connection via HTTP/1.1
-// keep-alive. The client does not follow redirects, so Location headers can
-// be inspected directly.
+// The plugin owns a single net.Conn, so the transport may hand it out exactly
+// once. An atomic guard prevents a re-dial (which would hand the same closed
+// socket to a second request, causing a data race or protocol corruption)
+// after the server sends Connection: close. The client does not follow
+// redirects, so Location headers can be inspected directly.
 func createHTTPClient(conn net.Conn, timeout time.Duration) *http.Client {
+	var dialed atomic.Bool
 	return &http.Client{
 		Timeout: timeout,
 		Transport: &http.Transport{
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				if dialed.Swap(true) {
+					return nil, fmt.Errorf("oracleouaf: single-connection transport already dialed")
+				}
 				return conn, nil
 			},
 		},
@@ -178,46 +194,67 @@ func isRedirect(statusCode int) bool {
 	return statusCode == http.StatusMovedPermanently ||
 		statusCode == http.StatusFound ||
 		statusCode == http.StatusSeeOther ||
-		statusCode == http.StatusTemporaryRedirect
+		statusCode == http.StatusTemporaryRedirect ||
+		statusCode == http.StatusPermanentRedirect
 }
 
 // evaluateOUAF inspects collected responses and decides whether the host
-// exposes OUAF, UTA, or both, returning the detected title.
+// exposes OUAF, UTA, or both, returning the detected title. The title is
+// only captured from responses that contributed to a detection signal, so
+// a titled 404/fallback page from a non-matching probe does not leak through.
 func evaluateOUAF(evs []ouafEvidence) (title string, ouafDetected bool, utaDetected bool) {
 	for _, ev := range evs {
-		respTitle := extractTitle(ev.body)
-		if title == "" && respTitle != "" {
-			title = respTitle
-		}
-
 		bodyLower := strings.ToLower(ev.body)
+		matched := false
 
 		// OUAF signals: product-specific body markers on /ouaf/ paths.
+		// The bare substrings "loginpage" and "cis.jsp" are deliberately NOT
+		// used as standalone triggers; soft-404 or access-denied pages commonly
+		// echo the requested URI, which would cause false positives.
 		if strings.HasPrefix(ev.path, "/ouaf/") && ev.statusCode != http.StatusNotFound {
 			if strings.Contains(bodyLower, "oracle utilities") ||
-				strings.Contains(bodyLower, "loginpage") ||
-				strings.Contains(ev.body, "j_security_check") ||
-				strings.Contains(bodyLower, "cis.jsp") {
+				strings.Contains(ev.body, "j_security_check") {
 				ouafDetected = true
+				matched = true
+			}
+		}
+
+		// OUAF signal: /ouaf/rest returns a JSON API surface.
+		if ev.path == "/ouaf/rest" && ev.statusCode != http.StatusNotFound {
+			if strings.Contains(bodyLower, "application") {
+				ouafDetected = true
+				matched = true
 			}
 		}
 
 		// OUAF signal: redirect to /ouaf/ context root.
 		if isRedirect(ev.statusCode) && locationPointsToOUAF(ev.location) {
 			ouafDetected = true
+			matched = true
 		}
 
-		// UTA signals: product-specific body markers on /uta/ paths.
+		// UTA signals: UTA-specific body marker on /uta/ paths.
+		// The generic phrase "Oracle Utilities" alone is NOT sufficient; an
+		// OUAF-branded fallback page for /uta/ would produce a false positive.
 		if strings.HasPrefix(ev.path, "/uta/") && ev.statusCode != http.StatusNotFound {
-			if strings.Contains(bodyLower, "testing accelerator") ||
-				strings.Contains(bodyLower, "oracle utilities") {
+			if strings.Contains(bodyLower, "testing accelerator") {
 				utaDetected = true
+				matched = true
 			}
 		}
 
 		// UTA signal: redirect to /uta/ context root.
 		if isRedirect(ev.statusCode) && locationPointsToUTA(ev.location) {
 			utaDetected = true
+			matched = true
+		}
+
+		// Only capture the title from responses that contributed to detection,
+		// so a titled 404/fallback page does not leak through.
+		if matched && title == "" {
+			if respTitle := extractTitle(ev.body); respTitle != "" {
+				title = respTitle
+			}
 		}
 	}
 

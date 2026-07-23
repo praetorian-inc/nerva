@@ -249,7 +249,7 @@ func TestEvaluateOUAF(t *testing.T) {
 			expectedUTA:  false,
 		},
 		{
-			name: "ouaf rest endpoint with product marker",
+			name: "ouaf rest endpoint with Oracle Utilities body",
 			evidence: []ouafEvidence{
 				{
 					path:       "/ouaf/rest",
@@ -258,6 +258,30 @@ func TestEvaluateOUAF(t *testing.T) {
 				},
 			},
 			expectedOUAF: true,
+			expectedUTA:  false,
+		},
+		{
+			name: "ouaf rest endpoint with application JSON surface",
+			evidence: []ouafEvidence{
+				{
+					path:       "/ouaf/rest",
+					statusCode: http.StatusOK,
+					body:       `{"application":"Oracle Utilities Application Framework","version":"4.4.0.3.0"}`,
+				},
+			},
+			expectedOUAF: true,
+			expectedUTA:  false,
+		},
+		{
+			name: "ouaf rest endpoint 404 does not trigger",
+			evidence: []ouafEvidence{
+				{
+					path:       "/ouaf/rest",
+					statusCode: http.StatusNotFound,
+					body:       `{"error":"not found","application":"none"}`,
+				},
+			},
+			expectedOUAF: false,
 			expectedUTA:  false,
 		},
 		{
@@ -287,6 +311,19 @@ func TestEvaluateOUAF(t *testing.T) {
 			expectedUTA:  false,
 		},
 		{
+			name: "308 Permanent Redirect to ouaf path",
+			evidence: []ouafEvidence{
+				{
+					path:       "/",
+					statusCode: http.StatusPermanentRedirect,
+					location:   "/ouaf/loginPage.jsp",
+					body:       "",
+				},
+			},
+			expectedOUAF: true,
+			expectedUTA:  false,
+		},
+		{
 			name: "uta login page with Testing Accelerator body",
 			evidence: []ouafEvidence{
 				{
@@ -299,7 +336,7 @@ func TestEvaluateOUAF(t *testing.T) {
 			expectedUTA:  true,
 		},
 		{
-			name: "uta login page with Oracle Utilities body",
+			name: "uta login page with generic Oracle Utilities body does not trigger UTA",
 			evidence: []ouafEvidence{
 				{
 					path:       "/uta/login.html",
@@ -308,7 +345,7 @@ func TestEvaluateOUAF(t *testing.T) {
 				},
 			},
 			expectedOUAF: false,
-			expectedUTA:  true,
+			expectedUTA:  false,
 		},
 		{
 			name: "redirect to uta path",
@@ -370,6 +407,30 @@ func TestEvaluateOUAF(t *testing.T) {
 			expectedOUAF: false,
 			expectedUTA:  false,
 		},
+		{
+			name: "soft-404 echoing loginPage in body does not trigger OUAF",
+			evidence: []ouafEvidence{
+				{
+					path:       "/ouaf/loginPage.jsp",
+					statusCode: http.StatusOK,
+					body:       `<html><body>The requested resource /ouaf/loginPage.jsp was not found</body></html>`,
+				},
+			},
+			expectedOUAF: false,
+			expectedUTA:  false,
+		},
+		{
+			name: "soft-404 echoing cis.jsp in body does not trigger OUAF",
+			evidence: []ouafEvidence{
+				{
+					path:       "/ouaf/cis.jsp",
+					statusCode: http.StatusOK,
+					body:       `<html><body>Access denied: /ouaf/cis.jsp</body></html>`,
+				},
+			},
+			expectedOUAF: false,
+			expectedUTA:  false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -379,6 +440,50 @@ func TestEvaluateOUAF(t *testing.T) {
 			assert.Equal(t, tt.expectedUTA, uta)
 		})
 	}
+}
+
+func TestEvaluateOUAF_TitleFromMatchedResponseOnly(t *testing.T) {
+	t.Run("title captured from matching response", func(t *testing.T) {
+		title, ouaf, _ := evaluateOUAF([]ouafEvidence{
+			{
+				path:       "/ouaf/loginPage.jsp",
+				statusCode: http.StatusOK,
+				body:       `<html><head><title>OUAF Login</title></head><body>Oracle Utilities Application Framework</body></html>`,
+			},
+		})
+		assert.True(t, ouaf)
+		assert.Equal(t, "OUAF Login", title)
+	})
+
+	t.Run("title not captured from 404 response", func(t *testing.T) {
+		title, ouaf, uta := evaluateOUAF([]ouafEvidence{
+			{
+				path:       "/ouaf/loginPage.jsp",
+				statusCode: http.StatusNotFound,
+				body:       `<html><head><title>Not Found</title></head><body>404</body></html>`,
+			},
+		})
+		assert.False(t, ouaf)
+		assert.False(t, uta)
+		assert.Equal(t, "", title)
+	})
+
+	t.Run("title not captured from non-matching response", func(t *testing.T) {
+		title, ouaf, _ := evaluateOUAF([]ouafEvidence{
+			{
+				path:       "/ouaf/cis.jsp",
+				statusCode: http.StatusOK,
+				body:       `<html><head><title>Generic App</title></head><body>hello</body></html>`,
+			},
+			{
+				path:       "/ouaf/loginPage.jsp",
+				statusCode: http.StatusOK,
+				body:       `<html><head><title>OUAF Login</title></head><body>Oracle Utilities</body></html>`,
+			},
+		})
+		assert.True(t, ouaf)
+		assert.Equal(t, "OUAF Login", title)
+	})
 }
 
 // parseTestServerAddr parses httptest server URL into netip.AddrPort.
