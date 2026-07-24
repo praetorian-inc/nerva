@@ -163,9 +163,18 @@ const (
 	ProtoPeopleSoft        = "oracle_peoplesoft"
 	ProtoOracleOAM         = "oracle_oam"
 	ProtoOracleOIM         = "oracle_oim"
+	ProtoOracleOUD         = "oracle_oud"
+	ProtoOracleOID         = "oracle_oid"
 	ProtoOracleHTTPServer  = "oracle_http_server"
 	ProtoOracleJDE         = "oracle_jde"
 	ProtoOracleSiebel      = "oracle_siebel"
+	ProtoOracleWebCenter   = "oracle_webcenter"
+	ProtoGlassFish         = "oracle_glassfish"
+	ProtoPayara            = "payara"
+	ProtoOracleGoldenGate  = "oracle_goldengate"
+	ProtoOracleForms       = "oracle_forms"
+	ProtoOracleReports     = "oracle_reports"
+	ProtoOracleWebLogic    = "oracle_weblogic"
 	ProtoPCOM              = "pcom"
 	ProtoPFCP              = "pfcp"
 	ProtoPinecone          = "pinecone"
@@ -492,6 +501,10 @@ func (e Service) Metadata() Metadata {
 		var p ServiceOracleOIM
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
+	case ProtoOracleOUD, ProtoOracleOID:
+		var p ServiceOracleDirectory
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
 	case ProtoOracleHTTPServer:
 		var p ServiceOracleHTTPServer
 		_ = json.Unmarshal(e.Raw, &p)
@@ -502,6 +515,30 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoOracleSiebel:
 		var p ServiceOracleSiebel
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoOracleWebCenter:
+		var p ServiceOracleWebCenter
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoGlassFish, ProtoPayara:
+		var p ServiceGlassFish
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoOracleGoldenGate:
+		var p ServiceOracleGoldenGate
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoOracleForms:
+		var p ServiceOracleForms
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoOracleReports:
+		var p ServiceOracleReports
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoOracleWebLogic:
+		var p ServiceWebLogic
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoOMRONFINS:
@@ -1580,6 +1617,22 @@ type ServiceOracleOIM struct {
 
 func (e ServiceOracleOIM) Type() string { return ProtoOracleOIM }
 
+type ServiceOracleDirectory struct {
+	Product          string   `json:"product"`                     // "oud" or "oid"
+	VendorName       string   `json:"vendor_name,omitempty"`       // OUD: "Oracle Corporation"
+	VendorVersion    string   `json:"vendor_version,omitempty"`    // OUD: raw vendorVersion "Oracle Unified Directory <ver>"
+	DirectoryVersion string   `json:"directory_version,omitempty"` // OID: raw orcldirectoryversion
+	CPEs             []string `json:"cpes,omitempty"`
+}
+
+// Type dynamically discriminates OID from OUD by the Product field (GlassFish precedent).
+func (e ServiceOracleDirectory) Type() string {
+	if e.Product == "oid" {
+		return ProtoOracleOID
+	}
+	return ProtoOracleOUD
+}
+
 type ServiceOracleHTTPServer struct {
 	Server           string   `json:"server,omitempty"`
 	Vendor           string   `json:"vendor,omitempty"`
@@ -1602,6 +1655,64 @@ type ServiceOracleSiebel struct {
 }
 
 func (e ServiceOracleSiebel) Type() string { return ProtoOracleSiebel }
+
+type ServiceOracleWebCenter struct {
+	Component string   `json:"component,omitempty"` // "Content" | "Portal" | "Sites"
+	CPEs      []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceOracleWebCenter) Type() string { return ProtoOracleWebCenter }
+
+type ServiceGlassFish struct {
+	Product      string   `json:"product"`                 // "glassfish", "eclipse", or "payara"
+	Server       string   `json:"server,omitempty"`        // raw Server header
+	XPoweredBy   string   `json:"x_powered_by,omitempty"`  // raw X-Powered-By header
+	JDK          string   `json:"jdk,omitempty"`           // JDK version parsed from X-Powered-By
+	AdminConsole bool     `json:"admin_console,omitempty"` // /common/index.jsf corroboration
+	CPEs         []string `json:"cpes,omitempty"`
+}
+
+// Type returns the emitted service protocol, dynamically discriminating Payara
+// from the GlassFish family based on the Product field (VMware precedent).
+func (e ServiceGlassFish) Type() string {
+	if e.Product == "payara" {
+		return ProtoPayara
+	}
+	return ProtoGlassFish
+}
+
+type ServiceOracleGoldenGate struct {
+	Edition string   `json:"edition,omitempty"` // microservices | classic
+	CPEs    []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceOracleGoldenGate) Type() string { return ProtoOracleGoldenGate }
+
+type ServiceOracleForms struct {
+	Era              string   `json:"era,omitempty"` // "10g" | "12c" | ""
+	FusionMiddleware bool     `json:"fusion_middleware,omitempty"`
+	CPEs             []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceOracleForms) Type() string { return ProtoOracleForms }
+
+type ServiceOracleReports struct {
+	Era              string   `json:"era,omitempty"` // "10g" | "12c" | ""
+	FusionMiddleware bool     `json:"fusion_middleware,omitempty"`
+	CPEs             []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceOracleReports) Type() string { return ProtoOracleReports }
+
+type ServiceWebLogic struct {
+	T3           bool     `json:"t3,omitempty"`            // server answered the T3 handshake
+	T3Version    string   `json:"t3_version,omitempty"`    // raw version from the HELO line, e.g. "12.2.1.3.0"
+	AdminConsole bool     `json:"admin_console,omitempty"` // /console/login/LoginForm.jsp matched
+	ConsoleTitle string   `json:"console_title,omitempty"` // the <title> observed on the console page
+	CPEs         []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceWebLogic) Type() string { return ProtoOracleWebLogic }
 
 type ServicePCOM struct {
 	Model     string   `json:"model,omitempty"`
