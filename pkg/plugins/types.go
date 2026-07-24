@@ -166,6 +166,7 @@ const (
 	ProtoOracleOUD         = "oracle_oud"
 	ProtoOracleOID         = "oracle_oid"
 	ProtoOracleHTTPServer  = "oracle_http_server"
+	ProtoOracleOBIEE       = "oracle_obiee"
 	ProtoOracleHyperion    = "oracle_hyperion"
 	ProtoOracleEssbase     = "oracle_essbase"
 	ProtoOracleJDE         = "oracle_jde"
@@ -514,6 +515,8 @@ func (e Service) Metadata() Metadata {
 		var p ServiceOracleHTTPServer
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
+	case ProtoOracleOBIEE:
+		var p ServiceOracleOBIEE
 	case ProtoOracleHyperion:
 		var p ServiceOracleHyperion
 		_ = json.Unmarshal(e.Raw, &p)
@@ -1663,6 +1666,12 @@ type ServiceOracleHTTPServer struct {
 
 func (e ServiceOracleHTTPServer) Type() string { return ProtoOracleHTTPServer }
 
+type ServiceOracleOBIEE struct {
+	Surface string   `json:"surface,omitempty"` // analytics | bi-publisher | dv
+	CPEs    []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceOracleOBIEE) Type() string { return ProtoOracleOBIEE }
 type ServiceOracleHyperion struct {
 	SharedServices bool     `json:"shared_services,omitempty"` // S3 /interop Foundation / Shared Services console
 	Planning       bool     `json:"planning,omitempty"`        // C1 /HyperionPlanning module present
