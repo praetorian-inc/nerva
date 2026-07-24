@@ -521,18 +521,23 @@ func parseSerializedStringNames(reply []byte) []string {
 				continue
 			}
 			l64 := binary.BigEndian.Uint64(reply[i+1 : i+9])
-			// Hard-bound the 8-byte length in uint64 space BEFORE any int conversion: it
-			// must be positive and the record must fit in the bytes remaining after the
-			// 9-byte header. i+9 <= len(reply) is already guaranteed above, so
-			// len(reply)-(i+9) is a non-negative int; performing the fit-check without an
-			// int(l64) conversion here leaves gosec G115 nothing to flag on this line (a
-			// same-line #nosec is not honored for a conversion inside an if-condition).
-			if l64 == 0 || l64 > uint64(len(reply)-(i+9)) {
+			// Reject a zero length, or one exceeding the whole buffer, BEFORE converting to
+			// int. uint64(len(reply)) is a safe conversion — len is non-negative, so gosec's
+			// G115 len()-whitelist does not flag it — and it bounds l64 so the standalone
+			// int(l64) below cannot overflow. The exact fit-in-remaining-buffer check is
+			// then done in int space (no further conversion). Every risky int<->uint64
+			// conversion is kept on its own line, where a #nosec directive is actually
+			// honored (gosec ignores a same-line #nosec on a conversion inside an
+			// if-condition, and its len()-whitelist does not survive a subtraction).
+			if l64 == 0 || l64 > uint64(len(reply)) {
 				i++
 				continue
 			}
-			// Safe: l64 <= len(reply)-(i+9) < len(reply), so it fits in int.
-			l := int(l64) // #nosec G115 -- l64 guarded 0 < l64 <= len(reply)-(i+9) above, so the conversion cannot overflow
+			l := int(l64) // #nosec G115 -- l64 guarded 0 < l64 <= len(reply) above; len(reply) is an int, so int(l64) cannot overflow
+			if i+9+l > len(reply) {
+				i++
+				continue
+			}
 			names = append(names, string(reply[i+9:i+9+l]))
 			i += 9 + l
 		default:
