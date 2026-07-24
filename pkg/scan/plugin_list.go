@@ -111,6 +111,7 @@ import (
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/oracleformsreports"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/oraclegoldengate"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/oraclehttp"
+	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/oraclehyperion"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/oracleidentity"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/oraclejdesiebel"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/oracleords"

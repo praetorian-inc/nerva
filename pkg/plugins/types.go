@@ -166,6 +166,8 @@ const (
 	ProtoOracleOUD         = "oracle_oud"
 	ProtoOracleOID         = "oracle_oid"
 	ProtoOracleHTTPServer  = "oracle_http_server"
+	ProtoOracleHyperion    = "oracle_hyperion"
+	ProtoOracleEssbase     = "oracle_essbase"
 	ProtoOracleJDE         = "oracle_jde"
 	ProtoOracleSiebel      = "oracle_siebel"
 	ProtoOracleWebCenter   = "oracle_webcenter"
@@ -510,6 +512,14 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoOracleHTTPServer:
 		var p ServiceOracleHTTPServer
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoOracleHyperion:
+		var p ServiceOracleHyperion
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoOracleEssbase:
+		var p ServiceOracleEssbase
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoOracleJDE:
@@ -1652,6 +1662,22 @@ type ServiceOracleHTTPServer struct {
 }
 
 func (e ServiceOracleHTTPServer) Type() string { return ProtoOracleHTTPServer }
+
+type ServiceOracleHyperion struct {
+	SharedServices bool     `json:"shared_services,omitempty"` // S3 /interop Foundation / Shared Services console
+	Planning       bool     `json:"planning,omitempty"`        // C1 /HyperionPlanning module present
+	APS            bool     `json:"aps,omitempty"`             // C2 /aps Analytic Provider Services servlet
+	CPEs           []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceOracleHyperion) Type() string { return ProtoOracleHyperion }
+
+type ServiceOracleEssbase struct {
+	REST bool     `json:"rest,omitempty"` // 21c REST /essbase/rest/v1/about present (HTTP)
+	CPEs []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceOracleEssbase) Type() string { return ProtoOracleEssbase }
 
 type ServiceOracleJDE struct {
 	AIS  bool     `json:"ais,omitempty"` // AIS REST tier (/jderest) present
