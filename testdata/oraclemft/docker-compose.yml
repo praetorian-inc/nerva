@@ -1,0 +1,30 @@
+services:
+  mft-console:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      MODE: console
+      PORT: "7011"
+    ports:
+      - "7011:7011"
+
+  mft-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      MODE: api
+      PORT: "7011"
+    ports:
+      - "7012:7011"
+
+  mft-full:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      MODE: full
+      PORT: "7011"
+    ports:
+      - "7013:7011"

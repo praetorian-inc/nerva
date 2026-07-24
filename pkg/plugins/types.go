@@ -180,6 +180,7 @@ const (
 	ProtoOracleWebLogic    = "oracle_weblogic"
 	ProtoOracleSBC         = "oracle_sbc"
 	ProtoOracleECB         = "oracle_ecb"
+	ProtoOracleMFT         = "oracle_mft"
 	ProtoOracleAgilePLM    = "oracle_agile_plm"
 	ProtoPCOM              = "pcom"
 	ProtoPFCP              = "pfcp"
@@ -517,6 +518,8 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoOracleOBIEE:
 		var p ServiceOracleOBIEE
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
 	case ProtoOracleHyperion:
 		var p ServiceOracleHyperion
 		_ = json.Unmarshal(e.Raw, &p)
@@ -563,6 +566,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoOracleAgilePLM:
 		var p ServiceOracleAgilePLM
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoOracleMFT:
+		var p ServiceMFT
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoOMRONFINS:
@@ -1781,6 +1788,13 @@ type ServiceOracleAgilePLM struct {
 }
 
 func (e ServiceOracleAgilePLM) Type() string { return ProtoOracleAgilePLM }
+
+type ServiceMFT struct {
+	Title string   `json:"title,omitempty"`
+	CPEs  []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceMFT) Type() string { return ProtoOracleMFT }
 
 type ServicePCOM struct {
 	Model     string   `json:"model,omitempty"`
