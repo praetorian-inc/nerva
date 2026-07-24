@@ -177,10 +177,11 @@ const (
 	ProtoOracleGoldenGate  = "oracle_goldengate"
 	ProtoOracleForms       = "oracle_forms"
 	ProtoOracleReports     = "oracle_reports"
-	ProtoOracleWebLogic    = "oracle_weblogic"
-	ProtoOracleSBC         = "oracle_sbc"
-	ProtoOracleECB         = "oracle_ecb"
-	ProtoOracleAgilePLM    = "oracle_agile_plm"
+	ProtoOracleSpatialStudio = "oracle_spatial_studio"
+	ProtoOracleWebLogic      = "oracle_weblogic"
+	ProtoOracleSBC           = "oracle_sbc"
+	ProtoOracleECB           = "oracle_ecb"
+	ProtoOracleAgilePLM      = "oracle_agile_plm"
 	ProtoPCOM              = "pcom"
 	ProtoPFCP              = "pfcp"
 	ProtoPinecone          = "pinecone"
@@ -517,6 +518,8 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoOracleOBIEE:
 		var p ServiceOracleOBIEE
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
 	case ProtoOracleHyperion:
 		var p ServiceOracleHyperion
 		_ = json.Unmarshal(e.Raw, &p)
@@ -563,6 +566,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoOracleAgilePLM:
 		var p ServiceOracleAgilePLM
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoOracleSpatialStudio:
+		var p ServiceSpatialStudio
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoOMRONFINS:
@@ -1781,6 +1788,14 @@ type ServiceOracleAgilePLM struct {
 }
 
 func (e ServiceOracleAgilePLM) Type() string { return ProtoOracleAgilePLM }
+
+type ServiceSpatialStudio struct {
+	Title   string   `json:"title,omitempty"`
+	Version string   `json:"version,omitempty"`
+	CPEs    []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceSpatialStudio) Type() string { return ProtoOracleSpatialStudio }
 
 type ServicePCOM struct {
 	Model     string   `json:"model,omitempty"`
