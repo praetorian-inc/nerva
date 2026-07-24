@@ -523,11 +523,11 @@ func parseSerializedStringNames(reply []byte) []string {
 			l64 := binary.BigEndian.Uint64(reply[i+1 : i+9])
 			// Hard-bound the 8-byte length before any int conversion: it must be
 			// positive and the whole record must fit inside the remaining buffer.
-			if l64 == 0 || l64 > uint64(len(reply)) || i+9+int(l64) > len(reply) {
+			if l64 == 0 || l64 > uint64(len(reply)) || i+9+int(l64) > len(reply) { // #nosec G115 -- l64 guarded > 0 and <= len(reply) (an int) by the preceding conditions, so int(l64) cannot overflow
 				i++
 				continue
 			}
-			l := int(l64)
+			l := int(l64) // #nosec G115 -- l64 guarded 0 < l64 <= len(reply) above, so the conversion cannot overflow
 			names = append(names, string(reply[i+9:i+9+l]))
 			i += 9 + l
 		default:
