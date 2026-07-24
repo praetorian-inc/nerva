@@ -175,6 +175,8 @@ const (
 	ProtoOracleForms       = "oracle_forms"
 	ProtoOracleReports     = "oracle_reports"
 	ProtoOracleWebLogic    = "oracle_weblogic"
+	ProtoOracleSBC         = "oracle_sbc"
+	ProtoOracleECB         = "oracle_ecb"
 	ProtoOracleAgilePLM    = "oracle_agile_plm"
 	ProtoPCOM              = "pcom"
 	ProtoPFCP              = "pfcp"
@@ -540,6 +542,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoOracleWebLogic:
 		var p ServiceWebLogic
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoOracleSBC, ProtoOracleECB:
+		var p ServiceOracleSBC
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoOracleAgilePLM:
@@ -1718,6 +1724,21 @@ type ServiceWebLogic struct {
 }
 
 func (e ServiceWebLogic) Type() string { return ProtoOracleWebLogic }
+
+type ServiceOracleSBC struct {
+	Product string   `json:"product,omitempty"`  // "sbc" (shared Acme Packet codebase; ECB indistinguishable unauth)
+	RestAPI bool     `json:"rest_api,omitempty"` // /rest/{ver}/auth/token 401 challenge present
+	CPEs    []string `json:"cpes,omitempty"`
+}
+
+// Type discriminates ECB from SBC by Product; defaults to SBC since the shared
+// Acme Packet web-GUI/REST surface cannot distinguish them unauthenticated.
+func (e ServiceOracleSBC) Type() string {
+	if e.Product == "ecb" {
+		return ProtoOracleECB
+	}
+	return ProtoOracleSBC
+}
 
 type ServiceOracleAgilePLM struct {
 	Build string   `json:"build,omitempty"`
