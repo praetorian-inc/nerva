@@ -166,6 +166,7 @@ const (
 	ProtoOracleOUD         = "oracle_oud"
 	ProtoOracleOID         = "oracle_oid"
 	ProtoOracleHTTPServer  = "oracle_http_server"
+	ProtoOracleWebCenter   = "oracle_webcenter"
 	ProtoGlassFish         = "oracle_glassfish"
 	ProtoPayara            = "payara"
 	ProtoOracleGoldenGate  = "oracle_goldengate"
@@ -504,6 +505,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoOracleHTTPServer:
 		var p ServiceOracleHTTPServer
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoOracleWebCenter:
+		var p ServiceOracleWebCenter
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoGlassFish, ProtoPayara:
@@ -1626,6 +1631,13 @@ type ServiceOracleHTTPServer struct {
 }
 
 func (e ServiceOracleHTTPServer) Type() string { return ProtoOracleHTTPServer }
+
+type ServiceOracleWebCenter struct {
+	Component string   `json:"component,omitempty"` // "Content" | "Portal" | "Sites"
+	CPEs      []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceOracleWebCenter) Type() string { return ProtoOracleWebCenter }
 
 type ServiceGlassFish struct {
 	Product      string   `json:"product"`                 // "glassfish", "eclipse", or "payara"
