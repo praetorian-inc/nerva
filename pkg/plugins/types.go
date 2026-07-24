@@ -163,14 +163,23 @@ const (
 	ProtoPeopleSoft        = "oracle_peoplesoft"
 	ProtoOracleOAM         = "oracle_oam"
 	ProtoOracleOIM         = "oracle_oim"
+	ProtoOracleOUD         = "oracle_oud"
+	ProtoOracleOID         = "oracle_oid"
 	ProtoOracleHTTPServer  = "oracle_http_server"
 	ProtoOracleHyperion    = "oracle_hyperion"
 	ProtoOracleEssbase     = "oracle_essbase"
+	ProtoOracleJDE         = "oracle_jde"
+	ProtoOracleSiebel      = "oracle_siebel"
+	ProtoOracleWebCenter   = "oracle_webcenter"
 	ProtoGlassFish         = "oracle_glassfish"
 	ProtoPayara            = "payara"
 	ProtoOracleGoldenGate  = "oracle_goldengate"
 	ProtoOracleForms       = "oracle_forms"
 	ProtoOracleReports     = "oracle_reports"
+	ProtoOracleWebLogic    = "oracle_weblogic"
+	ProtoOracleSBC         = "oracle_sbc"
+	ProtoOracleECB         = "oracle_ecb"
+	ProtoOracleAgilePLM    = "oracle_agile_plm"
 	ProtoPCOM              = "pcom"
 	ProtoPFCP              = "pfcp"
 	ProtoPinecone          = "pinecone"
@@ -497,6 +506,10 @@ func (e Service) Metadata() Metadata {
 		var p ServiceOracleOIM
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
+	case ProtoOracleOUD, ProtoOracleOID:
+		var p ServiceOracleDirectory
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
 	case ProtoOracleHTTPServer:
 		var p ServiceOracleHTTPServer
 		_ = json.Unmarshal(e.Raw, &p)
@@ -507,6 +520,18 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoOracleEssbase:
 		var p ServiceOracleEssbase
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoOracleJDE:
+		var p ServiceOracleJDE
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoOracleSiebel:
+		var p ServiceOracleSiebel
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoOracleWebCenter:
+		var p ServiceOracleWebCenter
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoGlassFish, ProtoPayara:
@@ -523,6 +548,18 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoOracleReports:
 		var p ServiceOracleReports
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoOracleWebLogic:
+		var p ServiceWebLogic
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoOracleSBC, ProtoOracleECB:
+		var p ServiceOracleSBC
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoOracleAgilePLM:
+		var p ServiceOracleAgilePLM
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoOMRONFINS:
@@ -1601,6 +1638,22 @@ type ServiceOracleOIM struct {
 
 func (e ServiceOracleOIM) Type() string { return ProtoOracleOIM }
 
+type ServiceOracleDirectory struct {
+	Product          string   `json:"product"`                     // "oud" or "oid"
+	VendorName       string   `json:"vendor_name,omitempty"`       // OUD: "Oracle Corporation"
+	VendorVersion    string   `json:"vendor_version,omitempty"`    // OUD: raw vendorVersion "Oracle Unified Directory <ver>"
+	DirectoryVersion string   `json:"directory_version,omitempty"` // OID: raw orcldirectoryversion
+	CPEs             []string `json:"cpes,omitempty"`
+}
+
+// Type dynamically discriminates OID from OUD by the Product field (GlassFish precedent).
+func (e ServiceOracleDirectory) Type() string {
+	if e.Product == "oid" {
+		return ProtoOracleOID
+	}
+	return ProtoOracleOUD
+}
+
 type ServiceOracleHTTPServer struct {
 	Server           string   `json:"server,omitempty"`
 	Vendor           string   `json:"vendor,omitempty"`
@@ -1625,6 +1678,27 @@ type ServiceOracleEssbase struct {
 }
 
 func (e ServiceOracleEssbase) Type() string { return ProtoOracleEssbase }
+
+type ServiceOracleJDE struct {
+	AIS  bool     `json:"ais,omitempty"` // AIS REST tier (/jderest) present
+	CPEs []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceOracleJDE) Type() string { return ProtoOracleJDE }
+
+type ServiceOracleSiebel struct {
+	Build string   `json:"build,omitempty"` // opaque SWE build-folder code (e.g. "23021"); NOT a CPE version
+	CPEs  []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceOracleSiebel) Type() string { return ProtoOracleSiebel }
+
+type ServiceOracleWebCenter struct {
+	Component string   `json:"component,omitempty"` // "Content" | "Portal" | "Sites"
+	CPEs      []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceOracleWebCenter) Type() string { return ProtoOracleWebCenter }
 
 type ServiceGlassFish struct {
 	Product      string   `json:"product"`                 // "glassfish", "eclipse", or "payara"
@@ -1666,6 +1740,38 @@ type ServiceOracleReports struct {
 }
 
 func (e ServiceOracleReports) Type() string { return ProtoOracleReports }
+
+type ServiceWebLogic struct {
+	T3           bool     `json:"t3,omitempty"`            // server answered the T3 handshake
+	T3Version    string   `json:"t3_version,omitempty"`    // raw version from the HELO line, e.g. "12.2.1.3.0"
+	AdminConsole bool     `json:"admin_console,omitempty"` // /console/login/LoginForm.jsp matched
+	ConsoleTitle string   `json:"console_title,omitempty"` // the <title> observed on the console page
+	CPEs         []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceWebLogic) Type() string { return ProtoOracleWebLogic }
+
+type ServiceOracleSBC struct {
+	Product string   `json:"product,omitempty"`  // "sbc" (shared Acme Packet codebase; ECB indistinguishable unauth)
+	RestAPI bool     `json:"rest_api,omitempty"` // /rest/{ver}/auth/token 401 challenge present
+	CPEs    []string `json:"cpes,omitempty"`
+}
+
+// Type discriminates ECB from SBC by Product; defaults to SBC since the shared
+// Acme Packet web-GUI/REST surface cannot distinguish them unauthenticated.
+func (e ServiceOracleSBC) Type() string {
+	if e.Product == "ecb" {
+		return ProtoOracleECB
+	}
+	return ProtoOracleSBC
+}
+
+type ServiceOracleAgilePLM struct {
+	Build string   `json:"build,omitempty"`
+	CPEs  []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceOracleAgilePLM) Type() string { return ProtoOracleAgilePLM }
 
 type ServicePCOM struct {
 	Model     string   `json:"model,omitempty"`
