@@ -467,11 +467,37 @@ func TestExtractEndpoint(t *testing.T) {
 	}
 }
 
+// buildTCStringNames serializes each name as a Java ObjectStream TC_STRING
+// record (tag 0x74 + 2-byte big-endian length + UTF-8 name bytes), with the
+// records concatenated with NO delimiter in between - exactly the shape of a
+// real Oracle NoSQL RMI registry list() reply (see
+// parseSerializedStringNames's doc comment). This is what defeated the OLD
+// raw-byte \b regex: each name runs straight into the next record's 0x74
+// tag (a word character), so a trailing \b never fired and the raw scan
+// matched zero triads against a genuine reply.
+func buildTCStringNames(names ...string) []byte {
+	var buf []byte
+	for _, name := range names {
+		nameBytes := []byte(name)
+		buf = append(buf, tcStringTag)
+		var lenBuf [2]byte
+		binary.BigEndian.PutUint16(lenBuf[:], uint16(len(nameBytes)))
+		buf = append(buf, lenBuf[:]...)
+		buf = append(buf, nameBytes...)
+	}
+	return buf
+}
+
 // ---------------------------------------------------------------------------
-// Section 2.3: TestOracleNoSQLListingMatches (sole discriminator is the
-// oracle.kv class token; the loose binding-name-triad heuristic and its
-// port-gating were deleted in a follow-up review to stop LLM-reviewer
-// oscillation, so classification is no longer port-dependent)
+// Section 2.3: TestOracleNoSQLListingMatches (oracleNoSQLListingMatches ORs
+// the oracle.kv class-token path with the binding-name-triad signature. The
+// triad signature is active again (it is NOT dead code): it is keyed on
+// names individually PARSED out of the reply's TC_STRING/TC_LONGSTRING
+// records (parseSerializedStringNames), not a raw-byte regex scan over the
+// concatenated stream - see buildTCStringNames above and
+// hasNoSQLBindingSignature's doc comment. A RAW, unframed triad (no 0x74/0x7c
+// record tag) is never parsed into a name at all, so it still correctly does
+// not classify; the framed cases below are the actual positive path.)
 // ---------------------------------------------------------------------------
 
 func TestOracleNoSQLListingMatches(t *testing.T) {
@@ -485,25 +511,115 @@ func TestOracleNoSQLListingMatches(t *testing.T) {
 		{"oracle.kv.impl class token", append(append([]byte{}, noise...), []byte("oracle.kv.impl.api.KVStoreImpl")...), true},
 		{"bare oracle.kv class token", append(append([]byte{}, noise...), []byte("oracle.kv")...), true},
 		{
-			// The binding-triad heuristic is gone: a bare triad with no
-			// oracle.kv class token must NOT classify, even though this is
-			// the exact shape the old port-gated heuristic used to trust.
-			"binding triad alone (store:sn1:MAIN), no class token - not detected: the triad heuristic was removed",
+			// No 0x74/0x7c record tag anywhere in this reply, so
+			// parseSerializedStringNames extracts ZERO names -
+			// "store:sn1:MAIN" is never even seen as a triad candidate. This is
+			// distinct from the FP guard below (a single framed triad with no
+			// corroborating admin name): here the name is never parsed at all.
+			"raw unframed triad (store:sn1:MAIN), no TC_STRING tag, no class token - not detected: name never parsed",
 			[]byte("store:sn1:MAIN"), false,
 		},
 		{
-			"generic RMI role collides with a real enum member (service:node:ADMIN), no class token - not detected",
+			"raw unframed generic RMI role (service:node:ADMIN), no TC_STRING tag, no class token - not detected: name never parsed",
 			[]byte("service:node:ADMIN"), false,
 		},
 		{"generic jmxrmi only, no class token - not detected", []byte("jmxrmi"), false},
 		{"generic JBoss RMI, no class token - not detected", []byte("org.jnp.interfaces.NamingContext"), false},
 		{"empty listing - not detected", []byte{}, false},
 		{"random binary noise, no marker - not detected", bytes.Repeat([]byte{0x01, 0x02, 0x03, 0x04}, 16), false},
+		{
+			"7 REAL kvlite binding names (live validation capture) framed as TC_STRING - classifies as oracle_nosql",
+			buildTCStringNames(
+				"kvstore:sn1:MONITOR",
+				"kvstore:rg1-rn1:ADMIN",
+				"kvstore:rg1-rn1:MONITOR",
+				"kvstore:rg1-rn1:MAIN",
+				"admin:CLIENT_ADMIN",
+				"kvstore:sn1:MAIN",
+				"commandService",
+			),
+			true,
+		},
+		{
+			">=2 framed enum-suffixed triads, no admin service name - detected",
+			buildTCStringNames("kvstore:sn1:MONITOR", "kvstore:rg1-rn1:ADMIN"),
+			true,
+		},
+		{
+			"exactly 1 framed triad + commandService admin name - detected",
+			buildTCStringNames("kvstore:sn1:MAIN", "commandService"),
+			true,
+		},
+		{
+			"exactly 1 framed triad + :CLIENT_ADMIN admin name - detected",
+			buildTCStringNames("kvstore:sn1:MAIN", "admin:CLIENT_ADMIN"),
+			true,
+		},
+		{
+			"exactly 1 framed generic triad alone (svc:node:ADMIN), no 2nd triad, no admin name - not detected: FP guard",
+			buildTCStringNames("svc:node:ADMIN"),
+			false,
+		},
+		{
+			"framed lookalike x:y:MAINTENANCE - not detected: anchored regex rejects a longer final segment",
+			buildTCStringNames("x:y:MAINTENANCE"),
+			false,
+		},
+		{
+			"framed lookalike x:y:ADMINISTRATOR - not detected: anchored regex rejects a longer final segment",
+			buildTCStringNames("x:y:ADMINISTRATOR"),
+			false,
+		},
+		{
+			"truncated TC_STRING - claimed length runs past the buffer - no panic, not detected",
+			[]byte{tcStringTag, 0x00, 0x50}, // claims 80 bytes, none remain
+			false,
+		},
+		{
+			"over-large TC_LONGSTRING length (8-byte length field is ~max uint64) - no panic, not detected",
+			append([]byte{tcLongStringTag}, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF),
+			false,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.expected, oracleNoSQLListingMatches(tt.reply))
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Section 2.3b: TestIsOracleNoSQLHealth (LAB-5056 real-data fix: the /V2/health
+// beacon JSON is the PRIMARY signal, probed before GET /). Real capture:
+// {"beacon":"GREEN","info":"ALL OK"}.
+// ---------------------------------------------------------------------------
+
+func TestIsOracleNoSQLHealth(t *testing.T) {
+	tests := []struct {
+		name     string
+		body     string
+		expected bool
+	}{
+		{"real proxy capture - GREEN beacon, non-empty info - detected", `{"beacon":"GREEN","info":"ALL OK"}`, true},
+		{"YELLOW beacon, non-empty info - detected", `{"beacon":"YELLOW","info":"degraded"}`, true},
+		{"RED beacon, non-empty info - detected", `{"beacon":"RED","info":"unavailable"}`, true},
+		{"GREEN beacon, empty info - not detected", `{"beacon":"GREEN","info":""}`, false},
+		{"GREEN beacon, info field absent entirely - not detected", `{"beacon":"GREEN"}`, false},
+		{"undocumented beacon value - not detected", `{"beacon":"BLUE","info":"ALL OK"}`, false},
+		{"beacon field absent - not detected", `{"info":"ALL OK"}`, false},
+		{"generic 200 JSON with no beacon field at all - not detected", `{"status":"ok"}`, false},
+		{"not JSON (e.g. an HTML body) - not detected", `<html>OK</html>`, false},
+		{"empty body - not detected", ``, false},
+		{
+			"beacon substring present but not as the JSON field (avoids a bare substring match) - not detected",
+			`{"message":"beacon check failed"}`, false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, isOracleNoSQLHealth([]byte(tt.body)))
 		})
 	}
 }
@@ -841,10 +957,14 @@ func TestNoSQLPluginRun(t *testing.T) {
 	ack := buildValidAck("10.0.0.5", 5000)
 	classMarkerListing := append([]byte{0xac, 0xed, 0x00, 0x05}, []byte("oracle.kv.impl.api.KVStoreImpl")...)
 	// bindingTriadOnlyListing is a bare <store>:<resourceId>:<InterfaceType>
-	// binding name with NO oracle.kv class token anywhere in the reply. The
-	// binding-triad heuristic (and its port gate) was deleted in a follow-up
-	// review to stop LLM-reviewer oscillation, so this must NOT classify
-	// regardless of port.
+	// binding name with NO oracle.kv class token anywhere in the reply and,
+	// critically, NO TC_STRING record tag (0x74) framing it either - it is raw
+	// concatenated bytes, not a serialized string record. The binding-triad
+	// signature is active (see TestOracleNoSQLListingMatches's framed-triad
+	// cases for the positive path), but it only ever sees names that
+	// parseSerializedStringNames actually parses out of a TC_STRING/
+	// TC_LONGSTRING record; an unframed name like this is never parsed at all,
+	// so it must NOT classify regardless of port.
 	bindingTriadOnlyListing := []byte("service:node:ADMIN")
 	genericListing := []byte("jmxrmi org.jnp.interfaces.NamingContext")
 	invalidAck := buildValidAck("10.0.0.5", 5000)
@@ -896,10 +1016,10 @@ func TestNoSQLPluginRun(t *testing.T) {
 	})
 
 	t.Run("ack then oracle.kv listing on a non-5000 port - detected (classification is not port-gated)", func(t *testing.T) {
-		// Classification rests solely on the oracle.kv class token, which is
-		// trusted on ANY port now that the port-gated binding-triad special
-		// case was deleted. Prove detection still fires when the target port
-		// is not the nosqlRMIPort default.
+		// The oracle.kv class token (and, separately, the binding-triad
+		// signature) are trusted on ANY port - neither discriminator is
+		// port-gated. Prove detection still fires when the target port is
+		// not the nosqlRMIPort default.
 		conn, target := scriptedServer(t, ackThenListing(ack, classMarkerListing))
 		defer conn.Close()
 		target.Address = netip.AddrPortFrom(target.Address.Addr(), 9999)
@@ -909,11 +1029,13 @@ func TestNoSQLPluginRun(t *testing.T) {
 		assertDetectionOnly(t, svc, plugins.ProtoOracleNoSQL, nosqlCPE)
 	})
 
-	t.Run("ack then binding-triad listing with no oracle.kv class token - not detected (triad heuristic removed)", func(t *testing.T) {
-		// The <store>:<resourceId>:<InterfaceType> binding-triad heuristic was
-		// deleted: a bare triad with no oracle.kv class token must not
-		// classify, even on nosqlRMIPort where the old port-gated heuristic
-		// used to trust it.
+	t.Run("ack then binding-triad listing with no oracle.kv class token and no TC_STRING framing - not detected", func(t *testing.T) {
+		// The <store>:<resourceId>:<InterfaceType> binding-triad signature is
+		// active, but it only classifies names parseSerializedStringNames
+		// actually parses out of a TC_STRING/TC_LONGSTRING record. This
+		// listing is raw, unframed bytes with no oracle.kv class token, so it
+		// parses to zero names and must not classify, even on nosqlRMIPort.
+		// See the next subtest for the TC_STRING-framed positive path.
 		conn, target := scriptedServer(t, ackThenListing(ack, bindingTriadOnlyListing))
 		defer conn.Close()
 		target.Address = netip.AddrPortFrom(target.Address.Addr(), nosqlRMIPort)
@@ -921,6 +1043,36 @@ func TestNoSQLPluginRun(t *testing.T) {
 		svc, err := (&NoSQLPlugin{}).Run(conn, shortTimeout, target)
 		assert.NoError(t, err)
 		assert.Nil(t, svc)
+	})
+
+	t.Run("ack then TC_STRING-framed real kvlite binding names - detected via the binding-triad signature", func(t *testing.T) {
+		// Exercises the full Run() path that was DEAD before the TC_STRING
+		// parsing fix: a real kvlite list() reply carries binding NAMES (no
+		// oracle.kv class token) framed as TC_STRING records with NO
+		// delimiter between them (see buildTCStringNames /
+		// parseSerializedStringNames doc comments). The old raw-byte \b regex
+		// never matched this shape; the fixed classifier parses each name out
+		// of its TC_STRING record before anchor-matching it.
+		realNamesListing := buildTCStringNames(
+			"kvstore:sn1:MONITOR",
+			"kvstore:rg1-rn1:ADMIN",
+			"kvstore:rg1-rn1:MONITOR",
+			"kvstore:rg1-rn1:MAIN",
+			"admin:CLIENT_ADMIN",
+			"kvstore:sn1:MAIN",
+			"commandService",
+		)
+		conn, target := scriptedServer(t, ackThenListing(ack, realNamesListing))
+		defer conn.Close()
+
+		svc, err := (&NoSQLPlugin{}).Run(conn, shortTimeout, target)
+		require.NoError(t, err)
+		assertDetectionOnly(t, svc, plugins.ProtoOracleNoSQL, nosqlCPE)
+
+		var payload plugins.ServiceOracleNoSQL
+		require.NoError(t, json.Unmarshal(svc.Raw, &payload))
+		assert.Equal(t, "10.0.0.5:5000", payload.Endpoint)
+		assert.False(t, payload.ViaHTTP)
 	})
 
 	t.Run("ack then generic listing - not detected, let javarmi claim", func(t *testing.T) {
@@ -1025,15 +1177,61 @@ func TestNoSQLPluginRun(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Section 3.2: TestNoSQLHTTPPluginRun (loopback, single HTTP round-trip)
+// Section 3.2: TestNoSQLHTTPPluginRun (loopback / httptest.Server; Run now
+// issues TWO sequential GETs over ONE keep-alive conn - GET /V2/health
+// PRIMARY, then GET / SECONDARY - so a single-response mock (httpOnce/
+// writeOnce) is no longer sufficient for any "detected" case: it would let
+// the /V2/health GET consume the one scripted response and leave the
+// secondary GET / with nothing. The "detected via GET /" cases below MIGRATE
+// to a two-path httptest.Server (mirrors the Coherence HTTP tests'
+// dialHTTPTestServer helper) so /V2/health can miss (404 or non-JSON) while
+// GET / still carries the marker.)
 // ---------------------------------------------------------------------------
 
 func TestNoSQLHTTPPluginRun(t *testing.T) {
-	t.Run("200 OK with Oracle NoSQL Database Proxy body - detected", func(t *testing.T) {
-		// Run probes the root path "/" (not /V2/health) and classifies solely
-		// on nosqlProxyMarkers; confirms detection on the plugin's own default
-		// port (8080).
-		conn, target := scriptedServer(t, httpOnce("HTTP/1.1 200 OK", "Oracle NoSQL Database Proxy"))
+	t.Run("V2/health beacon JSON (real proxy capture), GET / returns 400 empty - detected via the primary signal", func(t *testing.T) {
+		// Real capture: {"beacon":"GREEN","info":"ALL OK"}. Run classifies on
+		// /V2/health alone and never needs to reach GET / (which the real
+		// proxy answers with an empty 400 body carrying no product marker).
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/V2/health":
+				fmt.Fprint(w, `{"beacon":"GREEN","info":"ALL OK"}`)
+			default:
+				w.WriteHeader(http.StatusBadRequest)
+			}
+		}))
+		defer server.Close()
+
+		conn, target := dialHTTPTestServer(t, server.URL)
+		defer conn.Close()
+
+		svc, err := (&NoSQLHTTPPlugin{}).Run(conn, shortTimeout, target)
+		assert.NoError(t, err)
+		assertDetectionOnly(t, svc, plugins.ProtoOracleNoSQL, nosqlCPE)
+
+		var payload plugins.ServiceOracleNoSQL
+		require.NoError(t, json.Unmarshal(svc.Raw, &payload))
+		assert.True(t, payload.ViaHTTP)
+		assert.Equal(t, "", payload.Endpoint)
+	})
+
+	t.Run("V2/health 404s, GET / carries the Oracle NoSQL Database Proxy body - detected via the secondary signal", func(t *testing.T) {
+		// MIGRATED: with a single-response mock, the /V2/health GET would
+		// consume this scripted body and the secondary GET / would see
+		// nothing (connection already closed). This two-path server lets
+		// /V2/health miss (404, no beacon JSON) so GET / is actually reached.
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/V2/health":
+				w.WriteHeader(http.StatusNotFound)
+			default:
+				fmt.Fprint(w, "Oracle NoSQL Database Proxy")
+			}
+		}))
+		defer server.Close()
+
+		conn, target := dialHTTPTestServer(t, server.URL)
 		defer conn.Close()
 		target.Address = netip.AddrPortFrom(target.Address.Addr(), nosqlHTTPPort)
 
@@ -1047,11 +1245,21 @@ func TestNoSQLHTTPPluginRun(t *testing.T) {
 		assert.Equal(t, "", payload.Endpoint)
 	})
 
-	t.Run("200 OK with kvproxy body on a non-8080 port - detected (classification is not port-gated)", func(t *testing.T) {
-		// Classification rests solely on nosqlProxyMarkers and is no longer
-		// gated to nosqlHTTPPort, so 80/443/custom-port deployments must be
-		// detected too.
-		conn, target := scriptedServer(t, httpOnce("HTTP/1.1 200 OK", "kvproxy"))
+	t.Run("V2/health 404s, GET / carries kvproxy body on a non-8080 port - detected (classification is not port-gated)", func(t *testing.T) {
+		// MIGRATED for the same reason as above. Classification rests solely
+		// on nosqlProxyMarkers and is not gated to nosqlHTTPPort, so
+		// 80/443/custom-port deployments must be detected too.
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/V2/health":
+				w.WriteHeader(http.StatusNotFound)
+			default:
+				fmt.Fprint(w, "kvproxy")
+			}
+		}))
+		defer server.Close()
+
+		conn, target := dialHTTPTestServer(t, server.URL)
 		defer conn.Close()
 		target.Address = netip.AddrPortFrom(target.Address.Addr(), 9999)
 
@@ -1060,7 +1268,7 @@ func TestNoSQLHTTPPluginRun(t *testing.T) {
 		assertDetectionOnly(t, svc, plugins.ProtoOracleNoSQL, nosqlCPE)
 	})
 
-	t.Run("bare 200 - not detected", func(t *testing.T) {
+	t.Run("bare 200 on both paths - not detected", func(t *testing.T) {
 		conn, target := scriptedServer(t, httpOnce("HTTP/1.1 200 OK", "<html>hello</html>"))
 		defer conn.Close()
 
@@ -1105,15 +1313,84 @@ func TestNoSQLHTTPPluginRun(t *testing.T) {
 		assert.Nil(t, svc)
 	})
 
-	t.Run("302 redirect, marker only in Location header with empty body - detected", func(t *testing.T) {
-		raw := "HTTP/1.1 302 Found\r\nLocation: /oracle.kv/redirect\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-		conn, target := scriptedServer(t, writeOnce([]byte(raw)))
+	t.Run("V2/health 404s, 302 redirect with marker only in Location header and empty body - detected", func(t *testing.T) {
+		// MIGRATED for the same reason as the two body-marker cases above.
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/V2/health":
+				w.WriteHeader(http.StatusNotFound)
+			default:
+				w.Header().Set("Location", "/oracle.kv/redirect")
+				w.WriteHeader(http.StatusFound)
+			}
+		}))
+		defer server.Close()
+
+		conn, target := dialHTTPTestServer(t, server.URL)
 		defer conn.Close()
 		target.Address = netip.AddrPortFrom(target.Address.Addr(), nosqlHTTPPort)
 
 		svc, err := (&NoSQLHTTPPlugin{}).Run(conn, shortTimeout, target)
 		assert.NoError(t, err)
 		assertDetectionOnly(t, svc, plugins.ProtoOracleNoSQL, nosqlCPE)
+	})
+
+	t.Run("beacon present but info empty - not detected (primary signal requires a non-empty info field)", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/V2/health":
+				fmt.Fprint(w, `{"beacon":"GREEN","info":""}`)
+			default:
+				w.WriteHeader(http.StatusBadRequest)
+			}
+		}))
+		defer server.Close()
+
+		conn, target := dialHTTPTestServer(t, server.URL)
+		defer conn.Close()
+
+		svc, err := (&NoSQLHTTPPlugin{}).Run(conn, shortTimeout, target)
+		assert.NoError(t, err)
+		assert.Nil(t, svc)
+	})
+
+	t.Run("non-2xx V2/health with a valid beacon body, no GET / marker - not detected", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/V2/health":
+				w.WriteHeader(http.StatusServiceUnavailable)
+				fmt.Fprint(w, `{"beacon":"RED","info":"unavailable"}`)
+			default:
+				fmt.Fprint(w, "<html>OK</html>")
+			}
+		}))
+		defer server.Close()
+
+		conn, target := dialHTTPTestServer(t, server.URL)
+		defer conn.Close()
+
+		svc, err := (&NoSQLHTTPPlugin{}).Run(conn, shortTimeout, target)
+		assert.NoError(t, err)
+		assert.Nil(t, svc)
+	})
+
+	t.Run("generic 200 JSON without a beacon field, no GET / marker - not detected", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/V2/health":
+				fmt.Fprint(w, `{"status":"ok"}`)
+			default:
+				w.WriteHeader(http.StatusBadRequest)
+			}
+		}))
+		defer server.Close()
+
+		conn, target := dialHTTPTestServer(t, server.URL)
+		defer conn.Close()
+
+		svc, err := (&NoSQLHTTPPlugin{}).Run(conn, shortTimeout, target)
+		assert.NoError(t, err)
+		assert.Nil(t, svc)
 	})
 }
 

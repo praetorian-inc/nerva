@@ -33,10 +33,13 @@ database protocols (LAB-5056). It registers six plugins from a single init():
     vectors above are the supported detection paths. It is gated behind
     coherenceHeuristicEnabled (an embedder can flip that toggle to re-enable the
     best-effort 7574 heuristic) and biased hard to false-negative.
-  - NoSQLPlugin      (oracle_nosql,        port 5000) — JRMP handshake + registry list()
-    oracle.kv class-token marker
-  - NoSQLHTTPPlugin  (oracle_nosql_http,   port 8080) — HTTP proxy product-name markers on
-    any port (8080 is only the fast-mode PortPriority default, not a gate)
+  - NoSQLPlugin      (oracle_nosql,        port 5000) — JRMP handshake + registry list();
+    classifies on the real Oracle NoSQL binding-name signature (>=2
+    <store>:<resourceId>:<InterfaceType> enum triads, or one triad plus an admin
+    service name commandService/:CLIENT_ADMIN) or an oracle.kv class token
+  - NoSQLHTTPPlugin  (oracle_nosql_http,   port 8080) — HTTP proxy: the /V2/health beacon
+    JSON (primary) or GET / product-name markers (secondary), on any port (8080 is only
+    the fast-mode PortPriority default, not a gate)
   - TimesTenPlugin   (oracle_timesten, ports 6624/6625) — malformed-HTTP reject signature
 
 The binary detectors (Coherence 7574 heuristic, NoSQL, TimesTen) are
@@ -63,7 +66,11 @@ Security invariants (all four plugins):
     read/iteration cap; the round-2 list() loop additionally has a total-byte cap. There
     are no self-dialed sockets; the framework owns and closes the conn.
   - Attacker-controlled response bytes are NEVER Java-deserialized. The RMI
-    registry list() reply is scanned as raw bytes with anchored RE2 regexes.
+    registry list() reply's TC_STRING records are walked with hard length-bounded
+    index math to extract the individual binding NAMES (no type is ever
+    instantiated), and each isolated name is matched with an anchored RE2 regex; the
+    supplementary oracle.kv class token is scanned over the raw bytes with an anchored
+    RE2 regex.
   - Every index / slice / binary.BigEndian access is length-guarded so a short or
     truncated response cannot panic.
   - Silence, empty, or ambiguous responses always return (nil, nil).
@@ -124,14 +131,15 @@ const (
 
 	// nosqlRMIPort is the Oracle NoSQL RMI registry default port. It only governs
 	// fast-mode ordering via NoSQLPlugin.PortPriority; classification is NOT
-	// port-gated — the unambiguous oracle.kv class token is the sole discriminator on
-	// any port (see NoSQLPlugin.Run / oracleNoSQLListingMatches).
+	// port-gated — the binding-name signature and the oracle.kv class token are
+	// Oracle-specific on any port (see NoSQLPlugin.Run / oracleNoSQLListingMatches).
 	nosqlRMIPort = 5000
 
 	// nosqlHTTPPort is the Oracle NoSQL Database Proxy default port. It only governs
 	// fast-mode ordering via NoSQLHTTPPlugin.PortPriority; HTTP classification is NOT
-	// port-gated — it rests solely on unambiguous product-name markers, so 80/443/custom
-	// deployments are detected too (see NoSQLHTTPPlugin.Run / isOracleNoSQLProxy).
+	// port-gated — it rests on the /V2/health beacon JSON and unambiguous product-name
+	// markers, so 80/443/custom deployments are detected too (see NoSQLHTTPPlugin.Run /
+	// isOracleNoSQLHealth / isOracleNoSQLProxy).
 	nosqlHTTPPort = 8080
 
 	// registryInterfaceHash is the well-known RMI RegistryImpl interface hash
@@ -167,23 +175,53 @@ const (
 // Package-scope RE2 patterns compiled once (P1-3). RE2 has no backtracking, so
 // these are ReDoS-immune; quantifiers are additionally bounded.
 var (
-	// nosqlClassRe matches an oracle.kv / oracle.kv.impl class token that leaks
-	// into a serialized list() reply. Quantifier bounded per P1-3. This is the SOLE
-	// discriminator for RMI NoSQL classification (see oracleNoSQLListingMatches).
+	// nosqlClassRe matches an oracle.kv / oracle.kv.impl class token that may leak
+	// into a serialized list() reply (e.g. a lookup stub class name). Quantifier
+	// bounded per P1-3. It is ONE of the RMI NoSQL discriminators (see
+	// oracleNoSQLListingMatches); the binding-name signature below is the other.
 	//
-	// DESIGN DECISION — binding-name triads are intentionally NOT used for
-	// classification. An Oracle NoSQL registry binding NAME has the shape
-	// <store>:<resourceId>:<InterfaceType> (the final segment an UPPERCASE Java
-	// InterfaceType enum member such as ADMIN/MAIN/MONITOR/LOGIN/TRUSTED_LOGIN). That
-	// word:word:ENUM shape is NOT Oracle-specific: a generic non-NoSQL RMI registry can
-	// legitimately expose a colliding role (e.g. service:node:ADMIN), which no regex can
-	// distinguish from a true NoSQL binding. Any triad-based heuristic therefore
-	// oscillates — flagged false-positive one review round, false-negative the next — so
-	// it is deliberately removed. Detection rests ONLY on the unambiguous oracle.kv class
-	// token. A binding-only listing (no class token present) is deliberately NOT
-	// classified: FN-safe (a real NoSQL registry whose reply happens to omit the class
-	// token is left to javarmi as generic RMI) and FP-free (no ambiguous marker exists).
+	// NOTE: a real Oracle NoSQL registry list() reply returns binding NAMES, not stub
+	// classes, so this class token is frequently ABSENT from a genuine listing. It is
+	// kept only as a harmless extra path (it matches when a stub class name is
+	// present); the primary discriminator is nosqlBindingTriadRe below.
 	nosqlClassRe = regexp.MustCompile(`oracle\.kv(?:\.impl)?[\w.$]{0,128}`)
+
+	// nosqlBindingTriadRe matches a single Oracle NoSQL registry binding NAME of the
+	// documented shape <store>:<resourceId>:<InterfaceType>, where the FINAL segment
+	// is EXACTLY one of Oracle NoSQL RegistryUtils' interface-type enum members —
+	// MAIN, MONITOR, ADMIN, LOGIN, TRUSTED_LOGIN, TEST — matched case-sensitively.
+	//
+	// It is applied to an INDIVIDUAL binding name already isolated out of the
+	// serialized reply by parseSerializedStringNames (each TC_STRING record carries
+	// exactly one name), so it is FULL-STRING ANCHORED (^…$). Anchoring is what makes
+	// a longer lookalike correctly NOT match — x:y:MAINTENANCE and x:y:ADMINISTRATOR
+	// fail because the enum member must consume the whole final segment. This is
+	// stronger than the old raw-byte \b approach, which could not be applied safely to
+	// the concatenated stream: in a real serialized reply each name is immediately
+	// followed by the next record's 0x74 ('t') tag, a word character, so a trailing
+	// \b never fired and the raw scan matched ZERO triads.
+	//
+	// Real kvlite exposes several such triads (e.g. kvstore:sn1:MAIN,
+	// kvstore:rg1-rn1:ADMIN, kvstore:rg1-rn1:MONITOR). The first two segments allow the
+	// alphanumeric / dot / hyphen characters real component ids use (kvstore, rg1-rn1,
+	// sn1); each is length-bounded per P1-3 (RE2 is backtracking-free).
+	//
+	// A SINGLE triad is intentionally not sufficient: the word:word:ENUM shape is not
+	// Oracle-unique, so a generic RMI registry could expose one colliding role (e.g.
+	// service:node:ADMIN). hasNoSQLBindingSignature therefore requires TWO such triads
+	// (real kvlite always has several) OR one triad plus an Oracle-NoSQL admin service
+	// name (nosqlAdminServiceRe), keeping the false-positive risk low while detecting
+	// the real product.
+	nosqlBindingTriadRe = regexp.MustCompile(
+		`^[\w.-]{1,64}:[\w.-]{1,64}:(?:TRUSTED_LOGIN|MONITOR|ADMIN|LOGIN|MAIN|TEST)$`)
+
+	// nosqlAdminServiceRe matches an Oracle-NoSQL-specific admin service name that
+	// corroborates a single binding triad: the well-known unqualified admin RMI
+	// service `commandService`, or an `:CLIENT_ADMIN` admin-login binding (real kvlite
+	// exposes admin:CLIENT_ADMIN). Both are Oracle NoSQL specific. Like
+	// nosqlBindingTriadRe it is applied to an individual parsed name, so `commandService`
+	// is anchored end-to-end and `:CLIENT_ADMIN` is anchored to the end of the name.
+	nosqlAdminServiceRe = regexp.MustCompile(`^commandService$|:CLIENT_ADMIN$`)
 
 	// ordsApexRejectRe matches the Oracle REST Data Services / APEX surface (a
 	// different Oracle product, handled by oracleords) as ORDS/APEX-SPECIFIC tokens,
@@ -378,17 +416,14 @@ func itoa(n int) string {
 // argument byte as an ObjectStreamConstants type code and reject the call before
 // Registry.list() runs.
 //
-// STILL UNVALIDATED end-to-end: the block-data framing is applied, but the FULL
-// call (operation-index encoding, interface hash, and the ProtocolAck handshake
-// sequence) has NOT been confirmed against a live Oracle NoSQL rmiregistry
-// capture in this environment. Live validation against a real capture remains the
-// pre-merge confirmation for this vector. The response-side marker (the oracle.kv
-// class token accepted by oracleNoSQLListingMatches) is Oracle-specific and
-// unambiguous, so it classifies on any port with no port gate. Binding-name triads
-// are deliberately NOT used for classification: their word:word:ENUM shape is not
-// Oracle-specific and oscillates between false positives and negatives (see
-// nosqlClassRe). Likewise the HTTP path keys only on unambiguous product-name markers
-// (see isOracleNoSQLProxy), never on a health beacon.
+// The response-side classifier (oracleNoSQLListingMatches) keys on the REAL Oracle
+// NoSQL list() reply shape validated against genuine kvlite: binding NAMES of the
+// form <store>:<resourceId>:<InterfaceType> whose final segment is a documented
+// RegistryUtils enum member (>=2 such triads, or one triad plus an admin service name
+// commandService/:CLIENT_ADMIN — see nosqlBindingTriadRe), plus a supplementary
+// oracle.kv class-token path. Both are Oracle-specific, so classification is not port
+// gated. Likewise the HTTP path keys on the /V2/health beacon JSON (isOracleNoSQLHealth)
+// and product-name markers (isOracleNoSQLProxy).
 //
 // This is FN-safe, never FP-causing: a rejected or mis-framed call yields no
 // listing, so pluginutils.Recv returns []byte{} and Run returns (nil, nil).
@@ -425,23 +460,128 @@ func buildRegistryListCall() []byte {
 // NoSQL over RMI — port 5000
 // ---------------------------------------------------------------------------
 
-// hasNoSQLClassToken reports the reliable oracle.kv / oracle.kv.impl class token.
-// It is the sole, unambiguous NoSQL discriminator and is trusted on ANY port
-// (see oracleNoSQLListingMatches).
+// hasNoSQLClassToken reports the oracle.kv / oracle.kv.impl class token. It is one
+// of the NoSQL discriminators, trusted on ANY port (see oracleNoSQLListingMatches).
+// It is frequently absent from a real list() reply (which returns binding names, not
+// stub classes), so it is a supplementary path, not the primary signal.
 func hasNoSQLClassToken(reply []byte) bool {
 	return len(reply) > 0 && nosqlClassRe.Match(reply)
 }
 
-// oracleNoSQLListingMatches is the classifier used by NoSQLPlugin.Run. Classification
-// rests SOLELY on the unambiguous oracle.kv class token, which is Oracle-specific on
-// any port. Binding-name triads are intentionally NOT consulted: their
-// <store>:<resourceId>:<InterfaceType> shape is not Oracle-specific and produced
-// oscillating false positives/negatives (a generic RMI registry can expose a colliding
-// role such as service:node:ADMIN — see nosqlClassRe). A binding-only listing that
-// carries no class token is deliberately left unclassified, so the generic javarmi
-// plugin reports it as generic RMI instead — FN-safe and FP-free.
+// TC_STRING / TC_LONGSTRING are the Java ObjectStream string record tags. A real
+// Oracle NoSQL registry list() reply is a serialized [Ljava.lang.String; array whose
+// elements are TC_STRING records: a 0x74 tag, a 2-byte big-endian length, then that
+// many UTF-8 name bytes, concatenated with NO delimiter. TC_LONGSTRING (0x7C) is the
+// same but with an 8-byte length; it is handled for completeness though real binding
+// names are always short.
+const (
+	tcStringTag     = 0x74
+	tcLongStringTag = 0x7c
+)
+
+// maxParsedBindingNames caps how many string records parseSerializedStringNames will
+// extract from a single reply, bounding work (and allocation) on a large or hostile
+// buffer. Real listings have a handful of names; a few hundred is ample headroom.
+const maxParsedBindingNames = 512
+
+// parseSerializedStringNames walks a serialized Java list() reply and extracts the
+// UTF-8 names carried in its TC_STRING (0x74, u16 length) and TC_LONGSTRING (0x7C,
+// u64 length) records. It scans for a record tag, reads the length, bounds-checks it
+// hard (length > 0 and the whole record fits inside the buffer), takes the next
+// length bytes as one name, then advances PAST that record so a name's interior bytes
+// are never re-scanned as a nested tag. Isolating each name this way is what lets the
+// caller anchor-match a whole name (^…$) instead of regexing the raw concatenated
+// stream, where each name runs straight into the next record's 0x74 tag.
+//
+// It is fully length-guarded (no panic on a truncated or garbage reply), never
+// deserializes anything, and is bounded by maxParsedBindingNames. A byte that does
+// not begin a valid record is skipped, so leading serialization-header bytes and any
+// non-string records are simply passed over.
+func parseSerializedStringNames(reply []byte) []string {
+	names := make([]string, 0, 8)
+	for i := 0; i < len(reply) && len(names) < maxParsedBindingNames; {
+		switch reply[i] {
+		case tcStringTag:
+			// Need the tag + 2-byte length field.
+			if i+3 > len(reply) {
+				i++
+				continue
+			}
+			l := int(binary.BigEndian.Uint16(reply[i+1 : i+3]))
+			if l <= 0 || i+3+l > len(reply) {
+				i++
+				continue
+			}
+			names = append(names, string(reply[i+3:i+3+l]))
+			i += 3 + l
+		case tcLongStringTag:
+			// Need the tag + 8-byte length field.
+			if i+9 > len(reply) {
+				i++
+				continue
+			}
+			l64 := binary.BigEndian.Uint64(reply[i+1 : i+9])
+			// Hard-bound the 8-byte length before any int conversion: it must be
+			// positive and the whole record must fit inside the remaining buffer.
+			if l64 == 0 || l64 > uint64(len(reply)) || i+9+int(l64) > len(reply) {
+				i++
+				continue
+			}
+			l := int(l64)
+			names = append(names, string(reply[i+9:i+9+l]))
+			i += 9 + l
+		default:
+			i++
+		}
+	}
+	return names
+}
+
+// hasNoSQLBindingSignature reports the Oracle NoSQL registry binding-name signature
+// keyed on the REAL list() reply shape (validated against genuine kvlite): binding
+// NAMES of the form <store>:<resourceId>:<InterfaceType>, whose final segment is one
+// of the documented RegistryUtils enum members (see nosqlBindingTriadRe). It first
+// PARSES the individual names out of the serialized TC_STRING records
+// (parseSerializedStringNames) and then anchor-matches each one, rather than regexing
+// the raw concatenated bytes — in a real reply each name is immediately followed by
+// the next record's 0x74 ('t') tag (a word character), so a raw \b-terminated scan
+// matched zero triads and the signature never fired.
+//
+// To keep the false-positive risk low against a generic RMI registry that happens to
+// expose a single colliding role (e.g. service:node:ADMIN), it requires a STRONGER
+// signal: at least TWO enum-suffixed triad names, OR one triad name PLUS an
+// Oracle-NoSQL admin service name (commandService or a :CLIENT_ADMIN binding — see
+// nosqlAdminServiceRe). Real kvlite always exposes several triads and both admin
+// names, so this is FN-safe.
+func hasNoSQLBindingSignature(reply []byte) bool {
+	if len(reply) == 0 {
+		return false
+	}
+	triads := 0
+	admin := false
+	for _, name := range parseSerializedStringNames(reply) {
+		if nosqlBindingTriadRe.MatchString(name) {
+			triads++
+			if triads >= 2 {
+				return true // >= 2 enum-suffixed triads: strong, Oracle-NoSQL-specific signal
+			}
+		}
+		if nosqlAdminServiceRe.MatchString(name) {
+			admin = true
+		}
+	}
+	// One triad only classifies with an Oracle-NoSQL admin service name to corroborate.
+	return triads >= 1 && admin
+}
+
+// oracleNoSQLListingMatches is the classifier used by NoSQLPlugin.Run. It classifies
+// an RMI registry list() reply as Oracle NoSQL when either the oracle.kv class token
+// is present (hasNoSQLClassToken — a harmless extra path for lookup stubs) or the real
+// binding-name signature is present (hasNoSQLBindingSignature — the primary path,
+// keyed on the genuine kvlite binding shape). A reply carrying neither is left
+// unclassified so the generic javarmi plugin reports it as generic RMI — FN-safe.
 func oracleNoSQLListingMatches(reply []byte) bool {
-	return hasNoSQLClassToken(reply)
+	return hasNoSQLClassToken(reply) || hasNoSQLBindingSignature(reply)
 }
 
 func (p *NoSQLPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
@@ -562,7 +702,13 @@ func (p *NoSQLPlugin) Priority() int { return 400 }
 
 // createHTTPClient wraps the framework-dialed conn in an http.Client that does
 // not follow redirects (re-derived from oracleidentity.go:121-133; the sibling
-// helper is unexported in another package).
+// helper is unexported in another package). Keep-alives are LEFT ENABLED so the
+// NoSQL proxy probe can issue its two sequential GETs (the /V2/health beacon then
+// the GET / product-name marker) over the one framework-owned conn, mirroring the
+// sibling Coherence HTTP client (createCoherenceHTTPClient). Each response body is
+// drained and closed between the GETs so net/http can return the conn to a clean,
+// reusable state; when Run returns, the framework closes the conn, which unblocks
+// and ends any pooled read goroutine.
 func createHTTPClient(conn net.Conn, timeout time.Duration) *http.Client {
 	return &http.Client{
 		Timeout: timeout,
@@ -570,10 +716,6 @@ func createHTTPClient(conn net.Conn, timeout time.Duration) *http.Client {
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 				return conn, nil
 			},
-			// The probe makes exactly one request over a framework-owned conn.
-			// Disable keep-alives so the transport does not pool the conn or leave
-			// a background read goroutine waiting after Run returns.
-			DisableKeepAlives: true,
 		},
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
@@ -581,12 +723,43 @@ func createHTTPClient(conn net.Conn, timeout time.Duration) *http.Client {
 	}
 }
 
-// isOracleNoSQLProxy reports whether an HTTP response corroborates an Oracle
-// NoSQL Database Proxy. Classification rests SOLELY on unambiguous product-name
-// markers (nosqlProxyMarkers), matched in the body or the Location header; a bare
-// 200 with no marker present is never classified. It explicitly rejects the
-// ORDS/APEX surface, a different Oracle product handled by oracleords. A response
-// carrying only health/status data (no product token) is deliberately not classified.
+// nosqlHealthResponse is the bounded subset of the Oracle NoSQL Database Proxy
+// (KVPROXY) /V2/health JSON this plugin reads. Only these two fields are decoded;
+// the rest of the document is ignored. Real capture: {"beacon":"GREEN","info":"ALL
+// OK"}. JSON is safe to decode: encoding/json never executes attacker-controlled
+// types.
+type nosqlHealthResponse struct {
+	Beacon string `json:"beacon"`
+	Info   string `json:"info"`
+}
+
+// isOracleNoSQLHealth reports whether a /V2/health response body is the Oracle
+// NoSQL Database Proxy health beacon. It parses the body as JSON (NOT a substring
+// match, to avoid a false positive on an arbitrary body that merely contains the
+// word "beacon") and requires a beacon field whose value is one of the documented
+// KVPROXY states (GREEN/YELLOW/RED) AND a non-empty info field. This is the one
+// product-specific signal the real proxy exposes, and it is only ever evaluated for
+// the /V2/health path (see NoSQLHTTPPlugin.Run), never for an arbitrary path.
+func isOracleNoSQLHealth(body []byte) bool {
+	var h nosqlHealthResponse
+	if err := json.Unmarshal(body, &h); err != nil {
+		return false
+	}
+	switch h.Beacon {
+	case "GREEN", "YELLOW", "RED":
+		return h.Info != ""
+	default:
+		return false
+	}
+}
+
+// isOracleNoSQLProxy reports whether a GET / HTTP response corroborates an Oracle
+// NoSQL Database Proxy via an unambiguous product-name marker (nosqlProxyMarkers),
+// matched in the body or the Location header; a bare 200 with no marker present is
+// never classified here. It explicitly rejects the ORDS/APEX surface, a different
+// Oracle product handled by oracleords. This is the SECONDARY signal; the primary
+// signal is the /V2/health beacon (see isOracleNoSQLHealth), which the real proxy
+// exposes when GET / carries no product token.
 func isOracleNoSQLProxy(resp *http.Response, body string) bool {
 	lb := strings.ToLower(body)
 	loc := strings.ToLower(resp.Header.Get("Location"))
@@ -611,21 +784,28 @@ func (p *NoSQLHTTPPlugin) Run(conn net.Conn, timeout time.Duration, target plugi
 	client := createHTTPClient(conn, timeout)
 	baseURL := "http://" + conn.RemoteAddr().String()
 
-	// Probe the root path: the proxy's landing/error response body and any redirect
-	// Location surface the product-name markers (nosqlProxyMarkers) that
-	// isOracleNoSQLProxy keys on. /V2/health returns only a status body with no product
-	// token, so it is deliberately NOT used. Detection rests solely on those unambiguous
-	// markers, so it is FP-safe on ANY port and needs no port gate — 80/443/custom-port
-	// deployments are detected too.
-	req, err := http.NewRequest("GET", baseURL+"/", nil)
-	if err != nil {
-		return nil, nil
+	// PRIMARY: the /V2/health beacon. This is the only product-specific signal the real
+	// Oracle NoSQL Database Proxy (KVPROXY) exposes — GET / returns 400 with an empty
+	// body and no product marker, while GET /V2/health returns a 2xx JSON beacon
+	// ({"beacon":"GREEN","info":"ALL OK"}). It is probed FIRST over the framework-owned
+	// conn so detection never depends on GET / keeping that single conn alive. The
+	// signal is scoped to this path only (a valid beacon JSON body — see
+	// isOracleNoSQLHealth), never accepted on an arbitrary path.
+	if resp, err := doGet(client, baseURL+"/V2/health", target.Host); err == nil {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxHTTPBodySize))
+		ok := isSuccessStatus(resp.StatusCode) && isOracleNoSQLHealth(body)
+		drainAndClose(resp) // drain+close so the conn is reusable for the GET / probe
+		if ok {
+			return buildNoSQLHTTPService(target), nil
+		}
 	}
-	req.Header.Set("User-Agent", httpUserAgent)
-	if target.Host != "" {
-		req.Host = target.Host
-	}
-	resp, err := client.Do(req)
+
+	// SECONDARY: the GET / product-name marker. The proxy's landing/error body or a
+	// redirect Location may carry a product-name marker (nosqlProxyMarkers) that
+	// isOracleNoSQLProxy keys on. Reuse the keep-alive conn from the health probe.
+	// Detection rests solely on unambiguous markers, so it is FP-safe on ANY port and
+	// needs no port gate — 80/443/custom-port deployments are detected too.
+	resp, err := doGet(client, baseURL+"/", target.Host)
 	if err != nil {
 		return nil, nil // no HTTP surface here -> not us
 	}
@@ -636,11 +816,17 @@ func (p *NoSQLHTTPPlugin) Run(conn net.Conn, timeout time.Duration, target plugi
 		return nil, nil // bare 200 / no NoSQL marker / ORDS -> not us
 	}
 
+	return buildNoSQLHTTPService(target), nil
+}
+
+// buildNoSQLHTTPService assembles the detection-only Service for a positive HTTP
+// (proxy) detection, shared by the /V2/health and GET / paths.
+func buildNoSQLHTTPService(target plugins.Target) *plugins.Service {
 	payload := plugins.ServiceOracleNoSQL{
 		ViaHTTP: true,
 		CPEs:    []string{nosqlCPE},
 	}
-	return plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP), nil
+	return plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP)
 }
 
 func (p *NoSQLHTTPPlugin) PortPriority(port uint16) bool { return port == nosqlHTTPPort }
