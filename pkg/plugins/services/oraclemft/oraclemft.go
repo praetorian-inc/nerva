@@ -36,11 +36,15 @@ Detection Strategy (best-effort, non-fatal errors):
     - The /mftapp/rest/v1/ endpoint returns a non-404 response containing
       "mft" (REST API surface)
     - A redirect (301/302/303/307/308) Location header points to a
-      /mftconsole/ path (JSF login redirect)
+      /mftconsole/ subpath (JSF login redirect); a redirect to the exact
+      probed path /mftconsole is NOT counted, because generic HTTPS
+      redirects preserve the path
 
   The bare substring "mftconsole" echoed back in a soft-404 or
   access-denied page is NOT sufficient on its own; the plugin requires
-  product-specific body markers.
+  product-specific body markers. Similarly, the REST API check requires
+  product-specific content (not just "mft" which appears in the probed
+  URL and could be echoed by generic error pages).
 
 Version:
   Not reliably available unauthenticated. The REST API may expose version
@@ -151,7 +155,9 @@ func locationPointsToMFTConsole(location string) bool {
 	if err != nil {
 		return false
 	}
-	return strings.HasPrefix(u.Path, "/mftconsole/") || u.Path == "/mftconsole"
+	// Require a subpath under /mftconsole/ — the exact path /mftconsole is
+	// indistinguishable from a generic path-preserving HTTPS redirect.
+	return strings.HasPrefix(u.Path, "/mftconsole/")
 }
 
 // isRedirect reports whether an HTTP status code is a redirect.
@@ -184,9 +190,12 @@ func evaluateMFT(evs []mftEvidence) (title string, detected bool) {
 			}
 		}
 
-		// MFT signal: /mftapp/rest/v1/ returns a REST API surface.
+		// MFT signal: /mftapp/rest/v1/ returns an MFT-specific REST API response.
+		// Bare "mft" is FP-prone because it appears in the probed URL and
+		// generic error pages echo it back. Require product-specific content.
 		if ev.path == "/mftapp/rest/v1/" && ev.statusCode != http.StatusNotFound {
-			if strings.Contains(bodyLower, "mft") {
+			if strings.Contains(bodyLower, "managed file transfer") ||
+				(strings.Contains(bodyLower, `"application"`) && strings.Contains(bodyLower, `"mft"`)) {
 				detected = true
 				matched = true
 			}

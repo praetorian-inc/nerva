@@ -75,9 +75,9 @@ func TestLocationPointsToMFTConsole(t *testing.T) {
 		expected bool
 	}{
 		{
-			name:     "exact mftconsole path",
+			name:     "exact mftconsole path not counted (path-preserving redirect)",
 			location: "/mftconsole",
-			expected: true,
+			expected: false,
 		},
 		{
 			name:     "mftconsole with trailing slash",
@@ -236,6 +236,63 @@ func TestEvaluateMFT(t *testing.T) {
 				},
 			},
 			expected: false,
+		},
+		{
+			name: "path-preserving redirect to /mftconsole does not trigger",
+			evidence: []mftEvidence{
+				{
+					path:       "/mftconsole",
+					statusCode: http.StatusFound,
+					location:   "/mftconsole",
+					body:       "",
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "path-preserving redirect with absolute URL does not trigger",
+			evidence: []mftEvidence{
+				{
+					path:       "/mftconsole",
+					statusCode: http.StatusMovedPermanently,
+					location:   "https://example.com/mftconsole",
+					body:       "",
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "REST API URL echo-back in error page does not trigger",
+			evidence: []mftEvidence{
+				{
+					path:       "/mftapp/rest/v1/",
+					statusCode: http.StatusForbidden,
+					body:       `Access denied: the resource /mftapp/rest/v1/ requires authentication`,
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "REST API with application mft JSON field triggers",
+			evidence: []mftEvidence{
+				{
+					path:       "/mftapp/rest/v1/",
+					statusCode: http.StatusUnauthorized,
+					body:       `{"error":"unauthorized","application":"mft","message":"Authentication required"}`,
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "REST API with Managed File Transfer text triggers",
+			evidence: []mftEvidence{
+				{
+					path:       "/mftapp/rest/v1/",
+					statusCode: http.StatusOK,
+					body:       `{"product":"Oracle Managed File Transfer","version":"12.2.1.4.0"}`,
+				},
+			},
+			expected: true,
 		},
 		{
 			name:     "no evidence at all",
