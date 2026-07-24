@@ -116,6 +116,7 @@ import (
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/oraclejdesiebel"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/oracleobiee"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/oracleords"
+	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/oracleprotocoldb"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/oraclesbc"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/pcworx"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/peoplesoft"
