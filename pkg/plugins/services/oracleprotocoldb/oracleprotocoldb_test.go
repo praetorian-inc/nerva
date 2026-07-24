@@ -404,6 +404,11 @@ func TestCouldBePartialRMIAck(t *testing.T) {
 			[]byte{jrmpProtocolAck, 0x00, 0x05, 0xff, 0xfe},
 			false,
 		},
+		{
+			"endpoint complete, trailing port zero byte begun - keep accumulating",
+			[]byte{jrmpProtocolAck, 0x00, 0x04, 'h', 'o', 's', 't', 0x00},
+			true,
+		},
 	}
 
 	for _, tt := range tests {

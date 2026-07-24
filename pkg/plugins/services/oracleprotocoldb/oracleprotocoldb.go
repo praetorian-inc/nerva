@@ -355,9 +355,17 @@ func couldBePartialRMIAck(resp []byte) bool {
 	if len(resp) >= requiredLength {
 		return false
 	}
-	// The endpoint bytes received so far must be printable ASCII; a non-printable byte
-	// contradicts the ack shape.
-	for _, b := range resp[3:] {
+	// Only the endpoint STRING bytes must be printable ASCII. Do NOT scan past the
+	// string into the trailing 4-byte writeInt port — its leading bytes are legitimately
+	// zero (non-printable), so a split landing after the endpoint string but before the
+	// full ack would otherwise be wrongly rejected, stopping accumulation and causing a
+	// deterministic false negative. Bound the scan to the endpoint region actually
+	// received so far, mirroring isValidRMIResponse's resp[3:3+claimedLength] check.
+	end := 3 + int(claimedLength)
+	if end > len(resp) {
+		end = len(resp)
+	}
+	for _, b := range resp[3:end] {
 		if b < 32 || b > 126 {
 			return false
 		}
@@ -376,7 +384,7 @@ func extractEndpoint(data []byte) string {
 		return ""
 	}
 	host := string(data[2 : 2+strLen])
-	portOffset := 2 + int(strLen) + 2 // +2 for the null separator bytes
+	portOffset := 2 + int(strLen) + 2 // skip the 2 high bytes of the 4-byte writeInt port; the low 2 are read below as Uint16 (valid for ports < 65536)
 	if len(data) >= portOffset+2 {
 		port := binary.BigEndian.Uint16(data[portOffset : portOffset+2])
 		if port > 0 {
