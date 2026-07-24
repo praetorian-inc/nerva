@@ -166,6 +166,8 @@ const (
 	ProtoOracleOUD         = "oracle_oud"
 	ProtoOracleOID         = "oracle_oid"
 	ProtoOracleHTTPServer  = "oracle_http_server"
+	ProtoOracleJDE         = "oracle_jde"
+	ProtoOracleSiebel      = "oracle_siebel"
 	ProtoOracleWebCenter   = "oracle_webcenter"
 	ProtoGlassFish         = "oracle_glassfish"
 	ProtoPayara            = "payara"
@@ -506,6 +508,14 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoOracleHTTPServer:
 		var p ServiceOracleHTTPServer
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoOracleJDE:
+		var p ServiceOracleJDE
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoOracleSiebel:
+		var p ServiceOracleSiebel
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoOracleWebCenter:
@@ -1636,6 +1646,20 @@ type ServiceOracleHTTPServer struct {
 }
 
 func (e ServiceOracleHTTPServer) Type() string { return ProtoOracleHTTPServer }
+
+type ServiceOracleJDE struct {
+	AIS  bool     `json:"ais,omitempty"` // AIS REST tier (/jderest) present
+	CPEs []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceOracleJDE) Type() string { return ProtoOracleJDE }
+
+type ServiceOracleSiebel struct {
+	Build string   `json:"build,omitempty"` // opaque SWE build-folder code (e.g. "23021"); NOT a CPE version
+	CPEs  []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceOracleSiebel) Type() string { return ProtoOracleSiebel }
 
 type ServiceOracleWebCenter struct {
 	Component string   `json:"component,omitempty"` // "Content" | "Portal" | "Sites"
