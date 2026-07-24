@@ -1229,6 +1229,14 @@ func TestTimesTenPluginRun(t *testing.T) {
 
 func TestCoherencePluginRun(t *testing.T) {
 	t.Run("positive POF fixture - detected", func(t *testing.T) {
+		// coherenceHeuristicEnabled defaults to false (LAB-5056 live validation),
+		// so this positive-detection case must opt in explicitly to exercise the
+		// heuristic body; see TestCoherenceHeuristicDisabledByDefault for the
+		// default-off behavior this opt-in is deliberately overriding.
+		saved := coherenceHeuristicEnabled
+		coherenceHeuristicEnabled = func() bool { return true }
+		t.Cleanup(func() { coherenceHeuristicEnabled = saved })
+
 		conn, target := scriptedServer(t, writeOnce([]byte{0x03, 0x00, 0x01, 0x02}))
 		defer conn.Close()
 		target.Address = netip.AddrPortFrom(target.Address.Addr(), coherencePort)
@@ -1315,6 +1323,13 @@ func TestCoherencePluginRun(t *testing.T) {
 		// into one syscall (see partialThenErrorConn's doc comment), so this is
 		// injected deterministically exactly as TestTimesTenPluginRun's
 		// equivalent partial-read case does.
+		//
+		// coherenceHeuristicEnabled defaults to false (LAB-5056 live validation),
+		// so this positive-detection case must opt in explicitly.
+		saved := coherenceHeuristicEnabled
+		coherenceHeuristicEnabled = func() bool { return true }
+		t.Cleanup(func() { coherenceHeuristicEnabled = saved })
+
 		conn, target := scriptedServer(t, holdOpen)
 		defer conn.Close()
 		target.Address = netip.AddrPortFrom(target.Address.Addr(), coherencePort)
@@ -1351,6 +1366,13 @@ func TestCoherencePluginRun(t *testing.T) {
 		// rejecting a valid frame seen only in part on the first Recv. splitReadConn
 		// caps the first Read to 2 bytes so the 4-byte fixture is guaranteed to arrive
 		// across two reads (real loopback timing does not reliably split a small Write).
+		//
+		// coherenceHeuristicEnabled defaults to false (LAB-5056 live validation),
+		// so this positive-detection case must opt in explicitly.
+		saved := coherenceHeuristicEnabled
+		coherenceHeuristicEnabled = func() bool { return true }
+		t.Cleanup(func() { coherenceHeuristicEnabled = saved })
+
 		conn, target := scriptedServer(t, writeOnce([]byte{0x03, 0x00, 0x01, 0x02}))
 		defer conn.Close()
 		target.Address = netip.AddrPortFrom(target.Address.Addr(), coherencePort)
@@ -1396,6 +1418,44 @@ func TestCoherenceHeuristicDisabled(t *testing.T) {
 	select {
 	case n := <-receivedBytes:
 		assert.Equal(t, 0, n, "server must not receive probe bytes when heuristic disabled")
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for scripted-server goroutine")
+	}
+}
+
+// TestCoherenceHeuristicDisabledByDefault locks in the new LAB-5056 default:
+// coherenceHeuristicEnabled defaults to `func() bool { return false }` (live
+// validation proved real Coherence CE 22.06.10 is silent to the POF probe on
+// 7574 while the heuristic can false-positive on unrelated short
+// length-prefixed binary services on that port). Deliberately does NOT set
+// coherenceHeuristicEnabled at all - unlike TestCoherenceHeuristicDisabled
+// above, which exercises the disable-switch branch via an explicit override -
+// so this test fails if the package default is ever flipped back to enabled.
+func TestCoherenceHeuristicDisabledByDefault(t *testing.T) {
+	receivedBytes := make(chan int, 1)
+	conn, target := scriptedServer(t, func(c net.Conn) {
+		defer c.Close()
+		buf := make([]byte, 4096)
+		n, _ := c.Read(buf)
+		receivedBytes <- n
+	})
+	defer conn.Close()
+	// Set the target port to coherencePort so this test exercises the
+	// disable-switch branch itself rather than short-circuiting on the port
+	// gate (which runs before the coherenceHeuristicEnabled check).
+	target.Address = netip.AddrPortFrom(target.Address.Addr(), coherencePort)
+
+	// Positive fixture that WOULD detect if the heuristic were enabled.
+	svc, err := (&CoherencePlugin{}).Run(conn, shortTimeout, target)
+	assert.Nil(t, svc, "the 7574 heuristic must be off by default")
+	assert.NoError(t, err)
+
+	// Force the server's Read to unblock and report whether the disabled-by-default
+	// path ever sent probe bytes (it must not: the gate is checked before any I/O).
+	conn.Close()
+	select {
+	case n := <-receivedBytes:
+		assert.Equal(t, 0, n, "server must not receive probe bytes when heuristic is disabled by default")
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for scripted-server goroutine")
 	}
@@ -1965,6 +2025,109 @@ func TestCoherenceHTTPPluginRun_ManagementAfterMetricsClose(t *testing.T) {
 	})
 
 	t.Run("metrics 404s and closes, fresh self-dial ALSO 404s for management - not detected", func(t *testing.T) {
+		conn, target := acceptLoop(t, func(addr string) []byte { return notFoundClose })
+		defer conn.Close()
+
+		svc, err := (&CoherenceHTTPPlugin{}).Run(conn, shortTimeout, target)
+		require.NoError(t, err)
+		assert.Nil(t, svc)
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Section 3.6c: TestCoherenceHTTPPluginRun_ManagementPerPathRedial - regression
+// for the per-path re-dial fix in detectCoherenceManagementFresh (LAB-5056): a
+// Coherence management node (Helidon) answers a non-2xx on the canonical
+// /management/coherence/cluster path with `Connection: close`. Reusing that
+// SAME connection for the /management/coherence fallback GET (the pre-fix
+// behavior, one fresh dial for the whole management vector rather than one
+// per path) would land on a dead socket and never reach the server for the
+// fallback attempt. httptest.Server's keep-alive connection cannot reproduce
+// a mid-vector close, so (like TestCoherenceHTTPPluginRun_ManagementAfterMetricsClose
+// above) this uses a raw net.Listener with a scripted accept loop keyed by
+// connection order: conn #1 is the framework-injected conn (the metrics probe,
+// 404s), conn #2 is the cluster-path self-dial (404 + Connection: close), and
+// conn #3 is the fallback-path self-dial. Pre-fix, the cluster path's close
+// would poison the single shared self-dialed conn before the fallback GET
+// could run, so the positive subcase below would fail with svc == nil; it
+// passes once each management path gets its own fresh dial.
+// ---------------------------------------------------------------------------
+
+func TestCoherenceHTTPPluginRun_ManagementPerPathRedial(t *testing.T) {
+	notFoundClose := []byte("HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n")
+
+	// acceptLoop starts a raw 127.0.0.1:0 listener. The first two accepted
+	// connections (the framework-injected metrics conn, and the cluster-path
+	// self-dial) always get notFoundClose; every LATER accepted connection
+	// (the fallback-path self-dial, and any further attempt) gets
+	// buildThirdResp(addr). It returns the dialed framework conn (the
+	// first-accepted one) and a matching Target.
+	acceptLoop := func(t *testing.T, buildThirdResp func(addr string) []byte) (net.Conn, plugins.Target) {
+		t.Helper()
+
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = ln.Close() })
+
+		addrPort, ok := ln.Addr().(*net.TCPAddr)
+		require.True(t, ok, "listener address is not TCP")
+		thirdResp := buildThirdResp(addrPort.String())
+
+		go func() {
+			accepted := 0
+			for {
+				c, aerr := ln.Accept()
+				if aerr != nil {
+					return
+				}
+				accepted++
+				n := accepted
+				go func(c net.Conn, n int) {
+					defer c.Close()
+					buf := make([]byte, 4096)
+					_, _ = c.Read(buf)
+					if n <= 2 {
+						_, _ = c.Write(notFoundClose)
+						return
+					}
+					_, _ = c.Write(thirdResp)
+				}(c, n)
+			}
+		}()
+
+		target := plugins.Target{
+			Host:    addrPort.IP.String(),
+			Address: netip.MustParseAddrPort(addrPort.String()),
+		}
+
+		conn, err := net.DialTimeout("tcp", addrPort.String(), 5*time.Second)
+		require.NoError(t, err)
+		return conn, target
+	}
+
+	t.Run("cluster path 404s and closes - fallback path re-dials a fresh conn and detects", func(t *testing.T) {
+		conn, target := acceptLoop(t, func(addr string) []byte {
+			body := coherenceManagementFullPositive
+			return []byte(fmt.Sprintf(
+				"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n%s",
+				len(body), body,
+			))
+		})
+		defer conn.Close()
+
+		svc, err := (&CoherenceHTTPPlugin{}).Run(conn, shortTimeout, target)
+		require.NoError(t, err)
+		require.NotNil(t, svc, "the fallback management path must re-dial a fresh conn instead of reusing the closed cluster-path conn")
+		assert.Equal(t, plugins.ProtoOracleCoherence, svc.Protocol)
+		assert.Equal(t, "22.06.10", svc.Version)
+
+		var payload plugins.ServiceOracleCoherence
+		require.NoError(t, json.Unmarshal(svc.Raw, &payload))
+		assert.True(t, payload.ViaHTTP)
+		assert.Equal(t, "root's cluster", payload.ClusterName)
+	})
+
+	t.Run("both management paths 404 - not detected", func(t *testing.T) {
 		conn, target := acceptLoop(t, func(addr string) []byte { return notFoundClose })
 		defer conn.Close()
 

@@ -26,9 +26,13 @@ database protocols (LAB-5056). It registers six plugins from a single init():
     high-confidence HTTP detector over a TLS-wrapped connection.
   - CoherencePlugin        (oracle_coherence, port 7574) — LOW-CONFIDENCE,
     best-effort binary POF-shape heuristic on the TCMP cluster/NameService port.
-    Real Coherence CE 7574 is silent to naive probes, so this vector cannot
-    reliably detect a live node; the HTTP detectors above are the reliable path.
-    It is gated behind coherenceHeuristicEnabled and biased hard to false-negative.
+    DISABLED BY DEFAULT: live validation proved real Coherence CE 22.06.10 is
+    silent to the POF probe on 7574 (it detects nothing real) while the heuristic
+    can false-positive on any short length-prefixed binary service on that port.
+    The HTTP metrics (/metrics) and management (/management/coherence/cluster)
+    vectors above are the supported detection paths. It is gated behind
+    coherenceHeuristicEnabled (an embedder can flip that toggle to re-enable the
+    best-effort 7574 heuristic) and biased hard to false-negative.
   - NoSQLPlugin      (oracle_nosql,        port 5000) — JRMP handshake + registry list()
     oracle.kv class-token marker
   - NoSQLHTTPPlugin  (oracle_nosql_http,   port 8080) — HTTP proxy product-name markers on
@@ -872,25 +876,46 @@ func detectCoherenceMetrics(client *http.Client, baseURL, host string) (coherenc
 	return res, true
 }
 
-// detectCoherenceManagement probes Management-over-REST. It fires on JSON that
-// carries a version field AND a Coherence marker (clusterName, licenseMode, or a
+// coherenceMgmtPaths lists the Management-over-REST paths in probe order: the
+// canonical cluster path first, then the bare fallback. Shared by the single-client
+// detectCoherenceManagement (direct unit tests) and the per-path fresh-dial loop in
+// detectCoherenceManagementFresh (production) so both agree on the ordering.
+var coherenceMgmtPaths = []string{"/management/coherence/cluster", "/management/coherence"}
+
+// tryCoherenceManagementGET issues ONE Management-over-REST GET on path over the
+// given client and returns the parsed result. It fires on JSON that carries a
+// version field AND a Coherence marker (clusterName, licenseMode, or a
 // links[].href containing management/coherence), parsing version, clusterName and
-// licenseMode. The canonical /management/coherence/cluster path is tried first,
-// then the /management/coherence fallback. FN-safe: any transport/JSON error or
-// missing marker yields (…, false).
+// licenseMode; the body is drained-and-closed before returning so the connection
+// is left clean. FN-safe: any transport/JSON error, non-2xx status, or missing
+// marker yields (…, false). Shared by detectCoherenceManagement (single client,
+// used by the direct unit tests) and probeCoherenceManagementPath (production,
+// fresh conn per path) so the test and production GET/parse logic never diverge.
+func tryCoherenceManagementGET(client *http.Client, baseURL, host, path string) (coherenceHTTPResult, bool) {
+	resp, err := doGet(client, baseURL+path, host)
+	if err != nil {
+		return coherenceHTTPResult{}, false
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxHTTPBodySize))
+	success := isSuccessStatus(resp.StatusCode)
+	drainAndClose(resp)
+	if !success {
+		return coherenceHTTPResult{}, false
+	}
+	return parseCoherenceManagement(body)
+}
+
+// detectCoherenceManagement probes Management-over-REST over a SINGLE client/
+// connection, trying the canonical /management/coherence/cluster path first, then
+// the /management/coherence fallback. Production does NOT use this single-conn form
+// (a non-2xx `Connection: close` on the cluster path would kill the shared conn
+// before the fallback GET — see detectCoherenceManagementFresh, which re-dials a
+// fresh connection per path); it is retained for the direct unit tests that inject
+// a pre-built client. FN-safe: any transport/JSON error or missing marker yields
+// (…, false).
 func detectCoherenceManagement(client *http.Client, baseURL, host string) (coherenceHTTPResult, bool) {
-	for _, path := range []string{"/management/coherence/cluster", "/management/coherence"} {
-		resp, err := doGet(client, baseURL+path, host)
-		if err != nil {
-			continue // non-fatal: try the fallback path
-		}
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxHTTPBodySize))
-		success := isSuccessStatus(resp.StatusCode)
-		drainAndClose(resp)
-		if !success {
-			continue
-		}
-		if res, ok := parseCoherenceManagement(body); ok {
+	for _, path := range coherenceMgmtPaths {
+		if res, ok := tryCoherenceManagementGET(client, baseURL, host, path); ok {
 			return res, true
 		}
 	}
@@ -939,8 +964,10 @@ func parseCoherenceManagement(body []byte) (coherenceHTTPResult, bool) {
 // server closes the TCP connection immediately after that response, so a
 // follow-up management GET reusing the same conn would land on a dead connection
 // and read an empty reply. The management probe therefore self-dials a fresh
-// connection to the target (mirroring the weblogic console corroborator), keeping
-// it independent of whatever state the metrics probe left the injected conn in.
+// connection to the target PER path (mirroring the weblogic console corroborator),
+// keeping each attempt independent of whatever state the metrics probe left the
+// injected conn in and of an earlier management path that answered `Connection:
+// close` (see detectCoherenceManagementFresh).
 func detectCoherenceHTTP(conn net.Conn, timeout time.Duration, target plugins.Target, useTLS bool) (coherenceHTTPResult, bool) {
 	metricsClient := createCoherenceHTTPClient(conn, timeout)
 	baseURL := "http://" + conn.RemoteAddr().String()
@@ -950,16 +977,39 @@ func detectCoherenceHTTP(conn net.Conn, timeout time.Duration, target plugins.Ta
 	return detectCoherenceManagementFresh(target, timeout, useTLS)
 }
 
-// detectCoherenceManagementFresh runs the Management-over-REST vector on a
-// short-lived connection self-dialed to the target, so it cannot be poisoned by a
-// preceding /metrics probe that closed the framework conn. It is a no-op (…,
-// false) when the target has no concrete routable address (e.g. an unspecified
-// 0.0.0.0 from a proxied or unresolved scan), matching the weblogic self-dial
-// gate rather than misdialing.
+// detectCoherenceManagementFresh runs the Management-over-REST vector on short-lived
+// connections self-dialed to the target, re-dialing a FRESH connection PER path
+// (canonical /management/coherence/cluster first, then the /management/coherence
+// fallback). A single shared connection is not safe here: besides a preceding
+// /metrics probe that closed the framework conn, a Coherence management node
+// (Helidon) answers a non-2xx on the cluster path with `Connection: close`, so a
+// fallback GET reusing that same conn would land on a dead connection and never
+// reach the server. Dialing fresh per path (and draining/closing between attempts)
+// keeps each attempt independent. It returns on the first positive path. It is a
+// no-op (…, false) when the target has no concrete routable address (e.g. an
+// unspecified 0.0.0.0 from a proxied or unresolved scan), matching the weblogic
+// self-dial gate rather than misdialing. FN-safe: any dial/transport/JSON error or
+// missing marker yields (…, false).
 func detectCoherenceManagementFresh(target plugins.Target, timeout time.Duration, useTLS bool) (coherenceHTTPResult, bool) {
 	if !canSelfDialCoherence(target) {
 		return coherenceHTTPResult{}, false
 	}
+	for _, path := range coherenceMgmtPaths {
+		if res, ok := probeCoherenceManagementPath(target, timeout, useTLS, path); ok {
+			return res, true
+		}
+	}
+	return coherenceHTTPResult{}, false
+}
+
+// probeCoherenceManagementPath self-dials ONE fresh short-lived connection and
+// issues a single Management-over-REST GET on path, closing that connection before
+// returning (its deferred Close runs before the next path is dialed). Each path
+// getting its own connection is what makes the cluster-path `Connection: close`
+// (Helidon) unable to poison the fallback attempt. TLS vs plaintext follows useTLS
+// via dialCoherenceConn. FN-safe: any dial/transport/JSON error, non-2xx status, or
+// missing marker yields (…, false).
+func probeCoherenceManagementPath(target plugins.Target, timeout time.Duration, useTLS bool, path string) (coherenceHTTPResult, bool) {
 	conn, err := dialCoherenceConn(target, timeout, useTLS)
 	if err != nil {
 		return coherenceHTTPResult{}, false
@@ -967,7 +1017,7 @@ func detectCoherenceManagementFresh(target plugins.Target, timeout time.Duration
 	defer func() { _ = conn.Close() }()
 	client := createCoherenceHTTPClient(conn, timeout)
 	baseURL := "http://" + conn.RemoteAddr().String()
-	return detectCoherenceManagement(client, baseURL, target.Host)
+	return tryCoherenceManagementGET(client, baseURL, target.Host, path)
 }
 
 // canSelfDialCoherence reports whether the target has a concrete, routable address
@@ -1060,26 +1110,30 @@ func (p *CoherenceHTTPTLSPlugin) Priority() int          { return -1 }
 // Coherence — port 7574 — LOW-CONFIDENCE, best-effort binary heuristic (FALLBACK)
 // ---------------------------------------------------------------------------
 //
-// This is NOT the reliable Coherence vector. Live validation showed a real
-// Coherence CE 22.06.10 node is SILENT on 7574 (the TCMP cluster/NameService
-// port) to naive probes and closes the connection, so this heuristic cannot
-// detect a live CE node. The HTTP metrics/management detectors above are the
-// dependable path; this heuristic is retained only as a best-effort fallback for
-// deployments that might answer the POF probe, and is biased hard to
-// false-negative. It runs only on port 7574 (see CoherencePlugin.Run) — disjoint
-// from the HTTP detectors' 9612/30000 — so it can never override a positive HTTP
-// detection.
+// This is NOT the reliable Coherence vector, and it is DISABLED BY DEFAULT (see
+// coherenceHeuristicEnabled). Live validation showed a real Coherence CE 22.06.10
+// node is SILENT on 7574 (the TCMP cluster/NameService port) to naive probes and
+// closes the connection, so this heuristic cannot detect a live CE node, and it is
+// false-positive-prone against unrelated short length-prefixed binary services on
+// 7574. The HTTP metrics (/metrics) and management (/management/coherence/cluster)
+// detectors above are the dependable, supported path; this heuristic is retained
+// only as an explicit opt-in for deployments that might answer the POF probe, and
+// is biased hard to false-negative. It runs only on port 7574 (see
+// CoherencePlugin.Run) — disjoint from the HTTP detectors' 9612/30000 — so it can
+// never override a positive HTTP detection.
 
-// coherenceHeuristicEnabled gates the ENTIRE 7574 byte heuristic. There is no
-// confirmed public byte-level Coherence signature and real CE nodes are silent on
-// 7574, so this detector is LOW-CONFIDENCE best-effort and may under-detect real
-// nodes (that is intentional — a false negative is preferred over a false
-// positive; the HTTP metrics/management vectors are the reliable detectors). It
-// is a package var (not a plain func) so it stays the one-line disable switch: if
-// field false-positives ever appear, set it to `func() bool { return false }` to
-// disable the 7574 heuristic with zero other changes — and, being a var, a test
-// can also flip it. It does NOT affect the HTTP detectors.
-var coherenceHeuristicEnabled = func() bool { return true }
+// coherenceHeuristicEnabled gates the ENTIRE 7574 byte heuristic and is DISABLED
+// BY DEFAULT. Live validation against a real Oracle Coherence CE 22.06.10 node
+// proved the 7574 cluster/NameService port is SILENT to the 0x00->POF probe (the
+// heuristic detects nothing real there), while it can false-positive on any short
+// length-prefixed binary service that happens to listen on 7574. The reliable,
+// supported detection paths are the HTTP metrics (/metrics) and management
+// (/management/coherence/cluster) vectors above; this heuristic is retained only
+// as an explicit opt-in. It is a package var (not a plain func) so it stays a
+// single one-line toggle: an embedder can set it to `func() bool { return true }`
+// to re-enable the best-effort 7574 heuristic with zero other changes — and, being
+// a var, a test can also flip it. It does NOT affect the HTTP detectors.
+var coherenceHeuristicEnabled = func() bool { return false }
 
 // looksLikeTLS reports a TLS record header (handshake, TLS 1.x).
 func looksLikeTLS(b []byte) bool {
