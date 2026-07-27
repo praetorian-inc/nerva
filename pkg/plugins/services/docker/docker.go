@@ -238,7 +238,7 @@ func extractHTTPBody(response []byte) []byte {
 func dockerUnauthFinding(evidence string) plugins.SecurityFinding {
 	return plugins.SecurityFinding{
 		ID:          "docker-unauth-api",
-		Severity:    plugins.SeverityCritical,
+		Severity:    plugins.SeverityHigh,
 		Description: "Docker API accessible without authentication",
 		Evidence:    evidence,
 	}
