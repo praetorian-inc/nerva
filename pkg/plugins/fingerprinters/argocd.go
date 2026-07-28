@@ -168,7 +168,7 @@ func (f *ArgoCDLoginFingerprinter) Fingerprint(resp *http.Response, body []byte)
 		return nil, nil
 	}
 
-	if !argoCDLoginTitleRegex.MatchString(string(body)) {
+	if !argoCDLoginTitleRegex.Match(body) {
 		return nil, nil
 	}
 
