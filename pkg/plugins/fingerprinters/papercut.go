@@ -61,6 +61,10 @@ func (f *PaperCutFingerprinter) ProbeEndpoint() string {
 	return "/app"
 }
 
+func (f *PaperCutFingerprinter) ProbeAccept() string {
+	return "text/html"
+}
+
 // Match accepts 200-499 responses with a text/html content type.
 func (f *PaperCutFingerprinter) Match(resp *http.Response) bool {
 	if resp.StatusCode < 200 || resp.StatusCode > 499 {
@@ -87,7 +91,7 @@ func (f *PaperCutFingerprinter) Fingerprint(resp *http.Response, body []byte) (*
 
 	// Signal 2 (corroborated): "papercut" brand in body AND Tapestry service page pattern.
 	bodyStr := string(body)
-	corroborated := strings.Contains(strings.ToLower(bodyStr), "papercut") && strings.Contains(bodyStr, "?service=page/")
+	corroborated := strings.Contains(bodyStr, "?service=page/") && strings.Contains(strings.ToLower(bodyStr), "papercut")
 
 	if !standalone && !corroborated {
 		return nil, nil

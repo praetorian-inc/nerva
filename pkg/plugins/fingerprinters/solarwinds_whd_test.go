@@ -220,12 +220,12 @@ func TestSolarWindsWHDFingerprinter_CPE(t *testing.T) {
 	if len(result.CPEs) != 1 {
 		t.Fatalf("CPEs length = %d, want 1", len(result.CPEs))
 	}
-	want := "cpe:2.3:a:solarwinds:webhelpdesk:*:*:*:*:*:*:*:*"
+	want := "cpe:2.3:a:solarwinds:web_help_desk:*:*:*:*:*:*:*:*"
 	if result.CPEs[0] != want {
 		t.Errorf("CPE = %q, want %q", result.CPEs[0], want)
 	}
-	if !strings.HasPrefix(result.CPEs[0], "cpe:2.3:a:solarwinds:webhelpdesk:") {
-		t.Errorf("CPE[0] = %q, want prefix cpe:2.3:a:solarwinds:webhelpdesk:", result.CPEs[0])
+	if !strings.HasPrefix(result.CPEs[0], "cpe:2.3:a:solarwinds:web_help_desk:") {
+		t.Errorf("CPE[0] = %q, want prefix cpe:2.3:a:solarwinds:web_help_desk:", result.CPEs[0])
 	}
 	// Mandatory severity check
 	if result.Severity != "" {

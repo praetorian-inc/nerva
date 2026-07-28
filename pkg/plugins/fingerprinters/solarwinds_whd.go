@@ -38,7 +38,7 @@ const solarwindsWHDMaxBodySize = 1 << 20
 // WHD does not expose a version unauthenticated, so Version is always empty
 // and the CPE is always wildcarded.
 //
-// CPE: cpe:2.3:a:solarwinds:webhelpdesk:*:*:*:*:*:*:*:*
+// CPE: cpe:2.3:a:solarwinds:web_help_desk:*:*:*:*:*:*:*:*
 type SolarWindsWHDFingerprinter struct{}
 
 func init() {
@@ -51,6 +51,10 @@ func (f *SolarWindsWHDFingerprinter) Name() string {
 
 func (f *SolarWindsWHDFingerprinter) ProbeEndpoint() string {
 	return "/helpdesk/WebObjects/Helpdesk.woa"
+}
+
+func (f *SolarWindsWHDFingerprinter) ProbeAccept() string {
+	return "text/html"
 }
 
 // Match is a fast pre-filter. Accepts 200-499 responses with a WebObjects
@@ -108,5 +112,5 @@ func buildSolarWindsWHDResult() *FingerprintResult {
 // buildSolarWindsWHDCPE constructs the CPE 2.3 string. Always wildcarded
 // since no version is available unauthenticated.
 func buildSolarWindsWHDCPE() string {
-	return "cpe:2.3:a:solarwinds:webhelpdesk:*:*:*:*:*:*:*:*"
+	return "cpe:2.3:a:solarwinds:web_help_desk:*:*:*:*:*:*:*:*"
 }

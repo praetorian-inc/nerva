@@ -189,7 +189,7 @@ func TestPaperCutFingerprinter_Match_RejectsNonHTML(t *testing.T) {
 	require.False(t, fp.Match(resp))
 }
 
-// TestPaperCutFingerprinter_PassiveInterface verifies that PaperCutFingerprinter
+// TestPaperCutFingerprinter_ActiveInterface verifies that PaperCutFingerprinter
 // implements ActiveHTTPFingerprinter via its ProbeEndpoint.
 func TestPaperCutFingerprinter_ActiveInterface(t *testing.T) {
 	var _ ActiveHTTPFingerprinter = (*PaperCutFingerprinter)(nil)

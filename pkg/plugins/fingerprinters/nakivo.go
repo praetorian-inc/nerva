@@ -59,15 +59,19 @@ var nakivoTitleRegex = regexp.MustCompile(`(?i)<title[^>]*>[^<]*nakivo\s+backup[
 // matches against IP address fragments (e.g. "68.1.10" inside
 // "192.168.1.100") while still permitting a letter prefix (e.g. "v10.11.3").
 // The trailing \b rejects partial matches against longer alphanumeric
-// tokens (e.g. "5.38abc").
-var nakivoVersionStrictPattern = regexp.MustCompile(`(?i)nakivo[^<]{0,200}?[^\d.](\d{1,2}\.\d{1,2}\.\d{1,2})\b`)
+// tokens (e.g. "5.38abc"). Go's regexp package (RE2) does not support
+// lookahead, so rejecting matches immediately followed by more digits or
+// dots (e.g. extracting "10.11.3" out of "10.11.3.12345") is enforced by
+// findNAKIVOVersionMatch, which scans matches and skips any followed by a
+// digit or dot.
+var nakivoVersionStrictPattern = regexp.MustCompile(`(?i)nakivo[^<]{0,200}?[^\d.](\d{1,3}\.\d{1,3}\.\d{1,3})\b`)
 
 // nakivoVersionLoosePattern is the same as nakivoVersionStrictPattern but
 // allows crossing HTML tag boundaries. Used only as a fallback when the
 // strict pattern finds no match, to support version text that legitimately
 // appears in a different tag than the nearest NAKIVO mention (e.g. version
 // in <body> following a <title> mention).
-var nakivoVersionLoosePattern = regexp.MustCompile(`(?is)nakivo.{0,200}?[^\d.](\d{1,2}\.\d{1,2}\.\d{1,2})\b`)
+var nakivoVersionLoosePattern = regexp.MustCompile(`(?is)nakivo.{0,200}?[^\d.](\d{1,3}\.\d{1,3}\.\d{1,3})\b`)
 
 // nakivoVersionValidRegex validates extracted version strings before CPE use.
 var nakivoVersionValidRegex = regexp.MustCompile(`^\d+\.\d+\.\d+$`)
@@ -78,6 +82,10 @@ func (f *NAKIVOFingerprinter) Name() string {
 
 func (f *NAKIVOFingerprinter) ProbeEndpoint() string {
 	return "/c/login"
+}
+
+func (f *NAKIVOFingerprinter) ProbeAccept() string {
+	return "text/html"
 }
 
 // Match is a fast pre-filter. Accepts responses in the 200-499 range with
@@ -131,14 +139,13 @@ func (f *NAKIVOFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fi
 // empty string if no valid version is found or it contains CPE
 // metacharacters.
 func extractNAKIVOVersion(bodyStr string) string {
-	m := nakivoVersionStrictPattern.FindStringSubmatch(bodyStr)
-	if m == nil {
-		m = nakivoVersionLoosePattern.FindStringSubmatch(bodyStr)
+	v := findNAKIVOVersionMatch(bodyStr, nakivoVersionStrictPattern)
+	if v == "" {
+		v = findNAKIVOVersionMatch(bodyStr, nakivoVersionLoosePattern)
 	}
-	if m == nil {
+	if v == "" {
 		return ""
 	}
-	v := m[1]
 	if !nakivoVersionValidRegex.MatchString(v) {
 		return ""
 	}
@@ -146,6 +153,25 @@ func extractNAKIVOVersion(bodyStr string) string {
 		return ""
 	}
 	return v
+}
+
+// findNAKIVOVersionMatch scans all matches of pattern against bodyStr and
+// returns the first captured version not immediately followed by another
+// digit or dot (e.g. rejects extracting "10.11.3" out of "10.11.3.12345").
+// This emulates a trailing negative lookahead, which Go's regexp package
+// (RE2) does not support.
+func findNAKIVOVersionMatch(bodyStr string, pattern *regexp.Regexp) string {
+	for _, m := range pattern.FindAllStringSubmatchIndex(bodyStr, -1) {
+		start, end := m[2], m[3]
+		if end < len(bodyStr) {
+			next := bodyStr[end]
+			if (next >= '0' && next <= '9') || next == '.' {
+				continue
+			}
+		}
+		return bodyStr[start:end]
+	}
+	return ""
 }
 
 // buildNAKIVOCPE constructs a CPE 2.3 string for NAKIVO Backup & Replication.
