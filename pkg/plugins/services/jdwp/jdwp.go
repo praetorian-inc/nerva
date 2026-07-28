@@ -195,7 +195,7 @@ func (p *JDWPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 func jdwpExposedFinding(evidence string) plugins.SecurityFinding {
 	return plugins.SecurityFinding{
 		ID:          "jdwp-exposed",
-		Severity:    plugins.SeverityCritical,
+		Severity:    plugins.SeverityHigh,
 		Description: "JDWP debug interface exposed — allows remote code execution without authentication",
 		Evidence:    evidence,
 	}

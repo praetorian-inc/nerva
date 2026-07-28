@@ -51,10 +51,21 @@ const (
 // Evidence should contain observable protocol-level data (e.g., banner text, response codes,
 // negotiated parameters). Do not include credentials, tokens, or other secrets.
 type SecurityFinding struct {
-	ID          string   `json:"id"`
-	Severity    Severity `json:"severity"`
-	Description string   `json:"description"`
-	Evidence    string   `json:"evidence,omitempty"`
+	ID             string   `json:"id"`
+	Severity       Severity `json:"severity"`
+	Title          string   `json:"title,omitempty"`
+	Description    string   `json:"description"`
+	Impact         string   `json:"impact,omitempty"`
+	Recommendation string   `json:"recommendation,omitempty"`
+	CVSS           string   `json:"cvss,omitempty"`
+	Evidence       string   `json:"evidence,omitempty"`
+}
+
+// EnrichFindings applies finding catalog metadata to all security findings.
+func (s *Service) EnrichFindings() {
+	for i := range s.SecurityFindings {
+		s.SecurityFindings[i].Enrich()
+	}
 }
 
 // Valid returns true if the severity is a recognized value.
