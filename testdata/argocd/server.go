@@ -40,7 +40,7 @@ func main() {
 	mux.HandleFunc("/api/version", func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("GET /api/version from %s", r.RemoteAddr)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{
+		if err := json.NewEncoder(w).Encode(map[string]string{
 			"Version":          "v2.9.3+6eba5be",
 			"BuildDate":        "2024-01-01T00:00:00Z",
 			"GitCommit":        "6eba5be1234567890abcdef1234567890abcdef",
@@ -50,7 +50,10 @@ func main() {
 			"KsonnetVersion":   "v0.13.1",
 			"KustomizeVersion": "v4.5.7",
 			"HelmVersion":      "v3.13.2",
-		})
+		}); err != nil {
+			log.Printf("encode error: %v", err)
+			return
+		}
 	})
 
 	mux.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
