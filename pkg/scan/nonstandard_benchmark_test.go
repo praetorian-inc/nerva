@@ -284,6 +284,40 @@ func runSingleTargetScan(b *testing.B, target plugins.Target, cfg Config, valida
 	}
 }
 
+// runMultiTargetScan scans targets through the same ScanTargets + ScanPool +
+// SimpleScanTarget path the CLI uses (see scan_api.go), with cfg.Workers
+// controlling how many targets are scanned concurrently (see pool.go).
+// Unlike runSingleTargetScan, it does not force a worker count, letting
+// callers set cfg.Workers to model realistic multi-target engagements.
+//
+// As in runSingleTargetScan, it runs ScanTargets once before the timed loop
+// and passes the result to validate, which must assert the expected number
+// of services was found across all targets. Without this check, the
+// "targets/op" and "plugins-tried/op" metrics reported by callers are
+// computed statically from the target/plugin lists and would stay unchanged
+// even if a plugin regression silently broke detection on some targets.
+func runMultiTargetScan(b *testing.B, targets []plugins.Target, cfg Config, validate func(*testing.B, []plugins.Service)) {
+	b.Helper()
+	if cfg.DefaultTimeout == 0 {
+		cfg.DefaultTimeout = benchmarkProbeTimeout
+	}
+
+	ctx := context.Background()
+
+	result, err := ScanTargets(ctx, targets, cfg)
+	if err != nil {
+		b.Fatalf("ScanTargets (validation run): %v", err)
+	}
+	validate(b, result)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := ScanTargets(ctx, targets, cfg); err != nil {
+			b.Fatalf("ScanTargets: %v", err)
+		}
+	}
+}
+
 // assertServiceFound fails the benchmark unless ScanTargets returned at
 // least one result, i.e. some plugin identified the service.
 func assertServiceFound(b *testing.B, services []plugins.Service) {
@@ -316,6 +350,18 @@ func assertSSHServiceFound(b *testing.B, services []plugins.Service) {
 		}
 	}
 	b.Fatalf("expected a result with service name containing %q, got %+v", "ssh", services)
+}
+
+// assertServiceCount returns a validate function for runMultiTargetScan that
+// fails the benchmark unless ScanTargets returned exactly want results,
+// i.e. the expected subset of targets were identified.
+func assertServiceCount(want int) func(*testing.B, []plugins.Service) {
+	return func(b *testing.B, services []plugins.Service) {
+		b.Helper()
+		if len(services) != want {
+			b.Fatalf("expected %d results, got %d", want, len(services))
+		}
+	}
 }
 
 // BenchmarkNonStandard_TCP_FastLane_StandardPort measures scan time when the
@@ -413,4 +459,64 @@ func BenchmarkNonStandard_TCPTLS_SlowLane_NoMatch(b *testing.B) {
 	runSingleTargetScan(b, target, Config{}, assertNoServiceFound)
 
 	b.ReportMetric(float64(len(sortedTCPTLSPlugins)), "plugins-tried/op")
+}
+
+// multiTargetSlowLaneCount is the number of targets scanned by
+// BenchmarkNonStandard_TCP_MultiTarget_SlowLane_NoMatch.
+const multiTargetSlowLaneCount = 10
+
+// BenchmarkNonStandard_TCP_MultiTarget_SlowLane_NoMatch measures scan time
+// for multiTargetSlowLaneCount targets that all point at the same
+// unrecognized mock TCP server on a non-standard port, scanned with 4
+// workers (matching the CLI's worker/target-count ratio at small scale).
+// Every target forces the full slow-lane plugin sweep, showing whether the
+// per-target slow-lane cost compounds roughly linearly with target count
+// once worker concurrency is accounted for.
+func BenchmarkNonStandard_TCP_MultiTarget_SlowLane_NoMatch(b *testing.B) {
+	port := startMockTCPServer(b, 0, handleCloseImmediately)
+	mustNoTCPPluginClaims(b, port)
+
+	targets := make([]plugins.Target, multiTargetSlowLaneCount)
+	for i := range targets {
+		targets[i] = plugins.Target{Address: netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), port)}
+	}
+
+	runMultiTargetScan(b, targets, Config{Workers: 4}, assertServiceCount(0))
+
+	b.ReportMetric(float64(len(targets)), "targets/op")
+	b.ReportMetric(float64(len(targets)*len(sortedTCPPlugins)), "plugins-tried/op")
+}
+
+// mixedLanesPerLaneCount is the number of fast-lane and the number of
+// slow-lane targets scanned by BenchmarkNonStandard_TCP_MultiTarget_MixedLanes
+// (total target count is 2*mixedLanesPerLaneCount).
+const mixedLanesPerLaneCount = 5
+
+// BenchmarkNonStandard_TCP_MultiTarget_MixedLanes measures scan time for a
+// realistic engagement mix: mixedLanesPerLaneCount targets running Redis on
+// its default port 6379 (fast lane, single dial + match) alongside
+// mixedLanesPerLaneCount targets running a completely unrecognized service on
+// a non-standard port (slow lane, full plugin sweep), scanned together with 4
+// workers. This shows the aggregate cost when only some ports in a target
+// list are non-standard, rather than the all-slow-lane worst case measured by
+// BenchmarkNonStandard_TCP_MultiTarget_SlowLane_NoMatch.
+func BenchmarkNonStandard_TCP_MultiTarget_MixedLanes(b *testing.B) {
+	redisPort := startMockTCPServer(b, 6379, handleRedisPong)
+	mustTCPPluginClaims(b, redisPort)
+
+	unknownPort := startMockTCPServer(b, 0, handleCloseImmediately)
+	mustNoTCPPluginClaims(b, unknownPort)
+
+	targets := make([]plugins.Target, 0, mixedLanesPerLaneCount*2)
+	for i := 0; i < mixedLanesPerLaneCount; i++ {
+		targets = append(targets, plugins.Target{Address: netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), redisPort)})
+	}
+	for i := 0; i < mixedLanesPerLaneCount; i++ {
+		targets = append(targets, plugins.Target{Address: netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), unknownPort)})
+	}
+
+	runMultiTargetScan(b, targets, Config{Workers: 4}, assertServiceCount(mixedLanesPerLaneCount))
+
+	b.ReportMetric(float64(len(targets)), "targets/op")
+	b.ReportMetric(float64(mixedLanesPerLaneCount*len(sortedTCPPlugins)), "plugins-tried-slow-lane/op")
 }
