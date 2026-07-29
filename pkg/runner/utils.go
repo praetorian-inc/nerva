@@ -61,11 +61,22 @@ func checkConfig(config cliConfig) error {
 		return errors.New("--resume requires --state-file")
 	}
 
+	if config.scanDepth != "" {
+		switch ScanDepth(strings.ToLower(config.scanDepth)) {
+		case ScanDepthFast, ScanDepthThorough:
+		default:
+			return fmt.Errorf("invalid --scan-depth value %q: must be %q or %q", config.scanDepth, ScanDepthFast, ScanDepthThorough)
+		}
+		if config.fastMode {
+			fmt.Fprintln(os.Stderr, "[WRN] --fast is deprecated when --scan-depth is set; --scan-depth takes precedence")
+		}
+	}
+
 	return nil
 }
 
 func createScanConfig(config cliConfig) scan.Config {
-	return scan.Config{
+	cfg := scan.Config{
 		DefaultTimeout: time.Duration(config.timeout) * time.Millisecond,
 		FastMode:       config.fastMode,
 		UDP:            config.useUDP,
@@ -80,6 +91,18 @@ func createScanConfig(config cliConfig) scan.Config {
 		Misconfigs:     config.misconfigs,
 		Deep:           config.deep,
 	}
+
+	// --scan-depth, when set, takes precedence over --fast (validated in checkConfig).
+	switch ScanDepth(strings.ToLower(config.scanDepth)) {
+	case ScanDepthFast:
+		cfg.ScanDepth = string(ScanDepthFast)
+		cfg.FastMode = true
+	case ScanDepthThorough:
+		cfg.ScanDepth = string(ScanDepthThorough)
+		cfg.FastMode = false
+	}
+
+	return cfg
 }
 
 func isPriorityPort(port int) bool {

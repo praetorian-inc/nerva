@@ -286,6 +286,10 @@ func init() {
 	rootCmd.PersistentFlags().BoolVarP(&config.outputCSV, "csv", "", false, "output format in csv")
 
 	rootCmd.PersistentFlags().BoolVarP(&config.fastMode, "fast", "f", false, "fast mode")
+	rootCmd.PersistentFlags().StringVar(&config.scanDepth, "scan-depth", "", "scan depth mode: \"fast\" or \"thorough\" (default: legacy behavior governed by --fast). "+
+		"fast: banner pre-filtering narrows plugin candidates to the detected protocol family, skipping plugins outside it; fast but may miss services with unusual banners. "+
+		"thorough: tries all plugins regardless of banner (current default behavior); slowest but most complete. "+
+		"Takes precedence over --fast if both are set (--fast is deprecated in that case).")
 	rootCmd.PersistentFlags().BoolVarP(&config.useUDP, "udp", "U", false, "run UDP plugins")
 	rootCmd.PersistentFlags().BoolVarP(&config.useSCTP, "sctp", "S", false, "run SCTP plugins (Linux only)")
 	rootCmd.PersistentFlags().BoolVarP(&config.verbose, "verbose", "v", false, "verbose mode")

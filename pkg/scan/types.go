@@ -27,6 +27,11 @@ type Config struct {
 
 	FastMode bool
 
+	// ScanDepth is "fast", "thorough", or "" (legacy, governed by FastMode alone).
+	// When set, it takes precedence over FastMode for future depth-aware plugin
+	// selection (see LAB-5301); FastMode is still populated for backward compatibility.
+	ScanDepth string
+
 	// The timeout specifies how long certain tasks should wait during the scanning process.
 	// This may include the timeouts set on the handshake process and the time to wait for a response to return.
 	DefaultTimeout time.Duration

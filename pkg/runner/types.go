@@ -14,12 +14,27 @@
 
 package runner
 
+// ScanDepth controls how nerva narrows plugin candidates via banner pre-filtering.
+type ScanDepth string
+
+const (
+	// ScanDepthFast uses banner pre-filtering to narrow plugin candidates to the
+	// detected protocol family, skipping plugins outside that family. Fast but
+	// may miss services with unusual or absent banners.
+	ScanDepthFast ScanDepth = "fast"
+
+	// ScanDepthThorough tries all plugins regardless of banner (current default
+	// behavior). Slowest but most complete.
+	ScanDepthThorough ScanDepth = "thorough"
+)
+
 type cliConfig struct {
 	outputFile       string
 	outputJSON       bool
 	outputCSV        bool
 	overwriteOutput  bool
 	fastMode         bool
+	scanDepth        string // --scan-depth flag; raw value, validated/normalized in checkConfig
 	timeout          int
 	useUDP           bool
 	useSCTP          bool
