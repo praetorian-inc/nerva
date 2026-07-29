@@ -36,9 +36,12 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"fmt"
+	"io"
+	"log"
 	"math/big"
 	"net"
 	"net/netip"
+	"strings"
 	"testing"
 	"time"
 
@@ -250,7 +253,14 @@ func handleTLSNoAppData(conn net.Conn) {
 // runSingleTargetScan scans one target through the same ScanTargets +
 // ScanPool + SimpleScanTarget path the CLI uses (see scan_api.go), with a
 // single worker since there is only one target.
-func runSingleTargetScan(b *testing.B, target plugins.Target, cfg Config) {
+//
+// Before the timed loop starts, it runs ScanTargets once and passes the
+// result to validate, which must assert the scan found (or didn't find)
+// the expected service. Without this check, the "plugins-tried/op" metrics
+// reported by callers are computed statically from the plugin registry and
+// would stay unchanged even if a plugin regression silently broke
+// detection, making the benchmark numbers meaningless.
+func runSingleTargetScan(b *testing.B, target plugins.Target, cfg Config, validate func(*testing.B, []plugins.Service)) {
 	b.Helper()
 	cfg.Workers = 1
 	if cfg.DefaultTimeout == 0 {
@@ -260,12 +270,52 @@ func runSingleTargetScan(b *testing.B, target plugins.Target, cfg Config) {
 	ctx := context.Background()
 	targets := []plugins.Target{target}
 
+	result, err := ScanTargets(ctx, targets, cfg)
+	if err != nil {
+		b.Fatalf("ScanTargets (validation run): %v", err)
+	}
+	validate(b, result)
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		if _, err := ScanTargets(ctx, targets, cfg); err != nil {
 			b.Fatalf("ScanTargets: %v", err)
 		}
 	}
+}
+
+// assertServiceFound fails the benchmark unless ScanTargets returned at
+// least one result, i.e. some plugin identified the service.
+func assertServiceFound(b *testing.B, services []plugins.Service) {
+	b.Helper()
+	if len(services) < 1 {
+		b.Fatalf("expected at least 1 result, got %d", len(services))
+	}
+}
+
+// assertNoServiceFound fails the benchmark unless ScanTargets returned zero
+// results, i.e. no plugin identified the (unrecognized) mock service.
+func assertNoServiceFound(b *testing.B, services []plugins.Service) {
+	b.Helper()
+	if len(services) != 0 {
+		b.Fatalf("expected 0 results, got %d", len(services))
+	}
+}
+
+// assertSSHServiceFound fails the benchmark unless ScanTargets returned at
+// least one result and one of those results' service name contains "ssh"
+// (case-insensitive).
+func assertSSHServiceFound(b *testing.B, services []plugins.Service) {
+	b.Helper()
+	if len(services) < 1 {
+		b.Fatalf("expected at least 1 result, got %d", len(services))
+	}
+	for _, s := range services {
+		if strings.Contains(strings.ToLower(s.Protocol), "ssh") {
+			return
+		}
+	}
+	b.Fatalf("expected a result with service name containing %q, got %+v", "ssh", services)
 }
 
 // BenchmarkNonStandard_TCP_FastLane_StandardPort measures scan time when the
@@ -277,7 +327,7 @@ func BenchmarkNonStandard_TCP_FastLane_StandardPort(b *testing.B) {
 	mustTCPPluginClaims(b, port)
 
 	target := plugins.Target{Address: netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), port)}
-	runSingleTargetScan(b, target, Config{})
+	runSingleTargetScan(b, target, Config{}, assertServiceFound)
 }
 
 // BenchmarkNonStandard_TCP_SlowLane_NoMatch measures scan time for a
@@ -290,7 +340,7 @@ func BenchmarkNonStandard_TCP_SlowLane_NoMatch(b *testing.B) {
 	mustNoTCPPluginClaims(b, port)
 
 	target := plugins.Target{Address: netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), port)}
-	runSingleTargetScan(b, target, Config{})
+	runSingleTargetScan(b, target, Config{}, assertNoServiceFound)
 
 	// Plugin iteration count: computed statically (not observed at runtime,
 	// since SimpleScanTarget doesn't expose per-attempt counters) from the
@@ -305,11 +355,21 @@ func BenchmarkNonStandard_TCP_SlowLane_NoMatch(b *testing.B) {
 // the fast lane finds nothing; the slow lane then dials every plugin in
 // priority order until SSHPlugin identifies the banner.
 func BenchmarkNonStandard_TCP_SlowLane_PartialMatch_SSH(b *testing.B) {
+	// Earlier-priority plugins probe this connection with an HTTP request
+	// before SSHPlugin gets a turn; net/http's Transport logs "Unsolicited
+	// response received on idle HTTP channel" via log.Default() when it
+	// later reads the SSH banner off that now-idle connection. Silence it
+	// for the duration of the benchmark so it doesn't spam benchmark output
+	// with synchronous stderr I/O inside the timed loop.
+	origOutput := log.Writer()
+	log.SetOutput(io.Discard)
+	defer log.SetOutput(origOutput)
+
 	port := startMockTCPServer(b, 0, handleSSHBanner)
 	mustNoTCPPluginClaims(b, port)
 
 	target := plugins.Target{Address: netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), port)}
-	runSingleTargetScan(b, target, Config{})
+	runSingleTargetScan(b, target, Config{}, assertSSHServiceFound)
 
 	if pos := pluginPosition(sortedTCPPlugins, "ssh"); pos > 0 {
 		b.ReportMetric(float64(pos), "plugins-tried/op")
@@ -326,7 +386,7 @@ func BenchmarkNonStandard_TCPTLS_FastLane_StandardPort(b *testing.B) {
 	mustTCPTLSPluginClaims(b, port)
 
 	target := plugins.Target{Address: netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), port)}
-	runSingleTargetScan(b, target, Config{})
+	runSingleTargetScan(b, target, Config{}, assertServiceFound)
 }
 
 // BenchmarkNonStandard_TCPTLS_SlowLane_NoMatch measures scan time for a
@@ -336,11 +396,21 @@ func BenchmarkNonStandard_TCPTLS_FastLane_StandardPort(b *testing.B) {
 // (unrecognized) application data, so SimpleScanTarget must sequentially
 // dial, handshake, and run every registered TCPTLS plugin before giving up.
 func BenchmarkNonStandard_TCPTLS_SlowLane_NoMatch(b *testing.B) {
+	// As in BenchmarkNonStandard_TCP_SlowLane_PartialMatch_SSH, an
+	// HTTP(S) plugin probing this connection before it's abandoned causes
+	// net/http's Transport to log "Unsolicited response received on idle
+	// HTTP channel" via log.Default() when the unrecognized application
+	// data above arrives after the connection is idle. Silence it for the
+	// duration of the benchmark.
+	origOutput := log.Writer()
+	log.SetOutput(io.Discard)
+	defer log.SetOutput(origOutput)
+
 	port := startMockTLSServer(b, 0, handleTLSNoAppData)
 	mustNoTCPPluginClaims(b, port)
 
 	target := plugins.Target{Address: netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), port)}
-	runSingleTargetScan(b, target, Config{})
+	runSingleTargetScan(b, target, Config{}, assertNoServiceFound)
 
 	b.ReportMetric(float64(len(sortedTCPTLSPlugins)), "plugins-tried/op")
 }
