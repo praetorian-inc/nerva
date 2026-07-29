@@ -173,6 +173,12 @@ func runScan(cmd *cobra.Command, args []string) error {
 	// Normalize scanDepth once (covers both the flag value and any value
 	// restored from resumed state); createScanConfig assumes lowercase input.
 	config.scanDepth = strings.ToLower(config.scanDepth)
+	if config.scanDepth != "" &&
+		config.scanDepth != string(ScanDepthFast) &&
+		config.scanDepth != string(ScanDepthThorough) {
+		return fmt.Errorf("invalid scan_depth %q in state file: must be %q or %q",
+			config.scanDepth, ScanDepthFast, ScanDepthThorough)
+	}
 
 	// Create progress callback for state tracking
 	scanConfig := createScanConfig(config)
