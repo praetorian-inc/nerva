@@ -191,7 +191,16 @@ func (s *stubConn) Read(b []byte) (int, error) {
 	return n, s.err
 }
 
-func (s *stubConn) SetReadDeadline(t time.Time) error { return nil }
+// SetReadDeadline closes readDone when a non-zero deadline is set, which
+// unblocks a Read call that is waiting on <-s.readDone. This simulates a
+// real net.Conn where setting a read deadline causes an in-flight blocked
+// Read to return once the deadline passes.
+func (s *stubConn) SetReadDeadline(t time.Time) error {
+	if s.blockRead && !t.IsZero() {
+		close(s.readDone)
+	}
+	return nil
+}
 
 func TestReadBanner_ImmediateData(t *testing.T) {
 	conn := &stubConn{data: []byte("SSH-2.0-OpenSSH_8.9\r\n")}
@@ -212,6 +221,31 @@ func TestReadBanner_UsesDefaultTimeoutWhenZero(t *testing.T) {
 	}
 	if len(banner) == 0 {
 		t.Errorf("ReadBanner with zero timeout returned no data, want banner bytes")
+	}
+}
+
+func TestReadBanner_TimeoutPathReturnsWithoutHanging(t *testing.T) {
+	conn := &stubConn{blockRead: true, readDone: make(chan struct{})}
+
+	done := make(chan struct{})
+	var banner []byte
+	var err error
+	go func() {
+		banner, err = ReadBanner(conn, 50*time.Millisecond)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("ReadBanner did not return within 2s, want it to unblock on read deadline")
+	}
+
+	if err != nil {
+		t.Errorf("ReadBanner returned error: %v, want nil", err)
+	}
+	if len(banner) != 0 {
+		t.Errorf("ReadBanner returned %q, want empty banner", banner)
 	}
 }
 

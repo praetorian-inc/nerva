@@ -92,7 +92,7 @@ const DefaultBannerReadTimeout = 300 * time.Millisecond
 //   - Services that send a banner immediately (SSH, FTP, SMTP, MySQL)
 //     return their initial bytes.
 //   - Services that wait for client input (HTTP, TLS) will hit the read
-//     deadline and return an empty, non-nil-error slice.
+//     deadline and return an empty slice and nil error.
 //   - Partial reads and connection resets return whatever bytes were read
 //     before the error, alongside the error, so callers can still attempt
 //     classification on partial data if desired.
@@ -188,19 +188,25 @@ func isTelnetIAC(banner []byte) bool {
 }
 
 // isMySQLGreeting reports whether banner looks like the start of a MySQL
-// initial handshake packet: a 3-byte little-endian payload length, a 1-byte
-// sequence id, a protocol version byte of 0x0a, and a non-empty,
-// printable-ASCII, null-terminated server version string.
+// initial handshake packet: a protocol version byte of 0x0a at offset 4,
+// followed by a non-empty, printable-ASCII, null-terminated server version
+// string starting at offset 5. It does not validate the 3-byte little-endian
+// payload length or the 1-byte sequence id that precede the version byte in
+// a real handshake packet.
 //
-// This intentionally mirrors the minimal validation used by the MySQL
-// plugin's own handshake parser (pkg/plugins/services/mysql), adapted for a
-// short banner read that may not contain the full handshake packet.
+// The real MySQL handshake parser (pkg/plugins/services/mysql) requires at
+// least 35 bytes for a full handshake packet, but a short banner pre-read
+// may not contain that much data. minMySQLGreetingLen is a lower bound
+// chosen to be long enough to hold a plausible version string (e.g.
+// "5.7.0\x00") while still rejecting most short garbage reads that happen
+// to have 0x0a at offset 4.
 func isMySQLGreeting(banner []byte) bool {
 	const (
-		versionByteOffset = 4
-		versionStart      = 5
+		versionByteOffset   = 4
+		versionStart        = 5
+		minMySQLGreetingLen = 10
 	)
-	if len(banner) < versionStart+1 {
+	if len(banner) < minMySQLGreetingLen {
 		return false
 	}
 	if banner[versionByteOffset] != 0x0a {
