@@ -54,21 +54,55 @@ import (
 // close quickly; the bound only guards against an unexpected stall.
 const benchmarkProbeTimeout = 200 * time.Millisecond
 
-// mustNoTCPPluginClaims fails the benchmark if any registered TCP or TCPTLS
-// plugin's PortPriority claims port, which would invalidate the "non-standard
-// port" premise of the slow-lane benchmarks below.
-func mustNoTCPPluginClaims(tb testing.TB, port uint16) {
-	tb.Helper()
+// anyPluginClaimsPort reports whether any registered TCP or TCPTLS plugin's
+// PortPriority claims port, which would invalidate the "non-standard port"
+// premise of the slow-lane benchmarks below.
+func anyPluginClaimsPort(port uint16) bool {
 	for _, p := range sortedTCPPlugins {
 		if p.PortPriority(port) {
-			tb.Fatalf("port %d unexpectedly claimed by TCP plugin %q; choose a different non-standard port", port, p.Name())
+			return true
 		}
 	}
 	for _, p := range sortedTCPTLSPlugins {
 		if p.PortPriority(port) {
-			tb.Fatalf("port %d unexpectedly claimed by TCPTLS plugin %q; choose a different non-standard port", port, p.Name())
+			return true
 		}
 	}
+	return false
+}
+
+// startUnclaimedTCPServer wraps startMockTCPServer, retrying with a fresh
+// ephemeral port (port 0) up to 5 times if the OS happens to hand back a port
+// that a registered plugin's PortPriority claims, which would invalidate the
+// "non-standard port" premise of the slow-lane benchmarks. Such a collision on
+// an OS-assigned ephemeral port is rare and environment-dependent, so if every
+// attempt collides the benchmark is skipped rather than failed.
+func startUnclaimedTCPServer(tb testing.TB, handle func(net.Conn)) uint16 {
+	tb.Helper()
+	const maxAttempts = 5
+	for i := 0; i < maxAttempts; i++ {
+		port := startMockTCPServer(tb, 0, handle)
+		if !anyPluginClaimsPort(port) {
+			return port
+		}
+	}
+	tb.Skipf("could not obtain an ephemeral TCP port unclaimed by any plugin after %d attempts", maxAttempts)
+	return 0
+}
+
+// startUnclaimedTLSServer is the TLS analogue of startUnclaimedTCPServer,
+// wrapping startMockTLSServer with the same ephemeral-port collision retry.
+func startUnclaimedTLSServer(tb testing.TB, handle func(net.Conn)) uint16 {
+	tb.Helper()
+	const maxAttempts = 5
+	for i := 0; i < maxAttempts; i++ {
+		port := startMockTLSServer(tb, 0, handle)
+		if !anyPluginClaimsPort(port) {
+			return port
+		}
+	}
+	tb.Skipf("could not obtain an ephemeral TLS port unclaimed by any plugin after %d attempts", maxAttempts)
+	return 0
 }
 
 // mustTCPPluginClaims fails the benchmark if no registered TCP plugin's
@@ -352,6 +386,22 @@ func assertSSHServiceFound(b *testing.B, services []plugins.Service) {
 	b.Fatalf("expected a result with service name containing %q, got %+v", "ssh", services)
 }
 
+// assertRedisServiceFound fails the benchmark unless ScanTargets returned at
+// least one result and one of those results' service name contains "redis"
+// (case-insensitive).
+func assertRedisServiceFound(b *testing.B, services []plugins.Service) {
+	b.Helper()
+	if len(services) < 1 {
+		b.Fatalf("expected at least 1 result, got %d", len(services))
+	}
+	for _, s := range services {
+		if strings.Contains(strings.ToLower(s.Protocol), "redis") {
+			return
+		}
+	}
+	b.Fatalf("expected a result with service name containing %q, got %+v", "redis", services)
+}
+
 // assertServiceCount returns a validate function for runMultiTargetScan that
 // fails the benchmark unless ScanTargets returned exactly want results,
 // i.e. the expected subset of targets were identified.
@@ -373,7 +423,7 @@ func BenchmarkNonStandard_TCP_FastLane_StandardPort(b *testing.B) {
 	mustTCPPluginClaims(b, port)
 
 	target := plugins.Target{Address: netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), port)}
-	runSingleTargetScan(b, target, Config{}, assertServiceFound)
+	runSingleTargetScan(b, target, Config{}, assertRedisServiceFound)
 }
 
 // BenchmarkNonStandard_TCP_SlowLane_NoMatch measures scan time for a
@@ -382,8 +432,7 @@ func BenchmarkNonStandard_TCP_FastLane_StandardPort(b *testing.B) {
 // SimpleScanTarget must sequentially dial and run every registered TCP plugin
 // before giving up. This is the worst-case slow-lane scenario from LAB-5299.
 func BenchmarkNonStandard_TCP_SlowLane_NoMatch(b *testing.B) {
-	port := startMockTCPServer(b, 0, handleCloseImmediately)
-	mustNoTCPPluginClaims(b, port)
+	port := startUnclaimedTCPServer(b, handleCloseImmediately)
 
 	target := plugins.Target{Address: netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), port)}
 	runSingleTargetScan(b, target, Config{}, assertNoServiceFound)
@@ -411,8 +460,7 @@ func BenchmarkNonStandard_TCP_SlowLane_PartialMatch_SSH(b *testing.B) {
 	log.SetOutput(io.Discard)
 	defer log.SetOutput(origOutput)
 
-	port := startMockTCPServer(b, 0, handleSSHBanner)
-	mustNoTCPPluginClaims(b, port)
+	port := startUnclaimedTCPServer(b, handleSSHBanner)
 
 	target := plugins.Target{Address: netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), port)}
 	runSingleTargetScan(b, target, Config{}, assertSSHServiceFound)
@@ -432,7 +480,7 @@ func BenchmarkNonStandard_TCPTLS_FastLane_StandardPort(b *testing.B) {
 	mustTCPTLSPluginClaims(b, port)
 
 	target := plugins.Target{Address: netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), port)}
-	runSingleTargetScan(b, target, Config{}, assertServiceFound)
+	runSingleTargetScan(b, target, Config{}, assertRedisServiceFound)
 }
 
 // BenchmarkNonStandard_TCPTLS_SlowLane_NoMatch measures scan time for a
@@ -452,8 +500,7 @@ func BenchmarkNonStandard_TCPTLS_SlowLane_NoMatch(b *testing.B) {
 	log.SetOutput(io.Discard)
 	defer log.SetOutput(origOutput)
 
-	port := startMockTLSServer(b, 0, handleTLSNoAppData)
-	mustNoTCPPluginClaims(b, port)
+	port := startUnclaimedTLSServer(b, handleTLSNoAppData)
 
 	target := plugins.Target{Address: netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), port)}
 	runSingleTargetScan(b, target, Config{}, assertNoServiceFound)
@@ -473,8 +520,7 @@ const multiTargetSlowLaneCount = 10
 // per-target slow-lane cost compounds roughly linearly with target count
 // once worker concurrency is accounted for.
 func BenchmarkNonStandard_TCP_MultiTarget_SlowLane_NoMatch(b *testing.B) {
-	port := startMockTCPServer(b, 0, handleCloseImmediately)
-	mustNoTCPPluginClaims(b, port)
+	port := startUnclaimedTCPServer(b, handleCloseImmediately)
 
 	targets := make([]plugins.Target, multiTargetSlowLaneCount)
 	for i := range targets {
@@ -504,8 +550,7 @@ func BenchmarkNonStandard_TCP_MultiTarget_MixedLanes(b *testing.B) {
 	redisPort := startMockTCPServer(b, 6379, handleRedisPong)
 	mustTCPPluginClaims(b, redisPort)
 
-	unknownPort := startMockTCPServer(b, 0, handleCloseImmediately)
-	mustNoTCPPluginClaims(b, unknownPort)
+	unknownPort := startUnclaimedTCPServer(b, handleCloseImmediately)
 
 	targets := make([]plugins.Target, 0, mixedLanesPerLaneCount*2)
 	for i := 0; i < mixedLanesPerLaneCount; i++ {
