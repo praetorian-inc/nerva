@@ -253,6 +253,7 @@ func buildState(config cliConfig, targets []plugins.Target, completedTargets []s
 		Config: StateConfig{
 			TimeoutMs:   config.timeout,
 			FastMode:    config.fastMode,
+			ScanDepth:   config.scanDepth,
 			UDP:         config.useUDP,
 			SCTP:        config.useSCTP,
 			Verbose:     config.verbose,
@@ -287,8 +288,9 @@ func init() {
 
 	rootCmd.PersistentFlags().BoolVarP(&config.fastMode, "fast", "f", false, "fast mode")
 	rootCmd.PersistentFlags().StringVar(&config.scanDepth, "scan-depth", "", "scan depth mode: \"fast\" or \"thorough\" (default: legacy behavior governed by --fast). "+
-		"fast: banner pre-filtering narrows plugin candidates to the detected protocol family, skipping plugins outside it; fast but may miss services with unusual banners. "+
-		"thorough: tries all plugins regardless of banner (current default behavior); slowest but most complete. "+
+		"fast: only tries plugins whose port priority matches the target port, skipping the full plugin iteration for non-standard ports; equivalent to --fast. "+
+		"thorough: tries all plugins regardless of port (current default behavior); slowest but most complete. "+
+		"Banner-based pre-filtering is planned for a future release and is not yet implemented. "+
 		"Takes precedence over --fast if both are set (--fast is deprecated in that case).")
 	rootCmd.PersistentFlags().BoolVarP(&config.useUDP, "udp", "U", false, "run UDP plugins")
 	rootCmd.PersistentFlags().BoolVarP(&config.useSCTP, "sctp", "S", false, "run SCTP plugins (Linux only)")

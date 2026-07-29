@@ -14,16 +14,18 @@
 
 package runner
 
-// ScanDepth controls how nerva narrows plugin candidates via banner pre-filtering.
+// ScanDepth controls how many plugins nerva tries per target.
 type ScanDepth string
 
 const (
-	// ScanDepthFast uses banner pre-filtering to narrow plugin candidates to the
-	// detected protocol family, skipping plugins outside that family. Fast but
-	// may miss services with unusual or absent banners.
+	// ScanDepthFast only tries plugins whose PortPriority matches the target
+	// port, skipping the full plugin iteration for non-standard ports.
+	// Equivalent to --fast. Fast but may miss services running on non-standard
+	// ports. Banner-based pre-filtering is planned for a future release
+	// (LAB-5301) and is not yet implemented.
 	ScanDepthFast ScanDepth = "fast"
 
-	// ScanDepthThorough tries all plugins regardless of banner (current default
+	// ScanDepthThorough tries all plugins regardless of port (current default
 	// behavior). Slowest but most complete.
 	ScanDepthThorough ScanDepth = "thorough"
 )

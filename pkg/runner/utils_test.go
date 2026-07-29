@@ -23,6 +23,7 @@ func TestCheckConfig_ScanDepthValidation(t *testing.T) {
 	tests := []struct {
 		name        string
 		scanDepth   string
+		fastMode    bool
 		wantErr     bool
 		errContains string
 	}{
@@ -30,11 +31,12 @@ func TestCheckConfig_ScanDepthValidation(t *testing.T) {
 		{name: "fast is valid", scanDepth: "fast", wantErr: false},
 		{name: "thorough is valid", scanDepth: "thorough", wantErr: false},
 		{name: "invalid value rejected", scanDepth: "medium", wantErr: true, errContains: "invalid --scan-depth"},
+		{name: "scan-depth and --fast both set is valid (warns but does not error)", scanDepth: "thorough", fastMode: true, wantErr: false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := cliConfig{scanDepth: tt.scanDepth}
+			cfg := cliConfig{scanDepth: tt.scanDepth, fastMode: tt.fastMode}
 			err := checkConfig(cfg)
 			if tt.wantErr {
 				if err == nil {
