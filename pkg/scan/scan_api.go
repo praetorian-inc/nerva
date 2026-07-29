@@ -168,6 +168,10 @@ func safeScanTarget(target plugins.Target, fn func() (*plugins.Service, error)) 
 
 // ScanTargets fingerprints service(s) running given a list of targets.
 func ScanTargets(ctx context.Context, targets []plugins.Target, config Config) ([]plugins.Service, error) {
+	if config.ScanDepth == "fast" && !config.FastMode {
+		config.FastMode = true
+	}
+
 	targets = ResolveTargets(targets, config)
 
 	if config.SCTP {

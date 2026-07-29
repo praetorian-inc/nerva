@@ -29,6 +29,8 @@ import (
 )
 
 func checkConfig(config cliConfig) error {
+	config.scanDepth = strings.ToLower(config.scanDepth)
+
 	if len(config.outputFile) > 0 {
 		_, err := os.Stat(config.outputFile)
 		if !os.IsNotExist(err) && config.overwriteOutput {
@@ -62,7 +64,7 @@ func checkConfig(config cliConfig) error {
 	}
 
 	if config.scanDepth != "" {
-		switch ScanDepth(strings.ToLower(config.scanDepth)) {
+		switch ScanDepth(config.scanDepth) {
 		case ScanDepthFast, ScanDepthThorough:
 		default:
 			return fmt.Errorf("invalid --scan-depth value %q: must be %q or %q", config.scanDepth, ScanDepthFast, ScanDepthThorough)
@@ -93,7 +95,7 @@ func createScanConfig(config cliConfig) scan.Config {
 	}
 
 	// --scan-depth, when set, takes precedence over --fast (validated in checkConfig).
-	switch ScanDepth(strings.ToLower(config.scanDepth)) {
+	switch ScanDepth(config.scanDepth) {
 	case ScanDepthFast:
 		cfg.ScanDepth = string(ScanDepthFast)
 		cfg.FastMode = true

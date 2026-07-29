@@ -20,6 +20,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -123,6 +124,9 @@ func runScan(cmd *cobra.Command, args []string) error {
 		if !config.deep {
 			config.deep = state.Config.Deep
 		}
+		if config.scanDepth == "" {
+			config.scanDepth = state.Config.ScanDepth
+		}
 	} else {
 		// Read targets from input
 		var err error
@@ -165,6 +169,10 @@ func runScan(cmd *cobra.Command, args []string) error {
 			}
 		}()
 	}
+
+	// Normalize scanDepth once (covers both the flag value and any value
+	// restored from resumed state); createScanConfig assumes lowercase input.
+	config.scanDepth = strings.ToLower(config.scanDepth)
 
 	// Create progress callback for state tracking
 	scanConfig := createScanConfig(config)

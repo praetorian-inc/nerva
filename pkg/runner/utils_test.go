@@ -15,6 +15,7 @@
 package runner
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -49,6 +50,51 @@ func TestCheckConfig_ScanDepthValidation(t *testing.T) {
 				t.Fatalf("expected no error for scan-depth %q, got %v", tt.scanDepth, err)
 			}
 		})
+	}
+}
+
+func TestScanDepth_ResumeRoundTrip(t *testing.T) {
+	// Simulate the original scan: --scan-depth=thorough is set and saved to a
+	// state file on disk (as buildState + SaveState do in root.go's runScan).
+	original := cliConfig{scanDepth: "thorough", timeout: 2000, workers: 50}
+	state := buildState(original, nil, nil, nil, 0)
+
+	stateFile := filepath.Join(t.TempDir(), "resume-state.json")
+	if err := SaveState(stateFile, state); err != nil {
+		t.Fatalf("SaveState failed: %v", err)
+	}
+
+	// Load it back, as a resumed invocation would.
+	loaded, err := LoadState(stateFile)
+	if err != nil {
+		t.Fatalf("LoadState failed: %v", err)
+	}
+	if loaded.Config.ScanDepth != "thorough" {
+		t.Fatalf("state file did not persist ScanDepth: got %q, want %q", loaded.Config.ScanDepth, "thorough")
+	}
+
+	// Simulate a resumed invocation where --scan-depth was NOT re-supplied on
+	// the command line (the common case). The resume restore block in
+	// root.go's runScan applies this same fallback.
+	resumed := cliConfig{timeout: 2000, workers: 50}
+	if resumed.scanDepth == "" {
+		resumed.scanDepth = loaded.Config.ScanDepth
+	}
+
+	if resumed.scanDepth != "thorough" {
+		t.Fatalf("resumed config did not restore ScanDepth: got %q, want %q", resumed.scanDepth, "thorough")
+	}
+
+	if err := checkConfig(resumed); err != nil {
+		t.Fatalf("checkConfig rejected restored scanDepth %q: %v", resumed.scanDepth, err)
+	}
+
+	scanCfg := createScanConfig(resumed)
+	if scanCfg.ScanDepth != "thorough" {
+		t.Errorf("createScanConfig ScanDepth = %q, want %q", scanCfg.ScanDepth, "thorough")
+	}
+	if scanCfg.FastMode {
+		t.Errorf("createScanConfig FastMode = true, want false for scan-depth=thorough")
 	}
 }
 
