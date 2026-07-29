@@ -86,7 +86,10 @@ const DefaultBannerReadTimeout = 300 * time.Millisecond
 // sends immediately after connecting, without writing anything to the
 // connection. It is intended purely for protocol-family classification via
 // ClassifyBanner, and must never be relied upon to capture a complete
-// protocol banner.
+// protocol banner. The read consumes bytes from conn and leaves a read
+// deadline set, so the connection should not be reused by plugins that
+// expect those initial bytes; callers must open a fresh connection for
+// plugin execution.
 //
 // Behavior:
 //   - Services that send a banner immediately (SSH, FTP, SMTP, MySQL)
@@ -135,11 +138,11 @@ func ClassifyBanner(banner []byte) ProtocolFamily {
 	}
 	if bytes.HasPrefix(banner, []byte("220")) {
 		text := string(banner)
-		if ftpKeywordPattern.MatchString(text) {
-			return ProtocolFamilyFTP
-		}
 		if smtpKeywordPattern.MatchString(text) {
 			return ProtocolFamilySMTP
+		}
+		if ftpKeywordPattern.MatchString(text) {
+			return ProtocolFamilyFTP
 		}
 		return ProtocolFamilyUnknown
 	}
@@ -188,11 +191,11 @@ func isTelnetIAC(banner []byte) bool {
 }
 
 // isMySQLGreeting reports whether banner looks like the start of a MySQL
-// initial handshake packet: a protocol version byte of 0x0a at offset 4,
-// followed by a non-empty, printable-ASCII, null-terminated server version
-// string starting at offset 5. It does not validate the 3-byte little-endian
-// payload length or the 1-byte sequence id that precede the version byte in
-// a real handshake packet.
+// initial handshake packet: a sequence ID of 0x00 at offset 3 (the server's
+// initial handshake is always sequence 0), a protocol version byte of 0x0a
+// at offset 4, followed by a non-empty, printable-ASCII, null-terminated
+// server version string starting at offset 5. It does not validate the
+// 3-byte little-endian payload length that precedes the sequence ID.
 //
 // The real MySQL handshake parser (pkg/plugins/services/mysql) requires at
 // least 35 bytes for a full handshake packet, but a short banner pre-read
@@ -202,11 +205,15 @@ func isTelnetIAC(banner []byte) bool {
 // to have 0x0a at offset 4.
 func isMySQLGreeting(banner []byte) bool {
 	const (
+		sequenceIDOffset    = 3
 		versionByteOffset   = 4
 		versionStart        = 5
 		minMySQLGreetingLen = 10
 	)
 	if len(banner) < minMySQLGreetingLen {
+		return false
+	}
+	if banner[sequenceIDOffset] != 0x00 {
 		return false
 	}
 	if banner[versionByteOffset] != 0x0a {
@@ -280,6 +287,14 @@ func FilterPluginsByFamily(candidates []plugins.Plugin, family ProtocolFamily) [
 // of plugin Name() values (lowercased) relevant to it. ProtocolFamilyUnknown
 // and ProtocolFamilyTLS are handled directly in FilterPluginsByFamily and do
 // not need entries here.
+//
+// NOTE (LAB-5301): ProtocolFamilyHTTP maps only the generic http/https
+// plugins. Many specialized plugins (docker, cups, influxdb, etc.) also
+// communicate over HTTP but carry distinct Name()s. This is safe today
+// because HTTP servers wait for client input, so ReadBanner times out and
+// ClassifyBanner returns Unknown (no narrowing). If LAB-5301 adds active
+// probing that can trigger an HTTP classification, the HTTP entry must be
+// expanded or removed to avoid dropping those specialized plugins.
 var protocolFamilyPluginNames = map[ProtocolFamily]map[string]bool{
 	ProtocolFamilySSH:    {"ssh": true},
 	ProtocolFamilyHTTP:   {"http": true, "https": true},

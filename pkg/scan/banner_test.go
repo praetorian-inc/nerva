@@ -85,6 +85,7 @@ func TestClassifyBanner_SMTP(t *testing.T) {
 	cases := [][]byte{
 		[]byte("220 mail.example.com ESMTP Postfix\r\n"),
 		[]byte("220 smtp.example.net Simple Mail Transfer Service ready\r\n"),
+		[]byte("220 ftp.example.com ESMTP Postfix\r\n"),
 	}
 	for _, banner := range cases {
 		if got := ClassifyBanner(banner); got != ProtocolFamilySMTP {
@@ -140,6 +141,7 @@ func TestClassifyBanner_UnknownEdgeCases(t *testing.T) {
 		{"TLS-like prefix too short", []byte{0x16}},
 		{"mysql-like byte4 but no null terminator", []byte{0x0b, 0x00, 0x00, 0x00, 0x0a, 'a', 'b', 'c'}},
 		{"mysql-like byte4 but empty version string", []byte{0x0b, 0x00, 0x00, 0x00, 0x0a, 0x00}},
+		{"mysql-like but non-zero sequence id", []byte{0x0b, 0x00, 0x00, 0x01, 0x0a, '8', '.', '0', '.', '0', 0x00}},
 		{"random binary garbage", []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08}},
 		{"random binary garbage 2", []byte{0xde, 0xad, 0xbe, 0xef, 0x00, 0x11, 0x22, 0x33}},
 	}
