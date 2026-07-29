@@ -79,6 +79,23 @@ func TestNexusAPIFingerprinter_Match(t *testing.T) {
 			server:     "Nexus/3.63.0-01 (PRO)",
 			want:       false,
 		},
+		{
+			name:       "503 with Nexus server header → true",
+			statusCode: 503,
+			server:     "Nexus/3.63.0-01 (PRO)",
+			want:       true,
+		},
+		{
+			name:       "503 with no server header → false",
+			statusCode: 503,
+			want:       false,
+		},
+		{
+			name:       "503 with unrelated server header → false",
+			statusCode: 503,
+			server:     "Apache/2.4.29",
+			want:       false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -100,14 +117,14 @@ func TestNexusAPIFingerprinter_Match(t *testing.T) {
 
 func TestNexusAPIFingerprinter_Fingerprint(t *testing.T) {
 	tests := []struct {
-		name            string
-		statusCode      int
-		server          string
-		wantNil         bool
-		wantVersion     string
-		wantEdition     string
-		wantMajor       string
-		wantCPE         string
+		name        string
+		statusCode  int
+		server      string
+		wantNil     bool
+		wantVersion string
+		wantEdition string
+		wantMajor   string
+		wantCPE     string
 	}{
 		{
 			name:        "Nexus 3 PRO",
@@ -148,6 +165,21 @@ func TestNexusAPIFingerprinter_Fingerprint(t *testing.T) {
 			server:     "Apache/2.4.29",
 			wantNil:    true,
 		},
+		{
+			name:        "503 with Nexus server header",
+			statusCode:  503,
+			server:      "Nexus/3.63.0-01 (PRO)",
+			wantVersion: "3.63.0",
+			wantEdition: "pro",
+			wantMajor:   "3",
+			wantCPE:     "cpe:2.3:a:sonatype:nexus_repository_manager:3.63.0:*:*:*:*:*:*:*",
+		},
+		{
+			name:       "503 with no Nexus server header → nil",
+			statusCode: 503,
+			server:     "Apache/2.4.29",
+			wantNil:    true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -176,6 +208,8 @@ func TestNexusAPIFingerprinter_Fingerprint(t *testing.T) {
 			assert.Equal(t, "server_header", result.Metadata["detection_method"])
 			if tt.wantEdition != "" {
 				assert.Equal(t, tt.wantEdition, result.Metadata["edition"])
+			} else {
+				assert.NotContains(t, result.Metadata, "edition")
 			}
 			assert.Equal(t, tt.wantMajor, result.Metadata["nexus_major_version"])
 		})
@@ -357,7 +391,7 @@ func TestNexusLoginFingerprinter_Fingerprint(t *testing.T) {
 			}
 
 			require.NotNil(t, result)
-			assert.Equal(t, "nexus-repository", result.Technology)
+			assert.Equal(t, "nexus-repository-login", result.Technology)
 			assert.Equal(t, tt.wantVersion, result.Version)
 			assert.Equal(t, tt.wantMethod, result.Metadata["detection_method"])
 			if tt.wantMajor != "" {
@@ -515,7 +549,7 @@ func TestNexusLoginFingerprinter_Integration(t *testing.T) {
 	result, err := fp.Fingerprint(resp, body)
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	assert.Equal(t, "nexus-repository", result.Technology)
+	assert.Equal(t, "nexus-repository-login", result.Technology)
 	assert.Equal(t, "3", result.Metadata["nexus_major_version"])
 }
 

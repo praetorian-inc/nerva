@@ -28,8 +28,9 @@ Detection uses two complementary approaches:
 
 Primary (NexusAPIFingerprinter): Active probe of the unauthenticated REST
 status endpoint /service/rest/v1/status, which returns HTTP 200 with an
-empty body when the instance is healthy. The Server header is present on
-this response and is the sole detection signal.
+empty body when the instance is healthy, or HTTP 503 with an empty body
+when the instance is unhealthy. The Server header is present on both
+responses and is the sole detection signal.
 
 Secondary (NexusLoginFingerprinter): Passive detection from any response
 carrying the Nexus Server header, or from the HTML login page served at the
@@ -180,10 +181,10 @@ func (f *NexusAPIFingerprinter) ProbeEndpoint() string {
 	return "/service/rest/v1/status"
 }
 
-// Match returns true when the response is HTTP 200 and the Server header
-// contains the Nexus signature.
+// Match returns true when the response is HTTP 200 or HTTP 503 and the
+// Server header contains the Nexus signature.
 func (f *NexusAPIFingerprinter) Match(resp *http.Response) bool {
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusServiceUnavailable {
 		return false
 	}
 	return nexusServerPattern.MatchString(resp.Header.Get("Server"))
@@ -192,7 +193,7 @@ func (f *NexusAPIFingerprinter) Match(resp *http.Response) bool {
 // Fingerprint performs full Nexus detection from the status endpoint
 // response, extracting version and edition from the Server header.
 func (f *NexusAPIFingerprinter) Fingerprint(resp *http.Response, _ []byte) (*FingerprintResult, error) {
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusServiceUnavailable {
 		return nil, nil
 	}
 
@@ -262,7 +263,7 @@ func (f *NexusLoginFingerprinter) Fingerprint(resp *http.Response, body []byte) 
 	if nexusServerPattern.MatchString(serverHeader) {
 		version, edition, generation := extractNexusServerInfo(serverHeader)
 		return &FingerprintResult{
-			Technology: "nexus-repository",
+			Technology: "nexus-repository-login",
 			Version:    version,
 			CPEs:       []string{buildNexusCPE(version)},
 			Metadata:   nexusMetadata("server_header", edition, generation),
@@ -280,7 +281,7 @@ func (f *NexusLoginFingerprinter) Fingerprint(resp *http.Response, body []byte) 
 	}
 
 	return &FingerprintResult{
-		Technology: "nexus-repository",
+		Technology: "nexus-repository-login",
 		Version:    "",
 		CPEs:       []string{buildNexusCPE("")},
 		Metadata:   nexusMetadata("html_title", "", generation),

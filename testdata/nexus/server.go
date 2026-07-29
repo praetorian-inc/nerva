@@ -42,6 +42,10 @@ func main() {
 	mux.HandleFunc("/service/rest/v1/status", func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("GET /service/rest/v1/status from %s", r.RemoteAddr)
 		w.Header().Set("Server", nexusServerHeader)
+		if r.URL.Query().Get("unhealthy") == "true" {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 	})
 
