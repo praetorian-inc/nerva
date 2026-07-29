@@ -77,26 +77,26 @@ func TestEnvoyServerInfoFingerprinter_Match(t *testing.T) {
 
 func TestEnvoyServerInfoFingerprinter_Fingerprint_Valid(t *testing.T) {
 	tests := []struct {
-		name                string
-		body                string
-		wantVersion         string
-		wantCPE             string
-		wantState           string
-		wantHotRestart      string
-		wantBuildType       string
-		wantTLSLibrary      string
-		wantVersionRawKey   bool
-		wantVersionRaw      string
+		name              string
+		body              string
+		wantVersion       string
+		wantCPE           string
+		wantState         string
+		wantHotRestart    string
+		wantBuildType     string
+		wantTLSLibrary    string
+		wantVersionRawKey bool
+		wantVersionRaw    string
 	}{
 		{
-			name:           "hash-prefixed version with -dev suffix → confirmed via hot_restart_version, clean version for CPE",
-			body:           `{"version":"c93f9f6c1e5adddd10a3e3646c7e049c649ae177/1.9.0-dev/Clean/RELEASE/BoringSSL","state":"LIVE","hot_restart_version":"11.104","node":{"user_agent_name":"envoy"}}`,
-			wantVersion:    "1.9.0",
-			wantCPE:        "cpe:2.3:a:envoyproxy:envoy:1.9.0:*:*:*:*:*:*:*",
-			wantState:      "LIVE",
-			wantHotRestart: "11.104",
-			wantBuildType:  "RELEASE",
-			wantTLSLibrary: "BoringSSL",
+			name:              "hash-prefixed version with -dev suffix → confirmed via hot_restart_version, clean version for CPE",
+			body:              `{"version":"c93f9f6c1e5adddd10a3e3646c7e049c649ae177/1.9.0-dev/Clean/RELEASE/BoringSSL","state":"LIVE","hot_restart_version":"11.104","node":{"user_agent_name":"envoy"}}`,
+			wantVersion:       "1.9.0",
+			wantCPE:           "cpe:2.3:a:envoyproxy:envoy:1.9.0:*:*:*:*:*:*:*",
+			wantState:         "LIVE",
+			wantHotRestart:    "11.104",
+			wantBuildType:     "RELEASE",
+			wantTLSLibrary:    "BoringSSL",
 			wantVersionRawKey: true,
 			wantVersionRaw:    "1.9.0-dev",
 		},
@@ -119,11 +119,11 @@ func TestEnvoyServerInfoFingerprinter_Fingerprint_Valid(t *testing.T) {
 			wantTLSLibrary: "BoringSSL",
 		},
 		{
-			name:        "missing/unparseable version field but hot_restart_version present → still confirmed, wildcard CPE",
-			body:        `{"version":"","state":"LIVE","hot_restart_version":"11.104"}`,
-			wantVersion: "",
-			wantCPE:     "cpe:2.3:a:envoyproxy:envoy:*:*:*:*:*:*:*:*",
-			wantState:   "LIVE",
+			name:           "missing/unparseable version field but hot_restart_version present → still confirmed, wildcard CPE",
+			body:           `{"version":"","state":"LIVE","hot_restart_version":"11.104"}`,
+			wantVersion:    "",
+			wantCPE:        "cpe:2.3:a:envoyproxy:envoy:*:*:*:*:*:*:*:*",
+			wantState:      "LIVE",
 			wantHotRestart: "11.104",
 		},
 	}
@@ -296,7 +296,7 @@ func TestBuildEnvoyCPE(t *testing.T) {
 		want    string
 	}{
 		{name: "valid version", version: "1.9.0", want: "cpe:2.3:a:envoyproxy:envoy:1.9.0:*:*:*:*:*:*:*"},
-		{name: "valid version with dev suffix", version: "1.9.0-dev", want: "cpe:2.3:a:envoyproxy:envoy:1.9.0-dev:*:*:*:*:*:*:*"},
+		{name: "valid version with dev suffix → suffix stripped", version: "1.9.0-dev", want: "cpe:2.3:a:envoyproxy:envoy:1.9.0:*:*:*:*:*:*:*"},
 		{name: "empty version → wildcard", version: "", want: "cpe:2.3:a:envoyproxy:envoy:*:*:*:*:*:*:*:*"},
 		{name: "invalid version (metacharacters) → wildcard", version: "1.9.0:*", want: "cpe:2.3:a:envoyproxy:envoy:*:*:*:*:*:*:*:*"},
 		{name: "invalid version (V-prefix) → wildcard", version: "V1.9.0", want: "cpe:2.3:a:envoyproxy:envoy:*:*:*:*:*:*:*:*"},
@@ -357,43 +357,43 @@ func TestEnvoyAdminFingerprinter_Match(t *testing.T) {
 
 func TestEnvoyAdminFingerprinter_Fingerprint_Valid(t *testing.T) {
 	tests := []struct {
-		name               string
-		statusCode         int
-		server             string
-		body               string
+		name                string
+		statusCode          int
+		server              string
+		body                string
 		wantDetectionMethod string
 	}{
 		{
-			name:               "server: envoy header only (no title) → server_header",
-			statusCode:         200,
-			server:             "envoy",
-			body:               `<html><head><title>Not Envoy</title></head><body></body></html>`,
+			name:                "server: envoy header only (no title) → server_header",
+			statusCode:          200,
+			server:              "envoy",
+			body:                `<html><head><title>Not Envoy</title></head><body></body></html>`,
 			wantDetectionMethod: "server_header",
 		},
 		{
-			name:               "title only, no server header → admin_ui",
-			statusCode:         200,
-			body:               `<html><head><title>Envoy Admin</title></head><body><table><tr><td>/stats</td></tr></table></body></html>`,
+			name:                "title only, no server header → admin_ui",
+			statusCode:          200,
+			body:                `<html><head><title>Envoy Admin</title></head><body><table><tr><td>/stats</td></tr></table></body></html>`,
 			wantDetectionMethod: "admin_ui",
 		},
 		{
-			name:               "case-insensitive title match → admin_ui",
-			statusCode:         200,
-			body:               `<html><head><title>envoy admin</title></head><body></body></html>`,
+			name:                "case-insensitive title match → admin_ui",
+			statusCode:          200,
+			body:                `<html><head><title>envoy admin</title></head><body></body></html>`,
 			wantDetectionMethod: "admin_ui",
 		},
 		{
-			name:               "both server header and title present → server_header wins",
-			statusCode:         200,
-			server:             "envoy",
-			body:               `<html><head><title>Envoy Admin</title></head><body></body></html>`,
+			name:                "both server header and title present → server_header wins",
+			statusCode:          200,
+			server:              "envoy",
+			body:                `<html><head><title>Envoy Admin</title></head><body></body></html>`,
 			wantDetectionMethod: "server_header",
 		},
 		{
-			name:               "403 status with server header → still detected (200-499 accepted)",
-			statusCode:         403,
-			server:             "envoy",
-			body:               ``,
+			name:                "403 status with server header → still detected (200-499 accepted)",
+			statusCode:          403,
+			server:              "envoy",
+			body:                ``,
 			wantDetectionMethod: "server_header",
 		},
 	}

@@ -288,11 +288,15 @@ func (f *EnvoyAdminFingerprinter) Fingerprint(resp *http.Response, body []byte) 
 	}, nil
 }
 
-// buildEnvoyCPE constructs a CPE 2.3 string for Envoy proxy. Empty or
-// invalid (unanchored-regex-failing) versions produce a wildcard CPE.
+// buildEnvoyCPE constructs a CPE 2.3 string for Envoy proxy. Pre-release
+// suffixes are stripped (NVD CPEs do not include them). Empty or invalid
+// versions produce a wildcard CPE.
 func buildEnvoyCPE(version string) string {
 	if version == "" || !envoyVersionRegex.MatchString(version) {
 		version = "*"
+	}
+	if version != "*" {
+		version = stripEnvoyVersionSuffix(version)
 	}
 	return fmt.Sprintf("cpe:2.3:a:envoyproxy:envoy:%s:*:*:*:*:*:*:*", version)
 }
