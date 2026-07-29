@@ -250,11 +250,13 @@ func (f *EnvoyAdminFingerprinter) Match(resp *http.Response) bool {
 
 // Fingerprint performs passive detection against the root response.
 //
-// Confirmation requires at least one signal:
-//   - Server: envoy header — no version available from the header alone
-//   - HTML body containing an anchored "<title>Envoy Admin</title>" tag
+// Confirmation requires the admin UI title tag in the HTML body. The
+// Server: envoy header alone is insufficient because Envoy data-plane
+// proxies also set this header on regular proxied traffic; emitting
+// envoy-admin based on the header alone would misclassify backend
+// applications behind Envoy as exposed admin interfaces.
 //
-// No version is available from either signal, so a wildcard CPE is emitted.
+// No version is available from the title, so a wildcard CPE is emitted.
 func (f *EnvoyAdminFingerprinter) Fingerprint(resp *http.Response, body []byte) (*FingerprintResult, error) {
 	// Gate 1: status filter — 5xx server errors are rejected.
 	if resp.StatusCode < 200 || resp.StatusCode > 499 {
@@ -266,16 +268,13 @@ func (f *EnvoyAdminFingerprinter) Fingerprint(resp *http.Response, body []byte) 
 		return nil, nil
 	}
 
-	hasServerHeader := strings.EqualFold(resp.Header.Get("Server"), "envoy")
-	hasAdminTitle := envoyAdminTitleRegex.Match(body)
-
-	if !hasServerHeader && !hasAdminTitle {
+	if !envoyAdminTitleRegex.Match(body) {
 		return nil, nil
 	}
 
 	detectionMethod := "admin_ui"
-	if hasServerHeader {
-		detectionMethod = "server_header"
+	if strings.EqualFold(resp.Header.Get("Server"), "envoy") {
+		detectionMethod = "server_header+admin_ui"
 	}
 
 	return &FingerprintResult{

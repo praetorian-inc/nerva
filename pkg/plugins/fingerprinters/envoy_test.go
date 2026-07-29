@@ -363,13 +363,7 @@ func TestEnvoyAdminFingerprinter_Fingerprint_Valid(t *testing.T) {
 		body                string
 		wantDetectionMethod string
 	}{
-		{
-			name:                "server: envoy header only (no title) → server_header",
-			statusCode:          200,
-			server:              "envoy",
-			body:                `<html><head><title>Not Envoy</title></head><body></body></html>`,
-			wantDetectionMethod: "server_header",
-		},
+
 		{
 			name:                "title only, no server header → admin_ui",
 			statusCode:          200,
@@ -383,18 +377,18 @@ func TestEnvoyAdminFingerprinter_Fingerprint_Valid(t *testing.T) {
 			wantDetectionMethod: "admin_ui",
 		},
 		{
-			name:                "both server header and title present → server_header wins",
+			name:                "both server header and title present → server_header+admin_ui",
 			statusCode:          200,
 			server:              "envoy",
 			body:                `<html><head><title>Envoy Admin</title></head><body></body></html>`,
-			wantDetectionMethod: "server_header",
+			wantDetectionMethod: "server_header+admin_ui",
 		},
 		{
-			name:                "403 status with server header → still detected (200-499 accepted)",
+			name:                "403 status with server header + title → still detected (200-499 accepted)",
 			statusCode:          403,
 			server:              "envoy",
-			body:                ``,
-			wantDetectionMethod: "server_header",
+			body:                `<html><head><title>Envoy Admin</title></head><body></body></html>`,
+			wantDetectionMethod: "server_header+admin_ui",
 		},
 	}
 
@@ -431,6 +425,12 @@ func TestEnvoyAdminFingerprinter_Fingerprint_Invalid(t *testing.T) {
 		server     string
 		body       string
 	}{
+		{
+			name:       "server: envoy header only, no admin title → nil (data-plane proxy FP guard)",
+			statusCode: 200,
+			server:     "envoy",
+			body:       `<html><head><title>Not Envoy</title></head><body></body></html>`,
+		},
 		{
 			name:       "generic nginx HTML page, no envoy signals → nil",
 			statusCode: 200,
