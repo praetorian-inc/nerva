@@ -194,8 +194,11 @@ func isTelnetIAC(banner []byte) bool {
 // initial handshake packet: a sequence ID of 0x00 at offset 3 (the server's
 // initial handshake is always sequence 0), a protocol version byte of 0x0a
 // at offset 4, followed by a non-empty, printable-ASCII, null-terminated
-// server version string starting at offset 5. It does not validate the
-// 3-byte little-endian payload length that precedes the sequence ID.
+// server version string starting at offset 5. The 3-byte little-endian
+// payload length preceding the sequence ID is parsed and checked against the
+// number of payload bytes actually inspected, rejecting packets whose
+// declared payload length is too small to cover the version string bytes
+// scanned.
 //
 // The real MySQL handshake parser (pkg/plugins/services/mysql) requires at
 // least 35 bytes for a full handshake packet, but a short banner pre-read
@@ -220,6 +223,8 @@ func isMySQLGreeting(banner []byte) bool {
 		return false
 	}
 
+	payloadLen := int(banner[0]) | int(banner[1])<<8 | int(banner[2])<<16
+
 	limit := len(banner)
 	if limit > versionStart+maxMySQLVersionScan {
 		limit = versionStart + maxMySQLVersionScan
@@ -228,7 +233,10 @@ func isMySQLGreeting(banner []byte) bool {
 	for i := versionStart; i < limit; i++ {
 		if banner[i] == 0x00 {
 			// Reject an empty version string; real servers always report one.
-			return i > versionStart
+			// Also reject if the declared payload length doesn't cover the
+			// payload bytes consumed up to offset i (payload starts at
+			// offset sequenceIDOffset+1, so i-sequenceIDOffset is the count).
+			return i > versionStart && payloadLen >= i-sequenceIDOffset
 		}
 		if banner[i] < 0x20 || banner[i] > 0x7e {
 			// Non-printable byte where a version string is expected.
