@@ -15,8 +15,10 @@
 package scan
 
 import (
+	"bytes"
 	"crypto/tls"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"sort"
@@ -42,6 +44,24 @@ var sortedTCPTLSPlugins = make([]plugins.Plugin, 0)
 var sortedUDPPlugins = make([]plugins.Plugin, 0)
 var sortedSCTPPlugins = make([]plugins.Plugin, 0)
 var tlsConfig = tls.Config{} //nolint:gosec
+
+// prefixConn wraps a net.Conn to replay previously-read bytes (a banner)
+// before subsequent reads, enabling connection reuse after ReadBanner.
+type prefixConn struct {
+	net.Conn
+	reader io.Reader
+}
+
+func (c *prefixConn) Read(b []byte) (int, error) {
+	return c.reader.Read(b)
+}
+
+func newPrefixConn(conn net.Conn, prefix []byte) net.Conn {
+	return &prefixConn{
+		Conn:   conn,
+		reader: io.MultiReader(bytes.NewReader(prefix), conn),
+	}
+}
 
 func init() {
 	setupPlugins()
@@ -236,15 +256,30 @@ func (c *Config) SimpleScanTarget(target plugins.Target) ([]*plugins.Service, er
 		return nil, nil
 	}
 
-	// go through each service mapping and check it
+	// Slow lane: pre-read banner to narrow plugin candidates before iterating.
 
 	if isTLS {
-		for _, plugin := range sortedTCPTLSPlugins {
-			tlsConn, err := c.DialTLS(target)
+		tlsCandidates := sortedTCPTLSPlugins
+
+		if bannerConn, dialErr := c.DialTLS(target); dialErr == nil {
+			banner, _ := ReadBanner(bannerConn, 0)
+			family := ClassifyBanner(banner)
+			if c.Verbose {
+				log.Printf("%v %v-> TLS banner pre-read: family=%s (%d bytes)\n",
+					target.Address.String(), target.Host, family, len(banner))
+			}
+			if family != ProtocolFamilyUnknown {
+				tlsCandidates = FilterPluginsByFamily(sortedTCPTLSPlugins, family)
+			}
+			bannerConn.Close()
+		}
+
+		for _, plugin := range tlsCandidates {
+			conn, err := c.DialTLS(target)
 			if err != nil {
 				return nil, fmt.Errorf("error connecting via TLS, err = %w", err)
 			}
-			result, err := simplePluginRunner(tlsConn, target, c, plugin)
+			result, err := simplePluginRunner(conn, target, c, plugin)
 			if err != nil && c.Verbose {
 				log.Printf("error: %v scanning %v\n", err, target.Address.String())
 			}
@@ -253,10 +288,38 @@ func (c *Config) SimpleScanTarget(target plugins.Target) ([]*plugins.Service, er
 			}
 		}
 	} else {
-		for _, plugin := range sortedTCPPlugins {
-			conn, err := c.DialTCP(target)
-			if err != nil {
-				return nil, fmt.Errorf("unable to connect, err = %w", err)
+		tcpCandidates := sortedTCPPlugins
+		var firstConn net.Conn
+
+		if bannerConn, dialErr := c.DialTCP(target); dialErr == nil {
+			banner, bannerErr := ReadBanner(bannerConn, 0)
+			family := ClassifyBanner(banner)
+			if c.Verbose {
+				log.Printf("%v %v-> banner pre-read: family=%s (%d bytes)\n",
+					target.Address.String(), target.Host, family, len(banner))
+			}
+			if family != ProtocolFamilyUnknown {
+				tcpCandidates = FilterPluginsByFamily(sortedTCPPlugins, family)
+			}
+			if family != ProtocolFamilyUnknown && len(banner) > 0 && bannerErr == nil {
+				_ = bannerConn.SetReadDeadline(time.Time{})
+				firstConn = newPrefixConn(bannerConn, banner)
+			} else {
+				bannerConn.Close()
+			}
+		}
+
+		for i, plugin := range tcpCandidates {
+			var conn net.Conn
+			var err error
+			if i == 0 && firstConn != nil {
+				conn = firstConn
+				firstConn = nil
+			} else {
+				conn, err = c.DialTCP(target)
+				if err != nil {
+					return nil, fmt.Errorf("unable to connect, err = %w", err)
+				}
 			}
 			result, err := simplePluginRunner(conn, target, c, plugin)
 			if err != nil && c.Verbose {
