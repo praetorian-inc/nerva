@@ -49,6 +49,7 @@ func selfSignedTLSConfig() *tls.Config {
 		log.Fatalf("create cert: %v", err)
 	}
 	return &tls.Config{
+		MinVersion: tls.VersionTLS12,
 		Certificates: []tls.Certificate{{
 			Certificate: [][]byte{certDER},
 			PrivateKey:  key,
@@ -102,6 +103,9 @@ func main() {
 		Addr:              ":" + port,
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       60 * time.Second,
 		TLSConfig:         selfSignedTLSConfig(),
 	}
 
