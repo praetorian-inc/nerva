@@ -1,5 +1,5 @@
 # Argo CD mock server for integration testing
-FROM golang:1.21-alpine AS builder
+FROM golang:1.24-alpine AS builder
 
 WORKDIR /app
 
@@ -7,7 +7,7 @@ COPY server.go .
 
 RUN go build -o argocd-mock server.go
 
-FROM alpine:3.20
+FROM alpine:3.21
 
 RUN addgroup -S app && adduser -S -G app app
 

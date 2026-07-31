@@ -48,6 +48,10 @@ import (
 	"strings"
 )
 
+// argoCDMaxBodySize caps the response body read by both ArgoCD fingerprinters
+// to prevent excessive memory consumption from oversized responses.
+const argoCDMaxBodySize = 1 << 20
+
 // Package-level precompiled regexes.
 var (
 	// argoCDVersionRegex validates that an extracted version is safe to embed
@@ -96,8 +100,8 @@ func (f *ArgoCDAPIFingerprinter) Match(resp *http.Response) bool {
 }
 
 func (f *ArgoCDAPIFingerprinter) Fingerprint(resp *http.Response, body []byte) (*FingerprintResult, error) {
-	if len(body) > 1*1024*1024 {
-		return nil, nil
+	if len(body) > argoCDMaxBodySize {
+		body = body[:argoCDMaxBodySize]
 	}
 
 	var vResp argoCDVersionResponse
@@ -164,8 +168,8 @@ func (f *ArgoCDLoginFingerprinter) Match(resp *http.Response) bool {
 }
 
 func (f *ArgoCDLoginFingerprinter) Fingerprint(resp *http.Response, body []byte) (*FingerprintResult, error) {
-	if len(body) > 1*1024*1024 {
-		return nil, nil
+	if len(body) > argoCDMaxBodySize {
+		body = body[:argoCDMaxBodySize]
 	}
 
 	if !argoCDLoginTitleRegex.Match(body) {
@@ -173,7 +177,7 @@ func (f *ArgoCDLoginFingerprinter) Fingerprint(resp *http.Response, body []byte)
 	}
 
 	return &FingerprintResult{
-		Technology: "argocd",
+		Technology: "argocd-login",
 		Version:    "",
 		CPEs:       []string{buildArgoCDCPE("")},
 		Metadata: map[string]any{
@@ -196,9 +200,6 @@ func extractArgoCDVersion(raw string) string {
 	}
 
 	if !argoCDVersionRegex.MatchString(version) {
-		return ""
-	}
-	if strings.ContainsAny(version, ":*?") {
 		return ""
 	}
 

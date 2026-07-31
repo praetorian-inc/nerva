@@ -345,7 +345,7 @@ func TestArgoCDAPIFingerprinter_Fingerprint_BodyCapGuard(t *testing.T) {
 	resp := &http.Response{StatusCode: 200, Header: make(http.Header)}
 	resp.Header.Set("Content-Type", "application/json")
 
-	bigBody := []byte(strings.Repeat("x", 1*1024*1024+1))
+	bigBody := []byte(strings.Repeat("x", argoCDMaxBodySize+1))
 	result, err := fp.Fingerprint(resp, bigBody)
 	assert.Nil(t, result)
 	assert.Nil(t, err)
@@ -403,7 +403,7 @@ func TestArgoCDLoginFingerprinter_Fingerprint_Valid(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, result)
 
-			assert.Equal(t, "argocd", result.Technology)
+			assert.Equal(t, "argocd-login", result.Technology)
 			assert.Empty(t, result.Version)
 			assert.Contains(t, result.CPEs, "cpe:2.3:a:argoproj:argo_cd:*:*:*:*:*:*:*:*")
 			assert.Equal(t, "login_title", result.Metadata["detection_method"])
@@ -454,10 +454,56 @@ func TestArgoCDLoginFingerprinter_Fingerprint_BodyCapGuard(t *testing.T) {
 	resp := &http.Response{StatusCode: 200, Header: make(http.Header)}
 	resp.Header.Set("Content-Type", "text/html")
 
-	bigBody := []byte(strings.Repeat("x", 1*1024*1024+1))
+	bigBody := []byte(strings.Repeat("x", argoCDMaxBodySize+1))
 	result, err := fp.Fingerprint(resp, bigBody)
 	assert.Nil(t, result)
 	assert.Nil(t, err)
+}
+
+// TestArgoCDAPIFingerprinter_Fingerprint_BodyCapTruncatesNotRejects verifies
+// that an oversized body whose leading bytes contain a valid Argo CD version
+// payload is truncated and still fingerprinted, rather than rejected outright.
+// This distinguishes the truncate-then-process behavior from the old
+// reject-if-oversized behavior, which would have returned nil here.
+func TestArgoCDAPIFingerprinter_Fingerprint_BodyCapTruncatesNotRejects(t *testing.T) {
+	fp := &ArgoCDAPIFingerprinter{}
+	resp := &http.Response{StatusCode: 200, Header: make(http.Header)}
+	resp.Header.Set("Content-Type", "application/json")
+
+	validJSON := `{"Version": "v2.9.3", "KustomizeVersion": "v4.5.7"}`
+	padding := strings.Repeat(" ", argoCDMaxBodySize)
+	body := []byte(validJSON + padding)
+	require.Greater(t, len(body), argoCDMaxBodySize, "test body must exceed argoCDMaxBodySize")
+
+	result, err := fp.Fingerprint(resp, body)
+	require.NoError(t, err)
+	require.NotNil(t, result, "oversized body with valid JSON prefix must be truncated and processed, not rejected")
+
+	assert.Equal(t, "argocd", result.Technology)
+	assert.Equal(t, "2.9.3", result.Version)
+}
+
+// TestArgoCDLoginFingerprinter_Fingerprint_BodyCapTruncatesNotRejects verifies
+// that an oversized body whose leading bytes contain the Argo CD login title
+// is truncated and still fingerprinted, rather than rejected outright. This
+// distinguishes the truncate-then-process behavior from the old
+// reject-if-oversized behavior, which would have returned nil here.
+func TestArgoCDLoginFingerprinter_Fingerprint_BodyCapTruncatesNotRejects(t *testing.T) {
+	fp := &ArgoCDLoginFingerprinter{}
+	resp := &http.Response{StatusCode: 200, Header: make(http.Header)}
+	resp.Header.Set("Content-Type", "text/html")
+
+	validHTML := `<!DOCTYPE html><html><head><title>Argo CD</title></head><body>`
+	padding := strings.Repeat(" ", argoCDMaxBodySize)
+	body := []byte(validHTML + padding)
+	require.Greater(t, len(body), argoCDMaxBodySize, "test body must exceed argoCDMaxBodySize")
+
+	result, err := fp.Fingerprint(resp, body)
+	require.NoError(t, err)
+	require.NotNil(t, result, "oversized body with valid title prefix must be truncated and processed, not rejected")
+
+	assert.Equal(t, "argocd-login", result.Technology)
+	assert.Equal(t, "login_title", result.Metadata["detection_method"])
 }
 
 // ── Regex boundary behavior ──────────────────────────────────────────────────
@@ -607,7 +653,7 @@ func TestArgoCDLoginFingerprinter_Integration(t *testing.T) {
 	result, err := fp.Fingerprint(resp, []byte(body))
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	assert.Equal(t, "argocd", result.Technology)
+	assert.Equal(t, "argocd-login", result.Technology)
 	assert.Contains(t, result.CPEs, "cpe:2.3:a:argoproj:argo_cd:*:*:*:*:*:*:*:*")
 }
 
