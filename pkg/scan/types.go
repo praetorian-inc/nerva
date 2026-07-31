@@ -26,20 +26,29 @@ const (
 )
 
 // normalizeDepth translates ScanDepth into FastMode and validates the value.
-// Idempotent; safe to call from multiple entry points.
+// After the first call normalizes the config, subsequent calls on the same
+// *Config are read-only and safe to invoke concurrently (e.g. from pool
+// workers). Callers that share a *Config across goroutines must ensure one
+// single-threaded normalizeDepth call completes before concurrent use.
 func (c *Config) normalizeDepth() error {
 	if c.ScanDepth == "" {
 		return nil
 	}
-	c.ScanDepth = strings.ToLower(c.ScanDepth)
-	switch c.ScanDepth {
+	lower := strings.ToLower(c.ScanDepth)
+	var wantFast bool
+	switch lower {
 	case ScanDepthFast:
-		c.FastMode = true
+		wantFast = true
 	case ScanDepthThorough:
-		c.FastMode = false
+		wantFast = false
 	default:
 		return fmt.Errorf("invalid ScanDepth %q: must be %q or %q", c.ScanDepth, ScanDepthFast, ScanDepthThorough)
 	}
+	if c.ScanDepth == lower && c.FastMode == wantFast {
+		return nil
+	}
+	c.ScanDepth = lower
+	c.FastMode = wantFast
 	return nil
 }
 
