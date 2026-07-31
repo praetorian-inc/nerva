@@ -28,7 +28,7 @@ import (
 	"github.com/praetorian-inc/nerva/pkg/scan"
 )
 
-func checkConfig(config cliConfig) error {
+func checkConfig(config *cliConfig) error {
 	config.scanDepth = strings.ToLower(config.scanDepth)
 
 	if len(config.outputFile) > 0 {

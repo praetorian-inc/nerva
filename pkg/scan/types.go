@@ -15,8 +15,33 @@
 package scan
 
 import (
+	"fmt"
+	"strings"
 	"time"
 )
+
+const (
+	ScanDepthFast     = "fast"
+	ScanDepthThorough = "thorough"
+)
+
+// normalizeDepth translates ScanDepth into FastMode and validates the value.
+// Idempotent; safe to call from multiple entry points.
+func (c *Config) normalizeDepth() error {
+	if c.ScanDepth == "" {
+		return nil
+	}
+	c.ScanDepth = strings.ToLower(c.ScanDepth)
+	switch c.ScanDepth {
+	case ScanDepthFast:
+		c.FastMode = true
+	case ScanDepthThorough:
+		c.FastMode = false
+	default:
+		return fmt.Errorf("invalid ScanDepth %q: must be %q or %q", c.ScanDepth, ScanDepthFast, ScanDepthThorough)
+	}
+	return nil
+}
 
 type Config struct {
 	// UDP scan

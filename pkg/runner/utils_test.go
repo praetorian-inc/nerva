@@ -22,23 +22,26 @@ import (
 
 func TestCheckConfig_ScanDepthValidation(t *testing.T) {
 	tests := []struct {
-		name        string
-		scanDepth   string
-		fastMode    bool
-		wantErr     bool
-		errContains string
+		name           string
+		scanDepth      string
+		fastMode       bool
+		wantErr        bool
+		errContains    string
+		wantNormalized string
 	}{
 		{name: "empty scan-depth is valid (legacy behavior)", scanDepth: "", wantErr: false},
 		{name: "fast is valid", scanDepth: "fast", wantErr: false},
 		{name: "thorough is valid", scanDepth: "thorough", wantErr: false},
 		{name: "invalid value rejected", scanDepth: "medium", wantErr: true, errContains: "invalid --scan-depth"},
 		{name: "scan-depth and --fast both set is valid (warns but does not error)", scanDepth: "thorough", fastMode: true, wantErr: false},
+		{name: "Fast (mixed case) normalized to lowercase", scanDepth: "Fast", wantErr: false, wantNormalized: "fast"},
+		{name: "THOROUGH (uppercase) normalized to lowercase", scanDepth: "THOROUGH", wantErr: false, wantNormalized: "thorough"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := cliConfig{scanDepth: tt.scanDepth, fastMode: tt.fastMode}
-			err := checkConfig(cfg)
+			err := checkConfig(&cfg)
 			if tt.wantErr {
 				if err == nil {
 					t.Fatalf("expected error for scan-depth %q, got nil", tt.scanDepth)
@@ -48,6 +51,9 @@ func TestCheckConfig_ScanDepthValidation(t *testing.T) {
 				}
 			} else if err != nil {
 				t.Fatalf("expected no error for scan-depth %q, got %v", tt.scanDepth, err)
+			}
+			if tt.wantNormalized != "" && cfg.scanDepth != tt.wantNormalized {
+				t.Fatalf("expected scanDepth normalized to %q, got %q", tt.wantNormalized, cfg.scanDepth)
 			}
 		})
 	}
@@ -85,7 +91,7 @@ func TestScanDepth_ResumeRoundTrip(t *testing.T) {
 		t.Fatalf("resumed config did not restore ScanDepth: got %q, want %q", resumed.scanDepth, "thorough")
 	}
 
-	if err := checkConfig(resumed); err != nil {
+	if err := checkConfig(&resumed); err != nil {
 		t.Fatalf("checkConfig rejected restored scanDepth %q: %v", resumed.scanDepth, err)
 	}
 

@@ -86,7 +86,7 @@ func runScan(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	if err := checkConfig(config); err != nil {
+	if err := checkConfig(&config); err != nil {
 		return err
 	}
 
@@ -126,6 +126,9 @@ func runScan(cmd *cobra.Command, args []string) error {
 		}
 		if config.scanDepth == "" {
 			config.scanDepth = state.Config.ScanDepth
+			if config.fastMode && config.scanDepth != "" {
+				fmt.Fprintln(os.Stderr, "[WRN] --fast is deprecated when --scan-depth is set; using scan-depth from resumed state")
+			}
 		}
 	} else {
 		// Read targets from input

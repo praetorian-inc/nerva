@@ -14,6 +14,8 @@
 
 package runner
 
+import "github.com/praetorian-inc/nerva/pkg/scan"
+
 // ScanDepth controls how many plugins nerva tries per target.
 type ScanDepth string
 
@@ -23,11 +25,11 @@ const (
 	// Equivalent to --fast. Fast but may miss services running on non-standard
 	// ports. Banner-based pre-filtering is planned for a future release
 	// (LAB-5301) and is not yet implemented.
-	ScanDepthFast ScanDepth = "fast"
+	ScanDepthFast ScanDepth = scan.ScanDepthFast
 
 	// ScanDepthThorough tries all plugins regardless of port (current default
 	// behavior). Slowest but most complete.
-	ScanDepthThorough ScanDepth = "thorough"
+	ScanDepthThorough ScanDepth = scan.ScanDepthThorough
 )
 
 type cliConfig struct {

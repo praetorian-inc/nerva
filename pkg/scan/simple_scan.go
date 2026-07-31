@@ -87,6 +87,10 @@ func setupPlugins() {
 
 // UDP Scan of the target
 func (c *Config) UDPScanTarget(target plugins.Target) (*plugins.Service, error) {
+	if err := c.normalizeDepth(); err != nil {
+		return nil, err
+	}
+
 	// first check the default port mappings for TCP / TLS
 	for _, plugin := range sortedUDPPlugins {
 		port := target.Address.Port()
@@ -127,6 +131,10 @@ func (c *Config) UDPScanTarget(target plugins.Target) (*plugins.Service, error) 
 // On Linux: Full SCTP features via kernel module.
 // On other platforms: Returns error (SCTP not supported).
 func (c *Config) SCTPScanTarget(target plugins.Target) (*plugins.Service, error) {
+	if err := c.normalizeDepth(); err != nil {
+		return nil, err
+	}
+
 	ip := target.Address.Addr().String()
 	port := target.Address.Port()
 
@@ -175,6 +183,10 @@ func (c *Config) SCTPScanTarget(target plugins.Target) (*plugins.Service, error)
 // accurate as possible.
 
 func (c *Config) SimpleScanTarget(target plugins.Target) ([]*plugins.Service, error) {
+	if err := c.normalizeDepth(); err != nil {
+		return nil, err
+	}
+
 	port := target.Address.Port()
 
 	// first check the default port mappings for TCP / TLS
