@@ -157,6 +157,13 @@ func TestSolarWindsWHDFingerprinter_Fingerprint(t *testing.T) {
 			wantResult: true,
 		},
 		{
+			name:       "negative: WebObjects headers on 404 (non-WHD WebObjects app)",
+			statusCode: 404,
+			headers:    http.Header{"X-Webobjects-Loadaverage": []string{"0.5"}},
+			body:       `<html><body>Not Found</body></html>`,
+			wantResult: false,
+		},
+		{
 			name:       "negative: unrelated HTML, no headers, no brand terms",
 			statusCode: 200,
 			headers:    http.Header{"Content-Type": []string{"text/html"}},

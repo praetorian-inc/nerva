@@ -133,7 +133,7 @@ func TestNAKIVOFingerprinter_Fingerprint(t *testing.T) {
 			name:        "positive: version 10.11.3 in body reflected in CPE",
 			statusCode:  200,
 			headers:     http.Header{"Content-Type": []string{"text/html"}},
-			body:        `<html><head><title>NAKIVO Backup</title></head><body>Version 10.11.3</body></html>`,
+			body:        `<html><head><title>NAKIVO Backup</title></head><body>NAKIVO Version 10.11.3</body></html>`,
 			wantResult:  true,
 			wantVersion: "10.11.3",
 		},
@@ -188,6 +188,25 @@ func TestNAKIVOFingerprinter_Fingerprint(t *testing.T) {
 			wantResult:  true,
 			wantVersion: "10.11.3",
 		},
+		{
+			name:        "version: JS asset version not extracted when strict pattern has no match",
+			statusCode:  200,
+			headers:     http.Header{"Content-Type": []string{"text/html"}},
+			body:        `<html><head><title>NAKIVO Backup &amp; Replication</title><script src="/ext-all.js?v=4.2.1"></script></head><body><div>/c/router</div><div>AuthenticationManagement</div><span>Version 10.11.3</span></body></html>`,
+			wantResult:  true,
+			wantVersion: "",
+		},
+		{
+			name:       "version: JS asset before body version, no NAKIVO anchor in body",
+			statusCode: 200,
+			headers:    http.Header{"Content-Type": []string{"text/html"}},
+			body: `<html><head><title>NAKIVO Backup &amp; Replication</title>
+<script src="/ext-all.js?v=4.2.1"></script></head>
+<body><div>/c/router</div><div>AuthenticationManagement</div>
+<span>Version 10.11.3</span></body></html>`,
+			wantResult:  true,
+			wantVersion: "",
+		},
 	}
 
 	for _, tt := range tests {
@@ -225,7 +244,7 @@ func TestNAKIVOFingerprinter_Fingerprint(t *testing.T) {
 				t.Errorf("Technology = %q, want %q", result.Technology, "nakivo")
 			}
 
-			if tt.wantVersion != "" && result.Version != tt.wantVersion {
+			if result.Version != tt.wantVersion {
 				t.Errorf("Version = %q, want %q", result.Version, tt.wantVersion)
 			}
 		})
@@ -247,7 +266,7 @@ func TestNAKIVOFingerprinter_VersionGuard(t *testing.T) {
 		t.Fatal("Fingerprint() returned nil, expected a result")
 	}
 	if result.Version != "" {
-		t.Errorf("Version = %q, want empty string (metacharacter guard should reject colon)", result.Version)
+		t.Errorf("Version = %q, want empty string (extraction pattern rejects colon)", result.Version)
 	}
 }
 

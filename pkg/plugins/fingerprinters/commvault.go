@@ -16,7 +16,7 @@ package fingerprinters
 
 import (
 	"net/http"
-	"regexp"
+	"strings"
 )
 
 // CommvaultFingerprinter detects Commvault backup/data management instances.
@@ -35,10 +35,6 @@ func init() {
 	Register(&CommvaultFingerprinter{})
 }
 
-// commvaultServerPattern matches Commvault in a Server header value,
-// case-insensitively. Precompiled to avoid per-call allocation.
-var commvaultServerPattern = regexp.MustCompile("(?i)commvault")
-
 func (f *CommvaultFingerprinter) Name() string {
 	return "commvault"
 }
@@ -48,7 +44,7 @@ func (f *CommvaultFingerprinter) Match(resp *http.Response) bool {
 	if resp.StatusCode >= 500 {
 		return false
 	}
-	return commvaultServerPattern.MatchString(resp.Header.Get("Server"))
+	return strings.Contains(strings.ToLower(resp.Header.Get("Server")), "commvault")
 }
 
 // Fingerprint performs full detection and returns a result if this is a Commvault instance.
@@ -59,7 +55,7 @@ func (f *CommvaultFingerprinter) Fingerprint(resp *http.Response, body []byte) (
 	}
 
 	serverHeader := resp.Header.Get("Server")
-	if !commvaultServerPattern.MatchString(serverHeader) {
+	if !strings.Contains(strings.ToLower(serverHeader), "commvault") {
 		return nil, nil
 	}
 

@@ -84,8 +84,11 @@ func (f *SolarWindsWHDFingerprinter) Fingerprint(resp *http.Response, body []byt
 	}
 
 	// Signal 1 (standalone): WebObjects headers on the WHD-specific probe path.
-	if resp.Header.Get("X-Webobjects-Loadaverage") != "" || resp.Header.Get("X-Webobjects-Servlet") != "" {
-		return buildSolarWindsWHDResult(), nil
+	// Gated on 2xx — non-WHD WebObjects apps can 404 with these headers.
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		if resp.Header.Get("X-Webobjects-Loadaverage") != "" || resp.Header.Get("X-Webobjects-Servlet") != "" {
+			return buildSolarWindsWHDResult(), nil
+		}
 	}
 
 	// Signal 2 (corroborated): both brand terms required — either alone is too common.

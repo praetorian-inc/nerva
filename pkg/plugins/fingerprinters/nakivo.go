@@ -36,8 +36,8 @@ const nakivoMaxBodySize = 1 << 20
 //
 // Version Detection:
 // Extracted from the HTML body via a dotted three-part version pattern
-// ("10.11.3"). Validated with `^\d+\.\d+\.\d+$`. Empty string if not found
-// or invalid.
+// ("10.11.3") anchored to NAKIVO-specific text within the same HTML
+// element. Empty string if not found.
 //
 // CPE: cpe:2.3:a:nakivo:backup_\&_replication_director:<version>:*:*:*:*:*:*:*
 type NAKIVOFingerprinter struct{}
@@ -65,16 +65,6 @@ var nakivoTitleRegex = regexp.MustCompile(`(?i)<title[^>]*>[^<]*nakivo\s+backup[
 // findNAKIVOVersionMatch, which scans matches and skips any followed by a
 // digit or dot.
 var nakivoVersionStrictPattern = regexp.MustCompile(`(?i)nakivo[^<]{0,200}?[^\d.](\d{1,3}\.\d{1,3}\.\d{1,3})\b`)
-
-// nakivoVersionLoosePattern is the same as nakivoVersionStrictPattern but
-// allows crossing HTML tag boundaries. Used only as a fallback when the
-// strict pattern finds no match, to support version text that legitimately
-// appears in a different tag than the nearest NAKIVO mention (e.g. version
-// in <body> following a <title> mention).
-var nakivoVersionLoosePattern = regexp.MustCompile(`(?is)nakivo.{0,200}?[^\d.](\d{1,3}\.\d{1,3}\.\d{1,3})\b`)
-
-// nakivoVersionValidRegex validates extracted version strings before CPE use.
-var nakivoVersionValidRegex = regexp.MustCompile(`^\d+\.\d+\.\d+$`)
 
 func (f *NAKIVOFingerprinter) Name() string {
 	return "nakivo"
@@ -134,25 +124,13 @@ func (f *NAKIVOFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fi
 }
 
 // extractNAKIVOVersion extracts a version anchored to NAKIVO-specific
-// context. Tries the strict (same-element) pattern first; falls back to the
-// tag-crossing pattern only if the strict pattern finds nothing. Returns
-// empty string if no valid version is found or it contains CPE
-// metacharacters.
+// context using the strict (same-element) pattern. Returns empty string if
+// no version is found. A loose, tag-crossing fallback was deliberately
+// removed: it could match unrelated version-like strings (e.g. JS library
+// versions from cache-busted asset URLs) in a neighboring tag, and a wrong
+// version in the CPE is worse than no version.
 func extractNAKIVOVersion(bodyStr string) string {
-	v := findNAKIVOVersionMatch(bodyStr, nakivoVersionStrictPattern)
-	if v == "" {
-		v = findNAKIVOVersionMatch(bodyStr, nakivoVersionLoosePattern)
-	}
-	if v == "" {
-		return ""
-	}
-	if !nakivoVersionValidRegex.MatchString(v) {
-		return ""
-	}
-	if strings.ContainsAny(v, ":*?") {
-		return ""
-	}
-	return v
+	return findNAKIVOVersionMatch(bodyStr, nakivoVersionStrictPattern)
 }
 
 // findNAKIVOVersionMatch scans all matches of pattern against bodyStr and
