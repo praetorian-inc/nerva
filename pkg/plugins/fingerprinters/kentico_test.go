@@ -72,7 +72,7 @@ func TestKenticoFingerprinter_Fingerprint_Valid(t *testing.T) {
 			statusCode:    200,
 			body:          `<html><head><meta name="generator" content="Kentico CMS 7.0 (build 7.0.5000)" /></head></html>`,
 			wantVersion:   "7.0.5000",
-			wantCPE:       "cpe:2.3:a:kentico:kentico_cms:7.0.5000:*:*:*:*:*:*:*",
+			wantCPE:       "cpe:2.3:a:kentico:xperience:7.0.5000:*:*:*:*:*:*:*",
 			wantDetection: "generator",
 		},
 		{
@@ -80,7 +80,7 @@ func TestKenticoFingerprinter_Fingerprint_Valid(t *testing.T) {
 			statusCode:    200,
 			body:          `<html><head><meta name="generator" content="Kentico CMS 3.1a (build 3.1.3142) FREE LICENSE" /></head></html>`,
 			wantVersion:   "3.1.3142",
-			wantCPE:       "cpe:2.3:a:kentico:kentico_cms:3.1.3142:*:*:*:*:*:*:*",
+			wantCPE:       "cpe:2.3:a:kentico:xperience:3.1.3142:*:*:*:*:*:*:*",
 			wantDetection: "generator",
 		},
 		{
@@ -88,7 +88,7 @@ func TestKenticoFingerprinter_Fingerprint_Valid(t *testing.T) {
 			statusCode:    200,
 			body:          `<html><head><meta name="generator" content="Kentico CMS 13.0" /></head></html>`,
 			wantVersion:   "13.0",
-			wantCPE:       "cpe:2.3:a:kentico:kentico_cms:13.0:*:*:*:*:*:*:*",
+			wantCPE:       "cpe:2.3:a:kentico:xperience:13.0:*:*:*:*:*:*:*",
 			wantDetection: "generator",
 		},
 		{
@@ -96,7 +96,7 @@ func TestKenticoFingerprinter_Fingerprint_Valid(t *testing.T) {
 			statusCode:    200,
 			body:          `<html><head><meta name="generator" content="Kentico Xperience 13.0 (build 13.0.178)" /></head></html>`,
 			wantVersion:   "13.0.178",
-			wantCPE:       "cpe:2.3:a:kentico:kentico_cms:13.0.178:*:*:*:*:*:*:*",
+			wantCPE:       "cpe:2.3:a:kentico:xperience:13.0.178:*:*:*:*:*:*:*",
 			wantDetection: "generator",
 		},
 		{
@@ -105,7 +105,7 @@ func TestKenticoFingerprinter_Fingerprint_Valid(t *testing.T) {
 			cookies:       [][2]string{{"CMSPreferredCulture", "en-US"}},
 			body:          "<html><body>Welcome</body></html>",
 			wantVersion:   "",
-			wantCPE:       "cpe:2.3:a:kentico:kentico_cms:*:*:*:*:*:*:*:*",
+			wantCPE:       "cpe:2.3:a:kentico:xperience:*:*:*:*:*:*:*:*",
 			wantDetection: "cookies",
 		},
 		{
@@ -114,7 +114,7 @@ func TestKenticoFingerprinter_Fingerprint_Valid(t *testing.T) {
 			cookies:       [][2]string{{"CMSCookieLevel", "200"}},
 			body:          "<html><body>Welcome</body></html>",
 			wantVersion:   "",
-			wantCPE:       "cpe:2.3:a:kentico:kentico_cms:*:*:*:*:*:*:*:*",
+			wantCPE:       "cpe:2.3:a:kentico:xperience:*:*:*:*:*:*:*:*",
 			wantDetection: "cookies",
 		},
 		{
@@ -123,7 +123,7 @@ func TestKenticoFingerprinter_Fingerprint_Valid(t *testing.T) {
 			cookies:       [][2]string{{"CMSCsrfCookie", "token123"}},
 			body:          "<html><body>Welcome</body></html>",
 			wantVersion:   "",
-			wantCPE:       "cpe:2.3:a:kentico:kentico_cms:*:*:*:*:*:*:*:*",
+			wantCPE:       "cpe:2.3:a:kentico:xperience:*:*:*:*:*:*:*:*",
 			wantDetection: "cookies",
 		},
 		{
@@ -132,7 +132,7 @@ func TestKenticoFingerprinter_Fingerprint_Valid(t *testing.T) {
 			cookies:       [][2]string{{"CMSCurrentTheme", "Default"}},
 			body:          "<html><body>Welcome</body></html>",
 			wantVersion:   "",
-			wantCPE:       "cpe:2.3:a:kentico:kentico_cms:*:*:*:*:*:*:*:*",
+			wantCPE:       "cpe:2.3:a:kentico:xperience:*:*:*:*:*:*:*:*",
 			wantDetection: "cookies",
 		},
 		{
@@ -140,7 +140,7 @@ func TestKenticoFingerprinter_Fingerprint_Valid(t *testing.T) {
 			statusCode:    200,
 			body:          `<html><head><script src="/CMSPages/GetResource.ashx?scriptfile=~/CMSScripts/Custom/script.js"></script></head></html>`,
 			wantVersion:   "",
-			wantCPE:       "cpe:2.3:a:kentico:kentico_cms:*:*:*:*:*:*:*:*",
+			wantCPE:       "cpe:2.3:a:kentico:xperience:*:*:*:*:*:*:*:*",
 			wantDetection: "body_path",
 		},
 		{
@@ -149,7 +149,7 @@ func TestKenticoFingerprinter_Fingerprint_Valid(t *testing.T) {
 			cookies:       [][2]string{{"CMSPreferredCulture", "en-US"}},
 			body:          `<html><head><meta name="generator" content="Kentico CMS 13.0 (build 13.0.178)" /></head></html>`,
 			wantVersion:   "13.0.178",
-			wantCPE:       "cpe:2.3:a:kentico:kentico_cms:13.0.178:*:*:*:*:*:*:*",
+			wantCPE:       "cpe:2.3:a:kentico:xperience:13.0.178:*:*:*:*:*:*:*",
 			wantDetection: "generator",
 		},
 		{
@@ -158,7 +158,7 @@ func TestKenticoFingerprinter_Fingerprint_Valid(t *testing.T) {
 			cookies:       [][2]string{{"CMSCookieLevel", "200"}},
 			body:          `<html><head><script src="/CMSPages/GetResource.ashx"></script></head></html>`,
 			wantVersion:   "",
-			wantCPE:       "cpe:2.3:a:kentico:kentico_cms:*:*:*:*:*:*:*:*",
+			wantCPE:       "cpe:2.3:a:kentico:xperience:*:*:*:*:*:*:*:*",
 			wantDetection: "cookies",
 		},
 		{
@@ -166,7 +166,7 @@ func TestKenticoFingerprinter_Fingerprint_Valid(t *testing.T) {
 			statusCode:    200,
 			body:          `<html><head><meta name='generator' content='Kentico CMS 8.0 (build 8.0.5112)' /></head></html>`,
 			wantVersion:   "8.0.5112",
-			wantCPE:       "cpe:2.3:a:kentico:kentico_cms:8.0.5112:*:*:*:*:*:*:*",
+			wantCPE:       "cpe:2.3:a:kentico:xperience:8.0.5112:*:*:*:*:*:*:*",
 			wantDetection: "generator",
 		},
 	}
@@ -336,9 +336,9 @@ func TestBuildKenticoCPE(t *testing.T) {
 		version string
 		want    string
 	}{
-		{name: "Version 7.0.5000", version: "7.0.5000", want: "cpe:2.3:a:kentico:kentico_cms:7.0.5000:*:*:*:*:*:*:*"},
-		{name: "Version 13.0.178", version: "13.0.178", want: "cpe:2.3:a:kentico:kentico_cms:13.0.178:*:*:*:*:*:*:*"},
-		{name: "Empty version uses wildcard", version: "", want: "cpe:2.3:a:kentico:kentico_cms:*:*:*:*:*:*:*:*"},
+		{name: "Version 7.0.5000", version: "7.0.5000", want: "cpe:2.3:a:kentico:xperience:7.0.5000:*:*:*:*:*:*:*"},
+		{name: "Version 13.0.178", version: "13.0.178", want: "cpe:2.3:a:kentico:xperience:13.0.178:*:*:*:*:*:*:*"},
+		{name: "Empty version uses wildcard", version: "", want: "cpe:2.3:a:kentico:xperience:*:*:*:*:*:*:*:*"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -381,7 +381,7 @@ func TestKenticoFingerprinter_Integration(t *testing.T) {
 	}
 	if len(result.CPEs) == 0 {
 		t.Error("Expected at least one CPE")
-	} else if result.CPEs[0] != "cpe:2.3:a:kentico:kentico_cms:13.0.178:*:*:*:*:*:*:*" {
+	} else if result.CPEs[0] != "cpe:2.3:a:kentico:xperience:13.0.178:*:*:*:*:*:*:*" {
 		t.Errorf("CPE = %q, want canonical CPE", result.CPEs[0])
 	}
 	if v, ok := result.Metadata["vendor"].(string); !ok || v != "Kentico" {

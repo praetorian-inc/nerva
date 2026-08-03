@@ -42,7 +42,7 @@ Falls back to the main version (e.g., "7.0") when no build is present.
 
 # CPE
 
-cpe:2.3:a:kentico:kentico_cms:*:*:*:*:*:*:*:*
+cpe:2.3:a:kentico:xperience:*:*:*:*:*:*:*:*
 
 # CVE Context
 
@@ -191,7 +191,7 @@ func extractKenticoVersion(body []byte) string {
 // buildKenticoCPE constructs the NVD-canonical CPE 2.3 string for Kentico CMS.
 func buildKenticoCPE(version string) string {
 	if version == "" {
-		return "cpe:2.3:a:kentico:kentico_cms:*:*:*:*:*:*:*:*"
+		return "cpe:2.3:a:kentico:xperience:*:*:*:*:*:*:*:*"
 	}
-	return fmt.Sprintf("cpe:2.3:a:kentico:kentico_cms:%s:*:*:*:*:*:*:*", version)
+	return fmt.Sprintf("cpe:2.3:a:kentico:xperience:%s:*:*:*:*:*:*:*", version)
 }
