@@ -25,7 +25,7 @@ cookies, and /CMSPages/ resource paths.
 
 Tier-1 (any one alone is sufficient), priority order:
   - Meta generator: <meta name="generator" content="Kentico CMS ..."> (also provides version)
-  - CMS cookies: CMSPreferredCulture or CMSCookieLevel present in Set-Cookie
+  - CMS cookies: CMSPreferredCulture, CMSCookieLevel, CMSCsrfCookie, or CMSCurrentTheme present in Set-Cookie
   - Resource path: body contains "/CMSPages/GetResource.ashx"
 
 Detection method priority for metadata:
@@ -130,7 +130,7 @@ func (f *KenticoFingerprinter) Fingerprint(resp *http.Response, body []byte) (*F
 		return nil, nil
 	}
 
-	detectionMethod := "body"
+	var detectionMethod string
 	if hasResourcePath {
 		detectionMethod = "body_path"
 	}

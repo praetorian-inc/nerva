@@ -99,10 +99,16 @@ func (f *CiscoSDWANFingerprinter) Fingerprint(resp *http.Response, body []byte) 
 
 	bodyLower := strings.ToLower(string(body))
 
-	hasBrandInTitle := strings.Contains(bodyLower, "<title>cisco vmanage</title>") ||
-		strings.Contains(bodyLower, "<title>cisco sd-wan</title>") ||
-		strings.Contains(bodyLower, "<title>cisco catalyst sd-wan</title>") ||
-		strings.Contains(bodyLower, "<title>viptela vmanage</title>")
+	var titleContent string
+	if i := strings.Index(bodyLower, "<title>"); i >= 0 {
+		if j := strings.Index(bodyLower[i:], "</title>"); j >= 0 {
+			titleContent = bodyLower[i+7 : i+j]
+		}
+	}
+	hasBrandInTitle := strings.Contains(titleContent, "cisco vmanage") ||
+		strings.Contains(titleContent, "cisco sd-wan") ||
+		strings.Contains(titleContent, "cisco catalyst sd-wan") ||
+		strings.Contains(titleContent, "viptela vmanage")
 	hasLoginForm := strings.Contains(bodyLower, "j_security_check")
 	hasAPIPrefix := strings.Contains(bodyLower, "/dataservice/")
 
@@ -110,7 +116,7 @@ func (f *CiscoSDWANFingerprinter) Fingerprint(resp *http.Response, body []byte) 
 		return nil, nil
 	}
 
-	detectionMethod := "body"
+	var detectionMethod string
 	if hasAPIPrefix {
 		detectionMethod = "api_prefix"
 	}

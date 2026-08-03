@@ -95,6 +95,12 @@ func TestCiscoSDWANFingerprinter_Fingerprint_Valid(t *testing.T) {
 			wantDetection: "title",
 		},
 		{
+			name:          "title with suffix",
+			statusCode:    200,
+			body:          `<html><head><title>Cisco vManage - Login</title></head><body></body></html>`,
+			wantDetection: "title",
+		},
+		{
 			name:          "Tier-2: j_security_check + /dataservice/ together",
 			statusCode:    200,
 			body:          `<html><body><form action="/j_security_check"><input name="j_username"/></form><script src="/dataservice/client.js"></script></body></html>`,

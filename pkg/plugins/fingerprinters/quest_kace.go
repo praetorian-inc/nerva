@@ -118,7 +118,7 @@ func (f *QuestKACEFingerprinter) Fingerprint(resp *http.Response, body []byte) (
 		return nil, nil
 	}
 
-	detectionMethod := "body"
+	var detectionMethod string
 	if hasBrandInBody {
 		detectionMethod = "title"
 	}
@@ -130,7 +130,7 @@ func (f *QuestKACEFingerprinter) Fingerprint(resp *http.Response, body []byte) (
 	}
 
 	version := ""
-	if hasKACEVersion && questKACEVersionValidateRegex.MatchString(kaceVersionHeader) {
+	if hasKACEVersion {
 		version = kaceVersionHeader
 	}
 
