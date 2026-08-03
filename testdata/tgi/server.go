@@ -19,6 +19,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -55,7 +56,7 @@ func main() {
 	mux.HandleFunc("/info", func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("GET /info from %s", r.RemoteAddr)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
+		if err := json.NewEncoder(w).Encode(map[string]any{
 			"model_id":                "meta-llama/Meta-Llama-3-70B-Instruct",
 			"model_sha":               nil,
 			"model_pipeline_tag":      nil,
@@ -74,7 +75,10 @@ func main() {
 			"version":                 "2.0.2",
 			"sha":                     "dccab72549635c7eb5ddb17f43f0b7cdff07c214",
 			"docker_label":            "sha-dccab72",
-		})
+		}); err != nil {
+			http.Error(w, "encoding error", http.StatusInternalServerError)
+			return
+		}
 	})
 
 	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
@@ -92,6 +96,9 @@ func main() {
 		Addr:              ":" + port,
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 
 	log.Printf("TGI mock server listening on port %s", port)
@@ -100,7 +107,7 @@ func main() {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Fatalf("Server error: %v", err)
 		}
 	}()

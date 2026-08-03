@@ -84,6 +84,10 @@ var tgiVersionRegex = regexp.MustCompile(`^\d+\.\d+\.\d+$`)
 // the start of a (trimmed) metrics line.
 var tgiMetricPattern = regexp.MustCompile(`^tgi_[a-zA-Z0-9_]+`)
 
+// tgiMaxBodySize caps the response body size accepted by the TGI
+// fingerprinters to avoid unbounded memory use.
+const tgiMaxBodySize = 2 * 1024 * 1024
+
 func init() {
 	Register(&TGIInfoFingerprinter{})
 	Register(&TGIMetricsFingerprinter{})
@@ -108,7 +112,7 @@ func (f *TGIInfoFingerprinter) Match(resp *http.Response) bool {
 }
 
 func (f *TGIInfoFingerprinter) Fingerprint(resp *http.Response, body []byte) (*FingerprintResult, error) {
-	if len(body) > 2*1024*1024 {
+	if len(body) > tgiMaxBodySize {
 		return nil, nil
 	}
 
@@ -172,6 +176,10 @@ func (f *TGIMetricsFingerprinter) ProbeEndpoint() string {
 	return "/metrics"
 }
 
+func (f *TGIMetricsFingerprinter) ProbeAccept() string {
+	return "text/plain"
+}
+
 func (f *TGIMetricsFingerprinter) Match(resp *http.Response) bool {
 	if resp.StatusCode != http.StatusOK {
 		return false
@@ -181,7 +189,7 @@ func (f *TGIMetricsFingerprinter) Match(resp *http.Response) bool {
 }
 
 func (f *TGIMetricsFingerprinter) Fingerprint(resp *http.Response, body []byte) (*FingerprintResult, error) {
-	if len(body) > 2*1024*1024 {
+	if len(body) > tgiMaxBodySize {
 		return nil, nil
 	}
 
@@ -192,7 +200,6 @@ func (f *TGIMetricsFingerprinter) Fingerprint(resp *http.Response, body []byte) 
 	return &FingerprintResult{
 		Technology: "tgi",
 		CPEs:       []string{buildTGICPE("")},
-		Metadata:   map[string]any{},
 	}, nil
 }
 
