@@ -20,6 +20,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -85,7 +86,7 @@ func runScan(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	if err := checkConfig(config); err != nil {
+	if err := checkConfig(&config); err != nil {
 		return err
 	}
 
@@ -122,6 +123,12 @@ func runScan(cmd *cobra.Command, args []string) error {
 		}
 		if !config.deep {
 			config.deep = state.Config.Deep
+		}
+		if config.scanDepth == "" {
+			config.scanDepth = state.Config.ScanDepth
+			if config.fastMode && config.scanDepth != "" {
+				fmt.Fprintln(os.Stderr, "[WRN] --fast is deprecated when --scan-depth is set; using scan-depth from resumed state")
+			}
 		}
 	} else {
 		// Read targets from input
@@ -164,6 +171,16 @@ func runScan(cmd *cobra.Command, args []string) error {
 				}
 			}
 		}()
+	}
+
+	// Normalize scanDepth once (covers both the flag value and any value
+	// restored from resumed state); createScanConfig assumes lowercase input.
+	config.scanDepth = strings.ToLower(config.scanDepth)
+	if config.scanDepth != "" &&
+		config.scanDepth != string(ScanDepthFast) &&
+		config.scanDepth != string(ScanDepthThorough) {
+		return fmt.Errorf("invalid scan_depth %q in state file: must be %q or %q",
+			config.scanDepth, ScanDepthFast, ScanDepthThorough)
 	}
 
 	// Create progress callback for state tracking
@@ -253,6 +270,7 @@ func buildState(config cliConfig, targets []plugins.Target, completedTargets []s
 		Config: StateConfig{
 			TimeoutMs:   config.timeout,
 			FastMode:    config.fastMode,
+			ScanDepth:   config.scanDepth,
 			UDP:         config.useUDP,
 			SCTP:        config.useSCTP,
 			Verbose:     config.verbose,
@@ -286,6 +304,11 @@ func init() {
 	rootCmd.PersistentFlags().BoolVarP(&config.outputCSV, "csv", "", false, "output format in csv")
 
 	rootCmd.PersistentFlags().BoolVarP(&config.fastMode, "fast", "f", false, "fast mode")
+	rootCmd.PersistentFlags().StringVar(&config.scanDepth, "scan-depth", "", "scan depth mode: \"fast\" or \"thorough\" (default: legacy behavior governed by --fast). "+
+		"fast: only tries plugins whose port priority matches the target port, skipping the full plugin iteration for non-standard ports; equivalent to --fast. "+
+		"thorough: tries all plugins regardless of port (current default behavior); slowest but most complete. "+
+		"Banner-based pre-filtering is planned for a future release and is not yet implemented. "+
+		"Takes precedence over --fast if both are set (--fast is deprecated in that case).")
 	rootCmd.PersistentFlags().BoolVarP(&config.useUDP, "udp", "U", false, "run UDP plugins")
 	rootCmd.PersistentFlags().BoolVarP(&config.useSCTP, "sctp", "S", false, "run SCTP plugins (Linux only)")
 	rootCmd.PersistentFlags().BoolVarP(&config.verbose, "verbose", "v", false, "verbose mode")

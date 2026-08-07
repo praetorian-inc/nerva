@@ -1,15 +1,17 @@
 // Mock Oracle Spatial Studio server for integration testing.
 //
 // MODE env var controls what the container simulates:
-//   "login"    - Spatial Studio login SPA only (port 4040)
-//   "api"      - Spatial Studio REST API only (port 4040)
-//   "full"     - Full Spatial Studio with login + API + OAuth (port 4040)
+//
+//	"login"    - Spatial Studio login SPA only (port 4040)
+//	"api"      - Spatial Studio REST API only (port 4040)
+//	"full"     - Full Spatial Studio with login + API + OAuth (port 4040)
 package main
 
 import (
 	"fmt"
 	"net/http"
 	"os"
+	"time"
 )
 
 func main() {
@@ -64,7 +66,15 @@ func main() {
 
 	addr := ":" + port
 	fmt.Printf("Spatial Studio mock server starting (mode=%s) on %s\n", mode, addr)
-	if err := http.ListenAndServe(addr, mux); err != nil {
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+	if err := srv.ListenAndServe(); err != nil {
 		fmt.Fprintf(os.Stderr, "server error: %v\n", err)
 		os.Exit(1)
 	}
