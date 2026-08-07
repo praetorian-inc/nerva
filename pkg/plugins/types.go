@@ -197,6 +197,7 @@ const (
 	ProtoOracleODI         = "oracle_odi"
 	ProtoOracleOLVM        = "oracle_olvm"
 	ProtoVirtualBoxWeb     = "virtualbox_web"
+	ProtoOracleSpatial     = "oracle_spatial_studio"
 	ProtoOracleWebLogic    = "oracle_weblogic"
 	ProtoOracleSBC         = "oracle_sbc"
 	ProtoOracleECB         = "oracle_ecb"
@@ -615,6 +616,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoOracleOUAF, ProtoOracleUTA:
 		var p ServiceOracleOUAF
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoOracleSpatial:
+		var p ServiceSpatialStudio
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoOMRONFINS:
@@ -1934,6 +1939,14 @@ func (e ServiceOracleOUAF) Type() string {
 	}
 	return ProtoOracleOUAF
 }
+
+type ServiceSpatialStudio struct {
+	Title   string   `json:"title,omitempty"`
+	Version string   `json:"version,omitempty"`
+	CPEs    []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceSpatialStudio) Type() string { return ProtoOracleSpatial }
 
 type ServicePCOM struct {
 	Model     string   `json:"model,omitempty"`
