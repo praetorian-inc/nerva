@@ -90,7 +90,7 @@ var shodanVectors = []struct {
 		// just the upstream project.
 		name:      "Shodan Vector 2: AdminerEvo 5.1.0 (community fork) behind nginx",
 		query:     `http.title:"Login - AdminerEvo"`,
-		rationale: "AdminerEvo is a distinct, actively maintained fork with growing Shodan presence; verifies adminerevo.org branding drives variant=adminerevo while Technology/CPE stay adminer:adminer.",
+		rationale: "AdminerEvo is a distinct, actively maintained fork with growing Shodan presence; verifies adminerevo.org branding drives variant=adminerevo, with Technology staying adminer while the CPE switches to the adminerevo vendor/product.",
 		headers: map[string]string{
 			"Content-Type": "text/html; charset=UTF-8",
 			"Server":       "nginx/1.18.0 (Ubuntu)",

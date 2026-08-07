@@ -19,9 +19,11 @@ Adminer Editor).
 
 # What We Detect
 
-  - The Adminer login page, whether deployed as a single PHP file
-    (/adminer.php — the most common deployment) or inside a directory
-    (/adminer/ — common in Docker images that ship Adminer as a bundled app).
+  - The Adminer login page across three deployment shapes: a single PHP file
+    (/adminer.php — the most common deployment), a directory
+    (/adminer/ — common in Docker images that ship Adminer as a bundled app),
+    and the web root (/ — the shape used by the official adminer Docker
+    image).
   - AdminerEvo, a community-maintained fork of Adminer with an updated UI.
   - Adminer Editor, a companion single-file content editor built on the same
     Adminer codebase.
@@ -82,11 +84,21 @@ The detected variant is recorded in metadata:
     title is "Login - Editor"
   - "adminer" otherwise (the default upstream project)
 
-# Active Probe Safety
+# Deployment Shapes and Probe Safety
 
-Both probes are plain, unauthenticated GET requests with no request body:
-GET /adminer.php (single-file deployment) and GET /adminer/ (directory
+Three fingerprinters share the detection logic above, one per deployment
+shape. All three report the same Technology ("adminer") because they
+describe the same product reached by a different path.
+
+Two are active probes: plain, unauthenticated GET requests with no request
+body — GET /adminer.php (single-file deployment) and GET /adminer/ (directory
 deployment). No write operations or authentication attempts are made.
+
+The third, root deployment, is covered by a passive fingerprinter that
+declares no probe endpoint and is evaluated against the root response the
+engine has already fetched. It must stay passive: the engine's passive pass
+skips fingerprinters that declare a non-root probe endpoint, so the two
+active fingerprinters above can never see Adminer served at "/".
 
 # CPE
 
@@ -120,9 +132,9 @@ var adminerVersionValidateRegex = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(?:
 
 // Corroborated-pair markers for Signal 2. Neither is used alone.
 const (
-	adminerSystemTDMarker        = "System<td>"
-	adminerAuthDriverMarkerDQ    = `name="auth[driver]"`
-	adminerAuthDriverMarkerSQ    = "name='auth[driver]'"
+	adminerSystemTDMarker     = "System<td>"
+	adminerAuthDriverMarkerDQ = `name="auth[driver]"`
+	adminerAuthDriverMarkerSQ = "name='auth[driver]'"
 )
 
 // Variant markers.
@@ -134,6 +146,7 @@ const (
 func init() {
 	Register(&AdminerFingerprinter{})
 	Register(&AdminerDirFingerprinter{})
+	Register(&AdminerRootFingerprinter{})
 }
 
 // ── FP1: AdminerFingerprinter (single-file deployment, /adminer.php) ───────────
@@ -179,6 +192,44 @@ func (f *AdminerDirFingerprinter) Match(resp *http.Response) bool { return match
 
 // Fingerprint performs full Adminer detection, shared with AdminerFingerprinter.
 func (f *AdminerDirFingerprinter) Fingerprint(resp *http.Response, body []byte) (*FingerprintResult, error) {
+	return fingerprintAdminer(resp, body)
+}
+
+// ── FP3: AdminerRootFingerprinter (root deployment, "/") ───────────────────────
+
+// AdminerRootFingerprinter detects Adminer served directly at the web root,
+// which is the shape produced by the official `adminer` Docker image.
+//
+// This fingerprinter is deliberately passive: it implements only
+// HTTPFingerprinter (Name/Match/Fingerprint) and intentionally declares
+// neither ProbeEndpoint nor ProbeAccept, so it is NOT an
+// ActiveHTTPFingerprinter. That is what makes the engine evaluate it against
+// the already-fetched root response during the passive pass.
+//
+// The two active Adminer fingerprinters cannot cover this case: the passive
+// pass skips any ActiveHTTPFingerprinter whose ProbeEndpoint is neither ""
+// nor "/", and the active pass only requests each fingerprinter's declared
+// path. Adminer at "/" is therefore never handed to them. Adding a probe
+// endpoint here would re-introduce that skip and defeat the purpose of this
+// type.
+//
+// It deliberately shares Technology "adminer" with the two active
+// fingerprinters, since all three describe the same product found via a
+// different path. On the uncommon host that serves Adminer at more than one
+// of these paths, the duplicate technology and CPE entries are harmless: all
+// three derive identical version, variant and CPE from the same login page,
+// so whichever result lands last in the engine's per-technology metadata map
+// is equivalent to the others.
+type AdminerRootFingerprinter struct{}
+
+// Name returns the fingerprinter identifier.
+func (f *AdminerRootFingerprinter) Name() string { return "adminer_root" }
+
+// Match is a fast pre-filter shared with the active Adminer fingerprinters.
+func (f *AdminerRootFingerprinter) Match(resp *http.Response) bool { return matchAdminer(resp) }
+
+// Fingerprint performs full Adminer detection against the root response.
+func (f *AdminerRootFingerprinter) Fingerprint(resp *http.Response, body []byte) (*FingerprintResult, error) {
 	return fingerprintAdminer(resp, body)
 }
 

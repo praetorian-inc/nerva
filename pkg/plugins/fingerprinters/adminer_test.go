@@ -371,6 +371,76 @@ func TestAdminerDirFingerprinter_Fingerprint_GenericLoginRejected(t *testing.T) 
 	assert.Nil(t, result)
 }
 
+// ── AdminerRootFingerprinter: identity / wiring ─────────────────────────────────
+
+func TestAdminerRootFingerprinter_Identity(t *testing.T) {
+	fp := &AdminerRootFingerprinter{}
+	assert.Equal(t, "adminer_root", fp.Name())
+}
+
+// Compile-time assertion: AdminerRootFingerprinter must implement
+// HTTPFingerprinter. If this line stops compiling, the type's method set
+// no longer satisfies the interface the registry requires.
+var _ HTTPFingerprinter = (*AdminerRootFingerprinter)(nil)
+
+// TestAdminerRootFingerprinter_MustStayPassive is the most important test in
+// this file. AdminerRootFingerprinter must implement HTTPFingerprinter but
+// must NOT implement ActiveHTTPFingerprinter. The engine's passive pass
+// (RunFingerprinters) skips any ActiveHTTPFingerprinter whose ProbeEndpoint
+// is neither "" nor "/" -- that's exactly why the two pre-existing active
+// fingerprinters (/adminer.php and /adminer/) can never see Adminer served
+// at the web root. If a future edit adds a ProbeEndpoint() method to
+// AdminerRootFingerprinter, it would silently start being skipped by that
+// same passive pass, and Adminer served at "/" would go undetected again --
+// with every other test in this file still green, since none of them probe
+// this specific invariant.
+func TestAdminerRootFingerprinter_MustStayPassive(t *testing.T) {
+	_, isActive := any(&AdminerRootFingerprinter{}).(ActiveHTTPFingerprinter)
+	assert.False(t, isActive,
+		"AdminerRootFingerprinter must not implement ActiveHTTPFingerprinter: "+
+			"adding a ProbeEndpoint() method would make the engine's passive pass "+
+			"(RunFingerprinters) skip it, since that pass skips any ActiveHTTPFingerprinter "+
+			"whose ProbeEndpoint is neither \"\" nor \"/\" -- silently reintroducing the bug "+
+			"where Adminer served at the web root is never detected")
+}
+
+func TestAdminerRootFingerprinter_NotInProbeEndpoints(t *testing.T) {
+	saved := httpFingerprinters
+	httpFingerprinters = nil
+	defer func() { httpFingerprinters = saved }()
+
+	Register(&AdminerRootFingerprinter{})
+
+	endpoints := GetProbeEndpoints()
+	_, ok := endpoints["adminer_root"]
+	assert.False(t, ok, "adminer_root must not appear in GetProbeEndpoints(); it is passive by design and declares no probe endpoint")
+}
+
+// ── AdminerRootFingerprinter: detection ─────────────────────────────────────────
+
+func TestAdminerRootFingerprinter_Fingerprint_TitleMatchWithVersion(t *testing.T) {
+	fp := &AdminerRootFingerprinter{}
+	resp := newAdminerResp(200, "text/html")
+
+	require.True(t, fp.Match(resp))
+
+	result, err := fp.Fingerprint(resp, []byte(adminerLoginHTML))
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "adminer", result.Technology)
+	assert.Equal(t, "4.8.1", result.Version)
+	assert.Contains(t, result.CPEs, "cpe:2.3:a:adminer:adminer:4.8.1:*:*:*:*:*:*:*")
+}
+
+func TestAdminerRootFingerprinter_Fingerprint_GenericLoginRejected(t *testing.T) {
+	fp := &AdminerRootFingerprinter{}
+	resp := newAdminerResp(200, "text/html")
+
+	result, err := fp.Fingerprint(resp, []byte(genericLoginHTML))
+	require.NoError(t, err)
+	assert.Nil(t, result)
+}
+
 // ── Version extraction ──────────────────────────────────────────────────────────
 
 func TestExtractAdminerVersion(t *testing.T) {
@@ -494,13 +564,17 @@ func TestAdminerFingerprinters_Registered(t *testing.T) {
 	httpFingerprinters = nil
 	Register(&AdminerFingerprinter{})
 	Register(&AdminerDirFingerprinter{})
+	Register(&AdminerRootFingerprinter{})
 
 	assert.NotNil(t, GetFingerprinterByName("adminer"))
 	assert.NotNil(t, GetFingerprinterByName("adminer_dir"))
+	assert.NotNil(t, GetFingerprinterByName("adminer_root"))
 
 	endpoints := GetProbeEndpoints()
 	assert.Equal(t, "/adminer.php", endpoints["adminer"])
 	assert.Equal(t, "/adminer/", endpoints["adminer_dir"])
+	_, hasRoot := endpoints["adminer_root"]
+	assert.False(t, hasRoot, "adminer_root must not appear in GetProbeEndpoints(); it is passive by design")
 }
 
 // ── Severity / SecurityFindings: pure fingerprinter, never sets either ─────────
