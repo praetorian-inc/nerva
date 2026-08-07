@@ -152,15 +152,15 @@ func (f *VaultFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fin
 	if !*health.Initialized {
 		result.SecurityFindings = []plugins.SecurityFinding{{
 			ID:          "vault-uninitialized",
-			Severity:    plugins.SeverityMedium,
+			Severity:    plugins.SeverityHigh,
 			Description: "Vault instance not initialized — can be claimed by first init request",
 			Evidence:    fmt.Sprintf("Vault %s reports initialized=false via /v1/sys/health", health.Version),
 		}}
 	} else if !*health.Sealed {
-		result.Severity = plugins.SeverityCritical
+		result.Severity = plugins.SeverityHigh
 		result.SecurityFindings = []plugins.SecurityFinding{{
 			ID:          "vault-unsealed-anonymous",
-			Severity:    plugins.SeverityCritical,
+			Severity:    plugins.SeverityHigh,
 			Description: "Vault unsealed and health endpoint accessible without authentication",
 			Evidence:    fmt.Sprintf("Vault %s reports initialized=true, sealed=false via /v1/sys/health", health.Version),
 		}}

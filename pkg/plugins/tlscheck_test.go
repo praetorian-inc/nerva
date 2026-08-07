@@ -307,19 +307,19 @@ func TestCheckWeakTLSVersion(t *testing.T) {
 		wantDescHint string
 	}{
 		{
-			name:         "TLS 1.0 produces High finding with BEAST reference",
+			name:         "TLS 1.0 produces Low finding with BEAST reference",
 			version:      tls.VersionTLS10,
 			wantNil:      false,
-			wantID:       "tls-weak-version",
-			wantSeverity: SeverityHigh,
+			wantID:       "tls-weak-version-10",
+			wantSeverity: SeverityLow,
 			wantDescHint: "BEAST",
 		},
 		{
-			name:         "TLS 1.1 produces Medium finding with RFC 8996 reference",
+			name:         "TLS 1.1 produces Low finding with RFC 8996 reference",
 			version:      tls.VersionTLS11,
 			wantNil:      false,
-			wantID:       "tls-weak-version",
-			wantSeverity: SeverityMedium,
+			wantID:       "tls-weak-version-11",
+			wantSeverity: SeverityLow,
 			wantDescHint: "RFC 8996",
 		},
 		{
@@ -379,8 +379,8 @@ func TestCheckExpiredCert(t *testing.T) {
 		if got.ID != "tls-certificate-expired" {
 			t.Errorf("finding.ID = %q, want %q", got.ID, "tls-certificate-expired")
 		}
-		if got.Severity != SeverityMedium {
-			t.Errorf("finding.Severity = %q, want %q", got.Severity, SeverityMedium)
+		if got.Severity != SeverityLow {
+			t.Errorf("finding.Severity = %q, want %q", got.Severity, SeverityLow)
 		}
 		if !strings.Contains(got.Evidence, "days_since_expiry") {
 			t.Errorf("finding.Evidence = %q, want it to contain %q", got.Evidence, "days_since_expiry")
@@ -720,8 +720,8 @@ func TestCheckTLS_Integration(t *testing.T) {
 		for _, f := range findings {
 			ids[f.ID] = true
 		}
-		if !ids["tls-weak-version"] {
-			t.Errorf("expected tls-weak-version finding in: %+v", findings)
+		if !ids["tls-weak-version-10"] {
+			t.Errorf("expected tls-weak-version-10 finding in: %+v", findings)
 		}
 		if !ids["tls-self-signed"] {
 			t.Errorf("expected tls-self-signed finding in: %+v", findings)
@@ -742,8 +742,8 @@ func TestCheckTLS_Integration(t *testing.T) {
 		for _, f := range findings {
 			ids[f.ID] = true
 		}
-		if !ids["tls-weak-version"] {
-			t.Errorf("expected tls-weak-version finding in: %+v", findings)
+		if !ids["tls-weak-version-11"] {
+			t.Errorf("expected tls-weak-version-11 finding in: %+v", findings)
 		}
 		if !ids["tls-self-signed"] {
 			t.Errorf("expected tls-self-signed finding in: %+v", findings)

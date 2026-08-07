@@ -160,8 +160,8 @@ func TestBuildSSHFindings(t *testing.T) {
 		if findings[0].ID != "ssh-password-auth" {
 			t.Errorf("expected ID ssh-password-auth, got %s", findings[0].ID)
 		}
-		if findings[0].Severity != plugins.SeverityMedium {
-			t.Errorf("expected severity medium, got %s", findings[0].Severity)
+		if findings[0].Severity != plugins.SeverityLow {
+			t.Errorf("expected severity low, got %s", findings[0].Severity)
 		}
 	})
 
