@@ -298,7 +298,7 @@ func ipmiExposedFinding() plugins.SecurityFinding {
 func ipmiAnonymousLoginFinding() plugins.SecurityFinding {
 	return plugins.SecurityFinding{
 		ID:          "ipmi-anonymous-login",
-		Severity:    plugins.SeverityCritical,
+		Severity:    plugins.SeverityHigh,
 		Description: "IPMI BMC permits anonymous login — no credentials required for management access",
 		Evidence:    "Auth status byte indicates anonymous login enabled (bit 0 set)",
 	}
@@ -309,7 +309,7 @@ func ipmiAnonymousLoginFinding() plugins.SecurityFinding {
 func ipmiCipherZeroFinding() plugins.SecurityFinding {
 	return plugins.SecurityFinding{
 		ID:          "ipmi-cipher-zero",
-		Severity:    plugins.SeverityCritical,
+		Severity:    plugins.SeverityHigh,
 		Description: "IPMI BMC accepts cipher suite 0 (CVE-2013-4786) — authentication can be bypassed entirely",
 		Evidence:    "RMCP+ Open Session Response with status 0x00 received for cipher suite 0 request",
 	}

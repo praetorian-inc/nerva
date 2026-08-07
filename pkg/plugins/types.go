@@ -51,10 +51,21 @@ const (
 // Evidence should contain observable protocol-level data (e.g., banner text, response codes,
 // negotiated parameters). Do not include credentials, tokens, or other secrets.
 type SecurityFinding struct {
-	ID          string   `json:"id"`
-	Severity    Severity `json:"severity"`
-	Description string   `json:"description"`
-	Evidence    string   `json:"evidence,omitempty"`
+	ID             string   `json:"id"`
+	Severity       Severity `json:"severity"`
+	Title          string   `json:"title,omitempty"`
+	Description    string   `json:"description"`
+	Impact         string   `json:"impact,omitempty"`
+	Recommendation string   `json:"recommendation,omitempty"`
+	CVSS           string   `json:"cvss,omitempty"`
+	Evidence       string   `json:"evidence,omitempty"`
+}
+
+// EnrichFindings applies finding catalog metadata to all security findings.
+func (s *Service) EnrichFindings() {
+	for i := range s.SecurityFindings {
+		s.SecurityFindings[i].Enrich()
+	}
 }
 
 // Valid returns true if the severity is a recognized value.
@@ -77,6 +88,7 @@ const (
 	ProtoBGP               = "bgp"
 	ProtoCassandra         = "cassandra"
 	ProtoChromaDB          = "chromadb"
+	ProtoClickHouse        = "clickhouse"
 	ProtoCitrixICA         = "citrix-ica"
 	ProtoCoAP              = "coap"
 	ProtoCODESYS           = "codesys"
@@ -133,6 +145,7 @@ const (
 	ProtoLwM2M             = "lwm2m"
 	ProtoM2UA              = "m2ua"
 	ProtoM3UA              = "m3ua"
+	ProtoManageSieve       = "managesieve"
 	ProtoMegaco            = "megaco"
 	ProtoMGCP              = "mgcp"
 	ProtoMemcached         = "memcached"
@@ -177,11 +190,20 @@ const (
 	ProtoOracleGoldenGate  = "oracle_goldengate"
 	ProtoOracleForms       = "oracle_forms"
 	ProtoOracleReports     = "oracle_reports"
+	ProtoOracleCoherence   = "oracle_coherence"
+	ProtoOracleNoSQL       = "oracle_nosql"
+	ProtoOracleTimesTen    = "oracle_timesten"
+	ProtoOracleILOM        = "oracle_ilom"
+	ProtoOracleODI         = "oracle_odi"
+	ProtoOracleOLVM        = "oracle_olvm"
+	ProtoVirtualBoxWeb     = "virtualbox_web"
 	ProtoOracleWebLogic    = "oracle_weblogic"
 	ProtoOracleSBC         = "oracle_sbc"
 	ProtoOracleECB         = "oracle_ecb"
 	ProtoOracleMFT         = "oracle_mft"
 	ProtoOracleAgilePLM    = "oracle_agile_plm"
+	ProtoOracleOUAF        = "oracle_ouaf"
+	ProtoOracleUTA         = "oracle_uta"
 	ProtoPCOM              = "pcom"
 	ProtoPFCP              = "pfcp"
 	ProtoPinecone          = "pinecone"
@@ -294,6 +316,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoCassandra:
 		var p ServiceCassandra
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoClickHouse:
+		var p ServiceClickHouse
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoChromaDB:
@@ -508,6 +534,18 @@ func (e Service) Metadata() Metadata {
 		var p ServiceOracleOIM
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
+	case ProtoOracleCoherence:
+		var p ServiceOracleCoherence
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoOracleNoSQL:
+		var p ServiceOracleNoSQL
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoOracleTimesTen:
+		var p ServiceOracleTimesTen
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
 	case ProtoOracleOUD, ProtoOracleOID:
 		var p ServiceOracleDirectory
 		_ = json.Unmarshal(e.Raw, &p)
@@ -556,6 +594,14 @@ func (e Service) Metadata() Metadata {
 		var p ServiceOracleReports
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
+	case ProtoOracleILOM, ProtoOracleODI, ProtoOracleOLVM:
+		var p ServiceOracleInfra
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoVirtualBoxWeb:
+		var p ServiceVirtualBoxWeb
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
 	case ProtoOracleWebLogic:
 		var p ServiceWebLogic
 		_ = json.Unmarshal(e.Raw, &p)
@@ -566,6 +612,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoOracleAgilePLM:
 		var p ServiceOracleAgilePLM
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoOracleOUAF, ProtoOracleUTA:
+		var p ServiceOracleOUAF
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoOracleMFT:
@@ -654,6 +704,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoM3UA:
 		var p ServiceM3UA
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoManageSieve:
+		var p ServiceManageSieve
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoSUA:
@@ -1455,6 +1509,17 @@ type ServiceGit struct {
 
 func (e ServiceGit) Type() string { return ProtoGit }
 
+// ServiceManageSieve contains metadata extracted from a ManageSieve (RFC 5804) greeting.
+type ServiceManageSieve struct {
+	Implementation    string   `json:"implementation,omitempty"`
+	SASLMechanisms    []string `json:"sasl_mechanisms,omitempty"`
+	StarttlsAvailable bool     `json:"starttls_available"`
+	SieveExtensions   []string `json:"sieve_extensions,omitempty"`
+	CPEs              []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceManageSieve) Type() string { return ProtoManageSieve }
+
 type ServiceSMPP struct {
 	CPEs            []string `json:"cpes,omitempty"`             // Common Platform Enumeration identifiers for vulnerability tracking
 	ProtocolVersion string   `json:"protocol_version,omitempty"` // SMPP protocol version (e.g., "3.4", "5.0")
@@ -1648,6 +1713,43 @@ type ServiceOracleOIM struct {
 
 func (e ServiceOracleOIM) Type() string { return ProtoOracleOIM }
 
+// ServiceOracleCoherence identifies an Oracle Coherence data-grid node. It is
+// emitted by two paths: the high-confidence HTTP detectors (ViaHTTP set — the
+// Prometheus /metrics endpoint and Management-over-REST, which expose an exact
+// version and cluster metadata) and the best-effort binary heuristic on the
+// 7574 cluster/NameService port (ViaHTTP unset — no version on the wire, so its
+// CPE is versionless). ClusterName and LicenseMode are populated only from the
+// Management-over-REST JSON.
+type ServiceOracleCoherence struct {
+	ViaHTTP     bool     `json:"via_http,omitempty"`     // detected via the metrics/management HTTP surface
+	ClusterName string   `json:"cluster_name,omitempty"` // Management-over-REST clusterName
+	LicenseMode string   `json:"license_mode,omitempty"` // Management-over-REST licenseMode (e.g. "Development")
+	CPEs        []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceOracleCoherence) Type() string { return ProtoOracleCoherence }
+
+// ServiceOracleNoSQL identifies an Oracle NoSQL Database. It is emitted by both
+// the RMI registry plugin (port 5000, Endpoint populated from the JRMP
+// handshake) and the HTTP proxy plugin (port 8080, ViaHTTP set). No store
+// version is exposed pre-auth, so CPE is versionless.
+type ServiceOracleNoSQL struct {
+	Endpoint string   `json:"endpoint,omitempty"` // RMI endpoint host:port (RMI plugin)
+	ViaHTTP  bool     `json:"via_http,omitempty"` // detected via the 8080 proxy
+	CPEs     []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceOracleNoSQL) Type() string { return ProtoOracleNoSQL }
+
+// ServiceOracleTimesTen identifies an Oracle TimesTen In-Memory Database
+// listener (6624/6625) via its distinctive malformed-HTTP reject. No version
+// is exposed, so CPE is versionless.
+type ServiceOracleTimesTen struct {
+	CPEs []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceOracleTimesTen) Type() string { return ProtoOracleTimesTen }
+
 type ServiceOracleDirectory struct {
 	Product          string   `json:"product"`                     // "oud" or "oid"
 	VendorName       string   `json:"vendor_name,omitempty"`       // OUD: "Oracle Corporation"
@@ -1679,6 +1781,7 @@ type ServiceOracleOBIEE struct {
 }
 
 func (e ServiceOracleOBIEE) Type() string { return ProtoOracleOBIEE }
+
 type ServiceOracleHyperion struct {
 	SharedServices bool     `json:"shared_services,omitempty"` // S3 /interop Foundation / Shared Services console
 	Planning       bool     `json:"planning,omitempty"`        // C1 /HyperionPlanning module present
@@ -1757,6 +1860,40 @@ type ServiceOracleReports struct {
 
 func (e ServiceOracleReports) Type() string { return ProtoOracleReports }
 
+// ServiceOracleInfra is the shared union payload for the Oracle infrastructure
+// bundle HTTP detector (ILOM, Oracle Data Integrator, OLVM). The emitted
+// technology is discriminated dynamically by Product via Type() (GlassFish
+// precedent). Version (ILOM firmware, ODI/OLVM version when known) flows through
+// CreateServiceFrom into service.Version; Firmware is retained on the struct
+// because it also drives the ILOM CPE.
+type ServiceOracleInfra struct {
+	Product  string   `json:"product"`            // "ilom" | "odi" | "olvm"
+	Firmware string   `json:"firmware,omitempty"` // ILOM Redfish Manager FirmwareVersion
+	Redfish  bool     `json:"redfish,omitempty"`  // ILOM: Redfish service root present
+	Console  bool     `json:"console,omitempty"`  // ODI: /odiconsole/ present
+	CPEs     []string `json:"cpes,omitempty"`
+}
+
+// Type discriminates the emitted technology from the Product field.
+func (e ServiceOracleInfra) Type() string {
+	switch e.Product {
+	case "odi":
+		return ProtoOracleODI
+	case "olvm":
+		return ProtoOracleOLVM
+	default:
+		return ProtoOracleILOM
+	}
+}
+
+// ServiceVirtualBoxWeb is the payload for the VirtualBox web service
+// (vboxwebsrv) SOAP endpoint on 18083.
+type ServiceVirtualBoxWeb struct {
+	CPEs []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceVirtualBoxWeb) Type() string { return ProtoVirtualBoxWeb }
+
 type ServiceWebLogic struct {
 	T3           bool     `json:"t3,omitempty"`            // server answered the T3 handshake
 	T3Version    string   `json:"t3_version,omitempty"`    // raw version from the HELO line, e.g. "12.2.1.3.0"
@@ -1788,6 +1925,20 @@ type ServiceOracleAgilePLM struct {
 }
 
 func (e ServiceOracleAgilePLM) Type() string { return ProtoOracleAgilePLM }
+
+type ServiceOracleOUAF struct {
+	OUAF  bool     `json:"ouaf,omitempty"`
+	UTA   bool     `json:"uta,omitempty"`
+	Title string   `json:"title,omitempty"`
+	CPEs  []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceOracleOUAF) Type() string {
+	if !e.OUAF && e.UTA {
+		return ProtoOracleUTA
+	}
+	return ProtoOracleOUAF
+}
 
 type ServiceMFT struct {
 	Title string   `json:"title,omitempty"`
@@ -2105,6 +2256,16 @@ type ServiceChromaDB struct {
 }
 
 func (e ServiceChromaDB) Type() string { return ProtoChromaDB }
+
+type ServiceClickHouse struct {
+	ServerName      string   `json:"server_name,omitempty"`
+	Timezone        string   `json:"timezone,omitempty"`
+	DisplayName     string   `json:"display_name,omitempty"`
+	ProtocolVersion uint64   `json:"protocol_version,omitempty"`
+	CPEs            []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceClickHouse) Type() string { return ProtoClickHouse }
 
 type ServiceCitrixICA struct {
 	BannerMatch bool     `json:"banner_match"` // true if double ICA signature matched (high confidence)

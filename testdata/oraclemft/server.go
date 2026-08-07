@@ -1,15 +1,17 @@
 // Mock Oracle MFT server for integration testing.
 //
 // MODE env var controls what the container simulates:
-//   "console"  - MFT console login page only
-//   "api"      - MFT REST API only
-//   "full"     - Full MFT with console + REST API
+//
+//	"console"  - MFT console login page only
+//	"api"      - MFT REST API only
+//	"full"     - Full MFT with console + REST API
 package main
 
 import (
 	"fmt"
 	"net/http"
 	"os"
+	"time"
 )
 
 func main() {
@@ -63,7 +65,15 @@ func main() {
 
 	addr := ":" + port
 	fmt.Printf("MFT mock server starting (mode=%s) on %s\n", mode, addr)
-	if err := http.ListenAndServe(addr, mux); err != nil {
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+	if err := srv.ListenAndServe(); err != nil {
 		fmt.Fprintf(os.Stderr, "server error: %v\n", err)
 		os.Exit(1)
 	}
