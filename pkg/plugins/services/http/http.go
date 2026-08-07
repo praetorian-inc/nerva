@@ -76,13 +76,16 @@ var (
 		9080: {},
 		9090: {},
 		9100: {},
+		9191: {}, // PaperCut MF/NG admin web interface
 	}
 
 	commonHTTPSPorts = map[int]struct{}{
 		443:  {},
+		4443: {}, // NAKIVO Backup & Replication web UI
 		5986: {}, // WinRM HTTPS
 		6443: {}, // Kubernetes API server default port
 		8443: {},
+		9192: {}, // PaperCut MF/NG secure admin web interface
 		9398: {}, // Veeam Backup Enterprise Manager legacy REST API
 		9443: {}, // Veeam Backup Enterprise Manager web UI (among others)
 	}
