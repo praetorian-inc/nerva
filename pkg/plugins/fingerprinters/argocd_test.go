@@ -239,10 +239,10 @@ func TestArgoCDAPIFingerprinter_Fingerprint_Valid(t *testing.T) {
 			wantHelmVersion: "v3.13.2",
 		},
 		{
-			name:                 "dev build version does not match strict semver",
+			name:                 "pre-release suffix is stripped from version",
 			body:                 `{"Version": "v2.10.0-rc1", "KustomizeVersion": "v4.5.7"}`,
-			wantVersion:          "",
-			wantCPE:              "cpe:2.3:a:argoproj:argo_cd:*:*:*:*:*:*:*:*",
+			wantVersion:          "2.10.0",
+			wantCPE:              "cpe:2.3:a:argoproj:argo_cd:2.10.0:*:*:*:*:*:*:*",
 			wantRawVersion:       "v2.10.0-rc1",
 			wantKustomizeVersion: "v4.5.7",
 		},
@@ -591,9 +591,9 @@ func TestExtractArgoCDVersion(t *testing.T) {
 			want: "",
 		},
 		{
-			name: "dev build suffix does not match strict semver",
+			name: "pre-release suffix is stripped",
 			raw:  "v2.10.0-rc1",
-			want: "",
+			want: "2.10.0",
 		},
 		{
 			name: "empty",

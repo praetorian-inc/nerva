@@ -194,14 +194,26 @@ func (f *ArgoCDLoginFingerprinter) Fingerprint(resp *http.Response, body []byte)
 
 // --- Shared helpers ---
 
-// extractArgoCDVersion strips a leading "v" prefix and a "+build" suffix from
-// the raw Argo CD Version field (e.g. "v2.9.3+6eba5be" -> "2.9.3"), then
-// validates the result against strict MAJOR.MINOR.PATCH semver and guards
-// against CPE metacharacters. Returns "" if the raw value cannot be reduced
-// to a safe, valid version string.
+// extractArgoCDVersion strips a leading "v" prefix, a "+build" suffix, and a
+// "-prerelease" suffix from the raw Argo CD Version field (e.g.
+// "v2.9.3+6eba5be" -> "2.9.3", "v2.10.0-rc1" -> "2.10.0"), then validates the
+// result against strict MAJOR.MINOR.PATCH semver and guards against CPE
+// metacharacters. Returns "" if the raw value cannot be reduced to a safe,
+// valid version string.
 func extractArgoCDVersion(raw string) string {
 	version := strings.TrimPrefix(raw, "v")
 	if idx := strings.Index(version, "+"); idx != -1 {
+		version = version[:idx]
+	}
+
+	// Drop any pre-release suffix. NVD argo_cd CPEs carry only
+	// MAJOR.MINOR.PATCH, so "2.10.0-rc1" would fail the strict semver check
+	// below and fall back to a wildcard CPE that matches every argo_cd CVE
+	// regardless of version. Reporting "2.10.0" is strictly more precise. The
+	// untouched original is preserved in the raw_version metadata field. This
+	// runs after the "+" strip because a build hash can itself contain a dash
+	// (e.g. "2.9.3+6eba-5be").
+	if idx := strings.Index(version, "-"); idx != -1 {
 		version = version[:idx]
 	}
 
