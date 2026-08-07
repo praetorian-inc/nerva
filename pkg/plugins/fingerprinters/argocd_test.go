@@ -405,7 +405,7 @@ func TestArgoCDLoginFingerprinter_Fingerprint_Valid(t *testing.T) {
 
 			assert.Equal(t, "argocd-login", result.Technology)
 			assert.Empty(t, result.Version)
-			assert.Contains(t, result.CPEs, "cpe:2.3:a:argoproj:argo_cd:*:*:*:*:*:*:*:*")
+			assert.Empty(t, result.CPEs)
 			assert.Equal(t, "login_title", result.Metadata["detection_method"])
 		})
 	}
@@ -654,7 +654,7 @@ func TestArgoCDLoginFingerprinter_Integration(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, "argocd-login", result.Technology)
-	assert.Contains(t, result.CPEs, "cpe:2.3:a:argoproj:argo_cd:*:*:*:*:*:*:*:*")
+	assert.Empty(t, result.CPEs)
 }
 
 func TestArgoCDLoginFingerprinter_Integration_NonArgoCD(t *testing.T) {

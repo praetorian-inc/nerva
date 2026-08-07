@@ -176,10 +176,16 @@ func (f *ArgoCDLoginFingerprinter) Fingerprint(resp *http.Response, body []byte)
 		return nil, nil
 	}
 
+	// No CPE is emitted here. The login page carries no version, so this
+	// fingerprinter could only ever produce a wildcard CPE. The HTTP engine
+	// concatenates CPEs from all matching fingerprinters without reconciling
+	// them, so a wildcard alongside the precise CPE from /api/version would
+	// match every argo_cd CVE regardless of version and make a fully patched
+	// instance correlate as vulnerable. Technology and detection_method still
+	// record the login signal.
 	return &FingerprintResult{
 		Technology: "argocd-login",
 		Version:    "",
-		CPEs:       []string{buildArgoCDCPE("")},
 		Metadata: map[string]any{
 			"detection_method": "login_title",
 		},
