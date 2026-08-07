@@ -191,8 +191,8 @@ func TestJDWPIntegrationMisconfigs(t *testing.T) {
 	if finding.ID != "jdwp-exposed" {
 		t.Errorf("Expected finding ID %q, got %q", "jdwp-exposed", finding.ID)
 	}
-	if finding.Severity != plugins.SeverityCritical {
-		t.Errorf("Expected severity %q, got %q", plugins.SeverityCritical, finding.Severity)
+	if finding.Severity != plugins.SeverityHigh {
+		t.Errorf("Expected severity %q, got %q", plugins.SeverityHigh, finding.Severity)
 	}
 	if len(finding.Evidence) == 0 {
 		t.Error("Expected non-empty evidence")

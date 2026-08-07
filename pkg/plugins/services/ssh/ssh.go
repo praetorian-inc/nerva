@@ -153,7 +153,7 @@ func buildSSHFindings(algo map[string]string, passwordAuth bool) []plugins.Secur
 	if passwordAuth {
 		findings = append(findings, plugins.SecurityFinding{
 			ID:          "ssh-password-auth",
-			Severity:    plugins.SeverityMedium,
+			Severity:    plugins.SeverityLow,
 			Description: "SSH server allows password authentication, enabling brute-force attacks",
 		})
 	}

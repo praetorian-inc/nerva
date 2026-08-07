@@ -1,15 +1,17 @@
 // Mock Oracle OUAF/UTA server for integration testing.
 //
 // MODE env var controls what the container simulates:
-//   "ouaf"     - OUAF login surface only (port 6501)
-//   "uta"      - UTA login surface only (port 6500)
-//   "both"     - OUAF + UTA on the same host (port 6501)
+//
+//	"ouaf"     - OUAF login surface only (port 6501)
+//	"uta"      - UTA login surface only (port 6500)
+//	"both"     - OUAF + UTA on the same host (port 6501)
 package main
 
 import (
 	"fmt"
 	"net/http"
 	"os"
+	"time"
 )
 
 func main() {
@@ -67,8 +69,16 @@ func main() {
 	})
 
 	addr := ":" + port
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
 	fmt.Printf("OUAF/UTA mock server starting (mode=%s) on %s\n", mode, addr)
-	if err := http.ListenAndServe(addr, mux); err != nil {
+	if err := srv.ListenAndServe(); err != nil {
 		fmt.Fprintf(os.Stderr, "server error: %v\n", err)
 		os.Exit(1)
 	}
