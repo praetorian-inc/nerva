@@ -123,6 +123,30 @@ func TestAppwebFingerprinter_Match(t *testing.T) {
 			statusCode: 200,
 			want:       false,
 		},
+		{
+			name:       "Server: NotAppweb/1.2.3 returns false (not a valid product token)",
+			server:     "NotAppweb/1.2.3",
+			statusCode: 200,
+			want:       false,
+		},
+		{
+			name:       "Server: MyAppWebProxy/1.0 returns false (embedded substring)",
+			server:     "MyAppWebProxy/1.0",
+			statusCode: 200,
+			want:       false,
+		},
+		{
+			name:       "Server: Appweb/1.2.3.4 returns false (4-part version rejected)",
+			server:     "Appweb/1.2.3.4",
+			statusCode: 200,
+			want:       false,
+		},
+		{
+			name:       "Server: Appweb/1.2.3beta returns false (version suffix rejected)",
+			server:     "Appweb/1.2.3beta",
+			statusCode: 200,
+			want:       false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -273,6 +297,16 @@ func TestAppwebFingerprinter_Fingerprint_Invalid(t *testing.T) {
 			server:     "Appweb/7.0.1",
 			statusCode: 503,
 		},
+		{
+			name:       "Server: NotAppweb/1.2.3 (not a valid product token)",
+			server:     "NotAppweb/1.2.3",
+			statusCode: 200,
+		},
+		{
+			name:       "Server: Appweb/1.2.3.4 (4-part version rejected)",
+			server:     "Appweb/1.2.3.4",
+			statusCode: 200,
+		},
 	}
 
 	for _, tt := range tests {
@@ -330,9 +364,6 @@ func TestBuildAppwebCPE(t *testing.T) {
 }
 
 func TestAppwebFingerprinter_Integration(t *testing.T) {
-	fp := &AppwebFingerprinter{}
-	Register(fp)
-
 	resp := &http.Response{
 		StatusCode: 200,
 		Header:     make(http.Header),

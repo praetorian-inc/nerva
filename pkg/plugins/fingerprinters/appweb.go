@@ -30,10 +30,9 @@ Those responses are out of scope for this fingerprinter.
 
 # Detection Method
 
- 1. Check Server header for "appweb" substring (case-insensitive)
+ 1. Check Server header for an anchored Appweb product token (case-insensitive)
  2. Accept status codes 200-499 (reject 5xx server errors)
- 3. Extract version if present in Server header
- 4. Validate version format to prevent CPE injection
+ 3. Extract version if present in Server header (3-part versions only)
 */
 package fingerprinters
 
@@ -47,13 +46,13 @@ import (
 // AppwebFingerprinter detects Appweb embedded web server via Server header
 type AppwebFingerprinter struct{}
 
-// appwebVersionRegex extracts version from Server header.
-// Matches: Embedthis-Appweb/4.1.0, Mbedthis-Appweb/2.4.2, Appweb/7.0.1
-var appwebVersionRegex = regexp.MustCompile(`(?i)(?:(?:Embedthis|Mbedthis)-)?Appweb/(\d+\.\d+\.\d+)`)
-
-// appwebVersionValidationRegex validates extracted version format.
-// Prevents CPE injection by ensuring version contains only digits and dots.
-var appwebVersionValidationRegex = regexp.MustCompile(`^\d+\.\d+\.\d+$`)
+// appwebHeaderRegex matches the Appweb product token in a Server header and
+// optionally extracts its 3-part version. Anchored to whitespace/string
+// boundaries to reject false positives like "NotAppweb" or "MyAppWebProxy",
+// and to reject over-extraction from malformed versions like "1.2.3.4" or
+// "1.2.3beta".
+// Matches: Embedthis-Appweb/4.1.0, Mbedthis-Appweb/2.4.2, Appweb/7.0.1, Appweb
+var appwebHeaderRegex = regexp.MustCompile(`(?i)(?:^|\s)(?:(?:Embedthis|Mbedthis)-)?Appweb(?:/(\d+\.\d+\.\d+))?(?:\s|$)`)
 
 func init() {
 	Register(&AppwebFingerprinter{})
@@ -69,9 +68,8 @@ func (f *AppwebFingerprinter) Match(resp *http.Response) bool {
 		return false
 	}
 
-	// Check Server header for "appweb" (case-insensitive)
-	serverHeader := strings.ToLower(resp.Header.Get("Server"))
-	return strings.Contains(serverHeader, "appweb")
+	// Check Server header for a valid Appweb product token
+	return appwebHeaderRegex.MatchString(resp.Header.Get("Server"))
 }
 
 func (f *AppwebFingerprinter) Fingerprint(resp *http.Response, body []byte) (*FingerprintResult, error) {
@@ -86,28 +84,17 @@ func (f *AppwebFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fi
 		return nil, nil
 	}
 
-	// Verify it contains "appweb" (case-insensitive)
-	serverLower := strings.ToLower(serverHeader)
-	if !strings.Contains(serverLower, "appweb") {
-		return nil, nil
-	}
-
 	// Reject CPE injection attempts
 	if strings.Contains(serverHeader, ":*:") {
 		return nil, nil
 	}
 
-	// Extract version from Server header if present
-	version := ""
-	matches := appwebVersionRegex.FindStringSubmatch(serverHeader)
-	if len(matches) >= 2 {
-		version = matches[1]
-
-		// Validate version format to prevent CPE injection
-		if !appwebVersionValidationRegex.MatchString(version) {
-			return nil, nil
-		}
+	// Verify it contains a valid Appweb product token and extract version
+	matches := appwebHeaderRegex.FindStringSubmatch(serverHeader)
+	if matches == nil {
+		return nil, nil
 	}
+	version := matches[1]
 
 	// Build metadata
 	metadata := map[string]any{
