@@ -66,6 +66,9 @@ func init() {
 func (p *AnyDeskPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
 	// The scanner's DialTLS already completed the TLS handshake.
 	// Type-assert to access certificate data.
+	if u, ok := conn.(interface{ Unwrap() net.Conn }); ok {
+		conn = u.Unwrap()
+	}
 	tlsConn, ok := conn.(*tls.Conn)
 	if !ok {
 		return nil, nil

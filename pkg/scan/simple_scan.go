@@ -56,6 +56,10 @@ func (c *prefixConn) Read(b []byte) (int, error) {
 	return c.reader.Read(b)
 }
 
+func (c *prefixConn) Unwrap() net.Conn {
+	return c.Conn
+}
+
 func newPrefixConn(conn net.Conn, prefix []byte) net.Conn {
 	return &prefixConn{
 		Conn:   conn,
@@ -134,6 +138,8 @@ func (c *Config) UDPScanTarget(target plugins.Target) (*plugins.Service, error) 
 		return nil, nil
 	}
 
+	// Banner pre-filtering is not applicable: UDP is connectionless; servers
+	// require a client probe before responding, so no server banner exists to pre-read.
 	for _, plugin := range sortedUDPPlugins {
 		conn, err := c.DialUDP(target)
 		if err != nil {
@@ -180,7 +186,9 @@ func (c *Config) SCTPScanTarget(target plugins.Target) (*plugins.Service, error)
 		return nil, nil
 	}
 
-	// Slow scan: try all SCTP plugins
+	// Slow scan: try all SCTP plugins.
+	// Banner pre-filtering is not applicable: SCTP is connection-oriented but
+	// SetReadDeadline is unsupported on Linux SCTP sockets, which ReadBanner depends on.
 	for _, plugin := range sortedSCTPPlugins {
 		conn, err := DialSCTP(ip, port)
 		if err != nil {
@@ -260,9 +268,10 @@ func (c *Config) SimpleScanTarget(target plugins.Target) ([]*plugins.Service, er
 
 	if isTLS {
 		tlsCandidates := sortedTCPTLSPlugins
+		var firstTLSConn net.Conn
 
 		if bannerConn, dialErr := c.DialTLS(target); dialErr == nil {
-			banner, _ := ReadBanner(bannerConn, 0)
+			banner, bannerErr := ReadBanner(bannerConn, 0)
 			family := ClassifyBanner(banner)
 			if c.Verbose {
 				log.Printf("%v %v-> TLS banner pre-read: family=%s (%d bytes)\n",
@@ -271,13 +280,25 @@ func (c *Config) SimpleScanTarget(target plugins.Target) ([]*plugins.Service, er
 			if family != ProtocolFamilyUnknown {
 				tlsCandidates = FilterPluginsByFamily(sortedTCPTLSPlugins, family)
 			}
-			bannerConn.Close()
+			if family != ProtocolFamilyUnknown && len(banner) > 0 && bannerErr == nil {
+				_ = bannerConn.SetReadDeadline(time.Time{})
+				firstTLSConn = newPrefixConn(bannerConn, banner)
+			} else {
+				bannerConn.Close()
+			}
 		}
 
-		for _, plugin := range tlsCandidates {
-			conn, err := c.DialTLS(target)
-			if err != nil {
-				return nil, fmt.Errorf("error connecting via TLS, err = %w", err)
+		for i, plugin := range tlsCandidates {
+			var conn net.Conn
+			var err error
+			if i == 0 && firstTLSConn != nil {
+				conn = firstTLSConn
+				firstTLSConn = nil
+			} else {
+				conn, err = c.DialTLS(target)
+				if err != nil {
+					return nil, fmt.Errorf("error connecting via TLS, err = %w", err)
+				}
 			}
 			result, err := simplePluginRunner(conn, target, c, plugin)
 			if err != nil && c.Verbose {

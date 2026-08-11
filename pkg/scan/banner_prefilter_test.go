@@ -16,7 +16,13 @@ package scan
 
 import (
 	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
 	"io"
+	"math/big"
 	"net"
 	"net/netip"
 	"testing"
@@ -170,6 +176,58 @@ func startClientFirstMockServer(t *testing.T) (netip.AddrPort, func()) {
 	return ap, func() { ln.Close() }
 }
 
+// startTLSBannerMockServer starts a TLS listener on a random loopback port
+// using a self-signed certificate. On each accepted connection, after the TLS
+// handshake completes, it writes banner, then reads and discards any further
+// data from the client.
+func startTLSBannerMockServer(t *testing.T, banner []byte) (netip.AddrPort, func()) {
+	t.Helper()
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(time.Hour),
+		IPAddresses:  []net.IP{net.IPv4(127, 0, 0, 1)},
+	}
+	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert := tls.Certificate{
+		Certificate: [][]byte{certDER},
+		PrivateKey:  key,
+	}
+
+	tlsCfg := &tls.Config{
+		Certificates: []tls.Certificate{cert},
+	}
+
+	ln, err := tls.Listen("tcp", "127.0.0.1:0", tlsCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				c.Write(banner)
+				_, _ = io.Copy(io.Discard, c)
+			}(conn)
+		}
+	}()
+	addr := ln.Addr().(*net.TCPAddr)
+	ap := netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), uint16(addr.Port))
+	return ap, func() { ln.Close() }
+}
+
 // --- integration tests for banner pre-filtering ----------------------------
 
 // TestIntegration_BannerPrefilter_SSHOnNonStandardPort verifies that
@@ -228,5 +286,82 @@ func TestIntegration_BannerPrefilter_ClientSpeaksFirst_NoNarrowing(t *testing.T)
 
 	if _, err := cfg.SimpleScanTarget(target); err != nil {
 		t.Fatalf("SimpleScanTarget returned error: %v", err)
+	}
+}
+
+// --- TLS integration tests for banner pre-filtering -------------------------
+
+// TestIntegration_BannerPrefilter_TLS_SSHOnNonStandardPort verifies that
+// SimpleScanTarget completes without error when a TLS-wrapped server sends
+// an SSH banner after the handshake on a non-standard port.
+func TestIntegration_BannerPrefilter_TLS_SSHOnNonStandardPort(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test")
+	}
+
+	ap, cleanup := startTLSBannerMockServer(t, []byte("SSH-2.0-OpenSSH_8.9\r\n"))
+	t.Cleanup(cleanup)
+
+	cfg := Config{FastMode: false, DefaultTimeout: 5 * time.Second}
+	target := plugins.Target{Address: ap}
+
+	if _, err := cfg.SimpleScanTarget(target); err != nil {
+		t.Fatalf("SimpleScanTarget returned error: %v", err)
+	}
+}
+
+// TestIntegration_BannerPrefilter_TLS_UnknownFallsBackToFullIteration verifies
+// that a TLS-wrapped server sending unrecognizable bytes does not narrow the
+// candidate list and does not cause SimpleScanTarget to error or panic.
+func TestIntegration_BannerPrefilter_TLS_UnknownFallsBackToFullIteration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test")
+	}
+
+	ap, cleanup := startTLSBannerMockServer(t, []byte{0x01, 0x02, 0x03})
+	t.Cleanup(cleanup)
+
+	cfg := Config{FastMode: false, DefaultTimeout: 200 * time.Millisecond}
+	target := plugins.Target{Address: ap}
+
+	if _, err := cfg.SimpleScanTarget(target); err != nil {
+		t.Fatalf("SimpleScanTarget returned error: %v", err)
+	}
+}
+
+// TestIntegration_BannerPrefilter_TLS_ReusePreservesTLSFindings verifies that
+// TLS connection reuse via prefixConn does not break plugins.CheckTLS — the
+// Unwrap method must expose the underlying *tls.Conn so that TLS security
+// findings (self-signed cert, weak key, etc.) are still returned.
+func TestIntegration_BannerPrefilter_TLS_ReusePreservesTLSFindings(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test")
+	}
+
+	ap, cleanup := startTLSBannerMockServer(t, []byte("SSH-2.0-OpenSSH_8.9\r\n"))
+	t.Cleanup(cleanup)
+
+	cfg := Config{FastMode: false, DefaultTimeout: 5 * time.Second, Verbose: false}
+	target := plugins.Target{Address: ap}
+
+	// Dial a TLS connection (same as SimpleScanTarget does in the slow lane).
+	tlsConn, err := cfg.DialTLS(target)
+	if err != nil {
+		t.Fatalf("DialTLS returned error: %v", err)
+	}
+	defer tlsConn.Close()
+
+	// Pre-read the banner, then wrap in prefixConn (replicating the
+	// connection-reuse path in SimpleScanTarget's slow TLS lane).
+	banner, _ := ReadBanner(tlsConn, 0)
+	_ = tlsConn.SetReadDeadline(time.Time{})
+	wrapped := newPrefixConn(tlsConn, banner)
+
+	// CheckTLS must see through the prefixConn wrapper to the underlying
+	// *tls.Conn. Without the Unwrap method, the type assertion fails and
+	// CheckTLS silently returns nil.
+	findings := plugins.CheckTLS(wrapped)
+	if len(findings) == 0 {
+		t.Fatal("expected TLS security findings from CheckTLS on prefixConn-wrapped *tls.Conn, got none — prefixConn may be hiding *tls.Conn from CheckTLS")
 	}
 }
