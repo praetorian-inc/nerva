@@ -25,6 +25,7 @@ import (
 	"math/big"
 	"net"
 	"net/netip"
+	"strings"
 	"testing"
 	"time"
 
@@ -238,14 +239,33 @@ func TestIntegration_BannerPrefilter_SSHOnNonStandardPort(t *testing.T) {
 		t.Skip("skipping integration test")
 	}
 
-	ap, cleanup := startBannerMockServer(t, []byte("SSH-2.0-OpenSSH_8.9\r\n"))
-	t.Cleanup(cleanup)
+	port := startMockTCPServer(t, 0, handleSSHBanner)
+	ap := netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), port)
 
 	cfg := Config{FastMode: false, DefaultTimeout: 5 * time.Second}
 	target := plugins.Target{Address: ap}
 
-	if _, err := cfg.SimpleScanTarget(target); err != nil {
+	services, err := cfg.SimpleScanTarget(target)
+	if err != nil {
 		t.Fatalf("SimpleScanTarget returned error: %v", err)
+	}
+	if len(services) == 0 {
+		t.Fatal("SimpleScanTarget returned no services; expected at least one SSH service")
+	}
+
+	found := false
+	for _, s := range services {
+		if strings.Contains(strings.ToLower(s.Protocol), "ssh") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		protocols := make([]string, len(services))
+		for i, s := range services {
+			protocols[i] = s.Protocol
+		}
+		t.Fatalf("no service identified as SSH; got protocols: %v", protocols)
 	}
 }
 
