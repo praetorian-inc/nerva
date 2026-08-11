@@ -296,3 +296,62 @@ func TestAppwebFingerprinter_Fingerprint_Invalid(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildAppwebCPE(t *testing.T) {
+	tests := []struct {
+		name    string
+		version string
+		want    string
+	}{
+		{
+			name:    "With version",
+			version: "4.1.0",
+			want:    "cpe:2.3:a:embedthis:appweb:4.1.0:*:*:*:*:*:*:*",
+		},
+		{
+			name:    "Empty version",
+			version: "",
+			want:    "cpe:2.3:a:embedthis:appweb:*:*:*:*:*:*:*:*",
+		},
+		{
+			name:    "Legacy version",
+			version: "2.4.2",
+			want:    "cpe:2.3:a:embedthis:appweb:2.4.2:*:*:*:*:*:*:*",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := buildAppwebCPE(tt.version); got != tt.want {
+				t.Errorf("buildAppwebCPE() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAppwebFingerprinter_Integration(t *testing.T) {
+	fp := &AppwebFingerprinter{}
+	Register(fp)
+
+	resp := &http.Response{
+		StatusCode: 200,
+		Header:     make(http.Header),
+	}
+	resp.Header.Set("Server", "Embedthis-Appweb/4.1.0")
+
+	results := RunFingerprinters(resp, []byte{})
+
+	found := false
+	for _, result := range results {
+		if result.Technology == "appweb" {
+			found = true
+			if result.Version != "4.1.0" {
+				t.Errorf("Version = %q, want %q", result.Version, "4.1.0")
+			}
+		}
+	}
+
+	if !found {
+		t.Error("AppwebFingerprinter not found in results")
+	}
+}
