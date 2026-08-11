@@ -75,7 +75,53 @@ func (f *AppwebFingerprinter) Match(resp *http.Response) bool {
 }
 
 func (f *AppwebFingerprinter) Fingerprint(resp *http.Response, body []byte) (*FingerprintResult, error) {
-	return nil, nil
+	// Only accept 2xx-4xx responses
+	if resp.StatusCode < 200 || resp.StatusCode >= 500 {
+		return nil, nil
+	}
+
+	// Extract Server header
+	serverHeader := resp.Header.Get("Server")
+	if serverHeader == "" {
+		return nil, nil
+	}
+
+	// Verify it contains "appweb" (case-insensitive)
+	serverLower := strings.ToLower(serverHeader)
+	if !strings.Contains(serverLower, "appweb") {
+		return nil, nil
+	}
+
+	// Reject CPE injection attempts
+	if strings.Contains(serverHeader, ":*:") {
+		return nil, nil
+	}
+
+	// Extract version from Server header if present
+	version := ""
+	matches := appwebVersionRegex.FindStringSubmatch(serverHeader)
+	if len(matches) >= 2 {
+		version = matches[1]
+
+		// Validate version format to prevent CPE injection
+		if !appwebVersionValidationRegex.MatchString(version) {
+			return nil, nil
+		}
+	}
+
+	// Build metadata
+	metadata := map[string]any{
+		"vendor":        "Embedthis",
+		"product":       "Appweb",
+		"server_header": serverHeader,
+	}
+
+	return &FingerprintResult{
+		Technology: "appweb",
+		Version:    version,
+		CPEs:       []string{buildAppwebCPE(version)},
+		Metadata:   metadata,
+	}, nil
 }
 
 func buildAppwebCPE(version string) string {

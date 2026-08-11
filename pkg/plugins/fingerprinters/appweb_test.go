@@ -142,3 +142,157 @@ func TestAppwebFingerprinter_Match(t *testing.T) {
 		})
 	}
 }
+
+func TestAppwebFingerprinter_Fingerprint_Valid(t *testing.T) {
+	tests := []struct {
+		name        string
+		server      string
+		wantVersion string
+	}{
+		{
+			name:        "Embedthis-Appweb/4.1.0 (version extraction)",
+			server:      "Embedthis-Appweb/4.1.0",
+			wantVersion: "4.1.0",
+		},
+		{
+			name:        "Mbedthis-Appweb/2.4.2 (legacy version extraction)",
+			server:      "Mbedthis-Appweb/2.4.2",
+			wantVersion: "2.4.2",
+		},
+		{
+			name:        "Appweb/7.0.1 (OEM version extraction)",
+			server:      "Appweb/7.0.1",
+			wantVersion: "7.0.1",
+		},
+		{
+			name:        "Embedthis-Appweb/8.2.1",
+			server:      "Embedthis-Appweb/8.2.1",
+			wantVersion: "8.2.1",
+		},
+		{
+			name:        "Appweb (bare, no version)",
+			server:      "Appweb",
+			wantVersion: "",
+		},
+		{
+			name:        "embedthis-appweb/4.1.0 (lowercase, version extraction)",
+			server:      "embedthis-appweb/4.1.0",
+			wantVersion: "4.1.0",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fp := &AppwebFingerprinter{}
+			resp := &http.Response{
+				StatusCode: 200,
+				Header:     make(http.Header),
+			}
+			resp.Header.Set("Server", tt.server)
+
+			result, err := fp.Fingerprint(resp, []byte{})
+			if err != nil {
+				t.Fatalf("Fingerprint() error = %v", err)
+			}
+			if result == nil {
+				t.Fatal("Fingerprint() returned nil result")
+			}
+
+			if result.Technology != "appweb" {
+				t.Errorf("Technology = %q, want %q", result.Technology, "appweb")
+			}
+			if result.Version != tt.wantVersion {
+				t.Errorf("Version = %q, want %q", result.Version, tt.wantVersion)
+			}
+
+			// Check metadata
+			vendor, ok := result.Metadata["vendor"].(string)
+			if !ok || vendor != "Embedthis" {
+				t.Errorf("Metadata[vendor] = %v, want %q", result.Metadata["vendor"], "Embedthis")
+			}
+			product, ok := result.Metadata["product"].(string)
+			if !ok || product != "Appweb" {
+				t.Errorf("Metadata[product] = %v, want %q", result.Metadata["product"], "Appweb")
+			}
+			serverHeader, ok := result.Metadata["server_header"].(string)
+			if !ok || serverHeader != tt.server {
+				t.Errorf("Metadata[server_header] = %v, want %q", result.Metadata["server_header"], tt.server)
+			}
+
+			// Check CPE
+			if len(result.CPEs) == 0 {
+				t.Error("Expected at least one CPE")
+			}
+			expectedCPE := "cpe:2.3:a:embedthis:appweb:"
+			if tt.wantVersion != "" {
+				expectedCPE += tt.wantVersion
+			} else {
+				expectedCPE += "*"
+			}
+			expectedCPE += ":*:*:*:*:*:*:*"
+			if result.CPEs[0] != expectedCPE {
+				t.Errorf("CPE = %q, want %q", result.CPEs[0], expectedCPE)
+			}
+		})
+	}
+}
+
+func TestAppwebFingerprinter_Fingerprint_Invalid(t *testing.T) {
+	tests := []struct {
+		name       string
+		server     string
+		statusCode int
+	}{
+		{
+			name:       "Server: Apache/2.4.41",
+			server:     "Apache/2.4.41",
+			statusCode: 200,
+		},
+		{
+			name:       "Server: empty",
+			server:     "",
+			statusCode: 200,
+		},
+		{
+			name:       "Server: Embedthis-http (v5+ out of scope)",
+			server:     "Embedthis-http",
+			statusCode: 200,
+		},
+		{
+			name:       "CPE injection attempt in Server header",
+			server:     "Embedthis-Appweb/1.0.0:*:*:*:*:*:*:*",
+			statusCode: 200,
+		},
+		{
+			name:       "Status 500",
+			server:     "Embedthis-Appweb/4.1.0",
+			statusCode: 500,
+		},
+		{
+			name:       "Status 503",
+			server:     "Appweb/7.0.1",
+			statusCode: 503,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fp := &AppwebFingerprinter{}
+			resp := &http.Response{
+				StatusCode: tt.statusCode,
+				Header:     make(http.Header),
+			}
+			if tt.server != "" {
+				resp.Header.Set("Server", tt.server)
+			}
+
+			result, err := fp.Fingerprint(resp, []byte{})
+			if err != nil {
+				t.Fatalf("Fingerprint() unexpected error = %v", err)
+			}
+			if result != nil {
+				t.Errorf("Fingerprint() = %+v, want nil", result)
+			}
+		})
+	}
+}
