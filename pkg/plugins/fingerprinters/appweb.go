@@ -41,6 +41,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"strings"
 )
 
 // AppwebFingerprinter detects Appweb embedded web server via Server header
@@ -63,7 +64,14 @@ func (f *AppwebFingerprinter) Name() string {
 }
 
 func (f *AppwebFingerprinter) Match(resp *http.Response) bool {
-	return false
+	// Only accept 2xx-4xx responses (reject 5xx server errors)
+	if resp.StatusCode < 200 || resp.StatusCode >= 500 {
+		return false
+	}
+
+	// Check Server header for "appweb" (case-insensitive)
+	serverHeader := strings.ToLower(resp.Header.Get("Server"))
+	return strings.Contains(serverHeader, "appweb")
 }
 
 func (f *AppwebFingerprinter) Fingerprint(resp *http.Response, body []byte) (*FingerprintResult, error) {
