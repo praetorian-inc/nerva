@@ -74,6 +74,18 @@ func TestAPISIXFingerprinter_Match(t *testing.T) {
 			setHeader: false,
 			want:      false,
 		},
+		{
+			name:         "prefixed Apache APISIX/3.9.0 returns false",
+			serverHeader: "Apache APISIX/3.9.0",
+			setHeader:    true,
+			want:         false,
+		},
+		{
+			name:         "suffixed APISIX/3.9.0 proxy still matches",
+			serverHeader: "APISIX/3.9.0 proxy",
+			setHeader:    true,
+			want:         true,
+		},
 	}
 
 	for _, tt := range tests {

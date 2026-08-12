@@ -53,7 +53,7 @@ func (f *APISIXFingerprinter) Name() string {
 }
 
 func (f *APISIXFingerprinter) Match(resp *http.Response) bool {
-	return strings.Contains(strings.ToLower(resp.Header.Get("Server")), "apisix")
+	return apisixServerRegex.MatchString(strings.TrimSpace(resp.Header.Get("Server")))
 }
 
 func (f *APISIXFingerprinter) Fingerprint(resp *http.Response, body []byte) (*FingerprintResult, error) {
