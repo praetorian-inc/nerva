@@ -222,6 +222,7 @@ const (
 	ProtoRDPEUDP           = "rdpeudp"
 	ProtoRedis             = "redis"
 	ProtoRedisTLS          = "redis"
+	ProtoRedisSentinel     = "redis-sentinel"
 	ProtoRMI               = "java-rmi"
 	ProtoRPC               = "rpc"
 	ProtoRsync             = "rsync"
@@ -436,6 +437,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoRedis:
 		var p ServiceRedis
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoRedisSentinel:
+		var p ServiceRedisSentinel
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoHTTP:
@@ -1430,6 +1435,13 @@ type ServiceRedis struct {
 }
 
 func (e ServiceRedis) Type() string { return ProtoRedis }
+
+type ServiceRedisSentinel struct {
+	SentinelMasters int      `json:"sentinel_masters"`
+	CPEs            []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceRedisSentinel) Type() string { return ProtoRedisSentinel }
 
 type ServiceElasticsearch struct {
 	CPEs []string `json:"cpes,omitempty"` // Common Platform Enumeration identifiers for vulnerability tracking
