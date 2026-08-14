@@ -37,6 +37,14 @@ func handleSentinelMockConn(conn net.Conn, mode string) {
 	pong := []byte("+PONG\r\n")
 	noauth := []byte("-NOAUTH Authentication required.\r\n")
 
+	sentinelSection := "# Sentinel\r\nsentinel_masters:2\r\nsentinel_tilt:0\r\n"
+	sentinelSectionResp := append([]byte(fmt.Sprintf("$%d\r\n", len(sentinelSection))), append([]byte(sentinelSection), '\r', '\n')...)
+
+	serverSection := "# Server\r\nredis_version:7.0.5\r\nredis_mode:sentinel\r\n"
+	serverSectionResp := append([]byte(fmt.Sprintf("$%d\r\n", len(serverSection))), append([]byte(serverSection), '\r', '\n')...)
+
+	nilBulkString := []byte("$-1\r\n")
+
 	sentinelInfo := "# Server\r\n" +
 		"redis_version:7.0.5\r\n" +
 		"redis_mode:sentinel\r\n" +
@@ -65,6 +73,18 @@ func handleSentinelMockConn(conn net.Conn, mode string) {
 				_, _ = conn.Write(noauth)
 			} else {
 				_, _ = conn.Write(pong)
+			}
+		case containsSubstr(msg, "sentinel"):
+			switch mode {
+			case "sentinel":
+				_, _ = conn.Write(sentinelSectionResp)
+			case "plain-redis":
+				_, _ = conn.Write(nilBulkString)
+			}
+		case containsSubstr(msg, "server"):
+			switch mode {
+			case "sentinel", "plain-redis":
+				_, _ = conn.Write(serverSectionResp)
 			}
 		case containsSubstr(msg, "INFO"):
 			switch mode {

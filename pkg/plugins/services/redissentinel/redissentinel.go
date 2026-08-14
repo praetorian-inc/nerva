@@ -157,21 +157,28 @@ func DetectRedisSentinel(conn net.Conn, target plugins.Target, timeout time.Dura
 		return nil, nil
 	}
 
-	// INFO (no section, full output): [*1(CR)(NL)$4(CR)(NL)INFO(CR)(NL)]
-	infoCmd := []byte("*1\r\n$4\r\nINFO\r\n")
+	// Scoped to the sentinel section to avoid truncation — full INFO can exceed
+	// the 4096-byte read buffer, and # Sentinel appears last.
+	infoSentinelCmd := []byte("*2\r\n$4\r\nINFO\r\n$8\r\nsentinel\r\n")
 
-	infoResp, err := utils.SendRecv(conn, infoCmd, timeout)
-	if err != nil || len(infoResp) == 0 {
+	sentinelResp, err := utils.SendRecv(conn, infoSentinelCmd, timeout)
+	if err != nil || len(sentinelResp) == 0 {
 		return nil, nil
 	}
 
-	infoData := parseInfoBulkString(infoResp)
-	if !strings.Contains(infoData, "# Sentinel") {
+	sentinelData := parseInfoBulkString(sentinelResp)
+	if !strings.Contains(sentinelData, "# Sentinel") {
 		return nil, nil
 	}
 
-	version := extractRedisVersion(infoData)
-	sentinelMasters := extractSentinelMasters(infoData)
+	sentinelMasters := extractSentinelMasters(sentinelData)
+
+	infoServerCmd := []byte("*2\r\n$4\r\nINFO\r\n$6\r\nserver\r\n")
+	version := ""
+	serverResp, err := utils.SendRecv(conn, infoServerCmd, timeout)
+	if err == nil && len(serverResp) > 0 {
+		version = extractRedisVersion(parseInfoBulkString(serverResp))
+	}
 	cpe := buildRedisCPE(version)
 
 	payload := plugins.ServiceRedisSentinel{
