@@ -30,6 +30,9 @@ import (
 // weak versions, expired certificates, self-signed certificates, and weak keys.
 // Returns nil if conn is not a *tls.Conn or no issues are found.
 func CheckTLS(conn net.Conn) []SecurityFinding {
+	if u, ok := conn.(interface{ Unwrap() net.Conn }); ok {
+		conn = u.Unwrap()
+	}
 	tlsConn, ok := conn.(*tls.Conn)
 	if !ok {
 		return nil
