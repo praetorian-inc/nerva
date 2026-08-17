@@ -1,0 +1,119 @@
+// Copyright 2022 Praetorian Security, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+/*
+Package fingerprinters provides HTTP fingerprinting for Appweb embedded web server.
+
+# Detection Strategy
+
+Appweb is an embedded web server by Embedthis Software, used in embedded devices,
+IoT appliances, and as the web frontend for Juniper Junos J-Web. Detection uses
+the Server header:
+
+  - Modern (3.x-4.x): "Embedthis-Appweb/4.1.0"
+  - Legacy (1.x-2.x): "Mbedthis-Appweb/2.4.2" (pre-rename)
+  - Custom/OEM: "Appweb/7.0.1" or bare "Appweb"
+
+Note: Appweb v5+ defaults to "Embedthis-http" with no "Appweb" in the header.
+Those responses are out of scope for this fingerprinter.
+
+# Detection Method
+
+ 1. Check Server header for an anchored Appweb product token (case-insensitive)
+ 2. Accept status codes 200-499 (reject 5xx server errors)
+ 3. Extract version if present in Server header (3-part versions only)
+*/
+package fingerprinters
+
+import (
+	"fmt"
+	"net/http"
+	"regexp"
+	"strings"
+)
+
+// AppwebFingerprinter detects Appweb embedded web server via Server header
+type AppwebFingerprinter struct{}
+
+// appwebHeaderRegex matches the Appweb product token in a Server header and
+// optionally extracts its 3-part version. Anchored to whitespace/string
+// boundaries to reject false positives like "NotAppweb" or "MyAppWebProxy",
+// and to reject over-extraction from malformed versions like "1.2.3.4" or
+// "1.2.3beta".
+// Matches: Embedthis-Appweb/4.1.0, Mbedthis-Appweb/2.4.2, Appweb/7.0.1, Appweb
+var appwebHeaderRegex = regexp.MustCompile(`(?i)(?:^|\s)(?:(?:Embedthis|Mbedthis)-)?Appweb(?:/(\d+\.\d+\.\d+))?(?:\s|$)`)
+
+func init() {
+	Register(&AppwebFingerprinter{})
+}
+
+func (f *AppwebFingerprinter) Name() string {
+	return "appweb"
+}
+
+func (f *AppwebFingerprinter) Match(resp *http.Response) bool {
+	// Only accept 2xx-4xx responses (reject 5xx server errors)
+	if resp.StatusCode < 200 || resp.StatusCode >= 500 {
+		return false
+	}
+
+	// Check Server header for a valid Appweb product token
+	return appwebHeaderRegex.MatchString(resp.Header.Get("Server"))
+}
+
+func (f *AppwebFingerprinter) Fingerprint(resp *http.Response, body []byte) (*FingerprintResult, error) {
+	// Only accept 2xx-4xx responses
+	if resp.StatusCode < 200 || resp.StatusCode >= 500 {
+		return nil, nil
+	}
+
+	// Extract Server header
+	serverHeader := resp.Header.Get("Server")
+	if serverHeader == "" {
+		return nil, nil
+	}
+
+	// Reject CPE injection attempts
+	if strings.Contains(serverHeader, ":*:") {
+		return nil, nil
+	}
+
+	// Verify it contains a valid Appweb product token and extract version
+	matches := appwebHeaderRegex.FindStringSubmatch(serverHeader)
+	if matches == nil {
+		return nil, nil
+	}
+	version := matches[1]
+
+	// Build metadata
+	metadata := map[string]any{
+		"vendor":        "Embedthis",
+		"product":       "Appweb",
+		"server_header": serverHeader,
+	}
+
+	return &FingerprintResult{
+		Technology: "appweb",
+		Version:    version,
+		CPEs:       []string{buildAppwebCPE(version)},
+		Metadata:   metadata,
+	}, nil
+}
+
+func buildAppwebCPE(version string) string {
+	if version == "" {
+		return "cpe:2.3:a:embedthis:appweb:*:*:*:*:*:*:*:*"
+	}
+	return fmt.Sprintf("cpe:2.3:a:embedthis:appweb:%s:*:*:*:*:*:*:*", version)
+}
