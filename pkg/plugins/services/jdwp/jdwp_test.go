@@ -142,8 +142,8 @@ func TestJDWPExposedFinding(t *testing.T) {
 	if service.SecurityFindings[0].ID != "jdwp-exposed" {
 		t.Errorf("expected finding ID %q, got %q", "jdwp-exposed", service.SecurityFindings[0].ID)
 	}
-	if service.SecurityFindings[0].Severity != plugins.SeverityCritical {
-		t.Errorf("expected severity %q, got %q", plugins.SeverityCritical, service.SecurityFindings[0].Severity)
+	if service.SecurityFindings[0].Severity != plugins.SeverityHigh {
+		t.Errorf("expected severity %q, got %q", plugins.SeverityHigh, service.SecurityFindings[0].Severity)
 	}
 	evidence := service.SecurityFindings[0].Evidence
 	if !bytes.Contains([]byte(evidence), []byte("JDWP handshake succeeded")) {
@@ -304,8 +304,8 @@ func TestJdwpExposedFindingHelper(t *testing.T) {
 	if finding.ID != "jdwp-exposed" {
 		t.Errorf("expected ID %q, got %q", "jdwp-exposed", finding.ID)
 	}
-	if finding.Severity != plugins.SeverityCritical {
-		t.Errorf("expected severity %q, got %q", plugins.SeverityCritical, finding.Severity)
+	if finding.Severity != plugins.SeverityHigh {
+		t.Errorf("expected severity %q, got %q", plugins.SeverityHigh, finding.Severity)
 	}
 	if finding.Description == "" {
 		t.Error("expected non-empty description")

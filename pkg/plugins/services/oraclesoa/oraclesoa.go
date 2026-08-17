@@ -66,7 +66,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"regexp"
 	"strings"
 	"time"
 
@@ -79,8 +78,6 @@ const (
 	// maxBody bounds the number of bytes read from any single HTTP response.
 	maxBody = int64(512 * 1024)
 )
-
-var titlePattern = regexp.MustCompile(`(?is)<title[^>]*>(.*?)</title>`)
 
 var (
 	soaInfraMarkers = []string{
@@ -152,15 +149,6 @@ func doGet(client *http.Client, baseURL, path, host string) (*http.Response, err
 	return client.Do(req)
 }
 
-// extractTitle returns the trimmed contents of the first <title> element.
-func extractTitle(body string) string {
-	m := titlePattern.FindStringSubmatch(body)
-	if len(m) < 2 {
-		return ""
-	}
-	return strings.TrimSpace(m[1])
-}
-
 // containsAny reports whether haystack contains any needle (case-insensitive).
 func containsAny(haystack string, needles []string) bool {
 	h := strings.ToLower(haystack)
@@ -180,7 +168,12 @@ func detectSOAInfra(client *http.Client, baseURL, host string) (anonymous, detec
 		return false, false
 	}
 	is2xx := resp.StatusCode >= 200 && resp.StatusCode < 300
+	// Bound the read, then drain whatever is left before closing: every probe in
+	// this plugin shares one injected keep-alive connection, and net/http can
+	// only reuse that connection if the response body is consumed to EOF. An
+	// undrained oversized response would kill every subsequent probe.
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxBody))
+	_, _ = io.Copy(io.Discard, resp.Body)
 	_ = resp.Body.Close()
 	content := string(body)
 
@@ -203,11 +196,11 @@ func detectSOA(client *http.Client, baseURL, host string) (product string, anony
 			continue
 		}
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxBody))
+		_, _ = io.Copy(io.Discard, resp.Body)
 		_ = resp.Body.Close()
 		content := string(body)
-		title := extractTitle(content)
 
-		if containsAny(title, probe.markers) || containsAny(content, probe.markers) {
+		if containsAny(content, probe.markers) {
 			return probe.product, false, true
 		}
 	}

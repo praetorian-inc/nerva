@@ -43,6 +43,7 @@ type ScanState struct {
 type StateConfig struct {
 	TimeoutMs   int     `json:"timeout_ms"`
 	FastMode    bool    `json:"fast_mode"`
+	ScanDepth   string  `json:"scan_depth,omitempty"`
 	UDP         bool    `json:"udp"`
 	SCTP        bool    `json:"sctp"`
 	Verbose     bool    `json:"verbose"`

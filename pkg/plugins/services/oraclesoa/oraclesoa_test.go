@@ -15,6 +15,7 @@
 package oraclesoa
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -55,9 +56,37 @@ func dialTestServer(t *testing.T, serverURL string) (net.Conn, plugins.Target) {
 	return conn, target
 }
 
-func TestExtractTitle(t *testing.T) {
-	assert.Equal(t, "Service Bus Console", extractTitle(`<html><head><title>Service Bus Console</title></head></html>`))
-	assert.Equal(t, "", extractTitle(`<html><body>hi</body></html>`))
+// dialTLSTestServer mirrors dialTestServer but completes a real TLS handshake
+// against an httptest.NewTLSServer, so TLSPlugin.Run receives the *tls.Conn a
+// scanner hands it in production. plugins.CheckTLS type-asserts conn.(*tls.Conn)
+// and returns nil for anything else, so without a genuine TLS conn the whole
+// CheckTLS branch of TLSPlugin.Run silently does nothing.
+func dialTLSTestServer(t *testing.T, serverURL string) (*tls.Conn, plugins.Target) {
+	t.Helper()
+	hostPort := strings.TrimPrefix(serverURL, "https://")
+	host, portStr, err := net.SplitHostPort(hostPort)
+	require.NoError(t, err)
+	port, err := strconv.Atoi(portStr)
+	require.NoError(t, err)
+	addr := netip.AddrPortFrom(netip.MustParseAddr(host), uint16(port))
+
+	conn, err := tls.Dial("tcp", hostPort, &tls.Config{InsecureSkipVerify: true}) //nolint:gosec // test-only self-signed httptest cert
+	require.NoError(t, err)
+	target := plugins.Target{
+		Host:    addr.Addr().String(),
+		Address: addr,
+	}
+	return conn, target
+}
+
+// hasFindingID reports whether findings contains a finding with the given ID.
+func hasFindingID(findings []plugins.SecurityFinding, id string) bool {
+	for _, f := range findings {
+		if f.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 func TestContainsAny(t *testing.T) {
@@ -369,6 +398,84 @@ func TestPlugin_Run_ServiceBusPath_ReflectedOnly_NotDetected(t *testing.T) {
 	assert.Nil(t, service)
 }
 
+// TestPlugin_Run_SOAInfraReflectedPath_NotDetected pins the reason "soa-infra"
+// was dropped from soaInfraMarkers: /soa-infra is the very path being requested,
+// so any catch-all or error page that echoes the requested URI would otherwise
+// be misdetected as Oracle SOA. Because the reflection here is served at 200,
+// that misdetection would additionally satisfy the is2xx gate and emit a false
+// oracle-soa-infra-unauthenticated finding, so the Misconfigs=true path is
+// pinned explicitly alongside the plain detection result.
+func TestPlugin_Run_SOAInfraReflectedPath_NotDetected(t *testing.T) {
+	// Tomcat-style catch-all that echoes the requested URI back at HTTP 200.
+	reflector := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "<html><body><h1>The requested resource [%s] is not available</h1></body></html>", r.URL.Path)
+	})
+
+	t.Run("no detection and no anonymous access on a 2xx reflection", func(t *testing.T) {
+		server := httptest.NewServer(reflector)
+		defer server.Close()
+
+		product, anonymous, detected := detectSOA(server.Client(), server.URL, "")
+		assert.False(t, detected, "an echoed request path is not a product marker")
+		assert.Equal(t, "", product)
+		assert.False(t, anonymous, "a 2xx reflection must not be reported as anonymous access")
+	})
+
+	// anonymous is the sole gate on the finding, so a nil service proves no
+	// false oracle-soa-infra-unauthenticated finding reaches the caller.
+	for _, misconfigs := range []bool{false, true} {
+		t.Run(fmt.Sprintf("Plugin.Run with Misconfigs=%t yields no service and no finding", misconfigs), func(t *testing.T) {
+			server := httptest.NewServer(reflector)
+			defer server.Close()
+
+			conn, target := dialTestServer(t, server.URL)
+			defer conn.Close()
+			target.Misconfigs = misconfigs
+
+			plugin := &Plugin{}
+			service, err := plugin.Run(conn, 5*time.Second, target)
+			require.NoError(t, err)
+			assert.Nil(t, service, "a reflected request path must not be detected as Oracle SOA")
+		})
+	}
+}
+
+// TestPlugin_Run_LaterProbeMatchesAfterOversizedEarlierResponses covers the
+// sequential-probe path that the connection drain exists for. All five probes
+// share one injected keep-alive connection, and net/http can only reuse that
+// connection when a response body is consumed to EOF. Here the first four
+// probes return bodies larger than maxBody and carry no marker, so only the
+// io.Copy(io.Discard, body) drain that follows the bounded read keeps the
+// connection alive long enough for the fifth probe to match.
+func TestPlugin_Run_LaterProbeMatchesAfterOversizedEarlierResponses(t *testing.T) {
+	oversized := strings.Repeat("x", int(maxBody)+64*1024)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/bpm/workspace" {
+			fmt.Fprint(w, "Business Process Workspace")
+			return
+		}
+		fmt.Fprint(w, oversized)
+	}))
+	defer server.Close()
+
+	conn, target := dialTestServer(t, server.URL)
+	defer conn.Close()
+	target.Misconfigs = true
+
+	plugin := &Plugin{}
+	service, err := plugin.Run(conn, 5*time.Second, target)
+	require.NoError(t, err)
+	require.NotNil(t, service, "the last probe must still be reachable after four oversized non-matching responses")
+
+	var payload plugins.ServiceOracleSOA
+	require.NoError(t, json.Unmarshal(service.Raw, &payload))
+	assert.Equal(t, "soa", payload.Product)
+	assert.Equal(t, "cpe:2.3:a:oracle:soa_suite:*:*:*:*:*:*:*:*", payload.CPEs[0])
+	assert.False(t, service.AnonymousAccess, "/bpm/workspace is a sign-in gate, not an anonymous surface")
+	assert.Empty(t, service.SecurityFindings)
+}
+
 func TestPlugin_Run_WeblogicCookieOnly_NotDetected(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.SetCookie(w, &http.Cookie{Name: "_WL_AUTHCOOKIE_JSESSIONID", Value: "abc123"})
@@ -400,8 +507,15 @@ func TestPlugin_Run_NotDetected(t *testing.T) {
 	assert.Nil(t, service)
 }
 
+// TestTLSPlugin_Run_PositiveDetection drives TLSPlugin.Run over a real
+// *tls.Conn against an httptest TLS server with Misconfigs enabled, so
+// plugins.CheckTLS(conn) actually executes rather than short-circuiting on its
+// plain-conn type assertion. httptest presents a self-signed certificate, so
+// CheckTLS must contribute tls-self-signed, and because the SOA Infrastructure
+// landing page is the surface that matched, that TLS finding has to coexist
+// with the SOA anonymous finding rather than replace it.
 func TestTLSPlugin_Run_PositiveDetection(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/soa-infra":
 			fmt.Fprint(w, "Welcome to the Oracle SOA Platform")
@@ -411,32 +525,46 @@ func TestTLSPlugin_Run_PositiveDetection(t *testing.T) {
 	}))
 	defer server.Close()
 
-	conn, target := dialTestServer(t, server.URL)
+	conn, target := dialTLSTestServer(t, server.URL)
 	defer conn.Close()
+	target.Misconfigs = true
 
 	plugin := &TLSPlugin{}
 	service, err := plugin.Run(conn, 5*time.Second, target)
 	require.NoError(t, err)
-	require.NotNil(t, service)
+	require.NotNil(t, service, "detection must succeed over a real *tls.Conn")
 
 	var payload plugins.ServiceOracleSOA
 	require.NoError(t, json.Unmarshal(service.Raw, &payload))
 	assert.Equal(t, "soa", payload.Product)
+	require.Len(t, payload.CPEs, 1)
+	assert.Equal(t, "cpe:2.3:a:oracle:soa_suite:*:*:*:*:*:*:*:*", payload.CPEs[0])
+
+	assert.True(t, service.TLS)
+	assert.Equal(t, "tcptls", service.Transport)
+
+	assert.True(t, service.AnonymousAccess)
+	assert.True(t, hasFindingID(service.SecurityFindings, "oracle-soa-infra-unauthenticated"),
+		"the SOA anonymous finding must survive the CheckTLS append")
+	assert.True(t, hasFindingID(service.SecurityFindings, "tls-self-signed"),
+		"httptest's self-signed certificate must yield a CheckTLS finding alongside it")
+	assert.Greater(t, len(service.SecurityFindings), 1)
 }
 
 func TestTLSPlugin_Run_NotDetected(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(404)
 	}))
 	defer server.Close()
 
-	conn, target := dialTestServer(t, server.URL)
+	conn, target := dialTLSTestServer(t, server.URL)
 	defer conn.Close()
+	target.Misconfigs = true
 
 	plugin := &TLSPlugin{}
 	service, err := plugin.Run(conn, 5*time.Second, target)
 	require.NoError(t, err)
-	assert.Nil(t, service)
+	assert.Nil(t, service, "no product marker means no service, even though CheckTLS would have findings")
 }
 
 func TestPlugin_PortPriority(t *testing.T) {

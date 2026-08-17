@@ -203,11 +203,11 @@ func dialTLSVersion(t *testing.T, addr string, version uint16) *tls.Conn {
 	return conn
 }
 
-// findWeakVersionFinding returns the first tls-weak-version SecurityFinding from
-// a slice, or nil if none is present.
+// findWeakVersionFinding returns the first tls-weak-version-* SecurityFinding
+// from a slice, or nil if none is present.
 func findWeakVersionFinding(findings []plugins.SecurityFinding) *plugins.SecurityFinding {
 	for i := range findings {
-		if findings[i].ID == "tls-weak-version" {
+		if findings[i].ID == "tls-weak-version-10" || findings[i].ID == "tls-weak-version-11" {
 			return &findings[i]
 		}
 	}
@@ -232,20 +232,20 @@ func TestCheckWeakTLS(t *testing.T) {
 		wantEvidHint string // substring expected in Evidence
 	}{
 		{
-			name:         "TLS 1.0 returns High finding",
+			name:         "TLS 1.0 returns Low finding",
 			version:      tls.VersionTLS10,
 			wantNil:      false,
-			wantID:       "tls-weak-version",
-			wantSeverity: plugins.SeverityHigh,
+			wantID:       "tls-weak-version-10",
+			wantSeverity: plugins.SeverityLow,
 			wantDescHint: "BEAST",
 			wantEvidHint: "TLS 1.0",
 		},
 		{
-			name:         "TLS 1.1 returns Medium finding",
+			name:         "TLS 1.1 returns Low finding",
 			version:      tls.VersionTLS11,
 			wantNil:      false,
-			wantID:       "tls-weak-version",
-			wantSeverity: plugins.SeverityMedium,
+			wantID:       "tls-weak-version-11",
+			wantSeverity: plugins.SeverityLow,
 			wantDescHint: "RFC 8996",
 			wantEvidHint: "TLS 1.1",
 		},
@@ -341,7 +341,7 @@ func findSecurityFinding(service *plugins.Service, id string) *plugins.SecurityF
 }
 
 // TestHTTPSPlugin_WeakTLS10 verifies that HTTPSPlugin.Run() produces a
-// tls-weak-version finding with severity High when the server negotiates TLS 1.0.
+// tls-weak-version-10 finding with severity Low when the server negotiates TLS 1.0.
 func TestHTTPSPlugin_WeakTLS10(t *testing.T) {
 	cert := generateSelfSignedCert(t)
 	service := runHTTPSPluginAgainstTLSServer(t, cert, tls.VersionTLS10, true)
@@ -350,12 +350,12 @@ func TestHTTPSPlugin_WeakTLS10(t *testing.T) {
 		t.Fatal("HTTPSPlugin.Run() returned nil service")
 	}
 
-	finding := findSecurityFinding(service, "tls-weak-version")
+	finding := findSecurityFinding(service, "tls-weak-version-10")
 	if finding == nil {
-		t.Fatalf("expected tls-weak-version finding in SecurityFindings, got: %v", service.SecurityFindings)
+		t.Fatalf("expected tls-weak-version-10 finding in SecurityFindings, got: %v", service.SecurityFindings)
 	}
-	if finding.Severity != plugins.SeverityHigh {
-		t.Errorf("finding.Severity = %q, want %q", finding.Severity, plugins.SeverityHigh)
+	if finding.Severity != plugins.SeverityLow {
+		t.Errorf("finding.Severity = %q, want %q", finding.Severity, plugins.SeverityLow)
 	}
 	if !strings.Contains(finding.Evidence, "TLS 1.0") {
 		t.Errorf("finding.Evidence = %q, want it to contain %q", finding.Evidence, "TLS 1.0")
@@ -363,7 +363,7 @@ func TestHTTPSPlugin_WeakTLS10(t *testing.T) {
 }
 
 // TestHTTPSPlugin_WeakTLS11 verifies that HTTPSPlugin.Run() produces a
-// tls-weak-version finding with severity Medium when the server negotiates TLS 1.1.
+// tls-weak-version-11 finding with severity Low when the server negotiates TLS 1.1.
 func TestHTTPSPlugin_WeakTLS11(t *testing.T) {
 	cert := generateSelfSignedCert(t)
 	service := runHTTPSPluginAgainstTLSServer(t, cert, tls.VersionTLS11, true)
@@ -372,12 +372,12 @@ func TestHTTPSPlugin_WeakTLS11(t *testing.T) {
 		t.Fatal("HTTPSPlugin.Run() returned nil service")
 	}
 
-	finding := findSecurityFinding(service, "tls-weak-version")
+	finding := findSecurityFinding(service, "tls-weak-version-11")
 	if finding == nil {
-		t.Fatalf("expected tls-weak-version finding in SecurityFindings, got: %v", service.SecurityFindings)
+		t.Fatalf("expected tls-weak-version-11 finding in SecurityFindings, got: %v", service.SecurityFindings)
 	}
-	if finding.Severity != plugins.SeverityMedium {
-		t.Errorf("finding.Severity = %q, want %q", finding.Severity, plugins.SeverityMedium)
+	if finding.Severity != plugins.SeverityLow {
+		t.Errorf("finding.Severity = %q, want %q", finding.Severity, plugins.SeverityLow)
 	}
 	if !strings.Contains(finding.Evidence, "TLS 1.1") {
 		t.Errorf("finding.Evidence = %q, want it to contain %q", finding.Evidence, "TLS 1.1")
@@ -394,9 +394,10 @@ func TestHTTPSPlugin_TLS12_NoFinding(t *testing.T) {
 		t.Fatal("HTTPSPlugin.Run() returned nil service")
 	}
 
-	finding := findSecurityFinding(service, "tls-weak-version")
-	if finding != nil {
-		t.Errorf("expected no tls-weak-version finding for TLS 1.2, got: %+v", *finding)
+	for _, f := range service.SecurityFindings {
+		if f.ID == "tls-weak-version-10" || f.ID == "tls-weak-version-11" {
+			t.Errorf("expected no tls-weak-version finding for TLS 1.2, got: %+v", f)
+		}
 	}
 }
 
@@ -412,9 +413,10 @@ func TestHTTPSPlugin_MisconfigsDisabled(t *testing.T) {
 		t.Fatal("HTTPSPlugin.Run() returned nil service")
 	}
 
-	finding := findSecurityFinding(service, "tls-weak-version")
-	if finding != nil {
-		t.Errorf("expected no tls-weak-version finding when Misconfigs=false, got: %+v", *finding)
+	for _, f := range service.SecurityFindings {
+		if f.ID == "tls-weak-version-10" || f.ID == "tls-weak-version-11" {
+			t.Errorf("expected no tls-weak-version finding when Misconfigs=false, got: %+v", f)
+		}
 	}
 }
 
@@ -547,7 +549,14 @@ func runTLSLiveTest(t *testing.T, tlsFlag string, tlsVersion uint16, wantSeverit
 		t.Fatal("HTTPSPlugin.Run() returned nil")
 	}
 
-	finding := findSecurityFinding(service, "tls-weak-version")
+	// Find either tls-weak-version-10 or tls-weak-version-11
+	var finding *plugins.SecurityFinding
+	for i := range service.SecurityFindings {
+		if service.SecurityFindings[i].ID == "tls-weak-version-10" || service.SecurityFindings[i].ID == "tls-weak-version-11" {
+			finding = &service.SecurityFindings[i]
+			break
+		}
+	}
 
 	if wantSeverity == nil {
 		if finding != nil {
@@ -572,8 +581,7 @@ func TestHTTPSPlugin_WeakTLS_Live(t *testing.T) {
 		t.Skip("skipping docker test in short mode")
 	}
 
-	sevHigh := plugins.SeverityHigh
-	sevMedium := plugins.SeverityMedium
+	sevLow := plugins.SeverityLow
 
 	tests := []struct {
 		name         string
@@ -583,17 +591,17 @@ func TestHTTPSPlugin_WeakTLS_Live(t *testing.T) {
 		wantEvidence string
 	}{
 		{
-			name:         "TLS 1.0 returns High finding",
+			name:         "TLS 1.0 returns Low finding",
 			tlsFlag:      "-tls1",
 			tlsVersion:   tls.VersionTLS10,
-			wantSeverity: &sevHigh,
+			wantSeverity: &sevLow,
 			wantEvidence: "TLS 1.0",
 		},
 		{
-			name:         "TLS 1.1 returns Medium finding",
+			name:         "TLS 1.1 returns Low finding",
 			tlsFlag:      "-tls1_1",
 			tlsVersion:   tls.VersionTLS11,
-			wantSeverity: &sevMedium,
+			wantSeverity: &sevLow,
 			wantEvidence: "TLS 1.1",
 		},
 		{

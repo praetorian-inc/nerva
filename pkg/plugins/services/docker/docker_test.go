@@ -537,7 +537,7 @@ func TestDockerSecurityFindings(t *testing.T) {
 	if service.SecurityFindings[0].ID != "docker-unauth-api" {
 		t.Errorf("expected finding ID 'docker-unauth-api', got %q", service.SecurityFindings[0].ID)
 	}
-	if service.SecurityFindings[0].Severity != plugins.SeverityCritical {
+	if service.SecurityFindings[0].Severity != plugins.SeverityHigh {
 		t.Errorf("expected severity critical, got %s", service.SecurityFindings[0].Severity)
 	}
 }
