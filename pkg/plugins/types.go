@@ -1758,7 +1758,7 @@ type ServiceOracleHTTPServer struct {
 func (e ServiceOracleHTTPServer) Type() string { return ProtoOracleHTTPServer }
 
 type ServiceOracleEM struct {
-	Component string   `json:"component,omitempty"` // console | agent | express
+	Component string   `json:"component,omitempty"` // console | agent | express | oms-upload
 	CPEs      []string `json:"cpes,omitempty"`
 }
 
