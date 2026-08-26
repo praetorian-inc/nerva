@@ -1,0 +1,10 @@
+vulnerabilities:
+  - id: GO-2026-5932
+    statement: >
+      golang.org/x/crypto/openpgp is an unmaintained-package advisory (no CVE, no fix
+      version), not a version-specific vulnerability. nerva does not import
+      golang.org/x/crypto/openpgp anywhere in its source (verified via
+      `grep -r x/crypto/openpgp`); the package is only present transitively because it
+      lives in the same golang.org/x/crypto module as other x/crypto subpackages nerva
+      does use.
+    expired_at: 2027-08-26
