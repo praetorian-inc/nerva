@@ -333,6 +333,52 @@ func TestDetectConsoleOrExpress(t *testing.T) {
 			expectedDetect:    true,
 		},
 		{
+			// The regression the status gate guards: "Database Express" is matched
+			// as a substring, so an error page from middleware fronting EM (WebLogic
+			// or OHS) that merely names the product must not be reported as Express.
+			name: "Database Express on a 404 error page -> NOT express",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(404)
+				fmt.Fprint(w, `<html><head><title>Error 404--Not Found</title></head><body>No context bound to /em/ for Database Express</body></html>`)
+			},
+			expectedComponent: "",
+			expectedDetect:    false,
+		},
+		{
+			// Same gate on the server-error side, and with the marker in the
+			// <title> rather than the body, so neither express clause survives a
+			// 5xx.
+			name: "Database Express title on a 500 error page -> NOT express",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(500)
+				fmt.Fprint(w, `<html><head><title>Database Express</title></head><body>Internal Server Error</body></html>`)
+			},
+			expectedComponent: "",
+			expectedDetect:    false,
+		},
+		{
+			// The gate is on the error status, not on 2xx: a redirect carrying the
+			// Express title is still Express (pinned by the ordering case below).
+			name: "Database Express title on a 200 -> express",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(200)
+				fmt.Fprint(w, `<html><head><title>Oracle Database Express Edition</title></head></html>`)
+			},
+			expectedComponent: "express",
+			expectedDetect:    true,
+		},
+		{
+			// A 4xx that IS a genuine console still classifies: the status gate is
+			// scoped to the express branch only.
+			name: "logon path plus EM marker on a 403 -> still console",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(403)
+				fmt.Fprint(w, `<html><body>Oracle Enterprise Manager<a href="/em/faces/logon">Sign In</a></body></html>`)
+			},
+			expectedComponent: "console",
+			expectedDetect:    true,
+		},
+		{
 			// The express branch is evaluated before the console clause, so a
 			// Database Express title wins even on a response carrying the otherwise
 			// sufficient logon Location path.

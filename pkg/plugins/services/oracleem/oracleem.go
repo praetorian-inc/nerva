@@ -43,7 +43,9 @@ Detection Signals (product-specific, no bare-status / generic-title triggers):
     otherwise be misclassified; the body clause therefore requires the logon
     path AND a corroborating EM product marker (see consoleBodyMarkers), and
     neither of those two signals triggers console detection alone.
-  - A <title> containing "Database Express" for EM Express.
+  - A <title> or body mention of "Database Express" for EM Express, accepted
+    only on a non-error (non-4xx/5xx) response, so an error page from fronting
+    middleware that happens to name the product is not misclassified.
   - An EM-specific receiver banner ("Http Receiver Servlet active" / "Http XML
     File receiver") in the /empbs/upload body for the OMS upload receiver.
 
@@ -258,20 +260,32 @@ func detectAgent(client *http.Client, baseURL, host string) (version string, ano
 // detectConsoleOrExpress probes /em/ and distinguishes EM Express (title
 // "Database Express") from the Cloud Control console (logon redirect or an
 // Enterprise Manager title/body). Both are sign-in gates, so anonymous is never
-// implied here.
+// implied here. Responses carrying a 4xx/5xx status are never classified as
+// express; see the gate in the body for why the console clauses need no
+// equivalent.
 func detectConsoleOrExpress(client *http.Client, baseURL, host string) (component string, detected bool) {
 	resp, err := doGet(client, baseURL, "/em/", host)
 	if err != nil {
 		return "", false
 	}
 	locPath := locationPath(resp)
+	isError := resp.StatusCode >= 400
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxBody))
 	_ = resp.Body.Close()
 	content := string(body)
 	title := extractTitle(content)
 
-	if containsAny(title, []string{"Database Express"}) ||
-		containsAny(content, []string{"Database Express"}) {
+	// "Database Express" is matched as a substring, so without a status gate an
+	// error page that merely mentions the product (a WebLogic or OHS 404/500
+	// served in front of EM) would be classified as EM Express. A live Express
+	// login page answers on a success or redirect status, never on 4xx/5xx, so
+	// error responses are excluded from this branch.
+	//
+	// The console clauses below need no equivalent gate: the parsed Location path
+	// is a redirect-only signal, and the body clause already requires two
+	// independent signals (the logon path AND an EM product marker).
+	if !isError && (containsAny(title, []string{"Database Express"}) ||
+		containsAny(content, []string{"Database Express"})) {
 		return "express", true
 	}
 	// The parsed Location path is the one sufficient console signal. A logon path
