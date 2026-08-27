@@ -1,6 +1,6 @@
 module github.com/praetorian-inc/nerva
 
-go 1.25.0
+go 1.27.0
 
 require (
 	github.com/ishidawataru/sctp v0.0.0-20251114114122-19ddcbc6aae2
@@ -12,13 +12,11 @@ require (
 	github.com/twmb/murmur3 v1.1.8
 	golang.org/x/crypto v0.51.0
 	golang.org/x/net v0.55.0
-	golang.org/x/sync v0.20.0
+	golang.org/x/sync v0.21.0
 	golang.org/x/term v0.43.0
 	golang.org/x/time v0.14.0
 	google.golang.org/grpc v1.78.0
 )
-
-require github.com/kr/text v0.2.0 // indirect
 
 require (
 	dario.cat/mergo v1.0.0 // indirect
@@ -36,6 +34,7 @@ require (
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510 // indirect
 	github.com/inconshreveable/mousetrap v1.0.0 // indirect
+	github.com/kr/text v0.2.0 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
 	github.com/moby/sys/user v0.3.0 // indirect
 	github.com/moby/term v0.5.0 // indirect
@@ -50,7 +49,7 @@ require (
 	github.com/xeipuuv/gojsonreference v0.0.0-20180127040603-bd5ef7bd5415 // indirect
 	github.com/xeipuuv/gojsonschema v1.2.0 // indirect
 	golang.org/x/sys v0.45.0 // indirect
-	golang.org/x/text v0.37.0 // indirect
+	golang.org/x/text v0.39.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20251029180050-ab9386a59fda // indirect
 	google.golang.org/protobuf v1.36.10 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect

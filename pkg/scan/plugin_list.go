@@ -110,6 +110,7 @@ import (
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/oracledb"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/oracledirectory"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/oracleebs"
+	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/oracleem"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/oracleformsreports"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/oraclegoldengate"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/oraclehttp"

@@ -17,6 +17,7 @@ package scan
 import (
 	"bytes"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -238,6 +239,14 @@ func (c *Config) SimpleScanTarget(target plugins.Target) ([]*plugins.Service, er
 
 	tlsConn, tlsErr := c.DialTLS(target)
 	isTLS := tlsErr == nil
+	if isRemoteTLSAlert(tlsErr) {
+		// A peer TLS alert proves the port uses TLS, so skip plaintext probes.
+		if c.Verbose {
+			log.Printf("%v %v-> peer rejected TLS handshake; skipping plaintext probes\n",
+				target.Address.String(), target.Host)
+		}
+		return nil, nil
+	}
 	if isTLS {
 		for _, plugin := range sortedTCPTLSPlugins {
 			if !plugin.PortPriority(port) {
@@ -353,6 +362,12 @@ func (c *Config) SimpleScanTarget(target plugins.Target) ([]*plugins.Service, er
 	}
 
 	return nil, nil
+}
+
+// isRemoteTLSAlert reports whether crypto/tls received a valid peer alert.
+func isRemoteTLSAlert(err error) bool {
+	var opErr *net.OpError
+	return errors.As(err, &opErr) && opErr.Op == "remote error"
 }
 
 // This will attempt to close the provided Conn after running the plugin.
