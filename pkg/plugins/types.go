@@ -179,6 +179,7 @@ const (
 	ProtoOracleOUD         = "oracle_oud"
 	ProtoOracleOID         = "oracle_oid"
 	ProtoOracleHTTPServer  = "oracle_http_server"
+	ProtoOracleEM          = "oracle_em"
 	ProtoOracleOBIEE       = "oracle_obiee"
 	ProtoOracleHyperion    = "oracle_hyperion"
 	ProtoOracleEssbase     = "oracle_essbase"
@@ -558,6 +559,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoOracleHTTPServer:
 		var p ServiceOracleHTTPServer
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoOracleEM:
+		var p ServiceOracleEM
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoOracleOBIEE:
@@ -1791,6 +1796,13 @@ type ServiceOracleHTTPServer struct {
 }
 
 func (e ServiceOracleHTTPServer) Type() string { return ProtoOracleHTTPServer }
+
+type ServiceOracleEM struct {
+	Component string   `json:"component,omitempty"` // console | agent | express | oms-upload
+	CPEs      []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceOracleEM) Type() string { return ProtoOracleEM }
 
 type ServiceOracleOBIEE struct {
 	Surface string   `json:"surface,omitempty"` // analytics | bi-publisher | dv
