@@ -250,6 +250,22 @@ func TestDetectSOA(t *testing.T) {
 			expectedDetect:  true,
 		},
 		{
+			// The corroborator must be an Oracle product string, not the bare word:
+			// a third-party BPM that merely names Oracle as a supported backend
+			// must not corroborate its own generic marker.
+			name: "generic BPM workspace mentioning Oracle only incidentally -> NOT detected",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/bpm/workspace":
+					fmt.Fprint(w, `<html><head><title>IBM BPM Workspace</title></head><body><h1>Business Process Workspace</h1><p>Supported datasources: Oracle Database 19c, PostgreSQL 16.</p></body></html>`)
+				default:
+					w.WriteHeader(404)
+				}
+			},
+			expectedProduct: "",
+			expectedDetect:  false,
+		},
+		{
 			// "Business Process Workspace" and "BPM Workspace" are generic BPMS
 			// terms that non-Oracle products also ship, so a third-party BPM
 			// workspace served on /bpm/workspace must not be attributed to Oracle.

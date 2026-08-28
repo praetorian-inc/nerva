@@ -143,18 +143,26 @@ var (
 	// oracleCorroborators are the Oracle/WebLogic branding signals accepted as
 	// corroboration for any probe's genericMarkers (currently BPM and B2B). They
 	// never trigger detection alone.
-	// The ADF entries are here because Oracle BPM Workspace is an ADF
-	// application whose pages reference those resource paths even when the
-	// visible text does not spell out "Oracle".
+	//
+	// A bare "Oracle" is deliberately NOT in this list: a third-party BPM or B2B
+	// product that merely names Oracle in passing ("supports Oracle Database as a
+	// backend") would otherwise corroborate its own generic marker and be
+	// misattributed. Every entry here is either a full Oracle product string or
+	// an Oracle-specific code identifier.
+	//
+	// The ADF entries are here because Oracle BPM Workspace is an ADF application
+	// whose pages reference those resource paths even when the visible text does
+	// not spell out an Oracle product name.
 	//
 	// NOTE: the ADF resource-path signals are taken from documented ADF
 	// behaviour and have NOT been validated against a live Oracle BPM target.
 	oracleCorroborators = []string{
-		"Oracle",
+		"Oracle Corporation",
+		"Oracle Fusion Middleware",
 		"WebLogic",
 		"oracle.bpm",
-		"/afr/",
 		"oracle.adf",
+		"/afr/",
 	}
 
 	// b2bMarkers are the unambiguous Oracle B2B product markers for the
