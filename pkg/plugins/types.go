@@ -180,6 +180,7 @@ const (
 	ProtoOracleOID         = "oracle_oid"
 	ProtoOracleHTTPServer  = "oracle_http_server"
 	ProtoOracleEM          = "oracle_em"
+	ProtoOracleSOA         = "oracle_soa"
 	ProtoOracleOBIEE       = "oracle_obiee"
 	ProtoOracleHyperion    = "oracle_hyperion"
 	ProtoOracleEssbase     = "oracle_essbase"
@@ -563,6 +564,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoOracleEM:
 		var p ServiceOracleEM
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoOracleSOA:
+		var p ServiceOracleSOA
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoOracleOBIEE:
@@ -1803,6 +1808,22 @@ type ServiceOracleEM struct {
 }
 
 func (e ServiceOracleEM) Type() string { return ProtoOracleEM }
+
+type ServiceOracleSOA struct {
+	Product string `json:"product,omitempty"` // soa | osb
+	Version string `json:"version,omitempty"` // e.g. 12.2.1.4, empty when not parseable
+	Release string `json:"release,omitempty"` // 11g | 12c | 14c, empty when unknown
+	// WebLogic records that the WebLogic substrate was observed (Server header or
+	// _WL_AUTHCOOKIE_ cookie). Supporting evidence only: it never triggers
+	// detection, since every WebLogic deployment carries it.
+	WebLogic bool `json:"weblogic,omitempty"`
+	// WSDLExposed records that /soa-infra/services/<partition> served composite
+	// WSDL metadata without credentials.
+	WSDLExposed bool     `json:"wsdl_exposed,omitempty"`
+	CPEs        []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceOracleSOA) Type() string { return ProtoOracleSOA }
 
 type ServiceOracleOBIEE struct {
 	Surface string   `json:"surface,omitempty"` // analytics | bi-publisher | dv

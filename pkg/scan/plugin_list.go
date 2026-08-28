@@ -124,6 +124,7 @@ import (
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/oracleouaf"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/oracleprotocoldb"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/oraclesbc"
+	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/oraclesoa"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/oraclespatialstudio"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/pcworx"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/peoplesoft"
