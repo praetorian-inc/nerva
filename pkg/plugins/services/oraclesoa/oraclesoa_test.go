@@ -222,17 +222,48 @@ func TestDetectSOA(t *testing.T) {
 			expectedDetect:  true,
 		},
 		{
-			name: "soa via /bpm/workspace",
+			name: "soa via /bpm/workspace (unambiguous Oracle BPM marker)",
 			handler: func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
 				case "/bpm/workspace":
-					fmt.Fprint(w, "Business Process Workspace")
+					fmt.Fprint(w, "Oracle BPM Workspace")
 				default:
 					w.WriteHeader(404)
 				}
 			},
 			expectedProduct: "soa",
 			expectedDetect:  true,
+		},
+		{
+			// The generic phrase alone is not enough; here Oracle branding in the
+			// same body corroborates it.
+			name: "soa via /bpm/workspace (generic term corroborated by Oracle branding)",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/bpm/workspace":
+					fmt.Fprint(w, `<html><body><h1>Business Process Workspace</h1><footer>Copyright (c) Oracle Corporation</footer></body></html>`)
+				default:
+					w.WriteHeader(404)
+				}
+			},
+			expectedProduct: "soa",
+			expectedDetect:  true,
+		},
+		{
+			// "Business Process Workspace" and "BPM Workspace" are generic BPMS
+			// terms that non-Oracle products also ship, so a third-party BPM
+			// workspace served on /bpm/workspace must not be attributed to Oracle.
+			name: "generic BPM workspace body with no Oracle branding -> NOT detected",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/bpm/workspace":
+					fmt.Fprint(w, `<html><head><title>IBM BPM Workspace</title></head><body><h1>Business Process Workspace</h1><p>IBM Business Automation Workflow</p></body></html>`)
+				default:
+					w.WriteHeader(404)
+				}
+			},
+			expectedProduct: "",
+			expectedDetect:  false,
 		},
 		{
 			name: "bare WebLogic auth cookie with no product marker -> NOT detected",
@@ -452,7 +483,11 @@ func TestPlugin_Run_LaterProbeMatchesAfterOversizedEarlierResponses(t *testing.T
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/bpm/workspace" {
-			fmt.Fprint(w, "Business Process Workspace")
+			// An unambiguous Oracle BPM marker: this test is about the last probe
+			// staying reachable after oversized earlier responses, so the body must
+			// match on its own without depending on the generic-term corroboration
+			// rule exercised in TestDetectSOA.
+			fmt.Fprint(w, "Oracle BPM Workspace")
 			return
 		}
 		fmt.Fprint(w, oversized)
@@ -565,6 +600,76 @@ func TestTLSPlugin_Run_NotDetected(t *testing.T) {
 	service, err := plugin.Run(conn, 5*time.Second, target)
 	require.NoError(t, err)
 	assert.Nil(t, service, "no product marker means no service, even though CheckTLS would have findings")
+}
+
+// TestTLSPlugin_Run_OSBDetection_Misconfigs covers the TLS branch where
+// detection succeeds but anonymous is false. An OSB console match is a sign-in
+// gate, so CheckTLS findings must appear while AnonymousAccess stays false and
+// the SOA Infrastructure finding is absent. This is the common-case path for any
+// OSB instance published over TLS.
+func TestTLSPlugin_Run_OSBDetection_Misconfigs(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/sbconsole":
+			fmt.Fprint(w, "Oracle Service Bus Console")
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer server.Close()
+
+	conn, target := dialTLSTestServer(t, server.URL)
+	defer conn.Close()
+	target.Misconfigs = true
+
+	plugin := &TLSPlugin{}
+	service, err := plugin.Run(conn, 5*time.Second, target)
+	require.NoError(t, err)
+	require.NotNil(t, service)
+
+	var payload plugins.ServiceOracleSOA
+	require.NoError(t, json.Unmarshal(service.Raw, &payload))
+	assert.Equal(t, "osb", payload.Product)
+	require.Len(t, payload.CPEs, 1)
+	assert.Equal(t, "cpe:2.3:a:oracle:service_bus:*:*:*:*:*:*:*:*", payload.CPEs[0])
+
+	assert.True(t, service.TLS)
+	assert.False(t, service.AnonymousAccess,
+		"an OSB console match is a sign-in gate and never implies anonymous access")
+	assert.False(t, hasFindingID(service.SecurityFindings, "oracle-soa-infra-unauthenticated"),
+		"the SOA Infrastructure finding belongs only to an anonymous /soa-infra match")
+	assert.True(t, hasFindingID(service.SecurityFindings, "tls-self-signed"),
+		"CheckTLS must still run when detection succeeds without anonymous access")
+}
+
+// TestTLSPlugin_Run_Misconfigs_Disabled mirrors the Misconfigs=false subtest of
+// TestPlugin_Run_SOAInfraDetection_Misconfigs on the TLS variant: a successful
+// detection with misconfiguration reporting off yields the service with no
+// findings at all, suppressing the anonymous finding and CheckTLS alike.
+func TestTLSPlugin_Run_Misconfigs_Disabled(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/soa-infra":
+			fmt.Fprint(w, "Welcome to the Oracle SOA Platform")
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer server.Close()
+
+	conn, target := dialTLSTestServer(t, server.URL)
+	defer conn.Close()
+	target.Misconfigs = false
+
+	plugin := &TLSPlugin{}
+	service, err := plugin.Run(conn, 5*time.Second, target)
+	require.NoError(t, err)
+	require.NotNil(t, service, "detection is independent of misconfiguration reporting")
+
+	assert.True(t, service.TLS)
+	assert.False(t, service.AnonymousAccess)
+	assert.Empty(t, service.SecurityFindings,
+		"Misconfigs=false must suppress the anonymous finding and the CheckTLS findings alike")
 }
 
 func TestPlugin_PortPriority(t *testing.T) {

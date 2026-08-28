@@ -32,8 +32,15 @@ Detection Surfaces (probed over one connection, first match wins):
 Detection Signals (product-specific, no bare-status / generic-title triggers):
 
   - SOA markers: "Oracle SOA Platform", "Welcome to the Oracle SOA",
-    "Oracle SOA Composer", "Business Process Workspace".
+    "Oracle SOA Composer", "Oracle BPM".
   - OSB markers: "Oracle Service Bus", "Service Bus Console".
+  - BPM generic terms ("Business Process Workspace", "BPM Workspace") are the
+    one exception to the rule that every marker carries an Oracle-specific
+    noun: other BPMS products ship both phrases. They therefore match only
+    when an Oracle/WebLogic branding signal corroborates them, so a
+    third-party BPM workspace published on /bpm/workspace is not attributed to
+    Oracle. Neither the generic term nor the branding signal triggers
+    detection alone.
 
 The requested path itself (e.g. "soa-infra" or "sbconsole") is never used as a
 marker, so a 404 body that merely echoes the requested path cannot trigger a
@@ -92,10 +99,38 @@ var (
 		"Oracle SOA Composer",
 		"SOA Composer",
 	}
+	// bpmMarkers are the unambiguous Oracle BPM product markers: any one is
+	// sufficient on its own, like every other marker list here.
 	bpmMarkers = []string{
+		"Oracle BPM",
+	}
+
+	// bpmGenericMarkers are BPMS terms that non-Oracle products also use (IBM
+	// BPM among others ships both phrases), so unlike every other marker list
+	// here they carry no Oracle-specific noun. They count only alongside a
+	// bpmCorroborators match; neither signal is sufficient alone. The probe path
+	// /bpm/workspace is itself an Oracle/WebLogic context root, so this is
+	// defence in depth against a third-party BPMS published on that path rather
+	// than a likely occurrence.
+	bpmGenericMarkers = []string{
 		"Business Process Workspace",
 		"BPM Workspace",
-		"Oracle BPM",
+	}
+
+	// bpmCorroborators are the Oracle/WebLogic branding signals accepted as
+	// corroboration for bpmGenericMarkers. They never trigger detection alone.
+	// The ADF entries are here because Oracle BPM Workspace is an ADF
+	// application whose pages reference those resource paths even when the
+	// visible text does not spell out "Oracle".
+	//
+	// NOTE: the ADF resource-path signals are taken from documented ADF
+	// behaviour and have NOT been validated against a live Oracle BPM target.
+	bpmCorroborators = []string{
+		"Oracle",
+		"WebLogic",
+		"oracle.bpm",
+		"/afr/",
+		"oracle.adf",
 	}
 )
 
@@ -104,14 +139,38 @@ var (
 type soaProbe struct {
 	path    string
 	product string
+	// markers are product-specific: any single match confirms the product.
 	markers []string
+	// genericMarkers are terms shared with non-Oracle products, so a match
+	// counts only alongside one of corroborators. Both are empty for probes
+	// whose markers are already unambiguous.
+	genericMarkers []string
+	corroborators  []string
+}
+
+// matches reports whether a probe response body identifies this probe's
+// product: an unambiguous marker on its own, or a generic marker corroborated
+// by an Oracle/WebLogic signal.
+func (p soaProbe) matches(content string) bool {
+	if containsAny(content, p.markers) {
+		return true
+	}
+	return len(p.genericMarkers) > 0 &&
+		containsAny(content, p.genericMarkers) &&
+		containsAny(content, p.corroborators)
 }
 
 var soaProbes = []soaProbe{
 	{path: "/sbconsole", product: "osb", markers: osbMarkers},
 	{path: "/servicebus", product: "osb", markers: osbMarkers},
 	{path: "/soa/composer", product: "soa", markers: composerMarkers},
-	{path: "/bpm/workspace", product: "soa", markers: bpmMarkers},
+	{
+		path:           "/bpm/workspace",
+		product:        "soa",
+		markers:        bpmMarkers,
+		genericMarkers: bpmGenericMarkers,
+		corroborators:  bpmCorroborators,
+	},
 }
 
 func init() {
@@ -200,7 +259,7 @@ func detectSOA(client *http.Client, baseURL, host string) (product string, anony
 		_ = resp.Body.Close()
 		content := string(body)
 
-		if containsAny(content, probe.markers) {
+		if probe.matches(content) {
 			return probe.product, false, true
 		}
 	}
