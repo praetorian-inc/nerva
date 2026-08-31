@@ -321,7 +321,7 @@ func init() {
 	// Resume support
 	rootCmd.PersistentFlags().IntVar(&config.autoSave, "auto-save", 0, "auto-save interval (number of targets)")
 	rootCmd.PersistentFlags().BoolVar(&config.misconfigs, "misconfigs", false, "enable security misconfiguration detection")
-	rootCmd.PersistentFlags().BoolVar(&config.deep, "deep", false, "enable deep probing (admin paths, login detection)")
+	rootCmd.PersistentFlags().BoolVar(&config.deep, "deep", false, "enable additional active probes (admin paths, login detection, printer enrichment)")
 
 	rootCmd.PersistentFlags().StringVar(&config.proxy, "proxy", "", "proxy URL (e.g. socks5://127.0.0.1:1080)")
 	rootCmd.PersistentFlags().StringVar(&config.proxyAuth, "proxy-auth", "", "socks5 proxy authentication (username:password)")
