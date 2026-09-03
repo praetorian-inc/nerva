@@ -124,6 +124,94 @@ func TestBodyHasAPEX(t *testing.T) {
 	}
 }
 
+// ordsLandingAPEXCard is the APEX launcher card from the landing page of a live
+// ORDS 26.2.3 instance with APEX NOT installed (note card--disabled). It is the
+// reason the APEX product gate must be an allowlist: this markup alone accounts
+// for most of the fifteen "apex" occurrences on an APEX-free instance.
+const ordsLandingAPEXCard = `<li id="cards__apex_card" class="card card--disabled" role="region" ` +
+	`data-i18n data-i18n.aria-labelledby="card_title_apex"> ` +
+	`<div class="card-image card-image--apex"> ` +
+	`<h2 class="card__title" data-i18n data-i18n.inner-text="card_title_apex"></h2> ` +
+	`<p class="card__description" data-i18n data-i18n.inner-text="card_description_apex"></p> ` +
+	`</div> <form id="apex-submit-form" class="card-actions" data-feature="apex"> ` +
+	`<label for="apex-card-actions__input-text"></label> ` +
+	`<input id="apex-card-actions__input-text" name="apex-input"> ` +
+	`<button id="apex-cdb-button" disabled></button> ` +
+	`<a role="button" id="apexhelpbutton" aria-controls="cards__apex_card"></a> ` +
+	`</form> </li> ` +
+	`<link rel="stylesheet" href="lib/css/font-apex/css/font-apex.min.css">`
+
+func TestBodyHasAPEXProduct(t *testing.T) {
+	tests := []struct {
+		name     string
+		body     string
+		expected bool
+	}{
+		{
+			name:     "APEX application URL",
+			body:     `<a href="f?p=4550:1:0::NO">Sign In</a>`,
+			expected: true,
+		},
+		{
+			name:     "APEX PL/SQL gateway procedure",
+			body:     `<form action="wwv_flow.accept" method="post">`,
+			expected: true,
+		},
+		{
+			name:     "APEX library asset",
+			body:     `<script src="/i/libraries/apex/minified/desktop.min.js?v=24.1.5"></script>`,
+			expected: true,
+		},
+		{
+			name:     "APEX UI asset",
+			body:     `<img src="/i/apex_ui/img/favicons/app-icon.png">`,
+			expected: true,
+		},
+		{
+			name:     "APEX images on the Oracle CDN",
+			body:     `<script src="https://static.oracle.com/cdn/apex/23.2.0/libraries/apex/minified/core.min.js"></script>`,
+			expected: true,
+		},
+		{
+			name:     "uppercase markers still match",
+			body:     `<FORM ACTION="WWV_FLOW.ACCEPT">`,
+			expected: true,
+		},
+		{
+			name:     "ORDS landing page APEX launcher card is not APEX",
+			body:     ordsLandingAPEXCard,
+			expected: false,
+		},
+		{
+			name:     "font-apex icon stylesheet alone is not APEX",
+			body:     `<link rel="stylesheet" href="lib/css/font-apex/css/font-apex.min.css">`,
+			expected: false,
+		},
+		{
+			name:     "bare /i/ path alone is not APEX",
+			body:     `<script src="/i/2.0/app.js"></script>`,
+			expected: false,
+		},
+		{
+			name:     "the word apex alone is not APEX",
+			body:     "apex resources at /i/",
+			expected: false,
+		},
+		{
+			name:     "empty body",
+			body:     "",
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := bodyHasAPEXProduct(tt.body)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
 func TestBuildORDSCPEs(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -254,10 +342,20 @@ func TestEvaluateORDS(t *testing.T) {
 		{
 			name: "body APEX marker on /ords path flags APEX",
 			evidence: []ordsEvidence{
-				{path: "/ords/", statusCode: http.StatusOK, server: "Oracle-REST-Data-Services/24.1.0", body: "apex resources at /i/"},
+				{path: "/ords/", statusCode: http.StatusOK, server: "Oracle-REST-Data-Services/24.1.0", body: `<a href="f?p=4550:1">Sign In</a>`},
 			},
 			expectedVersion:   "24.1.0",
 			expectedAPEX:      true,
+			expectedDetect:    true,
+			expectedAnonymous: true,
+		},
+		{
+			name: "weak /i/ body marker no longer flags APEX",
+			evidence: []ordsEvidence{
+				{path: "/ords/", statusCode: http.StatusOK, server: "Oracle-REST-Data-Services/24.1.0", body: "apex resources at /i/"},
+			},
+			expectedVersion:   "24.1.0",
+			expectedAPEX:      false,
 			expectedDetect:    true,
 			expectedAnonymous: true,
 		},
@@ -906,4 +1004,68 @@ func TestORDSPlugin_Run_ModernORDSVersionsInCPEs(t *testing.T) {
 		"cpe:2.3:a:oracle:rest_data_services:26.2:*:*:*:*:*:*:*",
 		"cpe:2.3:a:oracle:application_express:24.1.5:*:*:*:*:*:*:*",
 	}, ordsService.CPEs)
+}
+
+func TestORDSPlugin_Run_APEXFreeORDSEmitsNoAPEXCPE(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/ords/_/landing":
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprint(w, `<html><body><ul>`+ordsLandingAPEXCard+`</ul></body></html>`)
+		case sdwConfigPath:
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprint(w, realSDWConfigJS)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	addr := parseTestServerAddr(t, server.URL)
+	conn, err := net.DialTimeout("tcp", strings.TrimPrefix(server.URL, "http://"), 5*time.Second)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	target := plugins.Target{Host: addr.Addr().String(), Address: addr}
+
+	service, err := (&ORDSPlugin{}).Run(conn, 5*time.Second, target)
+	require.NoError(t, err)
+	require.NotNil(t, service, "ORDS must still be detected from the landing page alone")
+	assert.Equal(t, "26.2", service.Version)
+
+	var ordsService plugins.ServiceOracleORDS
+	require.NoError(t, json.Unmarshal(service.Raw, &ordsService))
+	assert.False(t, ordsService.APEX, "APEX is not installed; the launcher card must not flag it")
+	assert.Empty(t, ordsService.APEXVersion)
+	assert.Equal(t, []string{"cpe:2.3:a:oracle:rest_data_services:26.2:*:*:*:*:*:*:*"}, ordsService.CPEs)
+}
+
+func TestORDSPlugin_Run_UnrelatedVersionedAssetDoesNotVersionAPEX(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/ords/" {
+			w.Header().Set("Server", "Oracle-REST-Data-Services/24.1.0")
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprint(w, `<html><body><script src="/i/2.0/app.js"></script></body></html>`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	addr := parseTestServerAddr(t, server.URL)
+	conn, err := net.DialTimeout("tcp", strings.TrimPrefix(server.URL, "http://"), 5*time.Second)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	target := plugins.Target{Host: addr.Addr().String(), Address: addr}
+
+	service, err := (&ORDSPlugin{}).Run(conn, 5*time.Second, target)
+	require.NoError(t, err)
+	require.NotNil(t, service)
+
+	var ordsService plugins.ServiceOracleORDS
+	require.NoError(t, json.Unmarshal(service.Raw, &ordsService))
+	assert.False(t, ordsService.APEX)
+	assert.Empty(t, ordsService.APEXVersion)
+	assert.Equal(t, []string{"cpe:2.3:a:oracle:rest_data_services:24.1.0:*:*:*:*:*:*:*"}, ordsService.CPEs)
 }

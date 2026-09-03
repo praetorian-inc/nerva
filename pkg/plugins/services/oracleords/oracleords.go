@@ -42,11 +42,30 @@ Detection Strategy (best-effort, non-fatal errors):
   applications), which avoids false positives against unrelated Jetty deployments.
 
 APEX Flag:
-  APEX is reported when APEX evidence is present: an X-APEX-* header (always),
-  or a body referencing "apex", the "/i/" static path, or an "f?p=" application
-  URL when that body was served under an /ords-prefixed path. The body-based
-  signal is gated to /ords paths so a generic root page does not falsely yield
-  an application_express CPE.
+  The markers that identify an ORDS surface are deliberately weaker than the
+  ones that identify APEX as an installed product, so the two are kept apart:
+
+    - bodyHasAPEX is the ORDS-detection marker. It accepts "apex", the "/i/"
+      static path or an "f?p=" application URL. Modern ORDS emits no Server
+      header, so on those instances this is the only thing that identifies the
+      service at all --- it matches on the landing page's own "apex" strings
+      (the font-apex icon stylesheet and the APEX launcher card), which is
+      exactly why it must not double as evidence that APEX is installed.
+
+    - bodyHasAPEXProduct gates the APEX flag, the application_express CPE and
+      the APEX version. It is an allowlist of markers only an APEX-rendered
+      response produces ("f?p=", "wwv_flow", the APEX library/UI asset paths,
+      the APEX CDN prefix). An allowlist is required because that same ORDS
+      landing page renders an APEX launcher card --- disabled when APEX is not
+      installed --- and so contains fifteen "apex" occurrences on an instance
+      with no APEX at all. Without the split, every modern ORDS is reported as
+      running APEX, and a body carrying an unrelated versioned asset such as
+      "/i/2.0/app.js" would stamp a precise, wrong version onto the
+      application_express CPE.
+
+  An X-APEX-* header is authoritative and flags APEX unconditionally. The
+  body-based signal is gated to /ords paths so a generic root page does not
+  falsely yield an application_express CPE.
 
 Version Detection (LAB-5060):
 
@@ -249,12 +268,51 @@ func is2xx(statusCode int) bool {
 	return statusCode >= 200 && statusCode < 300
 }
 
-// bodyHasAPEX reports whether a response body carries APEX static/app references.
+// bodyHasAPEX reports whether a response body carries APEX static/app
+// references. This is the ORDS-DETECTION marker and is intentionally broad:
+// on modern ORDS, whose responses carry no Server header, the landing page's
+// "font-apex" stylesheet reference is the only thing that identifies the
+// service. Do not use it to decide that APEX itself is installed --- see
+// bodyHasAPEXProduct.
 func bodyHasAPEX(body string) bool {
 	if strings.Contains(strings.ToLower(body), "apex") {
 		return true
 	}
 	return strings.Contains(body, "/i/") || strings.Contains(body, "f?p=")
+}
+
+// apexProductMarkers are references that only an APEX-rendered response
+// produces. This is deliberately an allowlist rather than a denylist of the
+// weak markers: the ORDS landing page renders an APEX launcher card on every
+// instance, disabled when APEX is absent, so on an APEX-free ORDS 26.2.3 its
+// markup still contains fifteen occurrences of "apex" --- "font-apex" twice
+// plus "cards__apex_card", "card_title_apex", "card_description_apex",
+// "apex-submit-form", "apex-card-actions__input-text", "apexhelpbutton" and
+// friends. No list of exclusions keeps up with that page across releases.
+//
+// Matching is case-insensitive; markers are written lowercase.
+var apexProductMarkers = []string{
+	"f?p=",                        // APEX application URL
+	"wwv_flow",                    // APEX PL/SQL gateway procedures
+	"/i/libraries/apex/",          // APEX JavaScript/CSS library assets
+	"/i/apex_ui/",                 // APEX UI static assets
+	"static.oracle.com/cdn/apex/", // APEX images served from the Oracle CDN
+	"apex.jquery",                 // APEX client-side global
+}
+
+// bodyHasAPEXProduct reports whether a response body carries evidence that APEX
+// is actually installed, as opposed to merely identifying an ORDS surface. It
+// gates the APEX flag, the application_express CPE and the APEX version, so
+// that neither an APEX-free ORDS landing page nor an unrelated versioned asset
+// such as "/i/2.0/app.js" can produce a false versioned CVE match.
+func bodyHasAPEXProduct(body string) bool {
+	lower := strings.ToLower(body)
+	for _, marker := range apexProductMarkers {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // ordsResult is the outcome of evaluating the collected ORDS evidence.
@@ -314,23 +372,21 @@ func evaluateORDS(evs []ordsEvidence) ordsResult {
 			res.anonymous = true
 		}
 
-		// APEX flag. The header signal is authoritative and unconditional.
-		// The body-based signal is gated to /ords-prefixed paths only, so a
-		// generic root page that happens to contain "apex" or "/i/" does not
-		// produce a false application_express CPE.
+		// APEX flag. The header signal is authoritative and unconditional. The
+		// body-based signal requires product-level evidence (bodyHasAPEXProduct,
+		// not the broader detection marker) and is gated to /ords-prefixed paths
+		// only, so neither an APEX-free ORDS landing page nor a generic root page
+		// produces a false application_express CPE.
 		//
-		// The APEX version is only read from a body that carried APEX evidence,
-		// which keeps an unrelated "/i/<n>.<n>/" path out of the version.
-		if ev.hasAPEXHeader {
+		// The version is read from that same qualifying body, once, which keeps
+		// an unrelated "/i/<n>.<n>/" path out of the version.
+		apexBody := strings.HasPrefix(ev.path, "/ords") && bodyHasAPEXProduct(ev.body)
+		if ev.hasAPEXHeader || apexBody {
 			res.apex = true
-			if v := parseAPEXVersion(ev.body); v != "" && res.apexVersion == "" {
-				res.apexVersion = v
-			}
-		}
-		if strings.HasPrefix(ev.path, "/ords") && bodyHasAPEX(ev.body) {
-			res.apex = true
-			if v := parseAPEXVersion(ev.body); v != "" && res.apexVersion == "" {
-				res.apexVersion = v
+			if res.apexVersion == "" {
+				if v := parseAPEXVersion(ev.body); v != "" {
+					res.apexVersion = v
+				}
 			}
 		}
 	}

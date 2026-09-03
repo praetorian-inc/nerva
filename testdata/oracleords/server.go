@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"time"
 )
 
 const (
@@ -127,7 +128,11 @@ func main() {
 
 	addr := ":" + port
 	fmt.Printf("ORDS mock (mode=%s) listening on %s\n", mode, addr)
-	server := &http.Server{Addr: addr, Handler: mux}
+	server := &http.Server{
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
 	if err := server.ListenAndServe(); err != nil {
 		fmt.Fprintf(os.Stderr, "server error: %v\n", err)
 		os.Exit(1)
@@ -155,8 +160,11 @@ const apexSignInPage = `<!DOCTYPE html>
 </html>`
 
 // landingPage is the ORDS standalone landing page introduced in ORDS 23.2. It
-// carries no version string; its only "apex" reference is the font-apex icon
-// stylesheet that ORDS ships for its own UI.
+// carries no version string. It does carry both the font-apex icon stylesheet
+// that ORDS ships for its own UI and the APEX launcher card that every instance
+// renders, disabled here because APEX is not installed. Neither of those means
+// APEX is present, and seeing through them is exactly what the plugin's
+// allowlist of APEX-rendered markers exists to do.
 const landingPage = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -172,6 +180,19 @@ const landingPage = `<!DOCTYPE html>
     <div id="landing-page">
         <h1 data-i18n data-i18n.inner-text="welcome"></h1>
         <p data-i18n data-i18n.inner-text="ords_description"></p>
+        <ul class="cards">
+            <li id="cards__apex_card" class="card card--disabled" role="region" data-i18n data-i18n.aria-labelledby="card_title_apex">
+                <div class="card-image card-image--apex"></div>
+                <h2 class="card__title" data-i18n data-i18n.inner-text="card_title_apex"></h2>
+                <p class="card__description" data-i18n data-i18n.inner-text="card_description_apex"></p>
+                <form id="apex-submit-form" class="card-actions" data-feature="apex">
+                    <label for="apex-card-actions__input-text" data-i18n data-i18n.inner-text="card_input_label"></label>
+                    <input id="apex-card-actions__input-text" class="card__input" placeholder="pdb1" type="text" name="apex-input">
+                    <button class="card__button card__go-button" id="apex-cdb-button" disabled></button>
+                    <a role="button" id="apexhelpbutton" data-i18n data-i18n.aria-label="help_button" aria-controls="cards__apex_card"></a>
+                </form>
+            </li>
+        </ul>
     </div>
     <script src="jet/js/libs/3rdparty/require/require.js"></script>
     <script src="landing/js/main.js"></script>
