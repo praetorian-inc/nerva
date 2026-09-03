@@ -127,20 +127,17 @@ func TestBodyHasAPEX(t *testing.T) {
 func TestBuildORDSCPEs(t *testing.T) {
 	tests := []struct {
 		name     string
-		version  string
-		apex     bool
+		res      ordsResult
 		expected []string
 	}{
 		{
 			name:     "with version, no APEX",
-			version:  "24.1.0",
-			apex:     false,
+			res:      ordsResult{version: "24.1.0"},
 			expected: []string{"cpe:2.3:a:oracle:rest_data_services:24.1.0:*:*:*:*:*:*:*"},
 		},
 		{
-			name:    "empty version, with APEX",
-			version: "",
-			apex:    true,
+			name: "empty version, with APEX of unknown version",
+			res:  ordsResult{apex: true},
 			expected: []string{
 				"cpe:2.3:a:oracle:rest_data_services:*:*:*:*:*:*:*:*",
 				"cpe:2.3:a:oracle:application_express:*:*:*:*:*:*:*:*",
@@ -148,15 +145,27 @@ func TestBuildORDSCPEs(t *testing.T) {
 		},
 		{
 			name:     "empty version, no APEX",
-			version:  "",
-			apex:     false,
+			res:      ordsResult{},
 			expected: []string{"cpe:2.3:a:oracle:rest_data_services:*:*:*:*:*:*:*:*"},
+		},
+		{
+			name: "APEX version lands in the application_express CPE",
+			res:  ordsResult{version: "26.2", apex: true, apexVersion: "24.1.5"},
+			expected: []string{
+				"cpe:2.3:a:oracle:rest_data_services:26.2:*:*:*:*:*:*:*",
+				"cpe:2.3:a:oracle:application_express:24.1.5:*:*:*:*:*:*:*",
+			},
+		},
+		{
+			name:     "APEX version is dropped when APEX itself was not detected",
+			res:      ordsResult{version: "26.2", apexVersion: "24.1.5"},
+			expected: []string{"cpe:2.3:a:oracle:rest_data_services:26.2:*:*:*:*:*:*:*"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := buildORDSCPEs(tt.version, tt.apex)
+			result := buildORDSCPEs(tt.res)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
@@ -164,12 +173,13 @@ func TestBuildORDSCPEs(t *testing.T) {
 
 func TestEvaluateORDS(t *testing.T) {
 	tests := []struct {
-		name              string
-		evidence          []ordsEvidence
-		expectedVersion   string
-		expectedAPEX      bool
-		expectedDetect    bool
-		expectedAnonymous bool
+		name                string
+		evidence            []ordsEvidence
+		expectedVersion     string
+		expectedAPEX        bool
+		expectedDetect      bool
+		expectedAnonymous   bool
+		expectedAPEXVersion string
 	}{
 		{
 			name: "Server header with version",
@@ -283,11 +293,12 @@ func TestEvaluateORDS(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			version, apex, detected, anonymous := evaluateORDS(tt.evidence)
-			assert.Equal(t, tt.expectedVersion, version)
-			assert.Equal(t, tt.expectedAPEX, apex)
-			assert.Equal(t, tt.expectedDetect, detected)
-			assert.Equal(t, tt.expectedAnonymous, anonymous)
+			res := evaluateORDS(tt.evidence)
+			assert.Equal(t, tt.expectedVersion, res.version)
+			assert.Equal(t, tt.expectedAPEX, res.apex)
+			assert.Equal(t, tt.expectedDetect, res.detected)
+			assert.Equal(t, tt.expectedAnonymous, res.anonymous)
+			assert.Equal(t, tt.expectedAPEXVersion, res.apexVersion)
 		})
 	}
 }
@@ -638,4 +649,261 @@ func TestORDSSecurityFindings(t *testing.T) {
 		assert.False(t, service.AnonymousAccess)
 		assert.Empty(t, service.SecurityFindings)
 	})
+}
+
+// realSDWConfigJS is the opening of the Database Actions / SQL Developer Web
+// client config as shipped in ORDS 26.2.3 (WEB-INF/lib/ords-sdw-client-*.jar,
+// sdw-content/en/js/config.js), served at /ords/_sdw/js/config.js.
+const realSDWConfigJS = `define({"meta":{"productName":"SQL Developer","companyName":"Oracle",` +
+	`"productVersion":"26.2.0","productPath":"_sdw/","signInPath":"sign-in/",` +
+	`"signOutPath":"sign-out/","landingPath":"/sql-developer"},` +
+	`"service":{"name":"Database Actions","version":""}})`
+
+func TestParseSDWProductVersion(t *testing.T) {
+	tests := []struct {
+		name     string
+		body     string
+		expected string
+	}{
+		{
+			name:     "ORDS 26.2.3 config reports the 26.2 train",
+			body:     realSDWConfigJS,
+			expected: "26.2",
+		},
+		{
+			name:     "two-component version",
+			body:     `define({"meta":{"productName":"SQL Developer","productVersion":"23.4"}})`,
+			expected: "23.4",
+		},
+		{
+			name:     "whitespace around JSON separators",
+			body:     `{ "productName" : "SQL Developer" , "productVersion" : "24.1.0" }`,
+			expected: "24.1",
+		},
+		{
+			name:     "OAuth admin console config is not a version source",
+			body:     `define({meta:{productName:'ORDS OAuth Administration',productVersion:'1.0.0'}});`,
+			expected: "",
+		},
+		{
+			name:     "SQL Developer config without a version",
+			body:     `define({"meta":{"productName":"SQL Developer","productPath":"_sdw/"}})`,
+			expected: "",
+		},
+		{
+			name:     "non-numeric version",
+			body:     `{"productName":"SQL Developer","productVersion":"latest"}`,
+			expected: "",
+		},
+		{
+			name:     "unrelated body",
+			body:     "<html><body>not ORDS</body></html>",
+			expected: "",
+		},
+		{
+			name:     "empty body",
+			body:     "",
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, parseSDWProductVersion(tt.body))
+		})
+	}
+}
+
+func TestParseAPEXVersion(t *testing.T) {
+	tests := []struct {
+		name     string
+		body     string
+		expected string
+	}{
+		{
+			name:     "cache-busting parameter on an APEX asset",
+			body:     `<script src="/i/libraries/apex/minified/desktop.min.js?v=24.1.5"></script>`,
+			expected: "24.1.5",
+		},
+		{
+			name:     "five-component cache-busting version",
+			body:     `<script src="/i/libraries/apex/minified/desktop_all.min.js?v=18.1.0.00.45"></script>`,
+			expected: "18.1.0.00.45",
+		},
+		{
+			name:     "versioned images directory",
+			body:     `<link rel="stylesheet" href="/i/24.1.5/app_ui/css/Core.min.css">`,
+			expected: "24.1.5",
+		},
+		{
+			name:     "Oracle CDN images directory",
+			body:     `<script src="https://static.oracle.com/cdn/apex/23.2.0/libraries/apex/minified/core.min.js"></script>`,
+			expected: "23.2.0",
+		},
+		{
+			name:     "cache-busting parameter wins over the images directory",
+			body:     `<link href="/i/24.1.5/app_ui/css/Core.min.css?v=24.1.5"><script src="/i/2.0/x.js"></script>`,
+			expected: "24.1.5",
+		},
+		{
+			name:     "unversioned APEX markup",
+			body:     `<a href="f?p=4550:1"><img src="/i/apex_ui/img/favicons/app-icon.png"></a>`,
+			expected: "",
+		},
+		{
+			name:     "a ?v= outside an /i/ reference is not an APEX version",
+			body:     `<script src="/static/js/app.js?v=1.2.3"></script>`,
+			expected: "",
+		},
+		{
+			name:     "empty body",
+			body:     "",
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, parseAPEXVersion(tt.body))
+		})
+	}
+}
+
+// TestDetectORDS_SDWConfigProbeGating covers when the Database Actions config
+// probe is issued: only once ORDS is detected and no Server-header version was
+// found.
+func TestDetectORDS_SDWConfigProbeGating(t *testing.T) {
+	tests := []struct {
+		name            string
+		handler         http.HandlerFunc
+		expectedVersion string
+		expectedDetect  bool
+		expectSDWProbe  bool
+	}{
+		{
+			name: "modern ORDS with no Server header takes the version from the SDW config",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/ords/":
+					w.WriteHeader(http.StatusOK)
+					fmt.Fprint(w, `<html><body><a href="f?p=4550:1">Sign in</a></body></html>`)
+				case sdwConfigPath:
+					w.WriteHeader(http.StatusOK)
+					fmt.Fprint(w, realSDWConfigJS)
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			},
+			expectedVersion: "26.2",
+			expectedDetect:  true,
+			expectSDWProbe:  true,
+		},
+		{
+			name: "an authenticated SDW config leaves the version empty and keeps detection",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/ords/":
+					w.WriteHeader(http.StatusOK)
+					fmt.Fprint(w, `<html><body><a href="f?p=4550:1">Sign in</a></body></html>`)
+				default:
+					w.WriteHeader(http.StatusUnauthorized)
+				}
+			},
+			expectedVersion: "",
+			expectedDetect:  true,
+			expectSDWProbe:  true,
+		},
+		{
+			name: "a Server-header version suppresses the SDW config probe",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Server", "Oracle-REST-Data-Services/24.1.0")
+				if r.URL.Path == "/ords/" {
+					w.WriteHeader(http.StatusOK)
+					return
+				}
+				w.WriteHeader(http.StatusNotFound)
+			},
+			expectedVersion: "24.1.0",
+			expectedDetect:  true,
+			expectSDWProbe:  false,
+		},
+		{
+			name: "a non-ORDS host is never probed for the SDW config",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Server", "nginx")
+				w.WriteHeader(http.StatusOK)
+				fmt.Fprint(w, "<html><body>hello world</body></html>")
+			},
+			expectedVersion: "",
+			expectedDetect:  false,
+			expectSDWProbe:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var sdwProbed bool
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == sdwConfigPath {
+					sdwProbed = true
+				}
+				tt.handler(w, r)
+			}))
+			defer server.Close()
+
+			conn, err := net.DialTimeout("tcp", strings.TrimPrefix(server.URL, "http://"), 5*time.Second)
+			require.NoError(t, err)
+			defer conn.Close()
+
+			res := detectORDS(createHTTPClient(conn, 5*time.Second), server.URL, "")
+			assert.Equal(t, tt.expectedDetect, res.detected)
+			assert.Equal(t, tt.expectedVersion, res.version)
+			assert.Equal(t, tt.expectSDWProbe, sdwProbed)
+		})
+	}
+}
+
+// TestORDSPlugin_Run_ModernORDSVersionsInCPEs is the end-to-end shape of the
+// LAB-5060 gap: an ORDS instance that emits no Server, X-ORDS-* or X-Powered-By
+// header still yields both an ORDS and an APEX version.
+func TestORDSPlugin_Run_ModernORDSVersionsInCPEs(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/ords/":
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprint(w, `<html><head>`+
+				`<script src="/i/libraries/apex/minified/desktop.min.js?v=24.1.5"></script>`+
+				`</head><body><a href="f?p=4550:1">Sign in</a></body></html>`)
+		case sdwConfigPath:
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprint(w, realSDWConfigJS)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	addr := parseTestServerAddr(t, server.URL)
+	conn, err := net.DialTimeout("tcp", strings.TrimPrefix(server.URL, "http://"), 5*time.Second)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	target := plugins.Target{
+		Host:    addr.Addr().String(),
+		Address: addr,
+	}
+
+	service, err := (&ORDSPlugin{}).Run(conn, 5*time.Second, target)
+	require.NoError(t, err)
+	require.NotNil(t, service)
+	assert.Equal(t, "26.2", service.Version)
+
+	var ordsService plugins.ServiceOracleORDS
+	require.NoError(t, json.Unmarshal(service.Raw, &ordsService))
+	assert.True(t, ordsService.APEX)
+	assert.Equal(t, "24.1.5", ordsService.APEXVersion)
+	assert.Equal(t, []string{
+		"cpe:2.3:a:oracle:rest_data_services:26.2:*:*:*:*:*:*:*",
+		"cpe:2.3:a:oracle:application_express:24.1.5:*:*:*:*:*:*:*",
+	}, ordsService.CPEs)
 }

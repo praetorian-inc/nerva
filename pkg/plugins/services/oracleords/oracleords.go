@@ -48,14 +48,50 @@ APEX Flag:
   signal is gated to /ords paths so a generic root page does not falsely yield
   an application_express CPE.
 
-Version:
-  Parsed from the "Oracle-REST-Data-Services/<ver>" Server token when present,
-  otherwise left empty.
+Version Detection (LAB-5060):
+
+  ORDS version, in order of preference:
+
+    1. The "Oracle-REST-Data-Services/<ver>" Server token. Older ORDS releases
+       (up to and including the 23.x line) emit this; modern standalone ORDS
+       does not.
+
+    2. The Database Actions / SQL Developer Web client config at
+       "/ords/_sdw/js/config.js", which carries
+       "productName":"SQL Developer","productVersion":"<ver>". That resource is
+       plain static content shipped in the ORDS distribution and is NOT covered
+       by any ORDS privilege pattern (the oracle.dbtools.sdw.user privilege
+       guards only "/_sdw/_services/*"), so it is readable anonymously wherever
+       a database pool is configured. Its productVersion tracks the ORDS
+       release train but pins the patch component at zero (ORDS 26.2.3 ships
+       "26.2.0"), so only the <major>.<minor> prefix is reported — claiming a
+       patch level we cannot observe would produce false CVE matches. The probe
+       runs only when ORDS was already detected and no Server-header version
+       was found, so non-ORDS hosts never see the extra request.
+
+  Modern ORDS otherwise leaks no version anonymously. Measured against a live
+  ORDS 26.2.3 standalone instance, every unauthenticated surface
+  ("/ords/_/landing" and its CSS/JS, "/ords/_/lib/*", "/ords/_/jet/*",
+  "/ords/sign-in/", the application/problem+json error bodies) is free of any
+  version string, and no Server, X-ORDS-*, X-APEX-* or X-Powered-By header is
+  emitted at all. ORDS does return a build-wide ETag on every "/ords/_/" static
+  resource (one value per build and locale, not per file), which would identify
+  a build exactly, but Oracle publishes only "ords-latest.zip" — prior releases
+  are not fetchable without an account — so an ETag-to-version table could
+  neither be built nor kept current, and is deliberately not attempted here.
+  When no source yields a version the service is still reported, with the
+  version left empty.
+
+  APEX version is read from APEX-rendered markup, which carries it in the
+  static-asset references: an "?v=<ver>" cache-busting parameter on an "/i/"
+  asset, a versioned images directory ("/i/<ver>/"), or the Oracle CDN images
+  directory ("static.oracle.com/cdn/apex/<ver>/"). It is only extracted from
+  bodies that already qualified as APEX evidence.
 
 CPE Format:
   cpe:2.3:a:oracle:rest_data_services:<ver-or-*>:*:*:*:*:*:*:*
   and, when APEX is detected, also:
-  cpe:2.3:a:oracle:application_express:*:*:*:*:*:*:*:*
+  cpe:2.3:a:oracle:application_express:<apex-ver-or-*>:*:*:*:*:*:*:*
 
 Default Ports:
   - 8080 is the ORDS standalone (Jetty) default (PortPriority for the TCP variant)
@@ -85,11 +121,38 @@ const (
 	DefaultORDSTLSPort = 8443
 	// maxResponseSize caps how much of each HTTP body is read.
 	maxResponseSize = int64(10 * 1024 * 1024)
+	// sdwConfigPath is the Database Actions / SQL Developer Web client config.
+	// It is static content and is not covered by an ORDS privilege pattern, so
+	// it reads anonymously wherever a database pool is configured.
+	sdwConfigPath = "/ords/_sdw/js/config.js"
 )
 
 // ordsServerVersionPattern extracts the version from the ORDS Server token:
 // "Oracle-REST-Data-Services/22.4.3".
 var ordsServerVersionPattern = regexp.MustCompile(`Oracle-REST-Data-Services/([\d.]+)`)
+
+// sdwProductVersionPattern extracts the Database Actions / SQL Developer Web
+// productVersion, e.g. `"productVersion":"26.2.0"`. Only the major and minor
+// components are captured; see parseSDWProductVersion.
+var sdwProductVersionPattern = regexp.MustCompile(`"productVersion"\s*:\s*"(\d+\.\d+)(?:\.\d+)*"`)
+
+// sdwProductNamePattern guards parseSDWProductVersion: "productVersion" is a
+// generic key in ORDS client configs (the OAuth admin console reports "1.0.0"
+// under it), so the version is only trusted from a config that identifies
+// itself as the SQL Developer / Database Actions client.
+var sdwProductNamePattern = regexp.MustCompile(`"productName"\s*:\s*"SQL Developer"`)
+
+// apexVersionPatterns match the APEX version as it appears in APEX-rendered
+// markup, most specific form first:
+//   - cache-busting parameter on an APEX static asset:
+//     /i/libraries/apex/minified/desktop.min.js?v=24.1.5
+//   - versioned images directory: /i/24.1.5/app_ui/...
+//   - Oracle CDN images directory: static.oracle.com/cdn/apex/24.1.5/...
+var apexVersionPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`/i/[^"'\s>]*\?v=(\d+\.\d+(?:\.\d+){0,3})`),
+	regexp.MustCompile(`/i/(\d+\.\d+(?:\.\d+){0,3})/`),
+	regexp.MustCompile(`static\.oracle\.com/cdn/apex/(\d+\.\d+(?:\.\d+){0,3})/`),
+}
 
 type ORDSPlugin struct{}
 
@@ -151,6 +214,36 @@ func parseORDSVersion(server string) string {
 	return ""
 }
 
+// parseSDWProductVersion extracts the ORDS release train from the Database
+// Actions / SQL Developer Web client config body, returning "<major>.<minor>"
+// (e.g. "26.2" for a body reporting "26.2.0"). The patch component is dropped
+// on purpose: SQL Developer Web pins it at zero for the whole train (ORDS
+// 26.2.3 ships "26.2.0"), so reporting it would assert a patch level the
+// response does not actually prove. Returns "" when the body is not a SQL
+// Developer client config or carries no parseable version.
+func parseSDWProductVersion(body string) string {
+	if !sdwProductNamePattern.MatchString(body) {
+		return ""
+	}
+	if m := sdwProductVersionPattern.FindStringSubmatch(body); len(m) >= 2 {
+		return m[1]
+	}
+	return ""
+}
+
+// parseAPEXVersion extracts the APEX version from APEX-rendered markup. Callers
+// must only pass bodies that already qualified as APEX evidence, so that an
+// unrelated "/i/<n>.<n>/" path cannot be mistaken for an APEX images directory.
+// Returns "" when no version is present.
+func parseAPEXVersion(body string) string {
+	for _, pattern := range apexVersionPatterns {
+		if m := pattern.FindStringSubmatch(body); len(m) >= 2 {
+			return m[1]
+		}
+	}
+	return ""
+}
+
 // is2xx reports whether an HTTP status code indicates a successful response.
 func is2xx(statusCode int) bool {
 	return statusCode >= 200 && statusCode < 300
@@ -164,13 +257,27 @@ func bodyHasAPEX(body string) bool {
 	return strings.Contains(body, "/i/") || strings.Contains(body, "f?p=")
 }
 
+// ordsResult is the outcome of evaluating the collected ORDS evidence.
+type ordsResult struct {
+	// version is the ORDS version, empty when no source yielded one.
+	version string
+	// apex reports whether APEX is fronted by this ORDS instance.
+	apex bool
+	// apexVersion is the APEX version, empty when it could not be read.
+	apexVersion string
+	// detected reports whether the host is ORDS at all.
+	detected bool
+	// anonymous reports whether the ORDS surface answered without credentials.
+	anonymous bool
+}
+
 // evaluateORDS inspects collected responses and decides whether the host is
-// ORDS, returning the parsed version, whether APEX is present, whether ORDS was
-// detected, and whether the ORDS surface is anonymously accessible. anonymous is
-// true only when an ORDS-identifying response actually SUCCEEDED (2xx): a service
-// that is identified solely from an auth-challenge response (401/403 carrying an
-// ORDS Server header or ORDS headers) is detected but is NOT anonymous access.
-func evaluateORDS(evs []ordsEvidence) (version string, apex bool, detected bool, anonymous bool) {
+// ORDS. anonymous is true only when an ORDS-identifying response actually
+// SUCCEEDED (2xx): a service that is identified solely from an auth-challenge
+// response (401/403 carrying an ORDS Server header or ORDS headers) is detected
+// but is NOT anonymous access.
+func evaluateORDS(evs []ordsEvidence) ordsResult {
+	var res ordsResult
 	for _, ev := range evs {
 		// ordsSignal tracks whether THIS response identified ORDS, so that the
 		// anonymous-access decision can be gated on its status code.
@@ -178,16 +285,16 @@ func evaluateORDS(evs []ordsEvidence) (version string, apex bool, detected bool,
 
 		// Strong signal: ORDS Server header (also yields version).
 		if strings.Contains(ev.server, "Oracle-REST-Data-Services") {
-			detected = true
+			res.detected = true
 			ordsSignal = true
-			if v := parseORDSVersion(ev.server); v != "" && version == "" {
-				version = v
+			if v := parseORDSVersion(ev.server); v != "" && res.version == "" {
+				res.version = v
 			}
 		}
 
 		// Strong signal: ORDS/APEX response headers.
 		if ev.hasORDSHeader || ev.hasAPEXHeader {
-			detected = true
+			res.detected = true
 			ordsSignal = true
 		}
 
@@ -195,7 +302,7 @@ func evaluateORDS(evs []ordsEvidence) (version string, apex bool, detected bool,
 		// A bare Jetty header alone is NOT sufficient; it must be on an /ords path.
 		if strings.HasPrefix(ev.path, "/ords") && ev.statusCode != http.StatusNotFound {
 			if strings.Contains(ev.server, "Jetty(") || bodyHasAPEX(ev.body) {
-				detected = true
+				res.detected = true
 				ordsSignal = true
 			}
 		}
@@ -204,60 +311,96 @@ func evaluateORDS(evs []ordsEvidence) (version string, apex bool, detected bool,
 		// succeeded (2xx). An ORDS surface that only answers with an auth
 		// challenge (e.g. 401/403) is detected but not anonymously accessible.
 		if ordsSignal && is2xx(ev.statusCode) {
-			anonymous = true
+			res.anonymous = true
 		}
 
 		// APEX flag. The header signal is authoritative and unconditional.
 		// The body-based signal is gated to /ords-prefixed paths only, so a
 		// generic root page that happens to contain "apex" or "/i/" does not
 		// produce a false application_express CPE.
+		//
+		// The APEX version is only read from a body that carried APEX evidence,
+		// which keeps an unrelated "/i/<n>.<n>/" path out of the version.
 		if ev.hasAPEXHeader {
-			apex = true
+			res.apex = true
+			if v := parseAPEXVersion(ev.body); v != "" && res.apexVersion == "" {
+				res.apexVersion = v
+			}
 		}
 		if strings.HasPrefix(ev.path, "/ords") && bodyHasAPEX(ev.body) {
-			apex = true
+			res.apex = true
+			if v := parseAPEXVersion(ev.body); v != "" && res.apexVersion == "" {
+				res.apexVersion = v
+			}
 		}
 	}
-	return version, apex, detected, anonymous
+	return res
+}
+
+// fetchEvidence performs a single GET and records the inspectable parts of the
+// response. ok is false when the request failed; callers treat that as
+// non-fatal and continue with whatever other evidence they can gather.
+func fetchEvidence(client *http.Client, baseURL string, path string, host string) (ordsEvidence, bool) {
+	resp, err := doGet(client, baseURL+path, host)
+	if err != nil {
+		return ordsEvidence{}, false
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
+	return ordsEvidence{
+		path:       path,
+		statusCode: resp.StatusCode,
+		server:     resp.Header.Get("Server"),
+		body:       string(body),
+		hasORDSHeader: resp.Header.Get("X-ORDS-STATUS-CODE") != "" ||
+			resp.Header.Get("X-ORDS-FORWARD") != "",
+		hasAPEXHeader: resp.Header.Get("X-APEX-STATUS-CODE") != "" ||
+			resp.Header.Get("X-APEX-FORWARD") != "",
+	}, true
 }
 
 // detectORDS fetches the ORDS probe paths and evaluates the collected evidence.
-func detectORDS(client *http.Client, baseURL string, host string) (version string, apex bool, detected bool, anonymous bool) {
+func detectORDS(client *http.Client, baseURL string, host string) ordsResult {
 	paths := []string{"/ords/", "/ords/_/landing", "/"}
 	var evs []ordsEvidence
 	for _, p := range paths {
-		resp, err := doGet(client, baseURL+p, host)
-		if err != nil {
-			// Non-fatal: continue with whatever other evidence we can gather.
-			continue
+		if ev, ok := fetchEvidence(client, baseURL, p, host); ok {
+			evs = append(evs, ev)
 		}
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
-		evs = append(evs, ordsEvidence{
-			path:       p,
-			statusCode: resp.StatusCode,
-			server:     resp.Header.Get("Server"),
-			body:       string(body),
-			hasORDSHeader: resp.Header.Get("X-ORDS-STATUS-CODE") != "" ||
-				resp.Header.Get("X-ORDS-FORWARD") != "",
-			hasAPEXHeader: resp.Header.Get("X-APEX-STATUS-CODE") != "" ||
-				resp.Header.Get("X-APEX-FORWARD") != "",
-		})
-		_ = resp.Body.Close()
 	}
-	return evaluateORDS(evs)
+	res := evaluateORDS(evs)
+
+	// Modern ORDS (24.x/26.x) emits no Server header, so fall back to the
+	// Database Actions client config for the release train. The probe is gated
+	// on ORDS already being detected without a version, which keeps the extra
+	// request off non-ORDS hosts and off hosts that already answered with a
+	// Server-header version.
+	if res.detected && res.version == "" {
+		if ev, ok := fetchEvidence(client, baseURL, sdwConfigPath, host); ok && is2xx(ev.statusCode) {
+			res.version = parseSDWProductVersion(ev.body)
+		}
+	}
+	return res
 }
 
 // buildORDSCPEs returns the CPE list for ORDS (always) and APEX (when detected).
-func buildORDSCPEs(version string, apex bool) []string {
-	v := version
-	if v == "" {
-		v = "*"
-	}
-	cpes := []string{fmt.Sprintf("cpe:2.3:a:oracle:rest_data_services:%s:*:*:*:*:*:*:*", v)}
-	if apex {
-		cpes = append(cpes, "cpe:2.3:a:oracle:application_express:*:*:*:*:*:*:*:*")
+// An unobtainable version is reported as the CPE "any" wildcard rather than
+// guessed.
+func buildORDSCPEs(res ordsResult) []string {
+	cpes := []string{fmt.Sprintf("cpe:2.3:a:oracle:rest_data_services:%s:*:*:*:*:*:*:*", cpeVersion(res.version))}
+	if res.apex {
+		cpes = append(cpes, fmt.Sprintf("cpe:2.3:a:oracle:application_express:%s:*:*:*:*:*:*:*", cpeVersion(res.apexVersion)))
 	}
 	return cpes
+}
+
+// cpeVersion renders a version for a CPE, substituting the "any" wildcard for
+// an unknown version.
+func cpeVersion(version string) string {
+	if version == "" {
+		return "*"
+	}
+	return version
 }
 
 func ordsFinding() plugins.SecurityFinding {
@@ -273,23 +416,24 @@ func (p *ORDSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 	client := createHTTPClient(conn, timeout)
 	baseURL := fmt.Sprintf("http://%s", conn.RemoteAddr().String())
 
-	version, apex, detected, anonymous := detectORDS(client, baseURL, target.Host)
-	if !detected {
+	res := detectORDS(client, baseURL, target.Host)
+	if !res.detected {
 		return nil, nil
 	}
 
 	payload := plugins.ServiceOracleORDS{
-		APEX: apex,
+		APEX:        res.apex,
+		APEXVersion: res.apexVersion,
 		// AICapable is inferred: ORDS is the common gateway for Select AI /
 		// AI Vector Search results / OML REST. Capability is inferred, not confirmed.
 		AICapable: true,
-		CPEs:      buildORDSCPEs(version, apex),
+		CPEs:      buildORDSCPEs(res),
 	}
-	service := plugins.CreateServiceFrom(target, payload, false, version, plugins.TCP)
+	service := plugins.CreateServiceFrom(target, payload, false, res.version, plugins.TCP)
 	// Only flag anonymous access / the exposure finding when ORDS actually served
 	// a successful (2xx) response; an auth-challenge-only surface is detected but
 	// is not anonymously accessible.
-	if target.Misconfigs && anonymous {
+	if target.Misconfigs && res.anonymous {
 		service.AnonymousAccess = true
 		service.SecurityFindings = append(service.SecurityFindings, ordsFinding())
 	}
@@ -305,22 +449,23 @@ func (p *ORDSTLSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins
 	client := createHTTPClient(conn, timeout)
 	baseURL := fmt.Sprintf("http://%s", conn.RemoteAddr().String())
 
-	version, apex, detected, anonymous := detectORDS(client, baseURL, target.Host)
-	if !detected {
+	res := detectORDS(client, baseURL, target.Host)
+	if !res.detected {
 		return nil, nil
 	}
 
 	payload := plugins.ServiceOracleORDS{
-		APEX:      apex,
-		AICapable: true,
-		CPEs:      buildORDSCPEs(version, apex),
+		APEX:        res.apex,
+		APEXVersion: res.apexVersion,
+		AICapable:   true,
+		CPEs:        buildORDSCPEs(res),
 	}
-	service := plugins.CreateServiceFrom(target, payload, true, version, plugins.TCPTLS)
+	service := plugins.CreateServiceFrom(target, payload, true, res.version, plugins.TCPTLS)
 	if target.Misconfigs {
 		// Only flag anonymous access / the exposure finding on a successful (2xx)
 		// ORDS response; an auth-challenge-only surface is detected but not
 		// anonymously accessible. TLS findings are unrelated and always collected.
-		if anonymous {
+		if res.anonymous {
 			service.AnonymousAccess = true
 			service.SecurityFindings = append(service.SecurityFindings, ordsFinding())
 		}
