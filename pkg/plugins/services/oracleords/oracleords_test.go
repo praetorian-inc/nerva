@@ -858,6 +858,33 @@ func TestParseAPEXVersion(t *testing.T) {
 			body:     "",
 			expected: "",
 		},
+		{
+			name:     "unrelated versioned asset under /i/ is not an APEX version",
+			body:     `<a href="f?p=4550:1">Sign In</a><script src="/i/2.0/app.js"></script>`,
+			expected: "",
+		},
+		{
+			name:     "unrelated cache-busted asset under /i/ is not an APEX version",
+			body:     `<script src="/i/vendor/analytics.js?v=3.4.5"></script>`,
+			expected: "",
+		},
+		{
+			name: "APEX asset wins over an unrelated versioned asset on the same page",
+			body: `<a href="f?p=4550:1">Sign In</a>` +
+				`<script src="/i/2.0/app.js"></script>` +
+				`<link rel="stylesheet" href="/i/24.1.5/app_ui/css/Core.min.css">`,
+			expected: "24.1.5",
+		},
+		{
+			name:     "versioned themes subtree",
+			body:     `<link rel="stylesheet" href="/i/23.2.0/themes/theme_42/23.2/css/Core.min.css">`,
+			expected: "23.2.0",
+		},
+		{
+			name:     "unversioned images directory with cache-busting parameter",
+			body:     `<link href="/i/themes/theme_42/1.4/css/Core.min.css?v=18.1.0.00.45">`,
+			expected: "18.1.0.00.45",
+		},
 	}
 
 	for _, tt := range tests {
@@ -1068,4 +1095,36 @@ func TestORDSPlugin_Run_UnrelatedVersionedAssetDoesNotVersionAPEX(t *testing.T) 
 	assert.False(t, ordsService.APEX)
 	assert.Empty(t, ordsService.APEXVersion)
 	assert.Equal(t, []string{"cpe:2.3:a:oracle:rest_data_services:24.1.0:*:*:*:*:*:*:*"}, ordsService.CPEs)
+}
+
+func TestORDSPlugin_Run_APEXPageWithUnrelatedVersionedAssetHasNoAPEXVersion(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/ords/" {
+			w.WriteHeader(http.StatusOK)
+			// Genuine APEX markup, so the APEX product gate opens, alongside an
+			// unrelated versioned asset that merely shares the "/i/" prefix.
+			fmt.Fprint(w, `<html><body><a href="f?p=4550:1">Sign In</a>`+
+				`<script src="/i/2.0/app.js"></script></body></html>`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	addr := parseTestServerAddr(t, server.URL)
+	conn, err := net.DialTimeout("tcp", strings.TrimPrefix(server.URL, "http://"), 5*time.Second)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	target := plugins.Target{Host: addr.Addr().String(), Address: addr}
+
+	service, err := (&ORDSPlugin{}).Run(conn, 5*time.Second, target)
+	require.NoError(t, err)
+	require.NotNil(t, service)
+
+	var ordsService plugins.ServiceOracleORDS
+	require.NoError(t, json.Unmarshal(service.Raw, &ordsService))
+	assert.True(t, ordsService.APEX, "f?p= is genuine APEX evidence")
+	assert.Empty(t, ordsService.APEXVersion, "an unrelated /i/ asset must not supply the APEX version")
+	assert.Contains(t, ordsService.CPEs, "cpe:2.3:a:oracle:application_express:*:*:*:*:*:*:*:*")
 }

@@ -105,7 +105,10 @@ Version Detection (LAB-5060):
   static-asset references: an "?v=<ver>" cache-busting parameter on an "/i/"
   asset, a versioned images directory ("/i/<ver>/"), or the Oracle CDN images
   directory ("static.oracle.com/cdn/apex/<ver>/"). It is only extracted from
-  bodies that already qualified as APEX evidence.
+  bodies that already qualified as APEX evidence, and every "/i/" match is
+  additionally anchored to an APEX images subtree (app_ui, apex_ui, libraries,
+  themes) so that an unrelated versioned asset sharing the "/i/" prefix on an
+  otherwise genuine APEX page cannot supply the version.
 
 CPE Format:
   cpe:2.3:a:oracle:rest_data_services:<ver-or-*>:*:*:*:*:*:*:*
@@ -161,15 +164,24 @@ var sdwProductVersionPattern = regexp.MustCompile(`"productVersion"\s*:\s*"(\d+\
 // itself as the SQL Developer / Database Actions client.
 var sdwProductNamePattern = regexp.MustCompile(`"productName"\s*:\s*"SQL Developer"`)
 
+// apexImagesSubtree matches the top-level directories of the APEX images
+// directory that actually appear in APEX-rendered markup. Every "/i/" version
+// match is anchored to one of them, because "/i/" on its own is only a
+// convention: a page can legitimately carry both APEX markup and an unrelated
+// "/i/2.0/app.js", and without the anchor that asset's "2.0" would be reported
+// as the APEX version.
+const apexImagesSubtree = `(?:app_ui|apex_ui|libraries|themes)`
+
 // apexVersionPatterns match the APEX version as it appears in APEX-rendered
 // markup, most specific form first:
 //   - cache-busting parameter on an APEX static asset:
 //     /i/libraries/apex/minified/desktop.min.js?v=24.1.5
+//     /i/24.1.5/app_ui/css/Core.min.css?v=24.1.5
 //   - versioned images directory: /i/24.1.5/app_ui/...
 //   - Oracle CDN images directory: static.oracle.com/cdn/apex/24.1.5/...
 var apexVersionPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`/i/[^"'\s>]*\?v=(\d+\.\d+(?:\.\d+){0,3})`),
-	regexp.MustCompile(`/i/(\d+\.\d+(?:\.\d+){0,3})/`),
+	regexp.MustCompile(`/i/(?:\d[\d.]*/)?` + apexImagesSubtree + `/[^"'\s>]*\?v=(\d+\.\d+(?:\.\d+){0,3})`),
+	regexp.MustCompile(`/i/(\d+\.\d+(?:\.\d+){0,3})/` + apexImagesSubtree + `/`),
 	regexp.MustCompile(`static\.oracle\.com/cdn/apex/(\d+\.\d+(?:\.\d+){0,3})/`),
 }
 
