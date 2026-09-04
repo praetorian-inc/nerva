@@ -54,8 +54,10 @@ APEX Flag:
 
     - bodyHasAPEXProduct gates the APEX flag, the application_express CPE and
       the APEX version. It is an allowlist of markers only an APEX-rendered
-      response produces ("f?p=", "wwv_flow", the APEX library/UI asset paths,
-      the APEX CDN prefix). An allowlist is required because that same ORDS
+      response produces ("f?p=", "wwv_flow", the APEX CDN prefix, and any
+      reference into the APEX images directory, version-prefixed or not --- the
+      last of these shares its pattern with the version parser so the two
+      cannot drift apart). An allowlist is required because that same ORDS
       landing page renders an APEX launcher card --- disabled when APEX is not
       installed --- and so contains fifteen "apex" occurrences on an instance
       with no APEX at all. Without the split, every modern ORDS is reported as
@@ -311,11 +313,21 @@ func bodyHasAPEX(body string) bool {
 var apexProductMarkers = []string{
 	"f?p=",                        // APEX application URL
 	"wwv_flow",                    // APEX PL/SQL gateway procedures
-	"/i/libraries/apex/",          // APEX JavaScript/CSS library assets
-	"/i/apex_ui/",                 // APEX UI static assets
 	"static.oracle.com/cdn/apex/", // APEX images served from the Oracle CDN
 	"apex.jquery",                 // APEX client-side global
 }
+
+// apexAssetPathPattern matches a reference into the APEX images directory, with
+// or without the version prefix that modern APEX uses ("/i/24.1.5/app_ui/…").
+//
+// It shares apexImagesSubtree with apexVersionPatterns on purpose: a path
+// specific enough to yield an APEX version is by definition specific enough to
+// prove APEX is installed. Keeping the two as independent literal lists let them
+// drift, and they did -- "/i/24.1.5/libraries/apex/…" yielded a version while
+// failing the product gate, because the literal marker did not survive the
+// version prefix. The result was an APEX instance reported as not running APEX,
+// and (since the version is gated on the product evidence) no version either.
+var apexAssetPathPattern = regexp.MustCompile(`/i/(?:\d[\d.]*/)?` + apexImagesSubtree + `/`)
 
 // bodyHasAPEXProduct reports whether a response body carries evidence that APEX
 // is actually installed, as opposed to merely identifying an ORDS surface. It
@@ -329,7 +341,7 @@ func bodyHasAPEXProduct(body string) bool {
 			return true
 		}
 	}
-	return false
+	return apexAssetPathPattern.MatchString(lower)
 }
 
 // ordsResult is the outcome of evaluating the collected ORDS evidence.

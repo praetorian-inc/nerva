@@ -202,6 +202,26 @@ func TestBodyHasAPEXProduct(t *testing.T) {
 			body:     "",
 			expected: false,
 		},
+		{
+			name:     "version-prefixed APEX library asset",
+			body:     `<script src="/i/24.1.5/libraries/apex/minified/desktop.min.js"></script>`,
+			expected: true,
+		},
+		{
+			name:     "version-prefixed APEX app_ui asset",
+			body:     `<link rel="stylesheet" href="/i/24.1.5/app_ui/css/Core.min.css">`,
+			expected: true,
+		},
+		{
+			name:     "version-prefixed APEX themes asset",
+			body:     `<link rel="stylesheet" href="/i/23.2.0/themes/theme_42/css/Core.min.css">`,
+			expected: true,
+		},
+		{
+			name:     "unversioned APEX app_ui asset",
+			body:     `<link rel="stylesheet" href="/i/app_ui/css/Core.min.css">`,
+			expected: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -404,6 +424,18 @@ func TestEvaluateORDS(t *testing.T) {
 			evidence: []ordsEvidence{
 				{path: "/ords/", statusCode: http.StatusOK, hasAPEXHeader: true,
 					body: `<a href="f?p=4550:1">Sign In</a><link href="/i/24.1.5/app_ui/css/Core.min.css">`},
+			},
+			expectedVersion:     "",
+			expectedAPEX:        true,
+			expectedDetect:      true,
+			expectedAnonymous:   true,
+			expectedAPEXVersion: "24.1.5",
+		},
+		{
+			name: "version-prefixed APEX asset alone is product evidence and yields a version",
+			evidence: []ordsEvidence{
+				{path: "/ords/", statusCode: http.StatusOK,
+					body: `<html><head><link rel="stylesheet" href="/i/24.1.5/app_ui/css/Core.min.css"></head></html>`},
 			},
 			expectedVersion:     "",
 			expectedAPEX:        true,
