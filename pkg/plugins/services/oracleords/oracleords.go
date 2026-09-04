@@ -180,7 +180,12 @@ const apexImagesSubtree = `(?:app_ui|apex_ui|libraries|themes)`
 //   - versioned images directory: /i/24.1.5/app_ui/...
 //   - Oracle CDN images directory: static.oracle.com/cdn/apex/24.1.5/...
 var apexVersionPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`/i/(?:\d[\d.]*/)?` + apexImagesSubtree + `/[^"'\s>]*\?v=(\d+\.\d+(?:\.\d+){0,3})`),
+	// The trailing terminator (or end of body) matters: without it, a malformed
+	// "?v=24.1.5abc" would silently capture "24.1.5" and report a version the
+	// response never stated. RE2 has no lookahead, so the boundary is an
+	// alternation of the characters that actually end an asset URL. The other
+	// two patterns already self-terminate on "/".
+	regexp.MustCompile(`/i/(?:\d[\d.]*/)?` + apexImagesSubtree + `/[^"'\s>]*\?v=(\d+\.\d+(?:\.\d+){0,3})(?:["'\s>&<)]|$)`),
 	regexp.MustCompile(`/i/(\d+\.\d+(?:\.\d+){0,3})/` + apexImagesSubtree + `/`),
 	regexp.MustCompile(`static\.oracle\.com/cdn/apex/(\d+\.\d+(?:\.\d+){0,3})/`),
 }
@@ -395,7 +400,12 @@ func evaluateORDS(evs []ordsEvidence) ordsResult {
 		apexBody := strings.HasPrefix(ev.path, "/ords") && bodyHasAPEXProduct(ev.body)
 		if ev.hasAPEXHeader || apexBody {
 			res.apex = true
-			if res.apexVersion == "" {
+			// The version comes only from a body that itself qualified as APEX
+			// product evidence. An X-APEX-* header proves the SERVICE is APEX but
+			// says nothing about the body it arrived with, so on the header-only
+			// path an unrelated versioned asset would otherwise be stamped onto
+			// the CPE. Prefer no version over a wrong one.
+			if apexBody && res.apexVersion == "" {
 				if v := parseAPEXVersion(ev.body); v != "" {
 					res.apexVersion = v
 				}

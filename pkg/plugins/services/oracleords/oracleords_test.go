@@ -387,6 +387,30 @@ func TestEvaluateORDS(t *testing.T) {
 			expectedDetect:    true,
 			expectedAnonymous: false,
 		},
+		{
+			name: "APEX header does not take a version from a non-qualifying body",
+			evidence: []ordsEvidence{
+				{path: "/", statusCode: http.StatusOK, hasAPEXHeader: true,
+					body: `<link rel="stylesheet" href="/i/9.9.9/themes/theme_42/css/Core.min.css">`},
+			},
+			expectedVersion:     "",
+			expectedAPEX:        true,
+			expectedDetect:      true,
+			expectedAnonymous:   true,
+			expectedAPEXVersion: "",
+		},
+		{
+			name: "APEX version is taken from a body that does qualify",
+			evidence: []ordsEvidence{
+				{path: "/ords/", statusCode: http.StatusOK, hasAPEXHeader: true,
+					body: `<a href="f?p=4550:1">Sign In</a><link href="/i/24.1.5/app_ui/css/Core.min.css">`},
+			},
+			expectedVersion:     "",
+			expectedAPEX:        true,
+			expectedDetect:      true,
+			expectedAnonymous:   true,
+			expectedAPEXVersion: "24.1.5",
+		},
 	}
 
 	for _, tt := range tests {
@@ -884,6 +908,31 @@ func TestParseAPEXVersion(t *testing.T) {
 			name:     "unversioned images directory with cache-busting parameter",
 			body:     `<link href="/i/themes/theme_42/1.4/css/Core.min.css?v=18.1.0.00.45">`,
 			expected: "18.1.0.00.45",
+		},
+		{
+			name:     "malformed version with trailing junk yields nothing",
+			body:     `<script src="/i/libraries/apex/minified/desktop.min.js?v=24.1.5abc"></script>`,
+			expected: "",
+		},
+		{
+			name:     "over-long version component list yields nothing",
+			body:     `<script src="/i/libraries/apex/x.js?v=24.1.5.6.7.8"></script>`,
+			expected: "",
+		},
+		{
+			name:     "version terminated by a query separator",
+			body:     `<script src="/i/libraries/apex/x.js?v=24.1.5&cb=9"></script>`,
+			expected: "24.1.5",
+		},
+		{
+			name:     "version at end of body",
+			body:     `/i/libraries/apex/minified/desktop.min.js?v=24.1.5`,
+			expected: "24.1.5",
+		},
+		{
+			name:     "version inside a CSS url()",
+			body:     `background:url(/i/themes/theme_42/css/Core.min.css?v=23.2.0)`,
+			expected: "23.2.0",
 		},
 	}
 
