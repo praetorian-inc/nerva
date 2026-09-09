@@ -1,6 +1,6 @@
 # Makefile for nerva - Service fingerprinting utility
 .PHONY: all build test test-unit test-integration clean help lint fmt vet install test-coverage \
-        release release-checksums
+        release release-checksums cli-docs
 .DEFAULT_GOAL := help
 .DELETE_ON_ERROR:
 
@@ -67,6 +67,11 @@ test-integration: ## Run integration tests (requires Linux for SCTP)
 test-coverage: ## Run tests with coverage report
 	$(GO) test $(TEST_FLAGS) -coverprofile=$(COVERAGE_FILE) ./...
 	$(GO) tool cover -html=$(COVERAGE_FILE)
+
+cli-docs: ## Regenerate CLI surface docs from the live cobra tree
+	@GOWORK=off $(GO) test ./pkg/runner -list 'TestCLISurface' | grep -qE '^TestCLISurface$$' \
+	  || { echo "cli-docs: 'go test -list' did not report TestCLISurface in ./pkg/runner. Either the -update writer was renamed, or the package failed to build -- run 'go build ./pkg/runner' to tell which. 'go test -run' exits 0 when its pattern matches nothing, so without this check the target would report success having regenerated nothing at all."; exit 1; }
+	GOWORK=off $(GO) test ./pkg/runner -run 'TestCLISurface' -count=1 -update
 
 #############################################################################
 # Quality Targets

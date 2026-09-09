@@ -1,0 +1,16 @@
+# Flag names documentation may mention even though the CLI does not accept them.
+#
+# The CLI-surface doc lint (see pkg/runner/cli_surface_test.go) checks every nerva invocation in
+# a fenced code block, every backticked flag name in prose, and every flag name
+# in a Go comment under the configured Go directories against the flags cobra
+# actually registers. This file is the escape hatch for deliberate mentions.
+# Every entry MUST carry a '#' reason: the gate rejects an entry without one,
+# because an unexplained exception is how a stale flag reference survives forever.
+#
+# Keep this list as short as possible. If a mention is not deliberate, fix the
+# document instead of allowing it.
+
+--name        # docker run --name, in live-test comments that document the fixture container
+--host        # mlflow server --host, in the docker run comment in pkg/plugins/fingerprinters/mlflow_test.go
+--privileged  # docker run --privileged, required for the pptpd fixture in pkg/plugins/services/pptp
+--sentinel    # redis-server --sentinel mode, named in pkg/plugins/services/redissentinel

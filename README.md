@@ -96,6 +96,19 @@ naabu -host example.com -silent | nerva
 # https://example.com:443
 ```
 
+### Subcommands
+
+<!-- BEGIN generated: cli-subcommands -->
+Nerva organizes its functionality into these focused subcommands:
+
+```bash
+```
+<!-- END generated: cli-subcommands -->
+
+<!-- BEGIN generated: cli-aliases -->
+The full reference — every subcommand, alias and flag, including the ones hidden from `--help` — is generated into [docs/CLI.md](docs/CLI.md).
+<!-- END generated: cli-aliases -->
+
 ## Usage
 
 ```

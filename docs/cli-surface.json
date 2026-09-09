@@ -1,0 +1,147 @@
+{
+  "schemaVersion": 1,
+  "surfaceHash": "sha256:fb62443a537e4b658be930ce6a9944a72a27b80a6661977e5062b440b3bfeb86",
+  "commands": [
+    {
+      "path": "nerva",
+      "use": "nerva [flags]\nTARGET SPECIFICATION:\n\tRequires a host and port number or ip and port number. The port is assumed to be open.\n\tHOST:PORT or IP:PORT\nEXAMPLES:\n\tnerva -t praetorian.com:80\n\tnerva -l input-file.txt\n\tnerva --json -t praetorian.com:80,127.0.0.1:8000",
+      "short": "",
+      "runnable": true,
+      "flags": [
+        {
+          "name": "auto-save",
+          "type": "int",
+          "default": "0",
+          "usage": "auto-save interval (number of targets)"
+        },
+        {
+          "name": "capabilities",
+          "shorthand": "c",
+          "type": "bool",
+          "default": "false",
+          "usage": "list available capabilities and exit"
+        },
+        {
+          "name": "csv",
+          "type": "bool",
+          "default": "false",
+          "usage": "output format in csv"
+        },
+        {
+          "name": "deep",
+          "type": "bool",
+          "default": "false",
+          "usage": "enable deep probing (admin paths, login detection)"
+        },
+        {
+          "name": "dns-order",
+          "type": "string",
+          "default": "lp",
+          "usage": "DNS resolution order: p, l, lp, pl"
+        },
+        {
+          "name": "fast",
+          "shorthand": "f",
+          "type": "bool",
+          "default": "false",
+          "usage": "fast mode"
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "usage": "output format in json"
+        },
+        {
+          "name": "list",
+          "shorthand": "l",
+          "type": "string",
+          "usage": "input file containing targets"
+        },
+        {
+          "name": "max-host-conn",
+          "shorthand": "H",
+          "type": "int",
+          "default": "0",
+          "usage": "max concurrent connections per host IP (0=unlimited)"
+        },
+        {
+          "name": "misconfigs",
+          "type": "bool",
+          "default": "false",
+          "usage": "enable security misconfiguration detection"
+        },
+        {
+          "name": "output",
+          "shorthand": "o",
+          "type": "string",
+          "usage": "output file"
+        },
+        {
+          "name": "proxy",
+          "type": "string",
+          "usage": "proxy URL (e.g. socks5://127.0.0.1:1080)"
+        },
+        {
+          "name": "proxy-auth",
+          "type": "string",
+          "usage": "socks5 proxy authentication (username:password)"
+        },
+        {
+          "name": "rate-limit",
+          "shorthand": "R",
+          "type": "float64",
+          "default": "0",
+          "usage": "max scans per second (0=unlimited)"
+        },
+        {
+          "name": "scan-depth",
+          "type": "string",
+          "usage": "scan depth mode: \"fast\" or \"thorough\" (default: legacy behavior governed by --fast). fast: only tries plugins whose port priority matches the target port, skipping the full plugin iteration for non-standard ports; equivalent to --fast. thorough: tries all plugins regardless of port (current default behavior); slowest but most complete. Banner-based pre-filtering is planned for a future release and is not yet implemented. Takes precedence over --fast if both are set (--fast is deprecated in that case)."
+        },
+        {
+          "name": "sctp",
+          "shorthand": "S",
+          "type": "bool",
+          "default": "false",
+          "usage": "run SCTP plugins (Linux only)"
+        },
+        {
+          "name": "targets",
+          "shorthand": "t",
+          "type": "stringSlice",
+          "default": "[]",
+          "usage": "target or comma separated target list"
+        },
+        {
+          "name": "timeout",
+          "shorthand": "w",
+          "type": "int",
+          "default": "2000",
+          "usage": "timeout (milliseconds)"
+        },
+        {
+          "name": "udp",
+          "shorthand": "U",
+          "type": "bool",
+          "default": "false",
+          "usage": "run UDP plugins"
+        },
+        {
+          "name": "verbose",
+          "shorthand": "v",
+          "type": "bool",
+          "default": "false",
+          "usage": "verbose mode"
+        },
+        {
+          "name": "workers",
+          "shorthand": "W",
+          "type": "int",
+          "default": "50",
+          "usage": "number of concurrent scan workers"
+        }
+      ]
+    }
+  ]
+}
