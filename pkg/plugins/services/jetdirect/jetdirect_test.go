@@ -360,6 +360,71 @@ func TestRunPlugin(t *testing.T) {
 		Host:    "192.168.1.100",
 		Address: netip.AddrPortFrom(netip.MustParseAddr("192.168.1.100"), 9100),
 	}
+	deepTarget := target
+	deepTarget.Deep = true
+
+	t.Run("standard port is inferred without writing by default", func(t *testing.T) {
+		conn := &mockConn{}
+
+		svc, err := plugin.Run(conn, timeout, target)
+
+		require.NoError(t, err)
+		require.NotNil(t, svc)
+		assert.Empty(t, conn.written)
+		assert.Equal(t, "jetdirect", svc.Protocol)
+
+		var meta plugins.ServiceJetDirect
+		require.NoError(t, json.Unmarshal(svc.Raw, &meta))
+		assert.True(t, meta.Inferred)
+		assert.Empty(t, meta.Manufacturer)
+		assert.Empty(t, meta.Model)
+		assert.Empty(t, meta.Firmware)
+		assert.Empty(t, meta.RawID)
+		assert.Empty(t, meta.Status)
+		assert.False(t, meta.FilesystemAccess)
+		assert.Empty(t, meta.CPEs)
+	})
+
+	t.Run("all standard ports are inferred without writing", func(t *testing.T) {
+		for _, port := range []uint16{9101, 9102} {
+			target := plugins.Target{
+				Host:    "192.168.1.100",
+				Address: netip.AddrPortFrom(netip.MustParseAddr("192.168.1.100"), port),
+			}
+			conn := &mockConn{}
+			svc, err := plugin.Run(conn, timeout, target)
+			require.NoError(t, err)
+			require.NotNil(t, svc)
+			assert.Empty(t, conn.written, "port %d should not write", port)
+			var meta plugins.ServiceJetDirect
+			require.NoError(t, json.Unmarshal(svc.Raw, &meta))
+			assert.True(t, meta.Inferred, "port %d should be inferred", port)
+			assert.Empty(t, meta.Manufacturer)
+			assert.Empty(t, meta.Model)
+		}
+	})
+
+	t.Run("nonstandard port without deep still probes", func(t *testing.T) {
+		nonstandardTarget := target
+		nonstandardTarget.Address = netip.AddrPortFrom(netip.MustParseAddr("192.168.1.100"), 19100)
+		// Deep is false — nonstandard must still probe
+		conn := &mockConn{
+			readData: [][]byte{
+				[]byte("@PJL INFO ID\r\n\"HP LaserJet 4250\"\r\n"),
+				[]byte("@PJL INFO CONFIG\r\nPAPERSIZE=LETTER\r\n"),
+				[]byte("@PJL INFO STATUS\r\nCODE=10001\r\nDISPLAY=\"Ready\"\r\n"),
+				[]byte("@PJL FSDIRLIST\r\nENTRY NAME=\"ROOT\" TYPE=DIR\r\n"),
+			},
+		}
+		svc, err := plugin.Run(conn, timeout, nonstandardTarget)
+		require.NoError(t, err)
+		require.NotNil(t, svc)
+		assert.NotEmpty(t, conn.written)
+		var meta plugins.ServiceJetDirect
+		require.NoError(t, json.Unmarshal(svc.Raw, &meta))
+		assert.False(t, meta.Inferred)
+		assert.Equal(t, "hp", meta.Manufacturer)
+	})
 
 	t.Run("full flow returns detected service with enrichment", func(t *testing.T) {
 		conn := &mockConn{
@@ -375,7 +440,7 @@ func TestRunPlugin(t *testing.T) {
 			},
 		}
 
-		svc, err := plugin.Run(conn, timeout, target)
+		svc, err := plugin.Run(conn, timeout, deepTarget)
 
 		require.NoError(t, err)
 		require.NotNil(t, svc)
@@ -387,6 +452,7 @@ func TestRunPlugin(t *testing.T) {
 
 		var meta plugins.ServiceJetDirect
 		require.NoError(t, json.Unmarshal(svc.Raw, &meta))
+		assert.False(t, meta.Inferred)
 		assert.Equal(t, "hp", meta.Manufacturer)
 		assert.Equal(t, "LaserJet 4250", meta.Model)
 		assert.Equal(t, "HP LaserJet 4250", meta.RawID)
@@ -396,30 +462,50 @@ func TestRunPlugin(t *testing.T) {
 		assert.Contains(t, meta.CPEs[0], "cpe:2.3:h:hp:laserjet_4250")
 	})
 
-	t.Run("non-PJL response returns nil service and nil error", func(t *testing.T) {
+	t.Run("failed deep detection on standard port stays inferred", func(t *testing.T) {
 		conn := &mockConn{
 			readData: [][]byte{
 				[]byte("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n"),
 			},
 		}
 
-		svc, err := plugin.Run(conn, timeout, target)
+		svc, err := plugin.Run(conn, timeout, deepTarget)
 
-		assert.NoError(t, err)
-		assert.Nil(t, svc)
+		require.NoError(t, err)
+		require.NotNil(t, svc)
+		var meta plugins.ServiceJetDirect
+		require.NoError(t, json.Unmarshal(svc.Raw, &meta))
+		assert.True(t, meta.Inferred)
+		assert.NotEmpty(t, conn.written)
 	})
 
-	t.Run("connection error on first read returns nil service and error", func(t *testing.T) {
-		// Empty readData causes io.EOF on first Read. pluginutils.Recv treats
-		// io.EOF as a ReadError (non-timeout, non-ECONNREFUSED), so Run returns
-		// nil service and a non-nil error.
+	t.Run("failed deep read on standard port stays inferred", func(t *testing.T) {
+		conn := &mockConn{readData: [][]byte{}}
+
+		svc, err := plugin.Run(conn, timeout, deepTarget)
+
+		require.NoError(t, err)
+		require.NotNil(t, svc)
+		var meta plugins.ServiceJetDirect
+		require.NoError(t, json.Unmarshal(svc.Raw, &meta))
+		assert.True(t, meta.Inferred)
+	})
+
+	t.Run("nonstandard port still requires positive detection", func(t *testing.T) {
 		conn := &mockConn{
-			readData: [][]byte{},
+			readData: [][]byte{
+				[]byte("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n"),
+			},
 		}
+		nonstandardTarget := deepTarget
+		nonstandardTarget.Address = netip.AddrPortFrom(
+			netip.MustParseAddr("192.168.1.100"),
+			19100,
+		)
 
-		svc, err := plugin.Run(conn, timeout, target)
+		svc, err := plugin.Run(conn, timeout, nonstandardTarget)
 
-		assert.Error(t, err)
+		require.NoError(t, err)
 		assert.Nil(t, svc)
 	})
 
@@ -432,7 +518,7 @@ func TestRunPlugin(t *testing.T) {
 			},
 		}
 
-		svc, err := plugin.Run(conn, timeout, target)
+		svc, err := plugin.Run(conn, timeout, deepTarget)
 
 		require.NoError(t, err)
 		require.NotNil(t, svc)
@@ -456,7 +542,7 @@ func TestRunPlugin(t *testing.T) {
 			},
 		}
 
-		svc, err := plugin.Run(conn, timeout, target)
+		svc, err := plugin.Run(conn, timeout, deepTarget)
 
 		require.NoError(t, err)
 		require.NotNil(t, svc)
