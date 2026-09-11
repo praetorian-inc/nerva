@@ -5,7 +5,7 @@ go 1.27.0
 require (
 	github.com/ishidawataru/sctp v0.0.0-20251114114122-19ddcbc6aae2
 	github.com/ory/dockertest/v3 v3.12.0
-	github.com/praetorian-inc/capability-sdk v0.0.0-20260908174325-de5f920e8132
+	github.com/praetorian-inc/capability-sdk v0.0.0-20260911151812-1c832477930f
 	github.com/projectdiscovery/wappalyzergo v0.2.17
 	github.com/quic-go/quic-go v0.60.0
 	github.com/spf13/cobra v1.10.2

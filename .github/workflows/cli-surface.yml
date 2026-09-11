@@ -43,7 +43,7 @@ jobs:
       - name: Check CLI surface and documentation for drift
         run: |
           set -eo pipefail
-          go test ./pkg/runner -run 'TestCLISurface' -count=1 -v \
+          GOWORK=off go test ./pkg/runner -run 'TestCLISurface' -count=1 -v \
             | tee "$RUNNER_TEMP/gate.log"
           for name in TestCLISurface TestCLISurfaceDocLint TestCLISurfaceGateDetectsRename; do
             if ! grep -qE "^--- PASS: ${name} " "$RUNNER_TEMP/gate.log"; then

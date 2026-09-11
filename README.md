@@ -96,13 +96,8 @@ naabu -host example.com -silent | nerva
 # https://example.com:443
 ```
 
-### Subcommands
-
 <!-- BEGIN generated: cli-subcommands -->
-Nerva organizes its functionality into these focused subcommands:
 
-```bash
-```
 <!-- END generated: cli-subcommands -->
 
 <!-- BEGIN generated: cli-aliases -->
@@ -124,29 +119,6 @@ EXAMPLES:
   nerva --json -t example.com:80
   cat targets.txt | nerva
 ```
-
-### Flags
-
-| Flag | Short | Description | Default |
-|------|-------|-------------|---------|
-| `--targets` | `-t` | Target or comma-separated target list | — |
-| `--list` | `-l` | Input file containing targets | — |
-| `--output` | `-o` | Output file path | stdout |
-| `--json` | | Output in JSON format | false |
-| `--csv` | | Output in CSV format | false |
-| `--misconfigs` | | Enable security misconfiguration detection | false |
-| `--proxy` | | Proxy URL (e.g. socks5://127.0.0.1:1080) | — |
-| `--proxy-auth` | | SOCKS5 Proxy Auth (e.g. username:password) | — |
-| `--dns-order` | | DNS resolution order: `p`, `l`, `lp`, `pl` | `lp` |
-| `--fast` | `-f` | Fast mode (default ports only) | false |
-| `--capabilities` | `-c` | List available capabilities and exit | false |
-| `--udp` | `-U` | Run UDP plugins | false |
-| `--sctp` | `-S` | Run SCTP plugins (Linux only) | false |
-| `--timeout` | `-w` | Timeout in milliseconds | 2000 |
-| `--verbose` | `-v` | Verbose output to stderr | false |
-| `--workers` | `-W` | Concurrent scan workers | 50 |
-| `--max-host-conn` | `-H` | Max concurrent connections per host IP (0=unlimited) | 0 |
-| `--rate-limit` | `-R` | Max scans per second globally (0=unlimited) | 0 |
 
 ### Examples
 

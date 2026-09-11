@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- CLI-surface drift gate: `make cli-docs` regenerates `docs/CLI.md` and `docs/cli-surface.json` from the live cobra tree; CI fails when documentation drifts (ENG-8010).
+
+### Changed
+
+- README flag table removed; [docs/CLI.md](docs/CLI.md) is the single flag reference (ENG-8010).
+- cobra 1.5.0 → 1.10.2 and pflag 1.0.5 → 1.0.10, riding in with the capability-sdk pin (ENG-8010).
+
 ## [1.4.0] - 2026-05-08
 
 ### Added
