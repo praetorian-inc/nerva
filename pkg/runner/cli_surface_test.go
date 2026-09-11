@@ -80,12 +80,27 @@ func TestCLISurfaceGateDetectsRename(t *testing.T) {
 	documented := clisurface.Walk(rootCmd)
 
 	t.Run("renaming a registered flag is reported", func(t *testing.T) {
-		flagObj := rootCmd.PersistentFlags().Lookup("scan-depth")
-		require.NotNil(t, flagObj, "the fixture flag must exist for this test to mean anything")
-		t.Cleanup(func() { flagObj.Name = "scan-depth" })
-		flagObj.Name = "scan-deptth"
+		live := clisurface.Walk(rootCmd)
+		cmds := append([]clisurface.Command(nil), live.Commands...)
+		renamed := false
+		for i := range cmds {
+			if cmds[i].Path != "nerva" {
+				continue
+			}
+			flags := append([]clisurface.Flag(nil), cmds[i].Flags...)
+			for j := range flags {
+				if flags[j].Name != "scan-depth" {
+					continue
+				}
+				flags[j].Name = "scan-deptth"
+				renamed = true
+			}
+			cmds[i].Flags = flags
+		}
+		require.True(t, renamed, "the fixture flag must exist for this test to mean anything")
+		live.Commands = cmds
 
-		findings := clisurface.Diff(documented, clisurface.Walk(rootCmd))
+		findings := clisurface.Diff(documented, live)
 
 		require.Len(t, findings, 2, "a rename is exactly one removal and one addition, and nothing else:\n%s",
 			docs.Report(findings))
