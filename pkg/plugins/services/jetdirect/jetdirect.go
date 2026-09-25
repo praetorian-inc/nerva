@@ -1,14 +1,11 @@
 // Package jetdirect implements JetDirect/PJL printer detection.
 //
 // Detection Strategy:
-// Phase 1: Send UEL + PJL INFO ID probe to identify PJL-aware printers.
-//   - The UEL escape sequence (\x1b%-12345X) resets the printer to PJL mode.
-//   - @PJL INFO ID requests the printer's identification string.
-//   - Valid responses contain @PJL INFO ID followed by a quoted model string.
-//
-// Phase 2: Enrichment (best-effort, failures do not affect detection):
-//   - @PJL INFO STATUS for printer status code
-//   - @PJL FSDIRLIST to detect filesystem access (security finding)
+//   - Standard ports (9100-9102): infer a raw-print service without writing by
+//     default, because incompatible devices may print arbitrary probe bytes.
+//   - Deep scans and nonstandard ports: send UEL + PJL INFO ID to identify
+//     PJL-aware printers.
+//   - Deep enrichment (best-effort after positive detection): INFO CONFIG, INFO STATUS, FSDIRLIST.
 //
 // Default port: 9100 (also 9101, 9102 for additional print channels)
 //
@@ -193,19 +190,50 @@ func enrichFilesystemAccess(conn net.Conn, timeout time.Duration) bool {
 	return strings.Contains(respStr, "ENTRY") || strings.Contains(respStr, "TYPE=")
 }
 
-// Run implements the Plugin interface. Sends PJL INFO ID probe and returns service if detected.
+// inferredService classifies a standard raw-print port without writing to it.
+// Raw-print channels treat arbitrary bytes as document data, so even
+// identification probes can create physical output on incompatible devices.
+func inferredService(target plugins.Target) *plugins.Service {
+	return plugins.CreateServiceFrom(
+		target,
+		plugins.ServiceJetDirect{Inferred: true},
+		false,
+		"",
+		plugins.TCP,
+	)
+}
+
+// Run identifies JetDirect/PJL services. Standard raw-print ports are inferred
+// without writes by default; explicit deep scans may send PJL probes for model
+// and firmware enrichment. A failed deep probe on a standard port still returns
+// the inferred service so the generic TCP fallback cannot send unrelated
+// protocol probes to a printer.
 func (p *JetDirectPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
+	standardPort := p.PortPriority(target.Address.Port())
+	if standardPort && !target.Deep {
+		return inferredService(target), nil
+	}
+
 	// Phase 1: Detection - Send PJL INFO ID probe
 	response, err := utils.SendRecv(conn, pjlInfoIDProbe, timeout)
 	if err != nil {
+		if standardPort {
+			// Dial already succeeded — open raw-print port. Probe timeout still
+			// means printer; stay inferred to block fallback probes (e.g. HTTP).
+			return inferredService(target), nil
+		}
 		return nil, err
 	}
 
 	detected, rawID := detectPJL(response)
 	if !detected {
+		if standardPort {
+			// Non-PJL banner on a standard raw-print port — keep inferred
+			// rather than falling through to unrelated protocol probes.
+			return inferredService(target), nil
+		}
 		return nil, nil
 	}
-
 	// Phase 2: Enrichment
 	vendor, model := extractVendorModel(rawID)
 	firmware := extractFirmware(rawID)
@@ -253,8 +281,8 @@ func (p *JetDirectPlugin) Name() string {
 func (p *JetDirectPlugin) Type() plugins.Protocol {
 	return plugins.TCP
 }
-
-// Priority returns the plugin priority. Port 9100 is exclusive to JetDirect.
+// Priority returns the plugin priority. Must run before GoldenGate (-1) and
+// HTTP (0) on 9100-9102 to prevent active probes on raw-print ports.
 func (p *JetDirectPlugin) Priority() int {
-	return 100
+	return -10
 }
