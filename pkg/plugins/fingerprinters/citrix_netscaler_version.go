@@ -125,7 +125,7 @@ func (f *CitrixNetScalerVersionFingerprinter) Fingerprint(resp *http.Response, b
 	}
 
 	if findings := citrixCTX697096Findings(version); len(findings) > 0 {
-		result.Severity = plugins.SeverityCritical
+		result.Severity = plugins.SeverityHigh
 		result.SecurityFindings = findings
 	}
 	return result, nil
@@ -257,7 +257,7 @@ func citrixCTX697096Findings(version string) []plugins.SecurityFinding {
 	}
 	return []plugins.SecurityFinding{{
 		ID:             "citrix-netscaler-ctx697096",
-		Severity:       plugins.SeverityCritical,
+		Severity:       plugins.SeverityHigh,
 		Title:          "Citrix NetScaler affected by CVE-2026-88771 / CVE-2026-88772 (CTX697096)",
 		Description:    desc,
 		Impact:         "Unauthenticated remote code execution on the appliance; actively exploited as a zero-day prior to disclosure.",

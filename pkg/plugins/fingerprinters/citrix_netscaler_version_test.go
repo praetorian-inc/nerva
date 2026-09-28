@@ -93,12 +93,12 @@ func TestCitrixNetScalerVersionFingerprinter_Fingerprint(t *testing.T) {
 		require.NotNil(t, result)
 		assert.Equal(t, "citrix-netscaler", result.Technology)
 		assert.Equal(t, "13.1-61.23", result.Version)
-		assert.Equal(t, plugins.SeverityCritical, result.Severity)
+		assert.Equal(t, plugins.SeverityHigh, result.Severity)
 
 		require.Len(t, result.SecurityFindings, 1)
 		finding := result.SecurityFindings[0]
 		assert.Equal(t, "citrix-netscaler-ctx697096", finding.ID)
-		assert.Equal(t, plugins.SeverityCritical, finding.Severity)
+		assert.Equal(t, plugins.SeverityHigh, finding.Severity)
 	})
 
 	t.Run("unknown stamp confirms asset but leaves version empty with no finding", func(t *testing.T) {
