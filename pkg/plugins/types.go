@@ -1365,6 +1365,9 @@ type ServiceJetDirect struct {
 	Status           string   `json:"status,omitempty"`
 	FilesystemAccess bool     `json:"filesystem_access,omitempty"`
 	CPEs             []string `json:"cpes,omitempty"`
+	// Inferred is true when the service was classified from a standard raw-print
+	// port without a positive PJL response. Deep scans can set this after a probe fails.
+	Inferred bool `json:"inferred,omitempty"`
 }
 
 func (e ServiceJetDirect) Type() string { return ProtoJetDirect }
