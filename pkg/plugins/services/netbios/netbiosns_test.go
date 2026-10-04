@@ -15,6 +15,7 @@
 package netbios
 
 import (
+	"encoding/hex"
 	"testing"
 
 	"github.com/ory/dockertest/v3"
@@ -59,13 +60,17 @@ func TestNetBIOS(t *testing.T) {
 // Layout:
 //
 //	Header (12 bytes): txid(2) + flags(2) + QDCOUNT(2) + ANCOUNT(2) + NSCOUNT(2) + ARCOUNT(2)
-//	Question section: literal wildcard name (34 bytes) + QTYPE(2) + QCLASS(2)
+//	Question section (only present if qdCount > 0): literal wildcard name (34 bytes) + QTYPE(2) + QCLASS(2)
 //	Answer section: answerName + TYPE(2) + CLASS(2) + TTL(4) + RDLENGTH(2) + RDATA
 //	RDATA: NUM_NAMES(1) + entries(numNames*18) + MAC(6)
 //
 // answerName may be either a literal label (e.g. the same 34-byte encoded name)
 // or a DNS compression pointer (2 bytes: 0xC0 0x0C).
-func buildNBSTATResponse(txid [2]byte, flags uint16, answerCount uint16, answerNameBytes []byte, names []plugins.NetbiosEntry, mac [6]byte) []byte {
+//
+// qdCount controls whether a question section is written at all. Real NBSTAT
+// responses from Samba and Windows use QDCOUNT=0 (the question is not echoed
+// back); qdCount=1 exists to cover responders that do echo it.
+func buildNBSTATResponse(txid [2]byte, flags uint16, qdCount uint16, answerCount uint16, answerNameBytes []byte, names []plugins.NetbiosEntry, mac [6]byte) []byte {
 	// Question section: 34-byte encoded wildcard + QTYPE + QCLASS
 	questionName := []byte{
 		0x20, 0x43, 0x4b, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41,
@@ -80,23 +85,27 @@ func buildNBSTATResponse(txid [2]byte, flags uint16, answerCount uint16, answerN
 	// Header
 	buf = append(buf, txid[0], txid[1])
 	buf = append(buf, byte(flags>>8), byte(flags))
-	buf = append(buf, 0x00, 0x01) // QDCOUNT = 1
+	buf = append(buf, byte(qdCount>>8), byte(qdCount))
 	buf = append(buf, byte(answerCount>>8), byte(answerCount))
 	buf = append(buf, 0x00, 0x00) // NSCOUNT
 	buf = append(buf, 0x00, 0x00) // ARCOUNT
 
-	// Question section
-	buf = append(buf, questionName...)
-	buf = append(buf, 0x00, 0x21) // QTYPE: NBSTAT
-	buf = append(buf, 0x00, 0x01) // QCLASS: IN
+	// Question section - real responders (Samba, Windows) omit this (QDCOUNT=0).
+	// Emit exactly qdCount entries so callers exercising qdCount > 1 get an
+	// internally consistent fixture (header count matches body content).
+	for i := uint16(0); i < qdCount; i++ {
+		buf = append(buf, questionName...)
+		buf = append(buf, 0x00, 0x21) // QTYPE: NBSTAT
+		buf = append(buf, 0x00, 0x01) // QCLASS: IN
+	}
 
 	// Answer name
 	buf = append(buf, answerNameBytes...)
 
 	// TYPE + CLASS + TTL + RDLENGTH
-	buf = append(buf, 0x00, 0x21)           // TYPE: NBSTAT
-	buf = append(buf, 0x00, 0x01)           // CLASS: IN
-	buf = append(buf, 0x00, 0x00, 0x00, 0x00) // TTL
+	buf = append(buf, 0x00, 0x21)                        // TYPE: NBSTAT
+	buf = append(buf, 0x00, 0x01)                        // CLASS: IN
+	buf = append(buf, 0x00, 0x00, 0x00, 0x00)            // TTL
 	buf = append(buf, byte(rdLength>>8), byte(rdLength)) // RDLENGTH
 
 	// RDATA
@@ -128,7 +137,7 @@ func TestParseNBSTATResponse_Valid(t *testing.T) {
 	mac := [6]byte{0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF}
 	// Use compression pointer for answer name
 	answerName := []byte{0xC0, 0x0C}
-	data := buildNBSTATResponse([2]byte{0x01, 0x02}, 0x8400, 1, answerName, names, mac)
+	data := buildNBSTATResponse([2]byte{0x01, 0x02}, 0x8400, 1, 1, answerName, names, mac)
 
 	result, ok := parseNBSTATResponse(data)
 	if !ok {
@@ -163,7 +172,7 @@ func TestParseNBSTATResponse_NotResponse(t *testing.T) {
 	mac := [6]byte{}
 	answerName := []byte{0xC0, 0x0C}
 	// flags with bit 15 clear = query, not response
-	data := buildNBSTATResponse([2]byte{0x00, 0x01}, 0x0400, 1, answerName, names, mac)
+	data := buildNBSTATResponse([2]byte{0x00, 0x01}, 0x0400, 1, 1, answerName, names, mac)
 
 	_, ok := parseNBSTATResponse(data)
 	if ok {
@@ -178,7 +187,7 @@ func TestParseNBSTATResponse_NonZeroRCODE(t *testing.T) {
 	mac := [6]byte{}
 	answerName := []byte{0xC0, 0x0C}
 	// flags: response (bit 15) set, but RCODE = 3 (name error)
-	data := buildNBSTATResponse([2]byte{0x00, 0x01}, 0x8403, 1, answerName, names, mac)
+	data := buildNBSTATResponse([2]byte{0x00, 0x01}, 0x8403, 1, 1, answerName, names, mac)
 
 	_, ok := parseNBSTATResponse(data)
 	if ok {
@@ -193,7 +202,7 @@ func TestParseNBSTATResponse_ZeroANCOUNT(t *testing.T) {
 	mac := [6]byte{}
 	answerName := []byte{0xC0, 0x0C}
 	// ANCOUNT = 0
-	data := buildNBSTATResponse([2]byte{0x00, 0x01}, 0x8400, 0, answerName, names, mac)
+	data := buildNBSTATResponse([2]byte{0x00, 0x01}, 0x8400, 1, 0, answerName, names, mac)
 
 	_, ok := parseNBSTATResponse(data)
 	if ok {
@@ -208,7 +217,7 @@ func TestParseNBSTATResponse_CompressedPointer(t *testing.T) {
 	mac := [6]byte{0x11, 0x22, 0x33, 0x44, 0x55, 0x66}
 	// Answer name uses DNS compression pointer 0xC0 0x0C
 	answerName := []byte{0xC0, 0x0C}
-	data := buildNBSTATResponse([2]byte{0x00, 0x01}, 0x8400, 1, answerName, names, mac)
+	data := buildNBSTATResponse([2]byte{0x00, 0x01}, 0x8400, 1, 1, answerName, names, mac)
 
 	result, ok := parseNBSTATResponse(data)
 	if !ok {
@@ -226,7 +235,7 @@ func TestParseNBSTATResponse_GroupOnly(t *testing.T) {
 	}
 	mac := [6]byte{0x00, 0x11, 0x22, 0x33, 0x44, 0x55}
 	answerName := []byte{0xC0, 0x0C}
-	data := buildNBSTATResponse([2]byte{0x01, 0x02}, 0x8400, 1, answerName, names, mac)
+	data := buildNBSTATResponse([2]byte{0x01, 0x02}, 0x8400, 1, 1, answerName, names, mac)
 
 	result, ok := parseNBSTATResponse(data)
 	if !ok {
@@ -243,6 +252,100 @@ func TestParseNBSTATResponse_GroupOnly(t *testing.T) {
 	}
 	if result.MACAddress != "00:11:22:33:44:55" {
 		t.Errorf("expected MACAddress %q, got %q", "00:11:22:33:44:55", result.MACAddress)
+	}
+}
+
+// TestParseNBSTATResponse_QDCountTwo exercises the loop in parseNBSTATResponse
+// that skips QDCOUNT question entries when there is more than one - nothing
+// else in this file does, since every other fixture uses qdCount 0 or 1.
+func TestParseNBSTATResponse_QDCountTwo(t *testing.T) {
+	names := []plugins.NetbiosEntry{
+		{Name: "MULTIQ", Suffix: 0x00, Flags: "unique"},
+	}
+	mac := [6]byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06}
+	// Compression pointer back to the first question's name (offset 12) is
+	// valid regardless of how many questions precede the answer.
+	answerName := []byte{0xC0, 0x0C}
+	data := buildNBSTATResponse([2]byte{0x00, 0x01}, 0x8400, 2, 1, answerName, names, mac)
+
+	result, ok := parseNBSTATResponse(data)
+	if !ok {
+		t.Fatal("expected parseNBSTATResponse to return true for a QDCOUNT=2 response")
+	}
+	if result.NetBIOSName != "MULTIQ" {
+		t.Errorf("expected NetBIOSName %q, got %q", "MULTIQ", result.NetBIOSName)
+	}
+}
+
+// TestParseNBSTATResponse_QDCountZero is a regression test: real NBSTAT
+// responders (Samba's nmbd, Windows) reply with QDCOUNT=0 - they do not echo
+// the question section back. The parser previously assumed a question
+// section was always present and unconditionally skipped one, which for a
+// QDCOUNT=0 response mis-parses the answer's own name as the question and
+// desyncs every offset after it, causing every real-world response to be
+// rejected. All the other tests in this file use qdCount=1 and could not
+// have caught this.
+func TestParseNBSTATResponse_QDCountZero(t *testing.T) {
+	names := []plugins.NetbiosEntry{
+		{Name: "MYHOST", Suffix: 0x00, Flags: "unique"},
+		{Name: "WORKGROUP", Suffix: 0x00, Flags: "group"},
+	}
+	mac := [6]byte{0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF}
+	// With QDCOUNT=0 there is no question section, so the answer name starts
+	// immediately after the 12-byte header; it cannot be a compression
+	// pointer back into a (nonexistent) question, so use a literal label.
+	answerName := []byte{
+		0x20, 0x43, 0x4b, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41,
+		0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x00,
+	}
+	data := buildNBSTATResponse([2]byte{0x01, 0x02}, 0x8400, 0, 1, answerName, names, mac)
+
+	result, ok := parseNBSTATResponse(data)
+	if !ok {
+		t.Fatal("expected parseNBSTATResponse to return true for a QDCOUNT=0 response")
+	}
+	if result.NetBIOSName != "MYHOST" {
+		t.Errorf("expected NetBIOSName %q, got %q", "MYHOST", result.NetBIOSName)
+	}
+	if result.GroupName != "WORKGROUP" {
+		t.Errorf("expected GroupName %q, got %q", "WORKGROUP", result.GroupName)
+	}
+}
+
+// TestParseNBSTATResponse_RealNmbdCapture feeds parseNBSTATResponse the exact
+// bytes captured from a real Samba nmbd 4.17.12 instance (Debian bookworm)
+// responding to the wildcard NBSTAT probe this plugin sends, netbios name
+// "TESTBOX", workgroup "WORKGROUP". This is an implementation-agnostic,
+// byte-exact regression check independent of the TestNetBIOS Docker
+// integration test above (which uses the dperson/samba image and was not
+// run/verified in the environment this bug was found and fixed in).
+func TestParseNBSTATResponse_RealNmbdCapture(t *testing.T) {
+	data, err := hex.DecodeString(
+		"4a6e8400000000010000000020434b4141414141414141414141414141414141" +
+			"4141414141414141414141414100002100010000000000ad0754455354424f58" +
+			"202020202020202000040054455354424f582020202020202020030400544553" +
+			"54424f58202020202020202020040001025f5f4d5342524f5753455f5f020184" +
+			"00574f524b47524f5550202020202020008400574f524b47524f555020202020" +
+			"20201d0400574f524b47524f55502020202020201e8400000000000000000000" +
+			"0000000000000000000000000000000000000000000000000000000000000000" +
+			"0000000000",
+	)
+	if err != nil {
+		t.Fatalf("bad test fixture hex: %v", err)
+	}
+
+	result, ok := parseNBSTATResponse(data)
+	if !ok {
+		t.Fatal("expected parseNBSTATResponse to accept a real nmbd capture")
+	}
+	if result.NetBIOSName != "TESTBOX" {
+		t.Errorf("expected NetBIOSName %q, got %q", "TESTBOX", result.NetBIOSName)
+	}
+	if result.GroupName != "WORKGROUP" {
+		t.Errorf("expected GroupName %q, got %q", "WORKGROUP", result.GroupName)
+	}
+	if len(result.Names) == 0 {
+		t.Error("expected a non-empty name table from the real capture")
 	}
 }
 
