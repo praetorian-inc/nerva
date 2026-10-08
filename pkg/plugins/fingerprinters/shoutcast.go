@@ -25,6 +25,21 @@ also send icy-notice1 containing "Shoutcast DNAS".
 The product name in a page title or in unrelated HTML is not enough.
 Documentation and comparison pages mention SHOUTcast without running it.
 
+# Lab setup
+
+Download sc_serv2_linux_x64-latest.tar.gz from download.nullsoft.com and extract it.
+The shipped examples/sc_serv_simple.conf sets adminpassword=changeme. The binary
+will not start without a config, and setup mode does not embed that password.
+
+	docker run -d --name shoutcast --platform linux/amd64 -p 8000:8000 \
+	  -v "$PWD":/opt/sc:ro debian:bookworm-slim \
+	  /opt/sc/sc_serv /opt/sc/examples/sc_serv_simple.conf
+
+GET /admin.cgi with no Authorization is 401, realm "Shoutcast Server", and
+Server: Shoutcast DNAS. admin:changeme is 200 with title "Shoutcast Server
+Administrator". A wrong password is 401. The listener root often omits the
+Server header and sends icy-notice1 instead.
+
 # What We Do NOT Detect
 
 Icecast, other streaming servers, and pages that only discuss SHOUTcast.
