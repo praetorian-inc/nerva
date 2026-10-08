@@ -21,6 +21,26 @@ The management portal login is served at /csp/sys/UtilHome.csp. A match
 requires the IRIS username field together with the product icon or the
 "Login IRIS" title. The Apache Server header alone is not a match.
 
+# Lab setup
+
+Community Edition boots without a license key. Nothing is installed on the host.
+
+	docker run -d --name iris --platform linux/arm64 \
+	  -p 52773:52773 -p 1972:1972 \
+	  intersystems/iris-community:latest-cd-linux-arm64
+
+Wait until the log says "Private webserver started on 52773". The login form
+is http://127.0.0.1:52773/csp/sys/UtilHome.csp. Fields are IRISUsername and
+IRISPassword, plus the hidden IRISSessionToken from that same response. The
+token is bound to the CSPSESSIONID cookie, so a login that drops the cookie
+stays on the login page.
+
+Shipped accounts are _SYSTEM:SYS and SuperUser:SYS. A hit on a fresh container
+is the password-change page (title "Password change IRIS", field
+IRISOldPassword). A wrong password stays on title "Login IRIS". The older
+Cache pair system:sys is rejected. Password comparison is case-sensitive: SYS
+works, sys does not.
+
 # What We Do NOT Detect
 
 Pages that merely mention InterSystems, and other CSP applications that
