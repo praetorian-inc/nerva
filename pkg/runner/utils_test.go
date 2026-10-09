@@ -155,3 +155,10 @@ func TestCreateScanConfig_ScanDepthMapping(t *testing.T) {
 		})
 	}
 }
+
+func TestCheckConfig_UDPScanAllowedWithoutRoot(t *testing.T) {
+	cfg := cliConfig{useUDP: true}
+	if err := checkConfig(&cfg); err != nil {
+		t.Fatalf("checkConfig(useUDP) = %v, want nil (UDP scans do not require root)", err)
+	}
+}
