@@ -17,11 +17,9 @@ package runner
 import (
 	"errors"
 	"fmt"
-	"net"
 	"os"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/praetorian-inc/nerva/pkg/plugins"
@@ -45,12 +43,6 @@ func checkConfig(config *cliConfig) error {
 		return errors.New("Only one output format can be specified (JSON or CSV)")
 	}
 
-	if config.useUDP {
-		if err := checkUDPScanAllowed(); err != nil {
-			return err
-		}
-	}
-
 	if config.showErrors && !(config.outputJSON || config.outputCSV) {
 		return errors.New("showErrors requires results being output in JSON or CSV format")
 	}
@@ -71,42 +63,6 @@ func checkConfig(config *cliConfig) error {
 	}
 
 	return nil
-}
-
-// openUDPSocket is the UDP permission probe. Tests replace it.
-var openUDPSocket = listenLocalUDP
-
-func listenLocalUDP() error {
-	c, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
-	if err != nil {
-		return err
-	}
-	return c.Close()
-}
-
-func udpPermissionDenied(err error) bool {
-	if err == nil {
-		return false
-	}
-	if errors.Is(err, os.ErrPermission) {
-		return true
-	}
-	var errno syscall.Errno
-	if errors.As(err, &errno) {
-		return errno == syscall.EPERM || errno == syscall.EACCES
-	}
-	return false
-}
-
-// checkUDPScanAllowed probes whether this process can open a UDP socket.
-// Nerva UDP scans use connected datagram sockets (net.Dial("udp", ...)) and
-// do not need root. Error only when the OS or sandbox denies datagram sockets.
-func checkUDPScanAllowed() error {
-	err := openUDPSocket()
-	if err == nil || !udpPermissionDenied(err) {
-		return nil
-	}
-	return fmt.Errorf("UDP scan permission denied: cannot open a UDP socket: %w", err)
 }
 
 func createScanConfig(config cliConfig) scan.Config {

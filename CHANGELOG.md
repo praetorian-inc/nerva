@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- `--udp` no longer prints a misleading "may require root" note. Nerva uses connected UDP sockets and does not need root; it now errors only if the OS or sandbox denies opening a UDP socket.
+- Removed the misleading `--udp` "may require root" note. Nerva UDP scans use connected datagram sockets and do not need root.
 
 ## [1.4.0] - 2026-05-08
 

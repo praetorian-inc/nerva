@@ -700,7 +700,7 @@ nerva -t example.com:80 -w 5000  # 5 seconds
 nerva -t example.com:53 -U
 ```
 
-Nerva UDP scans use connected datagram sockets and do not require root. If the OS or sandbox denies UDP sockets, nerva exits with an error.
+Nerva UDP scans use connected datagram sockets and do not require root.
 
 ### SCTP not working
 

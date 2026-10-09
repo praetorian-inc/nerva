@@ -15,12 +15,8 @@
 package runner
 
 import (
-	"errors"
-	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 )
 
@@ -160,63 +156,9 @@ func TestCreateScanConfig_ScanDepthMapping(t *testing.T) {
 	}
 }
 
-func TestUDPPermissionDenied(t *testing.T) {
-	tests := []struct {
-		name string
-		err  error
-		want bool
-	}{
-		{name: "nil", err: nil, want: false},
-		{name: "os.ErrPermission", err: os.ErrPermission, want: true},
-		{name: "wrapped os.ErrPermission", err: fmt.Errorf("listen: %w", os.ErrPermission), want: true},
-		{name: "EPERM", err: syscall.EPERM, want: true},
-		{name: "EACCES", err: syscall.EACCES, want: true},
-		{name: "wrapped EPERM", err: fmt.Errorf("listen: %w", syscall.EPERM), want: true},
-		{name: "timeout", err: errors.New("i/o timeout"), want: false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := udpPermissionDenied(tt.err); got != tt.want {
-				t.Errorf("udpPermissionDenied(%v) = %v, want %v", tt.err, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestCheckConfig_UDPScanAllowedWithoutRoot(t *testing.T) {
 	cfg := cliConfig{useUDP: true}
 	if err := checkConfig(&cfg); err != nil {
 		t.Fatalf("checkConfig(useUDP) = %v, want nil (UDP scans do not require root)", err)
-	}
-}
-
-func TestCheckConfig_UDPScanErrorsOnPermissionDenied(t *testing.T) {
-	orig := openUDPSocket
-	t.Cleanup(func() { openUDPSocket = orig })
-	openUDPSocket = func() error {
-		return fmt.Errorf("listen udp: %w", os.ErrPermission)
-	}
-
-	err := checkConfig(&cliConfig{useUDP: true})
-	if err == nil {
-		t.Fatal("expected permission error, got nil")
-	}
-	if !strings.Contains(err.Error(), "UDP scan permission denied") {
-		t.Errorf("error = %q, want UDP scan permission denied", err.Error())
-	}
-	if !errors.Is(err, os.ErrPermission) {
-		t.Errorf("error should wrap os.ErrPermission, got %v", err)
-	}
-}
-
-func TestCheckConfig_UDPScanIgnoresNonPermissionProbeErrors(t *testing.T) {
-	orig := openUDPSocket
-	t.Cleanup(func() { openUDPSocket = orig })
-	openUDPSocket = func() error {
-		return errors.New("i/o timeout")
-	}
-
-	if err := checkConfig(&cliConfig{useUDP: true}); err != nil {
-		t.Fatalf("non-permission probe error should not fail checkConfig, got %v", err)
 	}
 }
