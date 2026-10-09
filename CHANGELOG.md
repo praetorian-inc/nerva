@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - README flag table removed; [docs/CLI.md](docs/CLI.md) is the single flag reference (ENG-8010).
 - cobra 1.5.0 → 1.10.2 and pflag 1.0.5 → 1.0.10, riding in with the capability-sdk pin (ENG-8010).
 
+### Fixed
+
+- `--udp` no longer prints a misleading "may require root" note. Nerva uses connected UDP sockets and does not need root; it now errors only if the OS or sandbox denies opening a UDP socket.
+
 ## [1.4.0] - 2026-05-08
 
 ### Added

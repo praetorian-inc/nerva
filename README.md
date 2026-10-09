@@ -134,10 +134,10 @@ nerva -t example.com:22,example.com:80,example.com:443
 nerva -l targets.txt --json -o results.json
 ```
 
-**UDP scanning** (may require root):
+**UDP scanning**:
 
 ```sh
-sudo nerva -t example.com:53 -U
+nerva -t example.com:53 -U
 # dns://example.com:53
 ```
 
@@ -694,11 +694,13 @@ nerva -t example.com:80 -w 5000  # 5 seconds
 
 **Cause**: UDP scanning disabled by default.
 
-**Solution**: Enable with `-U` flag (may require root):
+**Solution**: Enable with `-U` flag:
 
 ```sh
-sudo nerva -t example.com:53 -U
+nerva -t example.com:53 -U
 ```
+
+Nerva UDP scans use connected datagram sockets and do not require root. If the OS or sandbox denies UDP sockets, nerva exits with an error.
 
 ### SCTP not working
 
