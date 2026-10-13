@@ -365,6 +365,8 @@ func TestJenkinsFingerprinter_CheckMisconfigs(t *testing.T) {
 				require.Len(t, findings, 1)
 				assert.Equal(t, tt.expectedID, findings[0].ID)
 				assert.Equal(t, tt.expectedSeverity, string(findings[0].Severity))
+				findings[0].Enrich()
+				assert.Equal(t, "critical", string(findings[0].Severity), "catalog Enrich() must not downgrade jenkins-script-console")
 			} else {
 				assert.Nil(t, findings)
 			}

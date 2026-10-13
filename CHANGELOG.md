@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - README flag table removed; [docs/CLI.md](docs/CLI.md) is the single flag reference (ENG-8010).
 - cobra 1.5.0 → 1.10.2 and pflag 1.0.5 → 1.0.10, riding in with the capability-sdk pin (ENG-8010).
+- Raise `jenkins-script-console` to Critical (CVSS 9.8). Unauthenticated Groovy script console is remote code execution on the controller; catalog previously overwrote the plugin Critical to Medium.
 
 ## [1.4.0] - 2026-05-08
 
