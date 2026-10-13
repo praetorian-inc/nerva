@@ -266,10 +266,10 @@ var findingCatalog = map[string]FindingMeta{
 	// ── Container and orchestration ──────────────────────────────────────
 	"docker-unauth-api": {
 		Title:          "Docker API Accessible Without Authentication",
-		Severity:       SeverityMedium,
+		Severity:       SeverityCritical,
 		Impact:         "An unauthenticated Docker API allows attackers to create privileged containers, mount the host filesystem, and achieve full host compromise.",
 		Recommendation: "Restrict Docker API access to Unix sockets or TLS-authenticated endpoints. Never expose the Docker API to untrusted networks without mTLS.",
-		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:N",
+		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
 	},
 	"docker-registry-unauthenticated-catalog": {
 		Title:          "Docker Registry Unauthenticated Catalog Access",
