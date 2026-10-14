@@ -6,7 +6,7 @@ Thank you for your interest in contributing to Nerva! This document provides gui
 
 ### Prerequisites
 
-- Go 1.18 or higher
+- Go 1.27.0 or higher
 - Git
 
 ### Development Setup

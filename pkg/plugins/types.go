@@ -179,6 +179,8 @@ const (
 	ProtoOracleOUD         = "oracle_oud"
 	ProtoOracleOID         = "oracle_oid"
 	ProtoOracleHTTPServer  = "oracle_http_server"
+	ProtoOracleEM          = "oracle_em"
+	ProtoOracleSOA         = "oracle_soa"
 	ProtoOracleOBIEE       = "oracle_obiee"
 	ProtoOracleHyperion    = "oracle_hyperion"
 	ProtoOracleEssbase     = "oracle_essbase"
@@ -558,6 +560,14 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoOracleHTTPServer:
 		var p ServiceOracleHTTPServer
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoOracleEM:
+		var p ServiceOracleEM
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoOracleSOA:
+		var p ServiceOracleSOA
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoOracleOBIEE:
@@ -1705,9 +1715,10 @@ type ServiceOracleEBS struct {
 func (e ServiceOracleEBS) Type() string { return ProtoOracleEBS }
 
 type ServiceOracleORDS struct {
-	APEX      bool     `json:"apex,omitempty"`
-	AICapable bool     `json:"ai_capable,omitempty"` // ORDS is the common carrier for Select AI / Vector Search / OML REST
-	CPEs      []string `json:"cpes,omitempty"`
+	APEX        bool     `json:"apex,omitempty"`
+	APEXVersion string   `json:"apex_version,omitempty"` // APEX version read from APEX-rendered markup; empty when unobtainable
+	AICapable   bool     `json:"ai_capable,omitempty"`   // ORDS is the common carrier for Select AI / Vector Search / OML REST
+	CPEs        []string `json:"cpes,omitempty"`
 }
 
 func (e ServiceOracleORDS) Type() string { return ProtoOracleORDS }
@@ -1794,6 +1805,29 @@ type ServiceOracleHTTPServer struct {
 }
 
 func (e ServiceOracleHTTPServer) Type() string { return ProtoOracleHTTPServer }
+
+type ServiceOracleEM struct {
+	Component string   `json:"component,omitempty"` // console | agent | express | oms-upload
+	CPEs      []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceOracleEM) Type() string { return ProtoOracleEM }
+
+type ServiceOracleSOA struct {
+	Product string `json:"product,omitempty"` // soa | osb
+	Version string `json:"version,omitempty"` // e.g. 12.2.1.4, empty when not parseable
+	Release string `json:"release,omitempty"` // 11g | 12c | 14c, empty when unknown
+	// WebLogic records that the WebLogic substrate was observed (Server header or
+	// _WL_AUTHCOOKIE_ cookie). Supporting evidence only: it never triggers
+	// detection, since every WebLogic deployment carries it.
+	WebLogic bool `json:"weblogic,omitempty"`
+	// WSDLExposed records that /soa-infra/services/<partition> served composite
+	// WSDL metadata without credentials.
+	WSDLExposed bool     `json:"wsdl_exposed,omitempty"`
+	CPEs        []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceOracleSOA) Type() string { return ProtoOracleSOA }
 
 type ServiceOracleOBIEE struct {
 	Surface string   `json:"surface,omitempty"` // analytics | bi-publisher | dv
