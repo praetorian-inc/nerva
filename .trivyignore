@@ -1,0 +1,6 @@
+# GO-2026-5932: golang.org/x/crypto/openpgp is an unmaintained-package advisory
+# (no CVE, no fix version). nerva does not import x/crypto/openpgp anywhere in
+# its source (verified via `grep -r x/crypto/openpgp`); it is included because
+# it lives in the directly required golang.org/x/crypto module, which nerva
+# uses through other x/crypto subpackages.
+GO-2026-5932 exp:2027-08-26
