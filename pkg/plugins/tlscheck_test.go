@@ -850,7 +850,15 @@ func startTLSTestServer(t *testing.T, cert tls.Certificate, weakSuite uint16) st
 					return
 				}
 				if clientHelloIsWeakOnly(rec) {
-					_ = writeRawServerHello(c, weakSuite)
+					offered, ok := cipherSuitesFromClientHelloRecord(rec)
+					if ok {
+						for _, id := range offered {
+							if id == weakSuite {
+								_ = writeRawServerHello(c, weakSuite)
+								return
+							}
+						}
+					}
 					return
 				}
 				r := io.MultiReader(bytes.NewReader(rec), c)
@@ -926,7 +934,7 @@ func TestCheckTLS_ModernServerDoesNotEmitWeakCipherIDs(t *testing.T) {
 }
 
 func TestBuildWeakClientHelloRoundTrip(t *testing.T) {
-	hello := buildWeakClientHello()
+	hello := buildWeakClientHello(weakAnon, "example.test")
 	if !clientHelloIsWeakOnly(hello) {
 		t.Fatal("buildWeakClientHello() was not classified as weak-only")
 	}
@@ -934,8 +942,29 @@ func TestBuildWeakClientHelloRoundTrip(t *testing.T) {
 	if !ok {
 		t.Fatal("failed to parse cipher suites from built ClientHello")
 	}
-	if len(suites) != len(weakCipherSuites) {
-		t.Fatalf("suite count = %d, want %d", len(suites), len(weakCipherSuites))
+	want := suitesForClass(weakAnon)
+	if len(suites) != len(want) {
+		t.Fatalf("suite count = %d, want %d", len(suites), len(want))
+	}
+}
+
+func TestIANAWeakSuiteIDs(t *testing.T) {
+	cases := []struct {
+		id    uint16
+		class weakClass
+	}{
+		{0xC015, weakNull}, // TLS_ECDH_anon_WITH_NULL_SHA
+		{0xC016, weakAnon}, // TLS_ECDH_anon_WITH_RC4_128_SHA
+		{0xC018, weakAnon}, // TLS_ECDH_anon_WITH_AES_128_CBC_SHA
+		{0xC019, weakAnon}, // TLS_ECDH_anon_WITH_AES_256_CBC_SHA
+		{0x001A, weakAnon}, // TLS_DH_anon_WITH_DES_CBC_SHA
+		{0x001B, weakAnon}, // TLS_DH_anon_WITH_3DES_EDE_CBC_SHA
+		{0x000E, weakExport},
+	}
+	for _, tc := range cases {
+		if got := classOfSuite(tc.id); got != tc.class {
+			t.Errorf("classOfSuite(0x%04x) = %v, want %v", tc.id, got, tc.class)
+		}
 	}
 }
 

@@ -68,6 +68,31 @@ func newPrefixConn(conn net.Conn, prefix []byte) net.Conn {
 	}
 }
 
+// tlsProbeConn carries a proxy-aware raw TCP dial so CheckTLS extra ClientHellos
+// reuse the scan's routing instead of net.Dial to RemoteAddr (which is the proxy).
+type tlsProbeConn struct {
+	net.Conn
+	dialRaw func() (net.Conn, error)
+	sni     string
+}
+
+func (c *tlsProbeConn) Unwrap() net.Conn { return c.Conn }
+
+func (c *tlsProbeConn) DialRawTCP() (net.Conn, error) { return c.dialRaw() }
+
+func (c *tlsProbeConn) ProbeSNI() string { return c.sni }
+
+func (c *Config) wrapTLSProbe(conn net.Conn, target plugins.Target) net.Conn {
+	sni := target.Host
+	return &tlsProbeConn{
+		Conn: conn,
+		sni:  sni,
+		dialRaw: func() (net.Conn, error) {
+			return c.DialTCP(target)
+		},
+	}
+}
+
 func init() {
 	setupPlugins()
 	cipherSuites := make([]uint16, 0)
@@ -464,7 +489,11 @@ func (c *Config) DialTLS(target plugins.Target) (net.Conn, error) {
 		if err != nil {
 			return nil, err
 		}
-		return pd.DialTLS(dialHost, port, config)
+		tlsConn, err := pd.DialTLS(dialHost, port, config)
+		if err != nil {
+			return nil, err
+		}
+		return c.wrapTLSProbe(tlsConn, target), nil
 	}
 
 	// Non-proxy path: Dial TCP first, then wrap with TLS Client
@@ -482,7 +511,7 @@ func (c *Config) DialTLS(target plugins.Target) (net.Conn, error) {
 		return nil, err
 	}
 
-	return tlsConn, nil
+	return c.wrapTLSProbe(tlsConn, target), nil
 }
 
 func resolveLocalFallback(host string, port uint16, network string, d *net.Dialer) (net.Conn, error) {

@@ -33,10 +33,7 @@ import (
 // client will not offer those suites).
 // Returns nil if conn is not a *tls.Conn or no issues are found.
 func CheckTLS(conn net.Conn) []SecurityFinding {
-	if u, ok := conn.(interface{ Unwrap() net.Conn }); ok {
-		conn = u.Unwrap()
-	}
-	tlsConn, ok := conn.(*tls.Conn)
+	tlsConn, ok := unwrapConn(conn).(*tls.Conn)
 	if !ok {
 		return nil
 	}
@@ -61,7 +58,7 @@ func CheckTLS(conn net.Conn) []SecurityFinding {
 		}
 	}
 
-	findings = append(findings, probeWeakCiphers(tlsConn)...)
+	findings = append(findings, probeWeakCiphers(conn)...)
 
 	if len(findings) == 0 {
 		return nil

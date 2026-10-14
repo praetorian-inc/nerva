@@ -16,6 +16,7 @@ package plugins
 
 import (
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -41,6 +42,7 @@ const (
 
 // IANA TLS 1.0–1.2 suites that are anonymous, NULL, or EXPORT.
 // Go's stdlib client will not offer these; the probe sends them raw.
+// RFC 2246 / 4346 / 4492 IANA IDs for ADH, AECDH, NULL, and EXPORT.
 var weakCipherSuites = []struct {
 	id    uint16
 	class weakClass
@@ -52,25 +54,29 @@ var weakCipherSuites = []struct {
 	{0xC006, weakNull},   // TLS_ECDHE_ECDSA_WITH_NULL_SHA
 	{0xC00B, weakNull},   // TLS_ECDH_RSA_WITH_NULL_SHA
 	{0xC010, weakNull},   // TLS_ECDHE_RSA_WITH_NULL_SHA
+	{0xC015, weakNull},   // TLS_ECDH_anon_WITH_NULL_SHA
 	{0x0003, weakExport}, // TLS_RSA_EXPORT_WITH_RC4_40_MD5
 	{0x0006, weakExport}, // TLS_RSA_EXPORT_WITH_RC2_CBC_40_MD5
 	{0x0008, weakExport}, // TLS_RSA_EXPORT_WITH_DES40_CBC_SHA
+	{0x000B, weakExport}, // TLS_DH_DSS_EXPORT_WITH_DES40_CBC_SHA
+	{0x000E, weakExport}, // TLS_DH_RSA_EXPORT_WITH_DES40_CBC_SHA
 	{0x0011, weakExport}, // TLS_DHE_DSS_EXPORT_WITH_DES40_CBC_SHA
 	{0x0014, weakExport}, // TLS_DHE_RSA_EXPORT_WITH_DES40_CBC_SHA
 	{0x0017, weakExport}, // TLS_DH_anon_EXPORT_WITH_RC4_40_MD5
 	{0x0019, weakExport}, // TLS_DH_anon_EXPORT_WITH_DES40_CBC_SHA
 	{0x0018, weakAnon},   // TLS_DH_anon_WITH_RC4_128_MD5
-	{0x001A, weakAnon},   // TLS_DH_anon_WITH_3DES_EDE_CBC_SHA
+	{0x001A, weakAnon},   // TLS_DH_anon_WITH_DES_CBC_SHA
+	{0x001B, weakAnon},   // TLS_DH_anon_WITH_3DES_EDE_CBC_SHA
 	{0x0034, weakAnon},   // TLS_DH_anon_WITH_AES_128_CBC_SHA
 	{0x003A, weakAnon},   // TLS_DH_anon_WITH_AES_256_CBC_SHA
 	{0x006C, weakAnon},   // TLS_DH_anon_WITH_AES_128_CBC_SHA256
 	{0x006D, weakAnon},   // TLS_DH_anon_WITH_AES_256_CBC_SHA256
 	{0x00A6, weakAnon},   // TLS_DH_anon_WITH_AES_128_GCM_SHA256
 	{0x00A7, weakAnon},   // TLS_DH_anon_WITH_AES_256_GCM_SHA384
-	{0xC015, weakAnon},   // TLS_ECDH_anon_WITH_RC4_128_SHA
-	{0xC016, weakAnon},   // TLS_ECDH_anon_WITH_3DES_EDE_CBC_SHA
-	{0xC017, weakAnon},   // TLS_ECDH_anon_WITH_AES_128_CBC_SHA
-	{0xC018, weakAnon},   // TLS_ECDH_anon_WITH_AES_256_CBC_SHA
+	{0xC016, weakAnon},   // TLS_ECDH_anon_WITH_RC4_128_SHA
+	{0xC017, weakAnon},   // TLS_ECDH_anon_WITH_3DES_EDE_CBC_SHA
+	{0xC018, weakAnon},   // TLS_ECDH_anon_WITH_AES_128_CBC_SHA
+	{0xC019, weakAnon},   // TLS_ECDH_anon_WITH_AES_256_CBC_SHA
 }
 
 func classOfSuite(id uint16) weakClass {
@@ -93,23 +99,99 @@ func tcpRemoteAddr(conn net.Conn) string {
 	return ""
 }
 
-// probeWeakCiphers dials a new connection to the same TCP peer and offers only
-// anonymous/NULL/EXPORT suites. Go's stdlib handshake cannot do this.
-// Non-TCP peers (net.Pipe tests) are skipped. Probe errors emit nothing.
-func probeWeakCiphers(conn net.Conn) []SecurityFinding {
-	addr := tcpRemoteAddr(conn)
+type rawTCPDialer interface {
+	DialRawTCP() (net.Conn, error)
+}
+
+type probeSNIProvider interface {
+	ProbeSNI() string
+}
+
+func unwrapConn(conn net.Conn) net.Conn {
+	cur := conn
+	for i := 0; i < 8; i++ {
+		u, ok := cur.(interface{ Unwrap() net.Conn })
+		if !ok {
+			return cur
+		}
+		next := u.Unwrap()
+		if next == nil || next == cur {
+			return cur
+		}
+		cur = next
+	}
+	return cur
+}
+
+func resolveRawDial(conn net.Conn) func() (net.Conn, error) {
+	cur := conn
+	for i := 0; i < 8 && cur != nil; i++ {
+		if d, ok := cur.(rawTCPDialer); ok {
+			return func() (net.Conn, error) { return d.DialRawTCP() }
+		}
+		u, ok := cur.(interface{ Unwrap() net.Conn })
+		if !ok {
+			break
+		}
+		cur = u.Unwrap()
+	}
+	addr := tcpRemoteAddr(unwrapConn(conn))
 	if addr == "" {
 		return nil
 	}
-	d := net.Dialer{Timeout: weakCipherProbeTimeout}
-	c, err := d.Dial("tcp", addr)
+	return func() (net.Conn, error) {
+		d := net.Dialer{Timeout: weakCipherProbeTimeout}
+		return d.Dial("tcp", addr)
+	}
+}
+
+func resolveProbeSNI(conn net.Conn) string {
+	cur := conn
+	for i := 0; i < 8 && cur != nil; i++ {
+		if p, ok := cur.(probeSNIProvider); ok {
+			if s := p.ProbeSNI(); s != "" {
+				return s
+			}
+		}
+		u, ok := cur.(interface{ Unwrap() net.Conn })
+		if !ok {
+			break
+		}
+		cur = u.Unwrap()
+	}
+	if tlsConn, ok := unwrapConn(conn).(*tls.Conn); ok {
+		return tlsConn.ConnectionState().ServerName
+	}
+	return ""
+}
+
+// probeWeakCiphers dials a new connection to the same peer (via the scan dialer
+// when present, otherwise RemoteAddr) and offers only anonymous, NULL, or
+// EXPORT suites — one ClientHello per class. Go's stdlib handshake cannot do this.
+// Non-TCP peers (net.Pipe tests) are skipped. Probe errors emit nothing.
+func probeWeakCiphers(conn net.Conn) []SecurityFinding {
+	dial := resolveRawDial(conn)
+	if dial == nil {
+		return nil
+	}
+	sni := resolveProbeSNI(conn)
+	var findings []SecurityFinding
+	for _, class := range []weakClass{weakAnon, weakNull, weakExport} {
+		if f := probeWeakClass(dial, sni, class); f != nil {
+			findings = append(findings, *f)
+		}
+	}
+	return findings
+}
+
+func probeWeakClass(dial func() (net.Conn, error), sni string, class weakClass) *SecurityFinding {
+	c, err := dial()
 	if err != nil {
 		return nil
 	}
 	defer c.Close()
 	_ = c.SetDeadline(time.Now().Add(weakCipherProbeTimeout))
-
-	hello := buildWeakClientHello()
+	hello := buildWeakClientHello(class, sni)
 	if _, err := c.Write(hello); err != nil {
 		return nil
 	}
@@ -117,14 +199,18 @@ func probeWeakCiphers(conn net.Conn) []SecurityFinding {
 	if err != nil || len(rec) < 6 {
 		return nil
 	}
-	if rec[0] != 0x16 { // handshake; alerts and anything else are non-selection
+	if rec[0] != 0x16 {
 		return nil
 	}
 	suite, ok := selectedCipherFromHandshakeRecord(rec)
-	if !ok {
+	if !ok || classOfSuite(suite) != class {
 		return nil
 	}
-	return findingForWeakSuite(suite)
+	fs := findingForWeakSuite(suite)
+	if len(fs) == 0 {
+		return nil
+	}
+	return &fs[0]
 }
 
 func findingForWeakSuite(suite uint16) []SecurityFinding {
@@ -157,7 +243,17 @@ func findingForWeakSuite(suite uint16) []SecurityFinding {
 	}
 }
 
-func buildWeakClientHello() []byte {
+func suitesForClass(class weakClass) []uint16 {
+	out := make([]uint16, 0, len(weakCipherSuites))
+	for _, s := range weakCipherSuites {
+		if s.class == class {
+			out = append(out, s.id)
+		}
+	}
+	return out
+}
+
+func buildWeakClientHello(class weakClass, sni string) []byte {
 	var body []byte
 	body = append(body, 0x03, 0x03) // client_version TLS 1.2
 	var rnd [32]byte
@@ -165,16 +261,16 @@ func buildWeakClientHello() []byte {
 	body = append(body, rnd[:]...)
 	body = append(body, 0x00) // session_id length
 
-	nSuites := len(weakCipherSuites)
-	cs := make([]byte, 2+2*nSuites)
-	binary.BigEndian.PutUint16(cs, uint16(2*nSuites))
-	for i, s := range weakCipherSuites {
-		binary.BigEndian.PutUint16(cs[2+2*i:], s.id)
+	ids := suitesForClass(class)
+	cs := make([]byte, 2+2*len(ids))
+	binary.BigEndian.PutUint16(cs, uint16(2*len(ids)))
+	for i, id := range ids {
+		binary.BigEndian.PutUint16(cs[2+2*i:], id)
 	}
 	body = append(body, cs...)
 	body = append(body, 0x01, 0x00) // compression methods: null
 
-	ext := weakClientHelloExtensions()
+	ext := weakClientHelloExtensions(sni)
 	body = append(body, ext...)
 
 	hs := []byte{0x01} // handshake type client_hello
@@ -187,7 +283,7 @@ func buildWeakClientHello() []byte {
 	return rec
 }
 
-func weakClientHelloExtensions() []byte {
+func weakClientHelloExtensions(sni string) []byte {
 	// supported_groups (0x000a): secp256r1, secp384r1 — needed for AECDH
 	groups := []byte{
 		0x00, 0x0a,
@@ -203,10 +299,30 @@ func weakClientHelloExtensions() []byte {
 		0x01, 0x00,
 	}
 	inner := append(groups, points...)
+	if sni != "" {
+		inner = append(inner, serverNameExtension(sni)...)
+	}
 	out := make([]byte, 2+len(inner))
 	binary.BigEndian.PutUint16(out, uint16(len(inner)))
 	copy(out[2:], inner)
 	return out
+}
+
+func serverNameExtension(hostname string) []byte {
+	host := []byte(hostname)
+	// server_name list: name_type host_name (0) + host
+	name := make([]byte, 3+len(host))
+	name[0] = 0
+	binary.BigEndian.PutUint16(name[1:3], uint16(len(host)))
+	copy(name[3:], host)
+	list := make([]byte, 2+len(name))
+	binary.BigEndian.PutUint16(list, uint16(len(name)))
+	copy(list[2:], name)
+	ext := make([]byte, 4+len(list))
+	binary.BigEndian.PutUint16(ext[0:2], 0x0000) // server_name
+	binary.BigEndian.PutUint16(ext[2:4], uint16(len(list)))
+	copy(ext[4:], list)
+	return ext
 }
 
 func appendUint16(b []byte, n int) []byte {
