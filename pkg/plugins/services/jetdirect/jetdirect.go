@@ -268,6 +268,14 @@ func (p *JetDirectPlugin) Run(conn net.Conn, timeout time.Duration, target plugi
 }
 
 // PortPriority returns true for the standard JetDirect ports.
+//
+// These ports are also claimed by the HTTP (9100) and Oracle GoldenGate (9100)
+// plugins. Combined with the Priority below, JetDirect wins the fast lane on
+// these ports so scans never write to a raw-print socket. The deliberate
+// trade-off is that a non-printer on 9100 (notably Oracle GoldenGate
+// Microservices, which lists 9100 as a common port) is reported as an inferred
+// JetDirect service rather than identified on its own, because 9100 cannot be
+// probed to disambiguate without risking physical print output.
 func (p *JetDirectPlugin) PortPriority(port uint16) bool {
 	return port == 9100 || port == 9101 || port == 9102
 }
@@ -281,6 +289,7 @@ func (p *JetDirectPlugin) Name() string {
 func (p *JetDirectPlugin) Type() plugins.Protocol {
 	return plugins.TCP
 }
+
 // Priority returns the plugin priority. Must run before GoldenGate (-1) and
 // HTTP (0) on 9100-9102 to prevent active probes on raw-print ports.
 func (p *JetDirectPlugin) Priority() int {
