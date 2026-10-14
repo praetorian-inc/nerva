@@ -28,6 +28,9 @@ import (
 
 // CheckTLS inspects the TLS connection state and returns security findings for
 // weak versions, expired certificates, self-signed certificates, and weak keys.
+// When conn is a TCP *tls.Conn it also probes whether the peer accepts
+// anonymous, NULL, or EXPORT cipher suites via a raw ClientHello (Go's stdlib
+// client will not offer those suites).
 // Returns nil if conn is not a *tls.Conn or no issues are found.
 func CheckTLS(conn net.Conn) []SecurityFinding {
 	if u, ok := conn.(interface{ Unwrap() net.Conn }); ok {
@@ -57,6 +60,8 @@ func CheckTLS(conn net.Conn) []SecurityFinding {
 			findings = append(findings, *f)
 		}
 	}
+
+	findings = append(findings, probeWeakCiphers(tlsConn)...)
 
 	if len(findings) == 0 {
 		return nil
