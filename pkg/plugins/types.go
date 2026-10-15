@@ -1365,6 +1365,9 @@ type ServiceJetDirect struct {
 	Status           string   `json:"status,omitempty"`
 	FilesystemAccess bool     `json:"filesystem_access,omitempty"`
 	CPEs             []string `json:"cpes,omitempty"`
+	// Inferred is true when the service was classified from a standard raw-print
+	// port without a positive PJL response. Deep scans can set this after a probe fails.
+	Inferred bool `json:"inferred,omitempty"`
 }
 
 func (e ServiceJetDirect) Type() string { return ProtoJetDirect }
@@ -1712,9 +1715,10 @@ type ServiceOracleEBS struct {
 func (e ServiceOracleEBS) Type() string { return ProtoOracleEBS }
 
 type ServiceOracleORDS struct {
-	APEX      bool     `json:"apex,omitempty"`
-	AICapable bool     `json:"ai_capable,omitempty"` // ORDS is the common carrier for Select AI / Vector Search / OML REST
-	CPEs      []string `json:"cpes,omitempty"`
+	APEX        bool     `json:"apex,omitempty"`
+	APEXVersion string   `json:"apex_version,omitempty"` // APEX version read from APEX-rendered markup; empty when unobtainable
+	AICapable   bool     `json:"ai_capable,omitempty"`   // ORDS is the common carrier for Select AI / Vector Search / OML REST
+	CPEs        []string `json:"cpes,omitempty"`
 }
 
 func (e ServiceOracleORDS) Type() string { return ProtoOracleORDS }

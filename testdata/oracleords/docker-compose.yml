@@ -1,0 +1,46 @@
+services:
+  # ORDS 24.x/26.x fronting APEX: no Server header, version only reachable via
+  # /ords/_sdw/js/config.js (LAB-5060).
+  ords-modern:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      MODE: modern
+      PORT: "8080"
+    ports:
+      - "8080:8080"
+
+  # The same release without APEX installed.
+  ords-modern-noapex:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      MODE: modern-noapex
+      PORT: "8080"
+    ports:
+      - "8081:8080"
+
+  # Modern ORDS whose /ords/_sdw/ surface requires credentials: detection must
+  # still succeed, with an empty version.
+  ords-protected:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      MODE: protected
+      PORT: "8080"
+    ports:
+      - "8082:8080"
+
+  # ORDS 22.x/23.x, which still emits the Server header.
+  ords-legacy:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      MODE: legacy
+      PORT: "8080"
+    ports:
+      - "8083:8080"
