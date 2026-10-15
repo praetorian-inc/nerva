@@ -15,9 +15,15 @@
 package mssql
 
 import (
+	"net"
+	"net/netip"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/ory/dockertest/v3"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/praetorian-inc/nerva/pkg/plugins"
 	"github.com/praetorian-inc/nerva/pkg/test"
@@ -106,6 +112,150 @@ func TestMSSQL(t *testing.T) {
 			if err != nil {
 				t.Errorf("%s", err.Error())
 			}
+		})
+	}
+}
+
+func buildMockPreloginResponse() []byte {
+	return []byte{
+		0x04, 0x01, 0x00, 0x30, 0x00, 0x00, 0x01, 0x00,
+		0x00, 0x00, 0x1F, 0x00, 0x06,
+		0x01, 0x00, 0x25, 0x00, 0x01,
+		0x02, 0x00, 0x26, 0x00, 0x01,
+		0x03, 0x00, 0x27, 0x00, 0x00,
+		0x04, 0x00, 0x27, 0x00, 0x01,
+		0x05, 0x00, 0x28, 0x00, 0x00,
+		0xFF,
+		0x0F, 0x00, 0x07, 0xD0, 0x00, 0x00,
+		0x00,
+		0x00,
+		0x00,
+	}
+}
+
+func buildMockLoginAck() []byte {
+	return []byte{
+		0x04, 0x01, 0x00, 0x15, 0x00, 0x00, 0x01, 0x00,
+		0xAD, 0x0A, 0x00,
+		0x01,
+		0x04, 0x00, 0x00, 0x74,
+		0x00,
+		0x0F, 0x00, 0x07, 0xD0,
+	}
+}
+
+func buildMockLoginError() []byte {
+	return []byte{
+		0x04, 0x01, 0x00, 0x09, 0x00, 0x00, 0x01, 0x00,
+		0xAA,
+	}
+}
+
+func startMockTDS(t *testing.T, unauth bool, expectLogin bool) (string, func()) {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+		buf := make([]byte, 4096)
+		if _, err := conn.Read(buf); err != nil {
+			return
+		}
+		if _, err := conn.Write(buildMockPreloginResponse()); err != nil {
+			return
+		}
+		if !expectLogin {
+			return
+		}
+		if _, err := conn.Read(buf); err != nil {
+			return
+		}
+		if unauth {
+			_, _ = conn.Write(buildMockLoginAck())
+			return
+		}
+		_, _ = conn.Write(buildMockLoginError())
+	}()
+
+	return listener.Addr().String(), func() { _ = listener.Close() }
+}
+
+func TestMSSQLSecurityFindings(t *testing.T) {
+	tests := []struct {
+		name         string
+		misconfigs   bool
+		unauth       bool
+		wantAnon     bool
+		wantFinding  bool
+		wantFindings int
+	}{
+		{
+			name:         "Misconfigs=true unauthenticated LOGINACK emits mssql-no-auth",
+			misconfigs:   true,
+			unauth:       true,
+			wantAnon:     true,
+			wantFinding:  true,
+			wantFindings: 1,
+		},
+		{
+			name:         "Misconfigs=true auth required ERROR does not emit mssql-no-auth",
+			misconfigs:   true,
+			unauth:       false,
+			wantAnon:     false,
+			wantFinding:  false,
+			wantFindings: 0,
+		},
+		{
+			name:         "Misconfigs=false does not emit finding",
+			misconfigs:   false,
+			unauth:       true,
+			wantAnon:     false,
+			wantFinding:  false,
+			wantFindings: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			addr, cleanup := startMockTDS(t, tt.unauth, tt.misconfigs)
+			defer cleanup()
+
+			conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+			require.NoError(t, err)
+			defer conn.Close()
+
+			addrPort := netip.MustParseAddrPort(addr)
+			target := plugins.Target{
+				Host:       "127.0.0.1",
+				Address:    addrPort,
+				Misconfigs: tt.misconfigs,
+			}
+
+			plugin := &MSSQLPlugin{}
+			service, err := plugin.Run(conn, 5*time.Second, target)
+			require.NoError(t, err)
+			require.NotNil(t, service, "fingerprint must succeed")
+
+			assert.Equal(t, tt.wantAnon, service.AnonymousAccess, "AnonymousAccess mismatch")
+			assert.Len(t, service.SecurityFindings, tt.wantFindings, "SecurityFindings count mismatch")
+
+			hasID := false
+			for _, f := range service.SecurityFindings {
+				if f.ID == "mssql-no-auth" {
+					hasID = true
+					assert.Equal(t, plugins.SeverityCritical, f.Severity)
+					assert.NotContains(t, strings.ToLower(f.Evidence), "password")
+					assert.NotContains(t, strings.ToLower(f.Evidence), "sa")
+					assert.NotContains(t, f.Evidence, "@")
+				}
+			}
+			assert.Equal(t, tt.wantFinding, hasID, "mssql-no-auth presence mismatch")
 		})
 	}
 }

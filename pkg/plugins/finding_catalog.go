@@ -225,6 +225,13 @@ var findingCatalog = map[string]FindingMeta{
 		Recommendation: "Set a strong root password immediately. Restrict root login to localhost and create least-privilege accounts for application access.",
 		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:N",
 	},
+	"mssql-no-auth": {
+		Title:          "MSSQL Accessible Without Authentication",
+		Severity:       SeverityMedium,
+		Impact:         "Unauthenticated access to Microsoft SQL Server allows attackers to read, modify, or delete databases and stored data.",
+		Recommendation: "Require SQL or Windows authentication for all logins. Disable empty credentials and restrict network access to trusted clients.",
+		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:N",
+	},
 	"cassandra-no-auth": {
 		Title:          "Cassandra Accessible Without Authentication",
 		Severity:       SeverityMedium,
