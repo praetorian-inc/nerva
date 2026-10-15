@@ -18,6 +18,7 @@ import (
 	"crypto/tls"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"net"
 	"strings"
 	"time"
@@ -384,14 +385,18 @@ func (p *MSSQLPlugin) Priority() int {
 	return 143
 }
 
+const encryptNotSup byte = 0x02 // ENCRYPT_NOT_SUP: only value that allows plaintext LOGIN7
+
 func checkUnauthenticatedLogin(conn net.Conn, timeout time.Duration, encryption byte, host string) bool {
-	loginConn := conn
-	if encryption == 0x01 || encryption == 0x03 { // ENCRYPT_ON / ENCRYPT_REQ
-		tconn := tls.Client(conn, &tls.Config{InsecureSkipVerify: true, ServerName: host}) //nolint:gosec
+	loginConn := net.Conn(conn)
+	if encryption != encryptNotSup {
+		prep := &tdsHandshakeConn{Conn: conn, wrap: true}
+		tconn := tls.Client(prep, &tls.Config{InsecureSkipVerify: true, ServerName: host}) //nolint:gosec
 		_ = tconn.SetDeadline(time.Now().Add(timeout))
 		if err := tconn.Handshake(); err != nil {
 			return false
 		}
+		prep.wrap = false
 		loginConn = tconn
 	}
 	resp, err := utils.SendRecv(loginConn, buildLogin7(), timeout)
@@ -401,9 +406,74 @@ func checkUnauthenticatedLogin(conn net.Conn, timeout time.Duration, encryption 
 	return hasLoginAck(resp)
 }
 
+// tdsHandshakeConn wraps TLS handshake records in TDS PRELOGIN (0x12) packets.
+// After Handshake(), wrap is set false so LOGIN7 travels as TLS application data.
+type tdsHandshakeConn struct {
+	net.Conn
+	wrap    bool
+	readBuf []byte
+}
+
+func (c *tdsHandshakeConn) Write(p []byte) (int, error) {
+	if !c.wrap {
+		return c.Conn.Write(p)
+	}
+	const maxPayload = 4088
+	off := 0
+	for off < len(p) {
+		n := len(p) - off
+		if n > maxPayload {
+			n = maxPayload
+		}
+		pkt := make([]byte, 8+n)
+		pkt[0] = 0x12
+		if off+n == len(p) {
+			pkt[1] = 0x01
+		}
+		length := 8 + n
+		pkt[2] = byte(length >> 8)
+		pkt[3] = byte(length)
+		pkt[6] = 0x01
+		copy(pkt[8:], p[off:off+n])
+		if _, err := c.Conn.Write(pkt); err != nil {
+			return off, err
+		}
+		off += n
+	}
+	return len(p), nil
+}
+
+func (c *tdsHandshakeConn) Read(p []byte) (int, error) {
+	if !c.wrap {
+		return c.Conn.Read(p)
+	}
+	if len(c.readBuf) == 0 {
+		hdr := make([]byte, 8)
+		if _, err := io.ReadFull(c.Conn, hdr); err != nil {
+			return 0, err
+		}
+		length := int(hdr[2])<<8 | int(hdr[3])
+		if length < 8 {
+			return 0, io.ErrUnexpectedEOF
+		}
+		body := make([]byte, length-8)
+		if _, err := io.ReadFull(c.Conn, body); err != nil {
+			return 0, err
+		}
+		c.readBuf = body
+	}
+	n := copy(p, c.readBuf)
+	c.readBuf = c.readBuf[n:]
+	return n, nil
+}
+
 func buildLogin7() []byte {
-	host, app, clt := utf16LE("nerva"), utf16LE("nerva"), utf16LE("ODBC")
-	ibHost, ibApp, ibClt := 94, 94+len(host), 94+len(host)+len(app)
+	host, user, app, clt := utf16LE("nerva"), utf16LE("sa"), utf16LE("nerva"), utf16LE("ODBC")
+	ibHost := 94
+	ibUser := ibHost + len(host)
+	ibPass := ibUser + len(user)
+	ibApp := ibPass
+	ibClt := ibApp + len(app)
 	ibRest := ibClt + len(clt)
 	payload := make([]byte, ibRest)
 	binary.LittleEndian.PutUint32(payload[0:], uint32(len(payload)))
@@ -417,8 +487,8 @@ func buildLogin7() []byte {
 		binary.LittleEndian.PutUint16(payload[at+2:], uint16(cch))
 	}
 	putOL(36, ibHost, len(host)/2)
-	putOL(40, ibHost+len(host), 0) // empty username
-	putOL(44, ibHost+len(host), 0) // empty password
+	putOL(40, ibUser, len(user)/2)
+	putOL(44, ibPass, 0)
 	putOL(48, ibApp, len(app)/2)
 	putOL(52, ibRest, 0)
 	putOL(56, ibRest, 0)
@@ -429,6 +499,7 @@ func buildLogin7() []byte {
 	putOL(82, ibRest, 0)
 	putOL(86, ibRest, 0)
 	copy(payload[ibHost:], host)
+	copy(payload[ibUser:], user)
 	copy(payload[ibApp:], app)
 	copy(payload[ibClt:], clt)
 	pktLen := 8 + len(payload)
