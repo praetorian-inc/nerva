@@ -266,10 +266,10 @@ var findingCatalog = map[string]FindingMeta{
 	// ── Container and orchestration ──────────────────────────────────────
 	"docker-unauth-api": {
 		Title:          "Docker API Accessible Without Authentication",
-		Severity:       SeverityMedium,
+		Severity:       SeverityCritical,
 		Impact:         "An unauthenticated Docker API allows attackers to create privileged containers, mount the host filesystem, and achieve full host compromise.",
 		Recommendation: "Restrict Docker API access to Unix sockets or TLS-authenticated endpoints. Never expose the Docker API to untrusted networks without mTLS.",
-		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:N",
+		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
 	},
 	"docker-registry-unauthenticated-catalog": {
 		Title:          "Docker Registry Unauthenticated Catalog Access",
@@ -287,10 +287,10 @@ var findingCatalog = map[string]FindingMeta{
 	},
 	"jenkins-script-console": {
 		Title:          "Jenkins Script Console Exposed",
-		Severity:       SeverityMedium,
-		Impact:         "Unauthenticated Jenkins access allows attackers to view build configurations, access credentials stored in Jenkins, and execute arbitrary code via build pipelines.",
+		Severity:       SeverityCritical,
+		Impact:         "The unauthenticated Groovy script console allows remote code execution on the Jenkins controller by evaluating arbitrary Groovy.",
 		Recommendation: "Enable Jenkins security and configure authentication. Disable anonymous read access and restrict script console access to administrators.",
-		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:N",
+		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
 	},
 	"minio-exposed": {
 		Title:          "MinIO Default Credentials",
@@ -539,10 +539,10 @@ var findingCatalog = map[string]FindingMeta{
 	// ── Debug and management ─────────────────────────────────────────────
 	"jdwp-exposed": {
 		Title:          "JDWP Debug Port Exposed",
-		Severity:       SeverityMedium,
+		Severity:       SeverityCritical,
 		Impact:         "The Java Debug Wire Protocol allows unauthenticated remote code execution by attaching a debugger and invoking arbitrary methods.",
 		Recommendation: "Remove JDWP from production JVM arguments. If debugging is required, bind to localhost only and use SSH tunneling for remote access.",
-		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:N",
+		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
 	},
 	"dify-setup-not-started": {
 		Title:          "Dify Setup Not Started",
