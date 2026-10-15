@@ -161,6 +161,7 @@ import (
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/socks5"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/sonarqube"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/ssh"
+	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/sstp"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/stun"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/sua"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/svn"
