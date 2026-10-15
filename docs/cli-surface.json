@@ -31,7 +31,7 @@
           "name": "deep",
           "type": "bool",
           "default": "false",
-          "usage": "enable deep probing (admin paths, login detection)"
+          "usage": "enable additional active probes (admin paths, login detection, printer enrichment)"
         },
         {
           "name": "dns-order",

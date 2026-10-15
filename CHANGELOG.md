@@ -15,6 +15,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - README flag table removed; [docs/CLI.md](docs/CLI.md) is the single flag reference (ENG-8010).
 - cobra 1.5.0 → 1.10.2 and pflag 1.0.5 → 1.0.10, riding in with the capability-sdk pin (ENG-8010).
+- Raise `docker-unauth-api` to Critical (CVSS 9.8). An unauthenticated Docker API is host compromise via privileged containers; catalog previously overwrote plugin High to Medium.
+- Raise `jenkins-script-console` to Critical (CVSS 9.8). Unauthenticated Groovy script console is remote code execution on the controller; catalog previously overwrote the plugin Critical to Medium.
+- Raise `jdwp-exposed` to Critical (CVSS 9.8). Handshake-confirmed JDWP is unauthenticated remote code execution; catalog previously overwrote the plugin High to Medium.
+- JetDirect raw-print ports (9100-9102) are now inferred without writing probe bytes by default; PJL identification and model/firmware enrichment require `--deep`. Prevents physical pages being printed when non-PJL devices treat scan probes as document data. Trade-off: port 9100 is treated as JetDirect, so Oracle GoldenGate Microservices on 9100 is no longer separately identified.
+
+### Fixed
+
+- Removed the misleading `--udp` "may require root" note. Nerva UDP scans use connected datagram sockets and do not need root.
 
 ## [1.4.0] - 2026-05-08
 
