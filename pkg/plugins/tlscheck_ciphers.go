@@ -165,16 +165,14 @@ func resolveProbeSNI(conn net.Conn) string {
 	return ""
 }
 
-// probeWeakCiphers dials a new connection to the same peer (via the scan dialer
-// when present, otherwise RemoteAddr) and offers only anonymous, NULL, or
-// EXPORT suites — one ClientHello per class. Go's stdlib handshake cannot do this.
-// Non-TCP peers (net.Pipe tests) are skipped. Probe errors emit nothing.
-func probeWeakCiphers(conn net.Conn) []SecurityFinding {
-	dial := resolveRawDial(conn)
+// ProbeWeakCiphers dials via dial and offers only anonymous, NULL, or EXPORT
+// suites — one ClientHello per class. Go's stdlib handshake cannot do this.
+// Used when a peer TLS alert proves the port is TLS but no *tls.Conn exists
+// (the server offers only weak suites). Probe errors emit nothing.
+func ProbeWeakCiphers(dial func() (net.Conn, error), sni string) []SecurityFinding {
 	if dial == nil {
 		return nil
 	}
-	sni := resolveProbeSNI(conn)
 	var findings []SecurityFinding
 	for _, class := range []weakClass{weakAnon, weakNull, weakExport} {
 		if f := probeWeakClass(dial, sni, class); f != nil {
@@ -182,6 +180,13 @@ func probeWeakCiphers(conn net.Conn) []SecurityFinding {
 		}
 	}
 	return findings
+}
+
+// probeWeakCiphers dials a new connection to the same peer (via the scan dialer
+// when present, otherwise RemoteAddr) and offers only anonymous, NULL, or
+// EXPORT suites. Non-TCP peers (net.Pipe tests) are skipped.
+func probeWeakCiphers(conn net.Conn) []SecurityFinding {
+	return ProbeWeakCiphers(resolveRawDial(conn), resolveProbeSNI(conn))
 }
 
 func probeWeakClass(dial func() (net.Conn, error), sni string, class weakClass) *SecurityFinding {

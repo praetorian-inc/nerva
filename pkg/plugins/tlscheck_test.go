@@ -869,6 +869,53 @@ func startTLSTestServer(t *testing.T, cert tls.Certificate, weakSuite uint16) st
 	return ln.Addr().String()
 }
 
+func writeTLSAlert(w io.Writer, level, desc byte) error {
+	_, err := w.Write([]byte{0x15, 0x03, 0x03, 0x00, 0x02, level, desc})
+	return err
+}
+
+// startWeakOnlyTLSServer offers only the given anonymous/NULL/EXPORT suite.
+// A modern ClientHello gets a fatal handshake_failure alert — no crypto/tls
+// handshake ever completes. This is the shape of a real weak-only listener.
+func startWeakOnlyTLSServer(t *testing.T, weakSuite uint16) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				_ = c.SetDeadline(time.Now().Add(5 * time.Second))
+				rec, err := readTLSRecord(c)
+				if err != nil {
+					return
+				}
+				if clientHelloIsWeakOnly(rec) {
+					offered, ok := cipherSuitesFromClientHelloRecord(rec)
+					if ok {
+						for _, id := range offered {
+							if id == weakSuite {
+								_ = writeRawServerHello(c, weakSuite)
+								return
+							}
+						}
+					}
+					return
+				}
+				_ = writeTLSAlert(c, 0x02, 0x28) // fatal handshake_failure
+			}(c)
+		}
+	}()
+	return ln.Addr().String()
+}
+
 func dialTLSClient(t *testing.T, addr string) *tls.Conn {
 	t.Helper()
 	cfg := &tls.Config{
@@ -915,6 +962,57 @@ func TestCheckTLS_WeakCipherAccepted(t *testing.T) {
 			}
 			if !found {
 				t.Fatalf("CheckTLS() missing %s in %+v", tc.id, findings)
+			}
+		})
+	}
+}
+
+func TestProbeWeakCiphers_WeakOnlyServerNoHandshake(t *testing.T) {
+	cases := []struct {
+		name  string
+		suite uint16
+		id    string
+	}{
+		{name: "ADH", suite: 0x0034, id: findingTLSAnonCipher},
+		{name: "NULL", suite: 0x0002, id: findingTLSNullCipher},
+		{name: "EXPORT", suite: 0x0003, id: findingTLSExportCipher},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			addr := startWeakOnlyTLSServer(t, tc.suite)
+
+			cfg := &tls.Config{
+				InsecureSkipVerify: true, //nolint:gosec // test-only
+				MinVersion:         tls.VersionTLS12,
+				MaxVersion:         tls.VersionTLS12,
+			}
+			d := &net.Dialer{Timeout: 3 * time.Second}
+			raw, err := d.Dial("tcp", addr)
+			if err != nil {
+				t.Fatalf("dial: %v", err)
+			}
+			cli := tls.Client(raw, cfg)
+			if err := cli.Handshake(); err == nil {
+				_ = cli.Close()
+				t.Fatal("stdlib handshake succeeded against weak-only server")
+			}
+			_ = raw.Close()
+
+			raw2, err := d.Dial("tcp", addr)
+			if err != nil {
+				t.Fatalf("dial probe: %v", err)
+			}
+			defer raw2.Close()
+			findings := probeWeakCiphers(raw2)
+			found := false
+			for _, f := range findings {
+				if f.ID == tc.id {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Fatalf("probeWeakCiphers() missing %s in %+v", tc.id, findings)
 			}
 		})
 	}

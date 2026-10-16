@@ -270,6 +270,13 @@ func (c *Config) SimpleScanTarget(target plugins.Target) ([]*plugins.Service, er
 			log.Printf("%v %v-> peer rejected TLS handshake; skipping plaintext probes\n",
 				target.Address.String(), target.Host)
 		}
+		// Weak-only servers (ADH/NULL/EXPORT) reject Go's stdlib ClientHello,
+		// so CheckTLS never runs — probe those suites on a raw TCP dial.
+		if c.Misconfigs {
+			if svc := c.tlsAlertMisconfigService(target); svc != nil {
+				return []*plugins.Service{svc}, nil
+			}
+		}
 		return nil, nil
 	}
 	if isTLS {
@@ -393,6 +400,21 @@ func (c *Config) SimpleScanTarget(target plugins.Target) ([]*plugins.Service, er
 func isRemoteTLSAlert(err error) bool {
 	var opErr *net.OpError
 	return errors.As(err, &opErr) && opErr.Op == "remote error"
+}
+
+// tlsAlertMisconfigService probes anonymous/NULL/EXPORT suites after the
+// stdlib handshake failed with a peer TLS alert. CheckTLS requires a
+// *tls.Conn, which these listeners never produce.
+func (c *Config) tlsAlertMisconfigService(target plugins.Target) *plugins.Service {
+	findings := plugins.ProbeWeakCiphers(func() (net.Conn, error) {
+		return c.DialTCP(target)
+	}, target.Host)
+	if len(findings) == 0 {
+		return nil
+	}
+	svc := plugins.CreateServiceFrom(target, nil, true, "", plugins.TCP)
+	svc.SecurityFindings = findings
+	return svc
 }
 
 // This will attempt to close the provided Conn after running the plugin.

@@ -32,6 +32,8 @@ import (
 // anonymous, NULL, or EXPORT cipher suites via a raw ClientHello (Go's stdlib
 // client will not offer those suites).
 // Returns nil if conn is not a *tls.Conn or no issues are found.
+// Peers that reject the stdlib handshake (weak-only ADH/NULL/EXPORT listeners)
+// never produce a *tls.Conn; the scan path calls ProbeWeakCiphers instead.
 func CheckTLS(conn net.Conn) []SecurityFinding {
 	tlsConn, ok := unwrapConn(conn).(*tls.Conn)
 	if !ok {
