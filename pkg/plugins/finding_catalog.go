@@ -94,6 +94,13 @@ var findingCatalog = map[string]FindingMeta{
 		Recommendation: "Serve all pages containing login or sensitive forms exclusively over HTTPS with HSTS.",
 		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:U/C:H/I:N/A:N",
 	},
+	"pos-poi-management-exposed": {
+		Title:          "POS/POI Management Interface Exposed",
+		Severity:       SeverityMedium,
+		Impact:         "An internet-exposed Verifone or Ingenico payment-terminal management interface lets attackers fingerprint POS/POI devices, attempt default credentials, and target the payment environment from outside the CDE.",
+		Recommendation: "Remove POS/POI management interfaces from the public internet. Restrict administration to a management network and require strong authentication.",
+		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:N",
+	},
 
 	// ── TLS findings ─────────────────────────────────────────────────────
 	"tls-weak-version-10": {
