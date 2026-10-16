@@ -131,6 +131,27 @@ var findingCatalog = map[string]FindingMeta{
 		Recommendation: "Generate a new key pair meeting current NIST minimums: RSA 2048+ bits or ECDSA P-256+. Reissue the certificate with the new key.",
 		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:N/A:N",
 	},
+	"tls-anon-cipher": {
+		Title:          "Anonymous TLS Cipher Suite Accepted",
+		Severity:       SeverityHigh,
+		Impact:         "Anonymous (ADH/AECDH) cipher suites provide no server authentication. A network attacker can complete the handshake and decrypt or modify traffic.",
+		Recommendation: "Disable anonymous cipher suites (ADH, AECDH). Restrict the server to authenticated suites such as ECDHE with AES-GCM or ChaCha20-Poly1305.",
+		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N",
+	},
+	"tls-null-cipher": {
+		Title:          "NULL TLS Cipher Suite Accepted",
+		Severity:       SeverityHigh,
+		Impact:         "NULL cipher suites provide no encryption. Application data, including credentials and session tokens, is transmitted in the clear inside TLS framing.",
+		Recommendation: "Disable NULL cipher suites. Require confidentiality-providing suites such as AES-GCM or ChaCha20-Poly1305.",
+		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+	},
+	"tls-export-cipher": {
+		Title:          "EXPORT TLS Cipher Suite Accepted",
+		Severity:       SeverityHigh,
+		Impact:         "EXPORT-grade cipher suites use deliberately weakened keys. Historical attacks (FREAK, Logjam) recover those keys and decrypt the session.",
+		Recommendation: "Disable all EXPORT cipher suites. Use modern key sizes and authenticated encryption.",
+		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+	},
 
 	// ── SSH findings ─────────────────────────────────────────────────────
 	"ssh-weak-cipher": {
