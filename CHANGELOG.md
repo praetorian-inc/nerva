@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Elasticsearch unauthenticated HTTP access finding `elasticsearch-no-auth` on GET / 200 identity JSON (ENG-9055).
 - CLI-surface drift gate: `make cli-docs` regenerates `docs/CLI.md` and `docs/cli-surface.json` from the live cobra tree; CI fails when documentation drifts (ENG-8010).
 
 ### Changed

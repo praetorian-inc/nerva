@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/praetorian-inc/nerva/pkg/plugins"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -363,4 +364,56 @@ func TestElasticsearchFingerprinter_Integration(t *testing.T) {
 	require.NotNil(t, result)
 	assert.Equal(t, "elasticsearch", result.Technology)
 	assert.Equal(t, "8.11.3", result.Version)
+}
+
+func TestElasticsearchFingerprinter_Unauth200EmitsNoAuthFinding(t *testing.T) {
+	fp := &ElasticsearchFingerprinter{}
+	body := []byte(`{
+		"name" : "es-node",
+		"cluster_name" : "elasticsearch",
+		"cluster_uuid" : "abc-123",
+		"version" : { "number" : "8.11.3" },
+		"tagline" : "You Know, for Search"
+	}`)
+	resp := &http.Response{
+		StatusCode: 200,
+		Header: http.Header{
+			"Content-Type": []string{"application/json"},
+		},
+	}
+
+	result, err := fp.Fingerprint(resp, body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Len(t, result.SecurityFindings, 1)
+	assert.Equal(t, "elasticsearch-no-auth", result.SecurityFindings[0].ID)
+	assert.Equal(t, plugins.SeverityHigh, result.SecurityFindings[0].Severity)
+	assert.Contains(t, result.SecurityFindings[0].Evidence, "200")
+}
+
+func TestElasticsearchFingerprinter_Auth401DoesNotEmitNoAuthFinding(t *testing.T) {
+	fp := &ElasticsearchFingerprinter{}
+	body := []byte(`{
+		"error": {
+			"root_cause": [{"type": "security_exception", "reason": "missing authentication credentials for REST request [/]"}],
+			"type": "security_exception",
+			"reason": "missing authentication credentials for REST request [/]"
+		},
+		"status": 401
+	}`)
+	resp := &http.Response{
+		StatusCode: 401,
+		Header: http.Header{
+			"Content-Type": []string{"application/json"},
+		},
+	}
+
+	result, err := fp.Fingerprint(resp, body)
+	require.NoError(t, err)
+	if result == nil {
+		return
+	}
+	for _, f := range result.SecurityFindings {
+		assert.NotEqual(t, "elasticsearch-no-auth", f.ID)
+	}
 }

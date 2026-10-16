@@ -246,6 +246,13 @@ var findingCatalog = map[string]FindingMeta{
 		Recommendation: "Enable InfluxDB authentication and create users with appropriate privileges. Restrict network access to trusted clients.",
 		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:N",
 	},
+	"elasticsearch-no-auth": {
+		Title:          "Elasticsearch Accessible Without Authentication",
+		Severity:       SeverityMedium,
+		Impact:         "Unauthenticated access to the Elasticsearch HTTP API allows attackers to read cluster identity and, depending on anonymous privileges, search or modify indices that may store sensitive data.",
+		Recommendation: "Enable Elasticsearch security (xpack.security.enabled) and require authentication for HTTP clients. Restrict network access to trusted clients.",
+		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:N",
+	},
 
 	// ── LDAP ─────────────────────────────────────────────────────────────
 	"ldap-anonymous-bind": {
