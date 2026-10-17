@@ -403,6 +403,13 @@ var findingCatalog = map[string]FindingMeta{
 		Recommendation: "Restrict AnyDesk access to trusted networks. Configure strong passwords and enable two-factor authentication.",
 		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N",
 	},
+	"pcanywhere-exposed": {
+		Title:          "pcAnywhere Service Exposed",
+		Severity:       SeverityLow,
+		Impact:         "An exposed pcAnywhere listener increases the attack surface for unauthorized remote access. The product is end-of-life and has known authentication weaknesses.",
+		Recommendation: "Disable pcAnywhere. Replace it with a supported remote-access solution restricted to trusted networks.",
+		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N",
+	},
 	"pptp-insecure": {
 		Title:          "PPTP VPN Service",
 		Severity:       SeverityLow,
