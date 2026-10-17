@@ -401,9 +401,128 @@ func (p *ORACLEPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.
 		payload.Note = "Oracle AI Database (23ai/26ai) - AI Vector Search / Select AI capable (inferred from version, not confirmed)"
 	}
 
-	return plugins.CreateServiceFrom(target, payload, false, version, plugins.TCP), nil
+	service := plugins.CreateServiceFrom(target, payload, false, version, plugins.TCP)
+	if target.Misconfigs && tryEmptyCredentialSession(timeout, target) {
+		service.AnonymousAccess = true
+		service.SecurityFindings = []plugins.SecurityFinding{{
+			ID:          "oracle-no-auth",
+			Severity:    plugins.SeverityCritical,
+			Description: "Oracle Database accessible without authentication",
+			Evidence:    "empty-user PreAuth received AUTH_SESSKEY without ORA-01017",
+		}}
+	}
+	return service, nil
 }
 
 func (p *ORACLEPlugin) Priority() int {
 	return 900
+}
+
+// emptyCredentialServiceNames is a short, finite list of well-known Oracle
+// service names used only after TNS fingerprinting succeeds. It is not a
+// wordlist and is not used for default-password guessing.
+var emptyCredentialServiceNames = []string{"XE", "ORCL", "ORCLPDB1", "FREE", "XEPDB1"}
+
+func emptyCredentialConnect(host, port, service string) []byte {
+	connectData := []byte(
+		"(DESCRIPTION=(CONNECT_DATA=(SERVICE_NAME=" + service + ")(CID=(PROGRAM=)" +
+			"(HOST=)(USER=)))(ADDRESS=(PROTOCOL=tcp)(HOST=" + host + ")(PORT=" + port + ")))",
+	)
+	return buildTNSConnect(connectData)
+}
+
+func tnsPacketType(response []byte) int {
+	if len(response) < 5 {
+		return 0
+	}
+	return int(response[4])
+}
+
+func loginIndicatesAuthRequired(response []byte) bool {
+	return bytes.Contains(response, []byte("ORA-01017")) ||
+		bytes.Contains(response, []byte("ORA-1017")) ||
+		bytes.Contains(response, []byte("(ERR=1017)"))
+}
+
+// canSelfDialOracle skips unspecified addresses (0.0.0.0 / ::) so a
+// hostname/proxy scan does not misdial localhost. Mirrors weblogic
+// canSelfDialConsole.
+func canSelfDialOracle(target plugins.Target) bool {
+	a := target.Address.Addr()
+	return a.IsValid() && !a.IsUnspecified()
+}
+
+func tnsDataPacket(payload []byte) []byte {
+	body := make([]byte, 2+len(payload))
+	copy(body[2:], payload)
+	pkt := make([]byte, 8+len(body))
+	binary.BigEndian.PutUint16(pkt[0:2], uint16(len(pkt)))
+	pkt[4] = 6 // Data
+	copy(pkt[8:], body)
+	return pkt
+}
+
+// emptyUserPreAuth is a TNS Data PreAuth (0x0376) for an empty username.
+// AUTH_SESSKEY in the reply is the logon-challenge marker; ORA-01017 means
+// credentials were required. TNS Accept alone is not a DB session.
+func emptyUserPreAuth() []byte {
+	payload := []byte{0x03, 0x76, 0x00}
+	return tnsDataPacket(payload)
+}
+
+// emptyCredentialSessionSucceeded reports a DB logon that accepted empty
+// credentials. TNS Accept (type 2) is only listener handoff — not a session.
+func emptyCredentialSessionSucceeded(response []byte) bool {
+	if tnsPacketType(response) != 6 {
+		return false
+	}
+	if loginIndicatesAuthRequired(response) {
+		return false
+	}
+	return bytes.Contains(response, []byte("AUTH_SESSKEY"))
+}
+
+// tryEmptyCredentialSession dials a fresh connection (TNS Refuse closes the
+// fingerprint conversation). After TNS Accept it sends empty-user PreAuth and
+// requires AUTH_SESSKEY without ORA-01017.
+func tryEmptyCredentialSession(timeout time.Duration, target plugins.Target) bool {
+	if !canSelfDialOracle(target) {
+		return false
+	}
+	host := target.Host
+	if host == "" {
+		host = target.Address.Addr().String()
+	}
+	port := fmt.Sprintf("%d", target.Address.Port())
+	for _, service := range emptyCredentialServiceNames {
+		conn, err := net.DialTimeout("tcp", target.Address.String(), timeout)
+		if err != nil {
+			return false
+		}
+		response, err := utils.SendRecv(conn, emptyCredentialConnect(host, port, service), timeout)
+		if err != nil || len(response) == 0 {
+			_ = conn.Close()
+			continue
+		}
+		if loginIndicatesAuthRequired(response) {
+			_ = conn.Close()
+			return false
+		}
+		if tnsPacketType(response) != 2 {
+			_ = conn.Close()
+			continue
+		}
+		preauth, err := utils.SendRecv(conn, emptyUserPreAuth(), timeout)
+		_ = conn.Close()
+		if err != nil || len(preauth) == 0 {
+			continue
+		}
+		if loginIndicatesAuthRequired(preauth) {
+			return false
+		}
+		if emptyCredentialSessionSucceeded(preauth) {
+			return true
+		}
+	}
+	return false
 }
