@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Removed the misleading `--udp` "may require root" note. Nerva UDP scans use connected datagram sockets and do not need root.
+- Register the DNP3, CODESYS, and SSTP service plugins. Each had a complete implementation and an `init()` that calls `RegisterPlugin`, but none were blank-imported in `pkg/scan/plugin_list.go`, so their `init()` never ran and the plugins never loaded. Added `TestAllServicePluginsRegistered`, which fails if any `pkg/plugins/services/...` package calls `RegisterPlugin` without being imported there, to prevent this class of silent gap from recurring.
 
 ## [1.4.0] - 2026-05-08
 
