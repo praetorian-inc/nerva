@@ -368,6 +368,13 @@ var findingCatalog = map[string]FindingMeta{
 		Recommendation: "Migrate the workload to a supported operating system version. If immediate migration is not possible, isolate the host on a restricted network segment and apply compensating controls.",
 		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N",
 	},
+	"os-eol": {
+		Title:          "Vendor-Unsupported Operating System",
+		Severity:       SeverityLow,
+		Impact:         "The host is running an operating system that no longer receives vendor security patches, leaving all known and future vulnerabilities permanently unpatched.",
+		Recommendation: "Migrate the workload to a vendor-supported operating system version. If immediate migration is not possible, isolate the host on a restricted network segment and apply compensating controls.",
+		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N",
+	},
 	"rdp-cleartext-credentials": {
 		Title:          "RDP Standard Security Allows Credential Interception",
 		Severity:       SeverityLow,

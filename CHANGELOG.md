@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- OS end-of-life detection beyond RDP: emit `os-eol` when banner/CPE metadata identifies vendor-unsupported Ubuntu, Debian, RHEL, or CentOS (ENG-9062). Windows via RDP remains `rdp-eol-os`.
 - CLI-surface drift gate: `make cli-docs` regenerates `docs/CLI.md` and `docs/cli-surface.json` from the live cobra tree; CI fails when documentation drifts (ENG-8010).
 
 ### Changed

@@ -681,6 +681,40 @@ func TestHTTPPlugin_ServerVersion_Live(t *testing.T) {
 	}
 }
 
+func TestHTTPPlugin_OSEol_Live(t *testing.T) {
+	const body = "<html><body><h1>Hello</h1></body></html>"
+	eol := runHTTPPlugin(t, "HTTP/1.1 200 OK\r\n"+
+		"Content-Type: text/html\r\n"+
+		"Server: Apache/2.4.6 (CentOS)\r\n"+
+		"Content-Length: 39\r\n"+
+		"Connection: close\r\n\r\n"+
+		body)
+	if findFinding(eol.SecurityFindings, "os-eol") == nil {
+		t.Fatalf("expected os-eol for CentOS 7 Server header, got %v", eol.SecurityFindings)
+	}
+
+	supported := runHTTPPlugin(t, "HTTP/1.1 200 OK\r\n"+
+		"Content-Type: text/html\r\n"+
+		"Server: Apache/2.4.41 (Ubuntu)\r\n"+
+		"Content-Length: 39\r\n"+
+		"Connection: close\r\n\r\n"+
+		body)
+	if findFinding(supported.SecurityFindings, "os-eol") != nil {
+		t.Fatalf("did not expect os-eol for versionless Ubuntu Server header, got %v", supported.SecurityFindings)
+	}
+}
+
+func TestHTTPPlugin_OSEol_Redirect(t *testing.T) {
+	eol := runHTTPPlugin(t, "HTTP/1.1 301 Moved Permanently\r\n"+
+		"Location: https://example.local/\r\n"+
+		"Server: Apache/2.4.6 (CentOS)\r\n"+
+		"Content-Length: 0\r\n"+
+		"Connection: close\r\n\r\n")
+	if findFinding(eol.SecurityFindings, "os-eol") == nil {
+		t.Fatalf("expected os-eol on 301 with CentOS 7 Server header, got %v", eol.SecurityFindings)
+	}
+}
+
 // TestHTTPPlugin_ServerNoVersion_Live verifies that a Server header without a
 // version number (e.g. "cloudflare") does not produce an http-server-version
 // finding.
