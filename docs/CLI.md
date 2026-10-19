@@ -32,7 +32,7 @@ EXAMPLES:
 | `--auto-save` |  | int | `0` | auto-save interval (number of targets) |
 | `--capabilities` | `-c` | bool | `false` | list available capabilities and exit |
 | `--csv` |  | bool | `false` | output format in csv |
-| `--deep` |  | bool | `false` | enable deep probing (admin paths, login detection) |
+| `--deep` |  | bool | `false` | enable additional active probes (admin paths, login detection, printer enrichment) |
 | `--dns-order` |  | string | `lp` | DNS resolution order: p, l, lp, pl |
 | `--fast` | `-f` | bool | `false` | fast mode |
 | `--json` |  | bool | `false` | output format in json |
