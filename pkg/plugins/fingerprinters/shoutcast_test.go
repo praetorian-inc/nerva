@@ -68,6 +68,22 @@ func TestShoutcastMatch(t *testing.T) {
 			header: http.Header{"Server": []string{"Shoutcast DNAS"}},
 			want:   false,
 		},
+		{
+			name:   "realm only without server header",
+			status: 401,
+			header: http.Header{
+				"Www-Authenticate": []string{`Basic realm="Shoutcast Server"`},
+			},
+			want: true,
+		},
+		{
+			name:   "shoutcaster realm does not match",
+			status: 401,
+			header: http.Header{
+				"Www-Authenticate": []string{`Basic realm="Shoutcaster"`},
+			},
+			want: false,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -109,5 +125,31 @@ func TestShoutcastFingerprint(t *testing.T) {
 	}
 	if miss != nil {
 		t.Fatalf("unrelated page fingerprinted: %+v", miss)
+	}
+}
+
+func TestShoutcastFingerprint_BodyVersionIgnored(t *testing.T) {
+	fp := &ShoutcastFingerprinter{}
+	resp := &http.Response{
+		StatusCode: 401,
+		Header: http.Header{
+			"Server":           []string{"Shoutcast DNAS"},
+			"Www-Authenticate": []string{`Basic realm="Shoutcast Server"`},
+		},
+	}
+	// The admin page body carries an unrelated "vX.Y" token; it must not become
+	// the DNAS version.
+	got, err := fp.Fingerprint(resp, []byte(`<script src="/jquery v3.6.0.js"></script>`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil {
+		t.Fatal("expected shoutcast detection")
+	}
+	if got.Version != "" {
+		t.Fatalf("body version leaked into result: %q", got.Version)
+	}
+	if len(got.CPEs) != 1 || got.CPEs[0] != "cpe:2.3:a:shoutcast:dnas:*:*:*:*:*:*:*:*" {
+		t.Fatalf("cpes = %v", got.CPEs)
 	}
 }

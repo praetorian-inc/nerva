@@ -104,7 +104,10 @@ func (f *ShoutcastFingerprinter) Fingerprint(resp *http.Response, body []byte) (
 		return nil, nil
 	}
 	server := resp.Header.Get("Server")
-	version := shoutcastVersion(server, resp.Header.Get("Icy-Notice1"), string(body))
+	// Version comes only from the DNAS-controlled banners (Server header and
+	// icy-notice1), never from arbitrary admin-page body: an unrelated "vX.Y"
+	// token there (e.g. a bundled JS library) would become a bogus CPE version.
+	version := shoutcastVersion(server, resp.Header.Get("Icy-Notice1"))
 	return &FingerprintResult{
 		Technology: "shoutcast",
 		Version:    version,
@@ -124,8 +127,16 @@ func shoutcastSignal(resp *http.Response) bool {
 	if strings.Contains(strings.ToLower(resp.Header.Get("Icy-Notice1")), "shoutcast dnas") {
 		return true
 	}
-	auth := strings.ToLower(resp.Header.Get("Www-Authenticate"))
-	return strings.Contains(auth, `realm="shoutcast`) || strings.Contains(auth, "realm=shoutcast")
+	// DNAS answers with realm="Shoutcast Server" (or a bare "Shoutcast").
+	// Match the full quoted realm so values like "Shoutcaster" do not qualify,
+	// and inspect every WWW-Authenticate value, not just the first.
+	for _, v := range resp.Header.Values("Www-Authenticate") {
+		l := strings.ToLower(v)
+		if strings.Contains(l, `realm="shoutcast server"`) || strings.Contains(l, `realm="shoutcast"`) {
+			return true
+		}
+	}
+	return false
 }
 
 func shoutcastVersion(parts ...string) string {
