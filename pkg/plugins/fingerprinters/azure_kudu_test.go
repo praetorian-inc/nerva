@@ -223,6 +223,12 @@ func TestAzureKuduFingerprinter_CheckMisconfigs(t *testing.T) {
 			responseBody:  `<html>"id" "is_webjob" w3wp</html>`,
 			expectFinding: false,
 		},
+		{
+			name:          "process list where the first record lacks scm markers",
+			statusCode:    200,
+			responseBody:  `[{"id":1,"name":"dotnet"},{"id":2,"name":"w3wp"}]`,
+			expectFinding: true,
+		},
 	}
 
 	for _, tt := range tests {

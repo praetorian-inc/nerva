@@ -218,27 +218,33 @@ func kuduConsoleBody(lower string) bool {
 }
 
 // kuduProcessListBody reports whether body is a Kudu /api/processes JSON array:
-// a non-empty array whose first element is a process object carrying an "id"
-// field plus at least one Kudu-specific field. Parsing the JSON (rather than
-// substring matching) avoids flagging arbitrary JSON arrays or HTML pages that
-// merely contain these tokens.
+// a non-empty array of process objects, at least one of which has an "id" plus a
+// Kudu-specific marker (the self-referential /api/processes href, the SCM or
+// webjob flags, or a w3wp worker name). Every record is examined, since Kudu may
+// omit the false-valued flags and the first process need not be the SCM worker.
+// Parsing the JSON (rather than substring matching) avoids flagging arbitrary
+// JSON arrays or HTML pages that merely contain these tokens.
 func kuduProcessListBody(body []byte) bool {
 	var procs []map[string]any
 	if err := json.Unmarshal(body, &procs); err != nil || len(procs) == 0 {
 		return false
 	}
-	first := procs[0]
-	if _, ok := first["id"]; !ok {
-		return false
-	}
-	if _, ok := first["is_scm_site"]; ok {
-		return true
-	}
-	if _, ok := first["is_webjob"]; ok {
-		return true
-	}
-	if name, ok := first["name"].(string); ok && strings.Contains(strings.ToLower(name), "w3wp") {
-		return true
+	for _, p := range procs {
+		if _, ok := p["id"]; !ok {
+			continue
+		}
+		if href, ok := p["href"].(string); ok && strings.Contains(strings.ToLower(href), "/api/processes") {
+			return true
+		}
+		if _, ok := p["is_scm_site"]; ok {
+			return true
+		}
+		if _, ok := p["is_webjob"]; ok {
+			return true
+		}
+		if name, ok := p["name"].(string); ok && strings.Contains(strings.ToLower(name), "w3wp") {
+			return true
+		}
 	}
 	return false
 }
