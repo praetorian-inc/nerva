@@ -285,6 +285,20 @@ var findingCatalog = map[string]FindingMeta{
 		Recommendation: "Configure Portainer with strong authentication immediately. Restrict network access to the management interface to trusted administrators.",
 		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:N",
 	},
+	"kudu-unauthenticated-console": {
+		Title:          "Azure App Service Kudu Debug Console Exposed",
+		Severity:       SeverityCritical,
+		Impact:         "An unauthenticated Kudu debug console allows arbitrary command execution on the App Service worker, including dumping environment variables, publishing credentials, and application files. This is the control plane used for Visual Studio remote debugging.",
+		Recommendation: "Require authentication on the SCM site (disable unauthenticated access), restrict SCM to private endpoints or access restrictions, and disable remote debugging when not actively troubleshooting (`az webapp config set --remote-debugging-enabled false`).",
+		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+	},
+	"kudu-unauthenticated-api": {
+		Title:          "Azure App Service Kudu Process API Exposed",
+		Severity:       SeverityHigh,
+		Impact:         "Unauthenticated GET /api/processes discloses worker process IDs and names and is the attach point for Visual Studio remote debugging against App Service.",
+		Recommendation: "Require publishing credentials or Microsoft Entra ID on the SCM site. Do not expose *.scm.azurewebsites.net to untrusted networks. Disable remote debugging when unused.",
+		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:L/A:N",
+	},
 	"jenkins-script-console": {
 		Title:          "Jenkins Script Console Exposed",
 		Severity:       SeverityCritical,
