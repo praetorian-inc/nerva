@@ -157,6 +157,19 @@ func TestAzureKuduFingerprinter_Fingerprint(t *testing.T) {
 		assert.Equal(t, "critical", string(result.SecurityFindings[0].Severity))
 	})
 
+	t.Run("unauthenticated console embedding its scm hostname still flags critical", func(t *testing.T) {
+		// Regression: a real Kudu console links to its own *.scm.azurewebsites.net
+		// host, which must not be misread as an AAD SSO redirect and suppress the finding.
+		body := []byte(`<html><head><title>Debug console - Kudu</title></head><body><script src="https://myapp.scm.azurewebsites.net/kudu.js"></script></body></html>`)
+		resp := &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"text/html"}}}
+		result, err := fp.Fingerprint(resp, body)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Equal(t, "none", result.Metadata["auth_mode"])
+		require.Len(t, result.SecurityFindings, 1)
+		assert.Equal(t, "kudu-unauthenticated-console", result.SecurityFindings[0].ID)
+	})
+
 	t.Run("aad login html is not kudu console", func(t *testing.T) {
 		body := []byte(`<html><head><title>Sign in to your account</title></head><body>Kudu</body></html>`)
 		resp := &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"text/html"}}}
@@ -196,6 +209,18 @@ func TestAzureKuduFingerprinter_CheckMisconfigs(t *testing.T) {
 			name:          "unrelated json 200",
 			statusCode:    200,
 			responseBody:  `{"hello":"world"}`,
+			expectFinding: false,
+		},
+		{
+			name:          "json array of strings, not process objects",
+			statusCode:    200,
+			responseBody:  `["is_scm_site","is_webjob","id"]`,
+			expectFinding: false,
+		},
+		{
+			name:          "html mentioning process tokens",
+			statusCode:    200,
+			responseBody:  `<html>"id" "is_webjob" w3wp</html>`,
 			expectFinding: false,
 		},
 	}

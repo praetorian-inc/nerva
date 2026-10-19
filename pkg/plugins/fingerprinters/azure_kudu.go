@@ -49,6 +49,7 @@ cpe:2.3:a:microsoft:azure_app_service:*:*:*:*:*:*:*:*
 package fingerprinters
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
@@ -102,20 +103,23 @@ func (f *AzureKuduFingerprinter) Fingerprint(resp *http.Response, body []byte) (
 
 	www := resp.Header.Get("WWW-Authenticate")
 	loc := resp.Header.Get("Location")
-	text := string(body)
-	lower := strings.ToLower(text)
+	lower := strings.ToLower(string(body))
 
 	auth := ""
 	unauthConsole := false
 
+	// Check the unauthenticated console body first: a real Kudu console page
+	// embeds its own *.scm.azurewebsites.net hostname, so a body-based SSO check
+	// would mask the Critical finding. The SSO signal is read only from the
+	// Location header (the HTTP plugin preserves 3xx redirects without following).
 	switch {
-	case kuduBasicRealm(www):
-		auth = "basic"
-	case kuduSSORedirect(loc) || kuduSSORedirect(text):
-		auth = "aad"
 	case kuduConsoleBody(lower):
 		auth = "none"
 		unauthConsole = true
+	case kuduBasicRealm(www):
+		auth = "basic"
+	case kuduSSORedirect(loc):
+		auth = "aad"
 	default:
 		return nil, nil
 	}
@@ -166,8 +170,7 @@ func (f *AzureKuduFingerprinter) CheckMisconfigs(client *http.Client, baseURL, h
 	if err != nil {
 		return nil
 	}
-	lower := strings.ToLower(string(body))
-	if !kuduProcessListBody(lower) {
+	if !kuduProcessListBody(body) {
 		return nil
 	}
 	return []plugins.SecurityFinding{{
@@ -214,12 +217,28 @@ func kuduConsoleBody(lower string) bool {
 	return hasKudu && hasConsole
 }
 
-func kuduProcessListBody(lower string) bool {
-	if !strings.HasPrefix(strings.TrimSpace(lower), "[") &&
-		!strings.Contains(lower, `"id"`) {
+// kuduProcessListBody reports whether body is a Kudu /api/processes JSON array:
+// a non-empty array whose first element is a process object carrying an "id"
+// field plus at least one Kudu-specific field. Parsing the JSON (rather than
+// substring matching) avoids flagging arbitrary JSON arrays or HTML pages that
+// merely contain these tokens.
+func kuduProcessListBody(body []byte) bool {
+	var procs []map[string]any
+	if err := json.Unmarshal(body, &procs); err != nil || len(procs) == 0 {
 		return false
 	}
-	return strings.Contains(lower, `"is_scm_site"`) ||
-		strings.Contains(lower, `"is_webjob"`) ||
-		(strings.Contains(lower, `"name"`) && strings.Contains(lower, "w3wp"))
+	first := procs[0]
+	if _, ok := first["id"]; !ok {
+		return false
+	}
+	if _, ok := first["is_scm_site"]; ok {
+		return true
+	}
+	if _, ok := first["is_webjob"]; ok {
+		return true
+	}
+	if name, ok := first["name"].(string); ok && strings.Contains(strings.ToLower(name), "w3wp") {
+		return true
+	}
+	return false
 }
