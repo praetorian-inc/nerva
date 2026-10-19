@@ -427,11 +427,11 @@ var findingCatalog = map[string]FindingMeta{
 		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N",
 	},
 	"winrm-no-auth": {
-		Title:          "WinRM Basic Authentication Enabled",
-		Severity:       SeverityLow,
-		Impact:         "Basic authentication sends credentials in base64 encoding (not encryption), making them trivially recoverable by network attackers without TLS.",
-		Recommendation: "Disable WinRM Basic authentication. Use Kerberos or CredSSP authentication over HTTPS instead.",
-		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N",
+		Title:          "WinRM Accessible Without Authentication",
+		Severity:       SeverityCritical,
+		Impact:         "An unauthenticated WinRM (WS-Management) endpoint accepts WS-Man requests without credentials, allowing an attacker to execute arbitrary commands on the Windows host and achieve full remote code execution.",
+		Recommendation: "Require authentication on the WinRM listener (Negotiate/Kerberos or CredSSP over HTTPS) and restrict it to trusted management networks. Never expose an unauthenticated WinRM listener.",
+		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
 	},
 	"smb-signing-not-required": {
 		Title:          "SMB Signing Not Required",

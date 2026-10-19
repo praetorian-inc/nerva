@@ -90,6 +90,7 @@ func TestWinRMFingerprinter_Fingerprint_WithAuth(t *testing.T) {
 		Header:     make(http.Header),
 	}
 	resp.Header.Set("Server", "Microsoft-HTTPAPI/2.0")
+	resp.Header.Set("Www-Authenticate", "Negotiate")
 
 	result, err := fp.Fingerprint(resp, nil)
 	require.NoError(t, err)
@@ -217,6 +218,7 @@ func TestWinRMAuthRequired(t *testing.T) {
 		Header:     make(http.Header),
 	}
 	resp.Header.Set("Server", "Microsoft-HTTPAPI/2.0")
+	resp.Header.Set("Www-Authenticate", "Negotiate")
 
 	result, err := fp.Fingerprint(resp, nil)
 	require.NoError(t, err)
@@ -238,6 +240,7 @@ func TestWinRMAuthRequiredTLS(t *testing.T) {
 		TLS:        &tls.ConnectionState{},
 	}
 	resp.Header.Set("Server", "Microsoft-HTTPAPI/2.0")
+	resp.Header.Set("Www-Authenticate", "Negotiate")
 
 	result, err := fp.Fingerprint(resp, nil)
 	require.NoError(t, err)
@@ -289,6 +292,7 @@ func TestWinRMFingerprinter_Integration(t *testing.T) {
 		Header:     make(http.Header),
 	}
 	resp.Header.Set("Server", "Microsoft-HTTPAPI/2.0")
+	resp.Header.Set("Www-Authenticate", "Negotiate")
 
 	require.True(t, fp.Match(resp))
 	result, err := fp.Fingerprint(resp, body)
@@ -374,7 +378,7 @@ func TestWinRMFingerprint_NegotiateChallengeIsWinRM(t *testing.T) {
 		StatusCode: 401,
 		Header: http.Header{
 			"Server":           []string{"Microsoft-HTTPAPI/2.0"},
-			"WWW-Authenticate": []string{`Negotiate`},
+			"Www-Authenticate": []string{`Negotiate`},
 		},
 	}
 	result, err := fp.Fingerprint(resp, nil)
@@ -403,17 +407,67 @@ func TestIsHTTPAPIGenericServicePage(t *testing.T) {
 	assert.False(t, isHTTPAPIGenericServicePage([]byte("endpoint not found")))
 }
 
-func TestLooksLikeWSMan(t *testing.T) {
-	soap := &http.Response{Header: make(http.Header)}
-	soap.Header.Set("Content-Type", "application/soap+xml")
-	assert.True(t, looksLikeWSMan(soap, nil))
+func TestWSManBody(t *testing.T) {
+	// Only an actual WS-Man SOAP body is evidence; a SOAP Content-Type or a
+	// Windows-auth header alone is not (those are exercised via Fingerprint).
+	assert.True(t, wsManBody([]byte(wsmanIdentifyResponse)))
+	assert.False(t, wsManBody([]byte(httpAPIGenericServicePage)))
+	assert.False(t, wsManBody([]byte("<html>not wsman</html>")))
+	assert.False(t, wsManBody(nil))
+}
 
-	neg := &http.Response{Header: make(http.Header)}
-	neg.Header.Set("WWW-Authenticate", "Negotiate")
-	assert.True(t, looksLikeWSMan(neg, nil))
+func TestWSManAuthChallenge(t *testing.T) {
+	for _, scheme := range []string{"Negotiate", "Kerberos", "CredSSP"} {
+		resp := &http.Response{Header: http.Header{"Www-Authenticate": []string{scheme}}}
+		assert.True(t, wsManAuthChallenge(resp), scheme)
+	}
+	// Basic alone and no challenge are not WinRM challenges.
+	basic := &http.Response{Header: http.Header{"Www-Authenticate": []string{`Basic realm="x"`}}}
+	assert.False(t, wsManAuthChallenge(basic))
+	assert.False(t, wsManAuthChallenge(&http.Response{Header: make(http.Header)}))
+}
 
-	plain := &http.Response{Header: make(http.Header)}
-	assert.True(t, looksLikeWSMan(plain, []byte(wsmanIdentifyResponse)))
-	assert.False(t, looksLikeWSMan(plain, []byte(httpAPIGenericServicePage)))
-	assert.False(t, looksLikeWSMan(plain, nil))
+// A 2xx carrying only a Windows-auth header (no WS-Man body) is not WS-Man and
+// must not raise a Critical winrm-no-auth finding.
+func TestWinRMFingerprint_2xxNegotiateOnlyIsNotWinRM(t *testing.T) {
+	fp := &WinRMFingerprinter{}
+	resp := &http.Response{
+		StatusCode: 200,
+		Header: http.Header{
+			"Server":           []string{"Microsoft-HTTPAPI/2.0"},
+			"Www-Authenticate": []string{"Negotiate"},
+		},
+		TLS: &tls.ConnectionState{},
+	}
+	result, err := fp.Fingerprint(resp, nil)
+	require.NoError(t, err)
+	assert.Nil(t, result, "a 200 with only an auth header is not WS-Man")
+}
+
+// A 2xx with only a SOAP Content-Type (no WS-Man body markers) is shared with
+// WCF/HTTP.sys services and must not be winrm-no-auth.
+func TestWinRMFingerprint_2xxSoapContentTypeOnlyIsNotWinRM(t *testing.T) {
+	fp := &WinRMFingerprinter{}
+	resp := &http.Response{
+		StatusCode: 200,
+		Header: http.Header{
+			"Server":       []string{"Microsoft-HTTPAPI/2.0"},
+			"Content-Type": []string{"application/soap+xml; charset=utf-8"},
+		},
+		TLS: &tls.ConnectionState{},
+	}
+	result, err := fp.Fingerprint(resp, []byte("<html>not wsman</html>"))
+	require.NoError(t, err)
+	assert.Nil(t, result, "SOAP media type alone is not WS-Man evidence")
+}
+
+// After catalog enrichment, winrm-no-auth must stay Critical (unauthenticated
+// remote command execution), not be downgraded.
+func TestWinRMNoAuthFinding_CatalogEnrichment(t *testing.T) {
+	f := plugins.SecurityFinding{ID: "winrm-no-auth", Severity: plugins.SeverityCritical}
+	f.Enrich()
+	assert.Equal(t, plugins.SeverityCritical, f.Severity, "catalog must keep winrm-no-auth Critical")
+	assert.NotEmpty(t, f.Title)
+	assert.NotEmpty(t, f.Impact)
+	assert.NotEmpty(t, f.CVSS)
 }

@@ -22,11 +22,13 @@ protocol for remote Windows system management. Detection identifies:
   - Microsoft-HTTPAPI Server header (HTTP.sys), which is necessary but not
     sufficient: many non-WinRM services (WCF, Azure gateways) use the same header
   - Probe /wsman (standard WS-Management path)
-  - 401 Unauthorized with a WinRM/WS-Man WWW-Authenticate challenge indicates
-    an auth-required WinRM instance
-  - HTTP 2xx is treated as unauthenticated WinRM only when the body or
-    Content-Type is actual WS-Man SOAP (e.g. IdentifyResponse). A generic
-    HTTP.sys "Endpoint not found" HTML page is not WinRM.
+  - 401 Unauthorized with a WinRM/WS-Man WWW-Authenticate challenge
+    (Negotiate, Kerberos or CredSSP) indicates an auth-required WinRM instance
+  - HTTP 2xx is treated as unauthenticated WinRM only when the response body
+    carries actual WS-Man SOAP evidence (an IdentifyResponse, the WS-Man
+    namespace or a WSManFault). A SOAP Content-Type or a Windows-auth header
+    alone is shared by non-WinRM HTTP.sys listeners, and a generic HTTP.sys
+    "Endpoint not found" HTML page is not WinRM.
 
 Port Configuration:
   - 5985: HTTP (unencrypted WinRM)
@@ -151,31 +153,41 @@ func isHTTPAPIGenericServicePage(body []byte) bool {
 }
 
 // classifyWinRM returns whether the response is WinRM and whether auth is required.
+//
+// A 401 is auth-required WinRM only when it carries a WinRM/WS-Man
+// WWW-Authenticate challenge (Negotiate, Kerberos or CredSSP). A 2xx is
+// unauthenticated WinRM only when the body carries actual WS-Man SOAP evidence
+// (an IdentifyResponse, the WS-Man namespace or a WSManFault); a SOAP
+// Content-Type or a Windows-auth header alone is shared by non-WinRM HTTP.sys
+// listeners and is not sufficient.
 func classifyWinRM(resp *http.Response, body []byte) (ok bool, authRequired bool) {
 	if resp.StatusCode == http.StatusUnauthorized {
-		return true, true
+		if wsManAuthChallenge(resp) {
+			return true, true
+		}
+		return false, false
 	}
 	if resp.StatusCode/100 != 2 {
 		return false, false
 	}
-	if looksLikeWSMan(resp, body) {
+	if wsManBody(body) {
 		return true, false
 	}
 	return false, false
 }
 
-func looksLikeWSMan(resp *http.Response, body []byte) bool {
-	ct := strings.ToLower(resp.Header.Get("Content-Type"))
-	if strings.Contains(ct, "soap") {
-		return true
-	}
+// wsManAuthChallenge reports a WinRM/WS-Man WWW-Authenticate challenge.
+func wsManAuthChallenge(resp *http.Response) bool {
 	www := strings.ToLower(resp.Header.Get("WWW-Authenticate"))
-	if strings.Contains(www, "negotiate") ||
+	return strings.Contains(www, "negotiate") ||
 		strings.Contains(www, "kerberos") ||
-		strings.Contains(www, "credssp") ||
-		strings.Contains(www, "wsman") {
-		return true
-	}
+		strings.Contains(www, "credssp")
+}
+
+// wsManBody reports an actual WS-Man SOAP body: an Identify response, the
+// WS-Man namespace, or a WSManFault. A SOAP Content-Type alone is not enough,
+// because WCF and other HTTP.sys services share the same media type.
+func wsManBody(body []byte) bool {
 	if len(body) == 0 {
 		return false
 	}
