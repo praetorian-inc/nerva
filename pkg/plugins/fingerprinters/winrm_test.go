@@ -115,20 +115,10 @@ func TestWinRMFingerprinter_Fingerprint_WithoutAuth(t *testing.T) {
 	}
 	resp.Header.Set("Server", "Microsoft-HTTPAPI/2.0")
 
+	// Bare HTTP.sys 200 is not WinRM — many HTTP.sys listeners answer 200.
 	result, err := fp.Fingerprint(resp, nil)
 	require.NoError(t, err)
-	require.NotNil(t, result)
-
-	assert.Equal(t, "winrm", result.Technology)
-	authRequired, ok := result.Metadata["auth_required"].(bool)
-	assert.True(t, ok, "authRequired should be bool type")
-	assert.False(t, authRequired)
-	assert.Equal(t, "Microsoft-HTTPAPI/2.0", result.Metadata["server"])
-
-	// Check CPE
-	require.NotEmpty(t, result.CPEs)
-	expectedCPE := "cpe:2.3:a:microsoft:windows_remote_management:*:*:*:*:*:*:*:*"
-	assert.Contains(t, result.CPEs, expectedCPE)
+	assert.Nil(t, result)
 }
 
 func TestWinRMFingerprinter_Fingerprint_NotWinRM(t *testing.T) {
@@ -181,8 +171,9 @@ func TestWinRMNoAuth(t *testing.T) {
 		Header:     make(http.Header),
 	}
 	resp.Header.Set("Server", "Microsoft-HTTPAPI/2.0")
+	resp.Header.Set("Content-Type", "application/soap+xml; charset=utf-8")
 
-	result, err := fp.Fingerprint(resp, nil)
+	result, err := fp.Fingerprint(resp, []byte(wsmanIdentifyResponse))
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
@@ -207,8 +198,9 @@ func TestWinRMNoAuthTLS(t *testing.T) {
 		TLS:        &tls.ConnectionState{},
 	}
 	resp.Header.Set("Server", "Microsoft-HTTPAPI/2.0")
+	resp.Header.Set("Content-Type", "application/soap+xml; charset=utf-8")
 
-	result, err := fp.Fingerprint(resp, nil)
+	result, err := fp.Fingerprint(resp, []byte(wsmanIdentifyResponse))
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
@@ -282,9 +274,7 @@ func TestWinRMStatusCodeEdgeCases(t *testing.T) {
 			}
 			result, err := fp.Fingerprint(resp, nil)
 			require.NoError(t, err)
-			require.NotNil(t, result)
-			assert.Empty(t, result.Severity, "status %d should not set severity", tt.statusCode)
-			assert.Empty(t, result.SecurityFindings, "status %d should not produce findings", tt.statusCode)
+			assert.Nil(t, result, "status %d without WS-Man evidence is not WinRM", tt.statusCode)
 		})
 	}
 }
@@ -308,4 +298,122 @@ func TestWinRMFingerprinter_Integration(t *testing.T) {
 	authRequired, ok := result.Metadata["auth_required"].(bool)
 	assert.True(t, ok, "authRequired should be bool type")
 	assert.True(t, authRequired)
+}
+
+const wsmanIdentifyResponse = `<?xml version="1.0"?>
+<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope" xmlns:wsmid="http://schemas.dmtf.org/wbem/wsman/identity/1/wsmanidentity.xsd">
+  <s:Header/>
+  <s:Body>
+    <wsmid:IdentifyResponse>
+      <wsmid:ProtocolVersion>http://schemas.dmtf.org/wbem/wsman/1/wsman.xsd</wsmid:ProtocolVersion>
+      <wsmid:ProductVendor>Microsoft Corporation</wsmid:ProductVendor>
+      <wsmid:ProductVersion>OS: 0.0.0 SP: 0.0 Stack: 3.0</wsmid:ProductVersion>
+    </wsmid:IdentifyResponse>
+  </s:Body>
+</s:Envelope>`
+
+const httpAPIGenericServicePage = `<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <title>Service</title>
+  </head>
+  <body>
+    <div id="content">
+      <p class="heading1">Service</p>
+      <p>Endpoint not found.</p>
+    </div>
+  </body>
+</html>`
+
+func TestWinRMFingerprint_HTTPAPIGenericServicePageIsNotWinRM(t *testing.T) {
+	fp := &WinRMFingerprinter{}
+	resp := &http.Response{
+		StatusCode: 200,
+		Header:     make(http.Header),
+		TLS:        &tls.ConnectionState{},
+	}
+	resp.Header.Set("Server", "Microsoft-HTTPAPI/2.0")
+	resp.Header.Set("Content-Type", "application/xml; charset=utf-8")
+
+	require.True(t, fp.Match(resp), "HTTPAPI still matches as a prefilter")
+	result, err := fp.Fingerprint(resp, []byte(httpAPIGenericServicePage))
+	require.NoError(t, err)
+	assert.Nil(t, result, "WCF/HTTP.sys Endpoint not found must not be winrm-no-auth")
+}
+
+func TestWinRMFingerprint_EmptyHTTPAPI200IsNotWinRM(t *testing.T) {
+	fp := &WinRMFingerprinter{}
+	resp := &http.Response{
+		StatusCode: 200,
+		Header:     http.Header{"Server": []string{"Microsoft-HTTPAPI/2.0"}},
+		TLS:        &tls.ConnectionState{},
+	}
+	result, err := fp.Fingerprint(resp, []byte{})
+	require.NoError(t, err)
+	assert.Nil(t, result)
+}
+
+func TestWinRMFingerprint_WSManBodyWithoutSoapContentType(t *testing.T) {
+	fp := &WinRMFingerprinter{}
+	resp := &http.Response{
+		StatusCode: 200,
+		Header:     http.Header{"Server": []string{"Microsoft-HTTPAPI/2.0"}},
+		TLS:        &tls.ConnectionState{},
+	}
+	result, err := fp.Fingerprint(resp, []byte(wsmanIdentifyResponse))
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.NotEmpty(t, result.SecurityFindings)
+	assert.Equal(t, "winrm-no-auth", result.SecurityFindings[0].ID)
+}
+
+func TestWinRMFingerprint_NegotiateChallengeIsWinRM(t *testing.T) {
+	fp := &WinRMFingerprinter{}
+	resp := &http.Response{
+		StatusCode: 401,
+		Header: http.Header{
+			"Server":           []string{"Microsoft-HTTPAPI/2.0"},
+			"WWW-Authenticate": []string{`Negotiate`},
+		},
+	}
+	result, err := fp.Fingerprint(resp, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "winrm", result.Technology)
+	assert.Empty(t, result.SecurityFindings)
+	assert.Equal(t, true, result.Metadata["auth_required"])
+}
+
+func TestWinRMFingerprint_GenericServicePage401IsNotWinRM(t *testing.T) {
+	fp := &WinRMFingerprinter{}
+	resp := &http.Response{
+		StatusCode: 401,
+		Header:     http.Header{"Server": []string{"Microsoft-HTTPAPI/2.0"}},
+	}
+	result, err := fp.Fingerprint(resp, []byte(httpAPIGenericServicePage))
+	require.NoError(t, err)
+	assert.Nil(t, result)
+}
+
+func TestIsHTTPAPIGenericServicePage(t *testing.T) {
+	assert.True(t, isHTTPAPIGenericServicePage([]byte(httpAPIGenericServicePage)))
+	assert.False(t, isHTTPAPIGenericServicePage([]byte(wsmanIdentifyResponse)))
+	assert.False(t, isHTTPAPIGenericServicePage(nil))
+	assert.False(t, isHTTPAPIGenericServicePage([]byte("endpoint not found")))
+}
+
+func TestLooksLikeWSMan(t *testing.T) {
+	soap := &http.Response{Header: make(http.Header)}
+	soap.Header.Set("Content-Type", "application/soap+xml")
+	assert.True(t, looksLikeWSMan(soap, nil))
+
+	neg := &http.Response{Header: make(http.Header)}
+	neg.Header.Set("WWW-Authenticate", "Negotiate")
+	assert.True(t, looksLikeWSMan(neg, nil))
+
+	plain := &http.Response{Header: make(http.Header)}
+	assert.True(t, looksLikeWSMan(plain, []byte(wsmanIdentifyResponse)))
+	assert.False(t, looksLikeWSMan(plain, []byte(httpAPIGenericServicePage)))
+	assert.False(t, looksLikeWSMan(plain, nil))
 }

@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- WinRM fingerprinter no longer treats HTTP.sys `Microsoft-HTTPAPI` plus HTTP 2xx as unauthenticated WinRM. Generic WCF "Endpoint not found" pages (common on Azure gateways and unused HTTP.sys listeners) were emitted as `winrm-no-auth`. Detection now requires WS-Man SOAP/Identify evidence for 2xx responses.
 - Removed the misleading `--udp` "may require root" note. Nerva UDP scans use connected datagram sockets and do not need root.
 
 ## [1.4.0] - 2026-05-08
