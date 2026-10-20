@@ -304,7 +304,8 @@ func weakClientHelloExtensions(sni string) []byte {
 		0x01, 0x00,
 	}
 	inner := append(groups, points...)
-	if sni != "" {
+	// RFC 6066 forbids IP literals in SNI host_name.
+	if sni != "" && net.ParseIP(sni) == nil {
 		inner = append(inner, serverNameExtension(sni)...)
 	}
 	out := make([]byte, 2+len(inner))

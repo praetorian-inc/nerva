@@ -1046,6 +1046,19 @@ func TestBuildWeakClientHelloRoundTrip(t *testing.T) {
 	}
 }
 
+func TestWeakClientHelloExtensionsOmitsIPSNI(t *testing.T) {
+	hostname := weakClientHelloExtensions("example.test")
+	empty := weakClientHelloExtensions("")
+	if bytes.Equal(hostname, empty) {
+		t.Fatal("hostname SNI was omitted")
+	}
+	for _, ip := range []string{"192.0.2.1", "2001:db8::1"} {
+		if got := weakClientHelloExtensions(ip); !bytes.Equal(got, empty) {
+			t.Errorf("SNI %q produced a different extension block than empty SNI", ip)
+		}
+	}
+}
+
 func TestIANAWeakSuiteIDs(t *testing.T) {
 	cases := []struct {
 		id    uint16
