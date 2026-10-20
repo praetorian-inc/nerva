@@ -366,7 +366,7 @@ func (p *MSSQLPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.T
 		service.AnonymousAccess = true
 		service.SecurityFindings = []plugins.SecurityFinding{{
 			ID:          "mssql-no-auth",
-			Severity:    plugins.SeverityCritical,
+			Severity:    plugins.SeverityMedium,
 			Description: "MSSQL accessible without authentication",
 			Evidence:    "Anonymous login succeeded without credentials",
 		}}
@@ -385,10 +385,16 @@ func (p *MSSQLPlugin) Priority() int {
 	return 143
 }
 
-const encryptNotSup byte = 0x02 // ENCRYPT_NOT_SUP: only value that allows plaintext LOGIN7
+const (
+	encryptOff    byte = 0x00 // ENCRYPT_OFF: LOGIN7 over TLS, LOGINACK plaintext
+	encryptOn     byte = 0x01 // ENCRYPT_ON: entire connection TLS after handshake
+	encryptNotSup byte = 0x02 // ENCRYPT_NOT_SUP: plaintext LOGIN7
+	encryptReq    byte = 0x03 // ENCRYPT_REQ: entire connection TLS after handshake
+)
 
 func checkUnauthenticatedLogin(conn net.Conn, timeout time.Duration, encryption byte, host string) bool {
-	loginConn := net.Conn(conn)
+	writeConn := net.Conn(conn)
+	readConn := net.Conn(conn)
 	if encryption != encryptNotSup {
 		prep := &tdsHandshakeConn{Conn: conn, wrap: true}
 		tconn := tls.Client(prep, &tls.Config{InsecureSkipVerify: true, ServerName: host}) //nolint:gosec
@@ -397,13 +403,48 @@ func checkUnauthenticatedLogin(conn net.Conn, timeout time.Duration, encryption 
 			return false
 		}
 		prep.wrap = false
-		loginConn = tconn
+		writeConn = tconn
+		if encryption != encryptOff {
+			readConn = tconn
+		}
 	}
-	resp, err := utils.SendRecv(loginConn, buildLogin7(), timeout)
+	if err := utils.Send(writeConn, buildLogin7(), timeout); err != nil {
+		return false
+	}
+	resp, err := recvTDSResponse(readConn, timeout)
 	if err != nil {
 		return false
 	}
 	return hasLoginAck(resp)
+}
+
+func recvTDSResponse(conn net.Conn, timeout time.Duration) ([]byte, error) {
+	if err := conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+		return nil, err
+	}
+	var response []byte
+	for i := 0; i < 32; i++ {
+		header := make([]byte, 8)
+		if _, err := io.ReadFull(conn, header); err != nil {
+			return nil, err
+		}
+		length := int(binary.BigEndian.Uint16(header[2:4]))
+		if length < 8 {
+			return nil, io.ErrUnexpectedEOF
+		}
+		body := make([]byte, length-8)
+		if _, err := io.ReadFull(conn, body); err != nil {
+			return nil, err
+		}
+		if len(response) == 0 {
+			response = append(response, header...)
+		}
+		response = append(response, body...)
+		if header[1]&0x01 != 0 {
+			return response, nil
+		}
+	}
+	return nil, io.ErrUnexpectedEOF
 }
 
 // tdsHandshakeConn wraps TLS handshake records in TDS PRELOGIN (0x12) packets.
