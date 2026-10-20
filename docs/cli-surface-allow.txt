@@ -14,3 +14,4 @@
 --host        # mlflow server --host, in the docker run comment in pkg/plugins/fingerprinters/mlflow_test.go
 --privileged  # docker run --privileged, required for the pptpd fixture in pkg/plugins/services/pptp
 --sentinel    # redis-server --sentinel mode, named in pkg/plugins/services/redissentinel
+--platform    # docker run --platform, in the IRIS fixture comments in pkg/plugins/fingerprinters/iris.go and iris_live_test.go

@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - CLI-surface drift gate: `make cli-docs` regenerates `docs/CLI.md` and `docs/cli-surface.json` from the live cobra tree; CI fails when documentation drifts (ENG-8010).
+- Azure App Service Kudu (SCM) HTTP fingerprinter: detects `/DebugConsole` via Basic `realm="site"`, App Service AAD SSO, or unauthenticated Kudu console markup. Emits `kudu-unauthenticated-console` (Critical) and `kudu-unauthenticated-api` for unauthenticated `/api/processes` (the attach path for Visual Studio remote debugging).
 
 ### Changed
 
@@ -18,6 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Raise `docker-unauth-api` to Critical (CVSS 9.8). An unauthenticated Docker API is host compromise via privileged containers; catalog previously overwrote plugin High to Medium.
 - Raise `jenkins-script-console` to Critical (CVSS 9.8). Unauthenticated Groovy script console is remote code execution on the controller; catalog previously overwrote the plugin Critical to Medium.
 - Raise `jdwp-exposed` to Critical (CVSS 9.8). Handshake-confirmed JDWP is unauthenticated remote code execution; catalog previously overwrote the plugin High to Medium.
+- JetDirect raw-print ports (9100-9102) are now inferred without writing probe bytes by default; PJL identification and model/firmware enrichment require `--deep`. Prevents physical pages being printed when non-PJL devices treat scan probes as document data. Trade-off: port 9100 is treated as JetDirect, so Oracle GoldenGate Microservices on 9100 is no longer separately identified.
+
+### Fixed
+
+- WinRM fingerprinter no longer treats HTTP.sys `Microsoft-HTTPAPI` plus HTTP 2xx as unauthenticated WinRM. Generic WCF "Endpoint not found" pages (common on Azure gateways and unused HTTP.sys listeners) were emitted as `winrm-no-auth`. A 2xx is now `winrm-no-auth` only with actual WS-Man SOAP body evidence (IdentifyResponse / WS-Man namespace / WSManFault); a SOAP `Content-Type` or a `Negotiate`/`Kerberos`/`CredSSP` header alone is no longer sufficient. A 401 is auth-required WinRM only with a WS-Man `WWW-Authenticate` challenge. Also corrected the `winrm-no-auth` catalog entry, which was mislabeled "WinRM Basic Authentication Enabled" at Low severity, to Critical unauthenticated remote command execution (CVSS 9.8) so downstream enrichment no longer downgrades it.
+- Removed the misleading `--udp` "may require root" note. Nerva UDP scans use connected datagram sockets and do not need root.
 
 ## [1.4.0] - 2026-05-08
 
