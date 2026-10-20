@@ -64,6 +64,11 @@ func TestZabbixPage(t *testing.T) {
 			body: `<html><head><title>Zabbix docs</title></head><body>installation guide</body></html>`,
 			want: false,
 		},
+		{
+			name: "zabbix title with input names in prose but no form tag does not match",
+			body: `<html><head><title>Zabbix API docs</title></head><body><code>name="name" name="password"</code></body></html>`,
+			want: false,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

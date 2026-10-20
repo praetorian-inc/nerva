@@ -17,6 +17,7 @@ package fingerprinters
 import (
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 )
@@ -45,7 +46,16 @@ func TestZabbixFingerprinter_LiveDocker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got == nil || got.Technology != "zabbix" {
-		t.Skipf("127.0.0.1:18081 did not serve Zabbix (got %+v); skipping", got)
+	// Identify the appliance independently of the fingerprinter so a detection
+	// regression against a real Zabbix is a failure, not a silent skip.
+	looksLikeZabbix := strings.Contains(strings.ToLower(string(body)), "zabbix")
+	if got == nil {
+		if looksLikeZabbix {
+			t.Fatalf("127.0.0.1:18081 served a Zabbix-looking page (%d bytes) but it was not fingerprinted", len(body))
+		}
+		t.Skip("127.0.0.1:18081 did not serve Zabbix; skipping")
+	}
+	if got.Technology != "zabbix" {
+		t.Fatalf("unexpected technology: %+v", got)
 	}
 }

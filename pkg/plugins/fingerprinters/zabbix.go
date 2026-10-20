@@ -96,7 +96,9 @@ func (f *ZabbixFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fi
 // in prose (a footer or reseller page) has no form and does not match.
 func zabbixPage(text string) bool {
 	lower := strings.ToLower(text)
-	hasForm := strings.Contains(lower, `name="name"`) && strings.Contains(lower, `name="password"`)
+	hasForm := strings.Contains(lower, "<form") &&
+		strings.Contains(lower, `name="name"`) &&
+		strings.Contains(lower, `name="password"`)
 	if !hasForm {
 		return false
 	}
