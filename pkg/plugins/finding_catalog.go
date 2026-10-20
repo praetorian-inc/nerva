@@ -266,10 +266,10 @@ var findingCatalog = map[string]FindingMeta{
 	// ── Container and orchestration ──────────────────────────────────────
 	"docker-unauth-api": {
 		Title:          "Docker API Accessible Without Authentication",
-		Severity:       SeverityMedium,
+		Severity:       SeverityCritical,
 		Impact:         "An unauthenticated Docker API allows attackers to create privileged containers, mount the host filesystem, and achieve full host compromise.",
 		Recommendation: "Restrict Docker API access to Unix sockets or TLS-authenticated endpoints. Never expose the Docker API to untrusted networks without mTLS.",
-		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:N",
+		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
 	},
 	"docker-registry-unauthenticated-catalog": {
 		Title:          "Docker Registry Unauthenticated Catalog Access",
@@ -285,12 +285,26 @@ var findingCatalog = map[string]FindingMeta{
 		Recommendation: "Configure Portainer with strong authentication immediately. Restrict network access to the management interface to trusted administrators.",
 		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:N",
 	},
+	"kudu-unauthenticated-console": {
+		Title:          "Azure App Service Kudu Debug Console Exposed",
+		Severity:       SeverityCritical,
+		Impact:         "An unauthenticated Kudu debug console allows arbitrary command execution on the App Service worker, including dumping environment variables, publishing credentials, and application files. This is the control plane used for Visual Studio remote debugging.",
+		Recommendation: "Require authentication on the SCM site (disable unauthenticated access), restrict SCM to private endpoints or access restrictions, and disable remote debugging when not actively troubleshooting (`az webapp config set --remote-debugging-enabled false`).",
+		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+	},
+	"kudu-unauthenticated-api": {
+		Title:          "Azure App Service Kudu Process API Exposed",
+		Severity:       SeverityHigh,
+		Impact:         "Unauthenticated GET /api/processes discloses worker process IDs and names and is the attach point for Visual Studio remote debugging against App Service.",
+		Recommendation: "Require publishing credentials or Microsoft Entra ID on the SCM site. Do not expose *.scm.azurewebsites.net to untrusted networks. Disable remote debugging when unused.",
+		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:L/A:N",
+	},
 	"jenkins-script-console": {
 		Title:          "Jenkins Script Console Exposed",
-		Severity:       SeverityMedium,
-		Impact:         "Unauthenticated Jenkins access allows attackers to view build configurations, access credentials stored in Jenkins, and execute arbitrary code via build pipelines.",
+		Severity:       SeverityCritical,
+		Impact:         "The unauthenticated Groovy script console allows remote code execution on the Jenkins controller by evaluating arbitrary Groovy.",
 		Recommendation: "Enable Jenkins security and configure authentication. Disable anonymous read access and restrict script console access to administrators.",
-		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:N",
+		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
 	},
 	"minio-exposed": {
 		Title:          "MinIO Default Credentials",
@@ -427,11 +441,11 @@ var findingCatalog = map[string]FindingMeta{
 		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N",
 	},
 	"winrm-no-auth": {
-		Title:          "WinRM Basic Authentication Enabled",
-		Severity:       SeverityLow,
-		Impact:         "Basic authentication sends credentials in base64 encoding (not encryption), making them trivially recoverable by network attackers without TLS.",
-		Recommendation: "Disable WinRM Basic authentication. Use Kerberos or CredSSP authentication over HTTPS instead.",
-		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N",
+		Title:          "WinRM Accessible Without Authentication",
+		Severity:       SeverityCritical,
+		Impact:         "An unauthenticated WinRM (WS-Management) endpoint accepts WS-Man requests without credentials, allowing an attacker to execute arbitrary commands on the Windows host and achieve full remote code execution.",
+		Recommendation: "Require authentication on the WinRM listener (Negotiate/Kerberos or CredSSP over HTTPS) and restrict it to trusted management networks. Never expose an unauthenticated WinRM listener.",
+		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
 	},
 	"smb-signing-not-required": {
 		Title:          "SMB Signing Not Required",
@@ -462,7 +476,16 @@ var findingCatalog = map[string]FindingMeta{
 		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N",
 	},
 
-	// ── Kerberos ─────────────────────────────────────────────────────────
+	// ── .NET ─────────────────────────────────────────────────────────────
+	"dotnet-remoting-http-exposed": {
+		Title:          ".NET Remoting HTTP Channel Exposed",
+		Severity:       SeverityHigh,
+		Impact:         "The .NET Remoting HTTP channel performs no authentication or type filtering at the channel layer: In the default configuration an attacker who discovers a valid remoting object URI can submit a crafted serialized payload and achieve unauthenticated remote code execution via deserialization. Exploitation first requires identifying a valid object URI.",
+		Recommendation: "Remove .NET Remoting endpoints from untrusted networks. Migrate affected services to WCF or .NET Core. If the channel must remain, restrict network access to trusted segments and require custom authorization sinks.",
+		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:H",
+	},
+
+	// ── Kerberos ────────────────────────────────────────────────────────
 	"kerberos-weak-etypes": {
 		Title:          "Kerberos Weak Encryption Types Supported",
 		Severity:       SeverityLow,
@@ -539,10 +562,10 @@ var findingCatalog = map[string]FindingMeta{
 	// ── Debug and management ─────────────────────────────────────────────
 	"jdwp-exposed": {
 		Title:          "JDWP Debug Port Exposed",
-		Severity:       SeverityMedium,
+		Severity:       SeverityCritical,
 		Impact:         "The Java Debug Wire Protocol allows unauthenticated remote code execution by attaching a debugger and invoking arbitrary methods.",
 		Recommendation: "Remove JDWP from production JVM arguments. If debugging is required, bind to localhost only and use SSH tunneling for remote access.",
-		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:N",
+		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
 	},
 	"dify-setup-not-started": {
 		Title:          "Dify Setup Not Started",
