@@ -96,9 +96,8 @@ var (
 	// such as HTTP version fragments ("1.1 proxy").
 	serverVersionRe = regexp.MustCompile(`[A-Za-z][\w.-]*/\d+\.\d+`)
 
-	// phpVersionRe is the numeric version Wappalyzer extracts for PHP, such as
-	// 8.2.12 or 8.3. Anything else stays out of the CPE.
-	phpVersionRe = regexp.MustCompile(`^[0-9]+(?:\.[0-9]+)*$`)
+	// cpeVersionToken is what CPE 2.3 accepts in the version field without quoting.
+	cpeVersionToken = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 )
 
 func (p *HTTPPlugin) PortPriority(port uint16) bool {
@@ -357,12 +356,11 @@ func (p *HTTPSPlugin) FingerprintResponse(resp *http.Response, client *http.Clie
 	return fingerprint(resp, p.analyzer, client, baseURL, host, misconfigs)
 }
 
-// phpCPEWithWappalyzerVersion copies a PHP version Wappalyzer already parsed
-// onto the technology name ("PHP:8.2.12") into the CPE. Wappalyzer's own CPE
-// stays "cpe:2.3:a:php:php:*:...", and Guard creates technologies from CPEs only.
-func phpCPEWithWappalyzerVersion(tech, cpe string) string {
-	name, version, ok := strings.Cut(tech, ":")
-	if !ok || name != "PHP" || !phpVersionRe.MatchString(version) {
+// cpeWithWappalyzerVersion writes the version Wappalyzer already parsed onto
+// the technology name ("PHP:8.2.12") into a wildcard CPE. Guard reads CPEs only.
+func cpeWithWappalyzerVersion(tech, cpe string) string {
+	_, version, ok := strings.Cut(tech, ":")
+	if !ok || !cpeVersionToken.MatchString(version) {
 		return cpe
 	}
 	parts := strings.Split(cpe, ":")
@@ -550,7 +548,7 @@ func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *ht
 	for tech, appInfo := range fingerprintResult {
 		technologies = append(technologies, tech)
 		if cpe := appInfo.CPE; cpe != "" {
-			cpes = append(cpes, phpCPEWithWappalyzerVersion(tech, cpe))
+			cpes = append(cpes, cpeWithWappalyzerVersion(tech, cpe))
 		}
 	}
 

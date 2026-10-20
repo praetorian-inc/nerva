@@ -62,8 +62,7 @@ func TestFormatTechnologyWithVersion(t *testing.T) {
 	}
 }
 
-func TestPHPCPEWithWappalyzerVersion(t *testing.T) {
-	const wildcard = "cpe:2.3:a:php:php:*:*:*:*:*:*:*:*"
+func TestCPEWithWappalyzerVersion(t *testing.T) {
 	tests := []struct {
 		name string
 		tech string
@@ -71,45 +70,39 @@ func TestPHPCPEWithWappalyzerVersion(t *testing.T) {
 		want string
 	}{
 		{
-			name: "version from technology name replaces the wildcard",
+			name: "php version replaces the wildcard",
 			tech: "PHP:8.2.12",
-			cpe:  wildcard,
+			cpe:  "cpe:2.3:a:php:php:*:*:*:*:*:*:*:*",
 			want: "cpe:2.3:a:php:php:8.2.12:*:*:*:*:*:*:*",
 		},
 		{
-			name: "major.minor version",
-			tech: "PHP:8.3",
-			cpe:  wildcard,
-			want: "cpe:2.3:a:php:php:8.3:*:*:*:*:*:*:*",
+			name: "nginx version replaces the wildcard",
+			tech: "Nginx:1.24.0",
+			cpe:  "cpe:2.3:a:f5:nginx:*:*:*:*:*:*:*:*",
+			want: "cpe:2.3:a:f5:nginx:1.24.0:*:*:*:*:*:*:*",
 		},
 		{
 			name: "no version leaves the wildcard",
 			tech: "PHP",
-			cpe:  wildcard,
-			want: wildcard,
+			cpe:  "cpe:2.3:a:php:php:*:*:*:*:*:*:*:*",
+			want: "cpe:2.3:a:php:php:*:*:*:*:*:*:*:*",
 		},
 		{
-			name: "other technologies are left alone",
-			tech: "Nginx:1.24.0",
-			cpe:  "cpe:2.3:a:f5:nginx:*:*:*:*:*:*:*:*",
-			want: "cpe:2.3:a:f5:nginx:*:*:*:*:*:*:*:*",
-		},
-		{
-			name: "version that is not numeric stays out of the CPE",
+			name: "version that would break the CPE stays out",
 			tech: "PHP:8.2.12:*",
-			cpe:  wildcard,
-			want: wildcard,
+			cpe:  "cpe:2.3:a:php:php:*:*:*:*:*:*:*:*",
+			want: "cpe:2.3:a:php:php:*:*:*:*:*:*:*:*",
 		},
 		{
 			name: "CPE that already has a version is not rewritten",
-			tech: "PHP:8.2.12",
-			cpe:  "cpe:2.3:a:php:php:7.4.33:*:*:*:*:*:*:*",
-			want: "cpe:2.3:a:php:php:7.4.33:*:*:*:*:*:*:*",
+			tech: "Nginx:1.24.0",
+			cpe:  "cpe:2.3:a:f5:nginx:1.24.0:*:*:*:*:*:*:*",
+			want: "cpe:2.3:a:f5:nginx:1.24.0:*:*:*:*:*:*:*",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, phpCPEWithWappalyzerVersion(tt.tech, tt.cpe))
+			assert.Equal(t, tt.want, cpeWithWappalyzerVersion(tt.tech, tt.cpe))
 		})
 	}
 }
@@ -158,8 +151,14 @@ func TestFingerprint_PHPTechnologyCPE(t *testing.T) {
 			wantCPE:  "cpe:2.3:a:php:php:*:*:*:*:*:*:*:*",
 		},
 		{
+			name:     "nginx version is written into its CPE",
+			headers:  map[string]string{"Server": "nginx/1.24.0"},
+			wantTech: "Nginx:1.24.0",
+			wantCPE:  "cpe:2.3:a:f5:nginx:1.24.0:*:*:*:*:*:*:*",
+		},
+		{
 			name:      "Express is not PHP",
-			headers:   map[string]string{"X-Powered-By": "Express", "Server": "nginx/1.24.0"},
+			headers:   map[string]string{"X-Powered-By": "Express"},
 			forbidPHP: true,
 		},
 	}
