@@ -1046,6 +1046,22 @@ func TestBuildWeakClientHelloRoundTrip(t *testing.T) {
 	}
 }
 
+func TestBuildWeakClientHelloExportUsesTLS10(t *testing.T) {
+	// handshake body starts at record(5) + hs header(4)
+	const verOff = 9
+	anon := buildWeakClientHello(weakAnon, "")
+	if len(anon) < verOff+2 || anon[verOff] != 0x03 || anon[verOff+1] != 0x03 {
+		t.Fatalf("anon client_version = %x, want TLS 1.2", anon[verOff:verOff+2])
+	}
+	export := buildWeakClientHello(weakExport, "")
+	if len(export) < verOff+2 || export[verOff] != 0x03 || export[verOff+1] != 0x01 {
+		t.Fatalf("export client_version = %x, want TLS 1.0", export[verOff:verOff+2])
+	}
+	if !clientHelloIsWeakOnly(export) {
+		t.Fatal("EXPORT ClientHello was not classified as weak-only")
+	}
+}
+
 func TestWeakClientHelloExtensionsOmitsIPSNI(t *testing.T) {
 	hostname := weakClientHelloExtensions("example.test")
 	empty := weakClientHelloExtensions("")

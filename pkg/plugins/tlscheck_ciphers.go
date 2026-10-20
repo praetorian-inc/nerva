@@ -260,7 +260,13 @@ func suitesForClass(class weakClass) []uint16 {
 
 func buildWeakClientHello(class weakClass, sni string) []byte {
 	var body []byte
-	body = append(body, 0x03, 0x03) // client_version TLS 1.2
+	// RFC 4346 forbids negotiating EXPORT in TLS 1.1+. Offer TLS 1.0 for
+	// that class so stacks that still enable EXPORT can select it.
+	if class == weakExport {
+		body = append(body, 0x03, 0x01) // client_version TLS 1.0
+	} else {
+		body = append(body, 0x03, 0x03) // client_version TLS 1.2
+	}
 	var rnd [32]byte
 	_, _ = rand.Read(rnd[:])
 	body = append(body, rnd[:]...)
