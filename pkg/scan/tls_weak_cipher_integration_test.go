@@ -105,13 +105,15 @@ func TestSimpleScanTarget_OpenSSLWeakCipherListeners(t *testing.T) {
 	}
 	defer pool.Purge(resource) //nolint:errcheck
 
-	adh := hostAddrPort(t, resource, "4433/tcp")
 	if err := pool.Retry(func() error {
-		conn, dialErr := net.DialTimeout("tcp", adh.String(), 3*time.Second)
-		if dialErr != nil {
-			return dialErr
+		for _, p := range []string{"4433/tcp", "4434/tcp", "4435/tcp", "4436/tcp"} {
+			ap := hostAddrPort(t, resource, p)
+			conn, dialErr := net.DialTimeout("tcp", ap.String(), 3*time.Second)
+			if dialErr != nil {
+				return dialErr
+			}
+			conn.Close()
 		}
-		conn.Close()
 		return nil
 	}); err != nil {
 		t.Fatalf("weak-cipher container never became ready: %v", err)
