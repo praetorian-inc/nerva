@@ -134,10 +134,10 @@ nerva -t example.com:22,example.com:80,example.com:443
 nerva -l targets.txt --json -o results.json
 ```
 
-**UDP scanning** (may require root):
+**UDP scanning**:
 
 ```sh
-sudo nerva -t example.com:53 -U
+nerva -t example.com:53 -U
 # dns://example.com:53
 ```
 
@@ -174,6 +174,7 @@ nerva -t example.com:2375 --misconfigs --json
 |------------|----------|-------------|
 | `docker-unauth-api` | Critical | Docker API accessible without authentication |
 | `x11-unauth-access` | Critical | X11 server allows unauthenticated connections |
+| `dotnet-remoting-http-exposed` | High | .NET Remoting HTTP channel exposed (deserialization risk) |
 | `smb-signing-not-required` | Medium | SMB signing not required (relay attack risk) |
 | `telnet-cleartext` | Medium | Telnet transmits credentials in cleartext |
 | `vnc-detected` | Medium | VNC detected (often weak authentication) |
@@ -370,10 +371,11 @@ Technology detection for web services, organized by category:
 | Home Assistant | Home automation platform |
 | UniFi/EdgeOS | Ubiquiti network devices |
 
-#### Other (2)
+#### Other (3)
 
 | Module | Description |
 |--------|-------------|
+| .NET Remoting HTTP | Microsoft .NET Remoting HTTP channel |
 | Go pprof | Go profiling endpoints |
 | NATS | Message broker |
 
@@ -694,11 +696,13 @@ nerva -t example.com:80 -w 5000  # 5 seconds
 
 **Cause**: UDP scanning disabled by default.
 
-**Solution**: Enable with `-U` flag (may require root):
+**Solution**: Enable with `-U` flag:
 
 ```sh
-sudo nerva -t example.com:53 -U
+nerva -t example.com:53 -U
 ```
+
+Nerva UDP scans use connected datagram sockets and do not require root.
 
 ### SCTP not working
 
