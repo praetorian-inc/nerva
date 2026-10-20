@@ -391,14 +391,29 @@ const (
 	encryptReq    byte = 0x03 // ENCRYPT_REQ: entire connection TLS after handshake
 )
 
+func probeTLSConfig(host string) *tls.Config {
+	suites := make([]uint16, 0, len(tls.CipherSuites())+len(tls.InsecureCipherSuites()))
+	for _, s := range tls.CipherSuites() {
+		suites = append(suites, s.ID)
+	}
+	for _, s := range tls.InsecureCipherSuites() {
+		suites = append(suites, s.ID)
+	}
+	return &tls.Config{
+		InsecureSkipVerify: true, //nolint:gosec
+		ServerName:         host,
+		CipherSuites:       suites,
+		MinVersion:         tls.VersionTLS10,
+		Renegotiation:      tls.RenegotiateFreelyAsClient,
+	}
+}
+
 func checkBlankSaLogin(conn net.Conn, timeout time.Duration, encryption byte, host string) bool {
 	writeConn := net.Conn(conn)
 	readConn := net.Conn(conn)
 	if encryption != encryptNotSup {
 		prep := &tdsHandshakeConn{Conn: conn, wrap: true}
-		cfg := utils.ScannerTLSConfig()
-		cfg.ServerName = host
-		tconn := tls.Client(prep, &cfg)
+		tconn := tls.Client(prep, probeTLSConfig(host))
 		_ = tconn.SetDeadline(time.Now().Add(timeout))
 		if err := tconn.Handshake(); err != nil {
 			return false
