@@ -62,6 +62,137 @@ func TestFormatTechnologyWithVersion(t *testing.T) {
 	}
 }
 
+func TestPHPCPEWithWappalyzerVersion(t *testing.T) {
+	const wildcard = "cpe:2.3:a:php:php:*:*:*:*:*:*:*:*"
+	tests := []struct {
+		name string
+		tech string
+		cpe  string
+		want string
+	}{
+		{
+			name: "version from technology name replaces the wildcard",
+			tech: "PHP:8.2.12",
+			cpe:  wildcard,
+			want: "cpe:2.3:a:php:php:8.2.12:*:*:*:*:*:*:*",
+		},
+		{
+			name: "major.minor version",
+			tech: "PHP:8.3",
+			cpe:  wildcard,
+			want: "cpe:2.3:a:php:php:8.3:*:*:*:*:*:*:*",
+		},
+		{
+			name: "no version leaves the wildcard",
+			tech: "PHP",
+			cpe:  wildcard,
+			want: wildcard,
+		},
+		{
+			name: "other technologies are left alone",
+			tech: "Nginx:1.24.0",
+			cpe:  "cpe:2.3:a:f5:nginx:*:*:*:*:*:*:*:*",
+			want: "cpe:2.3:a:f5:nginx:*:*:*:*:*:*:*:*",
+		},
+		{
+			name: "version that is not numeric stays out of the CPE",
+			tech: "PHP:8.2.12:*",
+			cpe:  wildcard,
+			want: wildcard,
+		},
+		{
+			name: "CPE that already has a version is not rewritten",
+			tech: "PHP:8.2.12",
+			cpe:  "cpe:2.3:a:php:php:7.4.33:*:*:*:*:*:*:*",
+			want: "cpe:2.3:a:php:php:7.4.33:*:*:*:*:*:*:*",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, phpCPEWithWappalyzerVersion(tt.tech, tt.cpe))
+		})
+	}
+}
+
+func TestFingerprint_PHPTechnologyCPE(t *testing.T) {
+	wappalyzerClient, err := wappalyzer.New()
+	if err != nil {
+		t.Fatal("unable to initialize wappalyzer:", err)
+	}
+
+	tests := []struct {
+		name      string
+		headers   map[string]string
+		wantTech  string
+		wantCPE   string
+		forbidPHP bool
+	}{
+		{
+			name:     "X-Powered-By PHP/8.2.12",
+			headers:  map[string]string{"X-Powered-By": "PHP/8.2.12"},
+			wantTech: "PHP:8.2.12",
+			wantCPE:  "cpe:2.3:a:php:php:8.2.12:*:*:*:*:*:*:*",
+		},
+		{
+			name:     "X-Powered-By with distro suffix keeps the numeric version",
+			headers:  map[string]string{"X-Powered-By": "PHP/8.1.2-1ubuntu2.22"},
+			wantTech: "PHP:8.1.2",
+			wantCPE:  "cpe:2.3:a:php:php:8.1.2:*:*:*:*:*:*:*",
+		},
+		{
+			name:     "X-Powered-By major.minor",
+			headers:  map[string]string{"X-Powered-By": "PHP/8.3"},
+			wantTech: "PHP:8.3",
+			wantCPE:  "cpe:2.3:a:php:php:8.3:*:*:*:*:*:*:*",
+		},
+		{
+			name:     "Server header PHP token",
+			headers:  map[string]string{"Server": "Apache/2.4.52 (Ubuntu) PHP/8.1.2"},
+			wantTech: "PHP:8.1.2",
+			wantCPE:  "cpe:2.3:a:php:php:8.1.2:*:*:*:*:*:*:*",
+		},
+		{
+			name:     "PHPSESSID without a version stays a wildcard CPE",
+			headers:  map[string]string{"Set-Cookie": "PHPSESSID=abc; path=/"},
+			wantTech: "PHP",
+			wantCPE:  "cpe:2.3:a:php:php:*:*:*:*:*:*:*:*",
+		},
+		{
+			name:      "Express is not PHP",
+			headers:   map[string]string{"X-Powered-By": "Express", "Server": "nginx/1.24.0"},
+			forbidPHP: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			header := make(http.Header, len(tt.headers))
+			for k, v := range tt.headers {
+				header.Set(k, v)
+			}
+			resp := &http.Response{
+				Status:     "200 OK",
+				StatusCode: 200,
+				Header:     header,
+				Body:       io.NopCloser(bytes.NewBuffer(nil)),
+			}
+			technologies, cpes, _, _, _, _, _, ferr := fingerprint(resp, wappalyzerClient, nil, "", "", false)
+			assert.NoError(t, ferr)
+			if tt.forbidPHP {
+				for _, tech := range technologies {
+					assert.NotContains(t, tech, "PHP")
+				}
+				for _, cpe := range cpes {
+					assert.NotContains(t, cpe, ":php:php:")
+				}
+				return
+			}
+			assert.Contains(t, technologies, tt.wantTech)
+			assert.Contains(t, cpes, tt.wantCPE)
+		})
+	}
+}
+
 func TestProcessFingerprintResult_IncludesVersion(t *testing.T) {
 	// This test verifies that when processing a FingerprintResult,
 	// the version is included in the technology string.
