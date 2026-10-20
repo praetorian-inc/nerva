@@ -51,7 +51,11 @@ import (
 	"strings"
 )
 
-var cupsServerRe = regexp.MustCompile(`(?i)^CUPS/(\d+\.\d+(?:\.\d+){0,2})\b`)
+// cupsServerRe matches a leading "CUPS" Server product token, with an optional
+// version. CUPS sends "CUPS/<version> IPP/..." by default, but with reduced
+// ServerTokens it may send "CUPS/<major>" or just "CUPS", so the version is
+// optional. The trailing (\s|$) keeps "CUPS-Proxy" and "CUPSfoo" from matching.
+var cupsServerRe = regexp.MustCompile(`(?i)^CUPS(?:/(\d+(?:\.\d+){0,3}))?(?:\s|$)`)
 
 // CUPSFingerprinter detects the CUPS web interface.
 type CUPSFingerprinter struct{}
@@ -73,13 +77,18 @@ func (f *CUPSFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fing
 		return nil, nil
 	}
 	m := cupsServerRe.FindStringSubmatch(strings.TrimSpace(resp.Header.Get("Server")))
-	if len(m) < 2 {
+	if m == nil {
 		return nil, nil
+	}
+	version := m[1] // empty when the server advertises reduced ServerTokens
+	cpeVersion := version
+	if cpeVersion == "" {
+		cpeVersion = "*"
 	}
 	return &FingerprintResult{
 		Technology: "cups",
-		Version:    m[1],
-		CPEs:       []string{fmt.Sprintf("cpe:2.3:a:openprinting:cups:%s:*:*:*:*:*:*:*", m[1])},
+		Version:    version,
+		CPEs:       []string{fmt.Sprintf("cpe:2.3:a:openprinting:cups:%s:*:*:*:*:*:*:*", cpeVersion)},
 		Metadata: map[string]any{
 			"vendor":  "OpenPrinting",
 			"product": "CUPS",

@@ -44,3 +44,46 @@ func TestCUPSFingerprint(t *testing.T) {
 		t.Fatalf("body mention fingerprinted: %+v %v", bodyOnly, err)
 	}
 }
+
+func TestCUPSFingerprint_ServerTokens(t *testing.T) {
+	fp := &CUPSFingerprinter{}
+	tests := []struct {
+		name      string
+		server    string
+		wantMatch bool
+		wantVer   string
+		wantCPE   string
+	}{
+		{"default minimal tokens", "CUPS/2.4 IPP/2.1", true, "2.4", "cpe:2.3:a:openprinting:cups:2.4:*:*:*:*:*:*:*"},
+		{"full version", "CUPS/2.4.18 IPP/2.1", true, "2.4.18", "cpe:2.3:a:openprinting:cups:2.4.18:*:*:*:*:*:*:*"},
+		{"major only", "CUPS/2 IPP/2", true, "2", "cpe:2.3:a:openprinting:cups:2:*:*:*:*:*:*:*"},
+		{"product only, no version", "CUPS IPP/2.1", true, "", "cpe:2.3:a:openprinting:cups:*:*:*:*:*:*:*:*"},
+		{"not cups prefix", "NotCUPS/2.4", false, "", ""},
+		{"cups-proxy is not cups", "CUPS-Proxy/1.0", false, "", ""},
+		{"apache", "Apache/2.4", false, "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := &http.Response{StatusCode: 200, Header: http.Header{"Server": []string{tt.server}}}
+			if got := fp.Match(resp); got != tt.wantMatch {
+				t.Fatalf("Match=%v want %v", got, tt.wantMatch)
+			}
+			got, err := fp.Fingerprint(resp, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !tt.wantMatch {
+				if got != nil {
+					t.Fatalf("expected no fingerprint, got %+v", got)
+				}
+				return
+			}
+			if got == nil || got.Version != tt.wantVer {
+				t.Fatalf("version=%+v want %q", got, tt.wantVer)
+			}
+			if len(got.CPEs) != 1 || got.CPEs[0] != tt.wantCPE {
+				t.Fatalf("cpe=%v want %v", got.CPEs, tt.wantCPE)
+			}
+		})
+	}
+}
