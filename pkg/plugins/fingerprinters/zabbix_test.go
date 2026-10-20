@@ -35,3 +35,45 @@ func TestZabbixFingerprint(t *testing.T) {
 		t.Fatalf("mention fingerprinted: %+v %v", miss, err)
 	}
 }
+
+func TestZabbixPage(t *testing.T) {
+	fp := &ZabbixFingerprinter{}
+	resp := &http.Response{StatusCode: 200, Header: make(http.Header)}
+	tests := []struct {
+		name string
+		body string
+		want bool
+	}{
+		{
+			name: "title and form, no author marker",
+			body: `<html><head><title>Production - Zabbix</title></head><body><form><input name="name"><input name="password"></form></body></html>`,
+			want: true,
+		},
+		{
+			name: "author marker and form, no zabbix title",
+			body: `<html><head><title>Login</title><meta name="Author" content="Zabbix SIA"></head><body><form><input name="name"><input name="password"></form></body></html>`,
+			want: true,
+		},
+		{
+			name: "zabbix sia in prose without form does not match",
+			body: `<html><head><title>News</title></head><body><footer>&copy; 2001-2024 Zabbix SIA</footer></body></html>`,
+			want: false,
+		},
+		{
+			name: "zabbix title without the sign-in form does not match",
+			body: `<html><head><title>Zabbix docs</title></head><body>installation guide</body></html>`,
+			want: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := fp.Fingerprint(resp, []byte(tt.body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if (got != nil) != tt.want {
+				t.Fatalf("Fingerprint match=%v want %v (result=%+v)", got != nil, tt.want, got)
+			}
+		})
+	}
+}

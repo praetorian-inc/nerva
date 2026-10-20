@@ -69,11 +69,11 @@ func (f *ZabbixFingerprinter) ProbeAccept() string {
 }
 
 func (f *ZabbixFingerprinter) Match(resp *http.Response) bool {
-	return resp != nil && resp.StatusCode >= 200 && resp.StatusCode < 400
+	return resp != nil && resp.StatusCode >= 200 && resp.StatusCode < 500
 }
 
 func (f *ZabbixFingerprinter) Fingerprint(resp *http.Response, body []byte) (*FingerprintResult, error) {
-	if resp == nil || resp.StatusCode < 200 || resp.StatusCode >= 400 {
+	if resp == nil || resp.StatusCode < 200 || resp.StatusCode >= 500 {
 		return nil, nil
 	}
 	text := string(body)
@@ -90,8 +90,30 @@ func (f *ZabbixFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fi
 	}, nil
 }
 
+// zabbixPage reports whether the HTML is the Zabbix sign-in page. The sign-in
+// form is always required; the product is then confirmed by a Zabbix page title
+// or the Zabbix SIA author meta marker. A page that merely mentions "Zabbix SIA"
+// in prose (a footer or reseller page) has no form and does not match.
 func zabbixPage(text string) bool {
-	hasTitle := strings.Contains(text, "<title>Zabbix") || strings.Contains(text, "Zabbix SIA")
-	hasForm := strings.Contains(text, `name="name"`) && strings.Contains(text, `name="password"`)
-	return hasTitle && (hasForm || strings.Contains(text, "Zabbix SIA"))
+	lower := strings.ToLower(text)
+	hasForm := strings.Contains(lower, `name="name"`) && strings.Contains(lower, `name="password"`)
+	if !hasForm {
+		return false
+	}
+	return zabbixInTitle(lower) || strings.Contains(lower, `content="zabbix sia"`)
+}
+
+// zabbixInTitle reports whether the <title> element mentions Zabbix anywhere in
+// the title text (e.g. "Production - Zabbix"), not only as a leading token.
+func zabbixInTitle(lower string) bool {
+	start := strings.Index(lower, "<title>")
+	if start < 0 {
+		return false
+	}
+	start += len("<title>")
+	rest := lower[start:]
+	if end := strings.Index(rest, "</title>"); end >= 0 {
+		rest = rest[:end]
+	}
+	return strings.Contains(rest, "zabbix")
 }
