@@ -396,7 +396,9 @@ func checkBlankSaLogin(conn net.Conn, timeout time.Duration, encryption byte, ho
 	readConn := net.Conn(conn)
 	if encryption != encryptNotSup {
 		prep := &tdsHandshakeConn{Conn: conn, wrap: true}
-		tconn := tls.Client(prep, &tls.Config{InsecureSkipVerify: true, ServerName: host}) //nolint:gosec
+		cfg := utils.ScannerTLSConfig()
+		cfg.ServerName = host
+		tconn := tls.Client(prep, &cfg)
 		_ = tconn.SetDeadline(time.Now().Add(timeout))
 		if err := tconn.Handshake(); err != nil {
 			return false

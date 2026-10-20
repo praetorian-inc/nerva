@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/praetorian-inc/nerva/pkg/plugins"
+	"github.com/praetorian-inc/nerva/pkg/plugins/pluginutils"
 )
 
 var dialer = &net.Dialer{
@@ -70,19 +71,7 @@ func newPrefixConn(conn net.Conn, prefix []byte) net.Conn {
 
 func init() {
 	setupPlugins()
-	cipherSuites := make([]uint16, 0)
-
-	for _, suite := range tls.CipherSuites() {
-		cipherSuites = append(cipherSuites, suite.ID)
-	}
-
-	for _, suite := range tls.InsecureCipherSuites() {
-		cipherSuites = append(cipherSuites, suite.ID)
-	}
-	tlsConfig.InsecureSkipVerify = true //nolint:gosec
-	tlsConfig.CipherSuites = cipherSuites
-	tlsConfig.MinVersion = tls.VersionTLS10
-	tlsConfig.Renegotiation = tls.RenegotiateFreelyAsClient
+	tlsConfig = pluginutils.ScannerTLSConfig()
 }
 
 func setupPlugins() {
