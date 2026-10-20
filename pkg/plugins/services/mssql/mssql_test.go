@@ -258,16 +258,16 @@ func TestMSSQLSecurityFindings(t *testing.T) {
 		wantFindings int
 	}{
 		{
-			name:         "ENCRYPT_NOT_SUP LOGINACK emits mssql-no-auth",
+			name:         "ENCRYPT_NOT_SUP LOGINACK emits mssql-default-creds",
 			misconfigs:   true,
 			unauth:       true,
 			encryption:   encryptNotSup,
-			wantAnon:     true,
+			wantAnon:     false,
 			wantFinding:  true,
 			wantFindings: 1,
 		},
 		{
-			name:         "ENCRYPT_NOT_SUP ERROR does not emit mssql-no-auth",
+			name:         "ENCRYPT_NOT_SUP ERROR does not emit mssql-default-creds",
 			misconfigs:   true,
 			unauth:       false,
 			encryption:   encryptNotSup,
@@ -285,34 +285,34 @@ func TestMSSQLSecurityFindings(t *testing.T) {
 			wantFindings: 0,
 		},
 		{
-			name:         "ENCRYPT_OFF LOGINACK emits mssql-no-auth",
+			name:         "ENCRYPT_OFF LOGINACK emits mssql-default-creds",
 			misconfigs:   true,
 			unauth:       true,
 			encryption:   encryptOff,
-			wantAnon:     true,
+			wantAnon:     false,
 			wantFinding:  true,
 			wantFindings: 1,
 		},
 		{
-			name:         "ENCRYPT_ON LOGINACK emits mssql-no-auth",
+			name:         "ENCRYPT_ON LOGINACK emits mssql-default-creds",
 			misconfigs:   true,
 			unauth:       true,
 			encryption:   encryptOn,
-			wantAnon:     true,
+			wantAnon:     false,
 			wantFinding:  true,
 			wantFindings: 1,
 		},
 		{
-			name:         "ENCRYPT_REQ LOGINACK emits mssql-no-auth",
+			name:         "ENCRYPT_REQ LOGINACK emits mssql-default-creds",
 			misconfigs:   true,
 			unauth:       true,
 			encryption:   encryptReq,
-			wantAnon:     true,
+			wantAnon:     false,
 			wantFinding:  true,
 			wantFindings: 1,
 		},
 		{
-			name:         "ENCRYPT_OFF ERROR does not emit mssql-no-auth",
+			name:         "ENCRYPT_OFF ERROR does not emit mssql-default-creds",
 			misconfigs:   true,
 			unauth:       false,
 			encryption:   encryptOff,
@@ -348,15 +348,16 @@ func TestMSSQLSecurityFindings(t *testing.T) {
 
 			hasID := false
 			for _, f := range service.SecurityFindings {
-				if f.ID == "mssql-no-auth" {
+				if f.ID == "mssql-default-creds" {
 					hasID = true
 					assert.Equal(t, plugins.SeverityMedium, f.Severity)
 					assert.NotContains(t, strings.ToLower(f.Evidence), "password")
 					assert.NotContains(t, strings.ToLower(f.Evidence), "sa")
+					assert.NotContains(t, strings.ToLower(f.Evidence), "anonymous")
 					assert.NotContains(t, f.Evidence, "@")
 				}
 			}
-			assert.Equal(t, tt.wantFinding, hasID, "mssql-no-auth presence mismatch")
+			assert.Equal(t, tt.wantFinding, hasID, "mssql-default-creds presence mismatch")
 		})
 	}
 }

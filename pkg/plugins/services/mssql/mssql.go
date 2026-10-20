@@ -362,13 +362,12 @@ func (p *MSSQLPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.T
 	}
 
 	service := plugins.CreateServiceFrom(target, payload, false, data.Version, plugins.TCP)
-	if target.Misconfigs && checkUnauthenticatedLogin(conn, timeout, data.Encryption, target.Host) {
-		service.AnonymousAccess = true
+	if target.Misconfigs && checkBlankSaLogin(conn, timeout, data.Encryption, target.Host) {
 		service.SecurityFindings = []plugins.SecurityFinding{{
-			ID:          "mssql-no-auth",
+			ID:          "mssql-default-creds",
 			Severity:    plugins.SeverityMedium,
-			Description: "MSSQL accessible without authentication",
-			Evidence:    "Anonymous login succeeded without credentials",
+			Description: "MSSQL sa account accepts the documented blank default password",
+			Evidence:    "Default blank SQL login succeeded",
 		}}
 	}
 	return service, nil
@@ -392,7 +391,7 @@ const (
 	encryptReq    byte = 0x03 // ENCRYPT_REQ: entire connection TLS after handshake
 )
 
-func checkUnauthenticatedLogin(conn net.Conn, timeout time.Duration, encryption byte, host string) bool {
+func checkBlankSaLogin(conn net.Conn, timeout time.Duration, encryption byte, host string) bool {
 	writeConn := net.Conn(conn)
 	readConn := net.Conn(conn)
 	if encryption != encryptNotSup {
