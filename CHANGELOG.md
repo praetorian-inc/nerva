@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - CLI-surface drift gate: `make cli-docs` regenerates `docs/CLI.md` and `docs/cli-surface.json` from the live cobra tree; CI fails when documentation drifts (ENG-8010).
+- Nextcloud / ownCloud HTTP fingerprinter via unauthenticated `GET /status.php`. Uses `productname` plus `version`/`versionstring` for CPE (not favicon-only).
+
 - Azure App Service Kudu (SCM) HTTP fingerprinter: detects `/DebugConsole` via Basic `realm="site"`, App Service AAD SSO, or unauthenticated Kudu console markup. Emits `kudu-unauthenticated-console` (Critical) and `kudu-unauthenticated-api` for unauthenticated `/api/processes` (the attach path for Visual Studio remote debugging).
 
 ### Changed
