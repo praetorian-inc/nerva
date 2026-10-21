@@ -95,6 +95,9 @@ var (
 	// The leading name component avoids false positives from bare version-like numbers
 	// such as HTTP version fragments ("1.1 proxy").
 	serverVersionRe = regexp.MustCompile(`[A-Za-z][\w.-]*/\d+\.\d+`)
+
+	// cpeVersionToken is what CPE 2.3 accepts in the version field without quoting.
+	cpeVersionToken = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 )
 
 func (p *HTTPPlugin) PortPriority(port uint16) bool {
@@ -353,6 +356,21 @@ func (p *HTTPSPlugin) FingerprintResponse(resp *http.Response, client *http.Clie
 	return fingerprint(resp, p.analyzer, client, baseURL, host, misconfigs)
 }
 
+// cpeWithWappalyzerVersion writes the version Wappalyzer already parsed onto
+// the technology name ("PHP:8.2.12") into a wildcard CPE. Guard reads CPEs only.
+func cpeWithWappalyzerVersion(tech, cpe string) string {
+	_, version, ok := strings.Cut(tech, ":")
+	if !ok || !cpeVersionToken.MatchString(version) {
+		return cpe
+	}
+	parts := strings.Split(cpe, ":")
+	if len(parts) < 6 || parts[5] != "*" {
+		return cpe
+	}
+	parts[5] = version
+	return strings.Join(parts, ":")
+}
+
 // formatTechnologyWithVersion returns a technology string with version appended if present.
 // This matches wappalyzer's format: "tech:version" (e.g., "kubernetes:1.29.0").
 func formatTechnologyWithVersion(technology, version string) string {
@@ -530,7 +548,7 @@ func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *ht
 	for tech, appInfo := range fingerprintResult {
 		technologies = append(technologies, tech)
 		if cpe := appInfo.CPE; cpe != "" {
-			cpes = append(cpes, cpe)
+			cpes = append(cpes, cpeWithWappalyzerVersion(tech, cpe))
 		}
 	}
 
