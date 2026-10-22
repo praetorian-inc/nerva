@@ -124,7 +124,7 @@ func TestRuckusFingerprinter_Fingerprint(t *testing.T) {
 			wantCPE:  "cpe:2.3:o:commscope:ruckus_smartzone_firmware:*:*:*:*:*:*:*:*",
 		},
 		{
-			name:       "identifies Ruckus Wireless Admin title without ZoneDirector token",
+			name:       "Ruckus Wireless Admin title without ZoneDirector token is rejected",
 			statusCode: 200,
 			headers:    map[string]string{"Content-Type": "text/html"},
 			body: `<html>
@@ -133,8 +133,7 @@ func TestRuckusFingerprinter_Fingerprint(t *testing.T) {
 <form action="/admin/login.jsp" method="post"></form>
 </body>
 </html>`,
-			wantTech: "ruckus",
-			wantCPE:  "cpe:2.3:a:ruckuswireless:ruckus_zonedirector:*:*:*:*:*:*:*:*",
+			wantNil: true,
 		},
 		{
 			name:       "Unleashed Login title without Ruckus corroboration is rejected",

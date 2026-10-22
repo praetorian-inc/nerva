@@ -57,7 +57,8 @@ func (f *ArubaInstantFingerprinter) Fingerprint(resp *http.Response, body []byte
 	title := strings.ToLower(extractHTMLTitle(body))
 
 	hasInstantTitle := strings.Contains(title, "aruba instant") || strings.Contains(title, "instant access point")
-	hasTreemapJS := strings.Contains(bodyLower, "raphael-treemap.min.js")
+	hasTreemapJS := strings.Contains(bodyLower, "raphael-treemap.min.js") &&
+		(strings.Contains(bodyLower, `src="`) || strings.Contains(bodyLower, `src='`))
 	if !hasInstantTitle && !hasTreemapJS {
 		return nil, nil
 	}
