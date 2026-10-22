@@ -60,7 +60,12 @@ func (f *CiscoWLCFingerprinter) Fingerprint(resp *http.Response, body []byte) (*
 	}
 
 	hasWLCTitle := strings.Contains(title, "wireless lan controller")
-	hasFrameset := strings.Contains(bodyLower, "/screens/frameset.html")
+	hasFrameset := strings.Contains(bodyLower, `href="/screens/frameset.html`) ||
+		strings.Contains(bodyLower, `src="/screens/frameset.html`) ||
+		strings.Contains(bodyLower, `href='/screens/frameset.html`) ||
+		strings.Contains(bodyLower, `src='/screens/frameset.html`) ||
+		strings.Contains(bodyLower, `location='/screens/frameset.html`) ||
+		strings.Contains(bodyLower, `location="/screens/frameset.html`)
 	hasAironetTitle := strings.Contains(title, "aironet")
 
 	switch {
@@ -72,7 +77,7 @@ func (f *CiscoWLCFingerprinter) Fingerprint(resp *http.Response, body []byte) (*
 	case hasAironetTitle:
 		return &FingerprintResult{
 			Technology: "cisco-aironet",
-			CPEs:       []string{"cpe:2.3:o:cisco:aironet_access_point_software:*:*:*:*:*:*:*:*"},
+			CPEs:       []string{"cpe:2.3:a:cisco:aironet_access_point_software:*:*:*:*:*:*:*:*"},
 		}, nil
 	default:
 		return nil, nil

@@ -88,7 +88,7 @@ func TestRuckusFingerprinter_Fingerprint(t *testing.T) {
 <link href="css/font-awesome.min.css?200.15" rel="stylesheet">
 </head>
 <body>
-<form action="/admin/login.jsp">Login</form>
+<form action="/admin/login.jsp">Ruckus Unleashed Login</form>
 </body>
 </html>`,
 			wantTech: "ruckus",
@@ -108,7 +108,7 @@ func TestRuckusFingerprinter_Fingerprint(t *testing.T) {
 </body>
 </html>`,
 			wantTech: "ruckus",
-			wantCPE:  "cpe:2.3:o:ruckuswireless:zonedirector_firmware:*:*:*:*:*:*:*:*",
+			wantCPE:  "cpe:2.3:a:ruckuswireless:ruckus_zonedirector:*:*:*:*:*:*:*:*",
 		},
 		{
 			name:       "identifies SmartZone management UI",
@@ -121,7 +121,7 @@ func TestRuckusFingerprinter_Fingerprint(t *testing.T) {
 </body>
 </html>`,
 			wantTech: "ruckus",
-			wantCPE:  "cpe:2.3:a:ruckuswireless:smartzone:*:*:*:*:*:*:*:*",
+			wantCPE:  "cpe:2.3:o:commscope:ruckus_smartzone_firmware:*:*:*:*:*:*:*:*",
 		},
 		{
 			name:       "identifies Ruckus Wireless Admin title without ZoneDirector token",
@@ -134,7 +134,14 @@ func TestRuckusFingerprinter_Fingerprint(t *testing.T) {
 </body>
 </html>`,
 			wantTech: "ruckus",
-			wantCPE:  "cpe:2.3:o:ruckuswireless:zonedirector_firmware:*:*:*:*:*:*:*:*",
+			wantCPE:  "cpe:2.3:a:ruckuswireless:ruckus_zonedirector:*:*:*:*:*:*:*:*",
+		},
+		{
+			name:       "Unleashed Login title without Ruckus corroboration is rejected",
+			statusCode: 200,
+			headers:    map[string]string{"Content-Type": "text/html"},
+			body:       `<html><head><title>Unleashed Login</title></head><body><form action="/admin/login.jsp"></form></body></html>`,
+			wantNil:    true,
 		},
 		{
 			name:       "generic HTML does not emit Ruckus identity",

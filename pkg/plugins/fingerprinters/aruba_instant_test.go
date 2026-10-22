@@ -93,7 +93,7 @@ func TestArubaInstantFingerprinter_Fingerprint(t *testing.T) {
 </body>
 </html>`,
 			wantTech: "aruba-instant",
-			wantCPE:  "cpe:2.3:a:arubanetworks:aruba_instant:*:*:*:*:*:*:*:*",
+			wantCPE:  "cpe:2.3:o:arubanetworks:instant:*:*:*:*:*:*:*:*",
 		},
 		{
 			name:       "identifies Instant Access Point title with Instant JS",
@@ -107,7 +107,7 @@ func TestArubaInstantFingerprinter_Fingerprint(t *testing.T) {
 </body>
 </html>`,
 			wantTech: "aruba-instant",
-			wantCPE:  "cpe:2.3:a:arubanetworks:aruba_instant:*:*:*:*:*:*:*:*",
+			wantCPE:  "cpe:2.3:o:arubanetworks:instant:*:*:*:*:*:*:*:*",
 		},
 		{
 			name:       "two exclusive Instant signals without brand token still identify",
@@ -118,7 +118,7 @@ func TestArubaInstantFingerprinter_Fingerprint(t *testing.T) {
 <script src="jscripts/third_party/raphael-treemap.min.js"></script>
 </body></html>`,
 			wantTech: "aruba-instant",
-			wantCPE:  "cpe:2.3:a:arubanetworks:aruba_instant:*:*:*:*:*:*:*:*",
+			wantCPE:  "cpe:2.3:o:arubanetworks:instant:*:*:*:*:*:*:*:*",
 		},
 		{
 			name:       "generic HTML does not emit Instant identity",
@@ -160,6 +160,13 @@ func TestArubaInstantFingerprinter_Fingerprint(t *testing.T) {
 			statusCode: 200,
 			headers:    map[string]string{"Content-Type": "text/html"},
 			body:       `<html><head><title>AirWave Management Platform</title></head><body>Aruba AirWave login</body></html>`,
+			wantNil:    true,
+		},
+		{
+			name:       "link to instant.arubanetworks.com without Instant title or UI JS is rejected",
+			statusCode: 200,
+			headers:    map[string]string{"Content-Type": "text/html"},
+			body:       `<html><head><title>Campus Wi-Fi</title></head><body><a href="https://instant.arubanetworks.com/swarm.cgi">Aruba captive portal</a></body></html>`,
 			wantNil:    true,
 		},
 		{

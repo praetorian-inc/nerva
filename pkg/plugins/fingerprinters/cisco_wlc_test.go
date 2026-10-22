@@ -104,7 +104,7 @@ func TestCiscoWLCFingerprinter_Fingerprint(t *testing.T) {
 </body>
 </html>`,
 			wantTech: "cisco-aironet",
-			wantCPE:  "cpe:2.3:o:cisco:aironet_access_point_software:*:*:*:*:*:*:*:*",
+			wantCPE:  "cpe:2.3:a:cisco:aironet_access_point_software:*:*:*:*:*:*:*:*",
 		},
 		{
 			name:       "identifies AireOS WLC via frameset path without WLC title",
@@ -146,6 +146,13 @@ func TestCiscoWLCFingerprinter_Fingerprint(t *testing.T) {
 			statusCode: 200,
 			headers:    map[string]string{"Content-Type": "text/html"},
 			body:       `<html><body><script>window.location='/screens/frameset.html';</script></body></html>`,
+			wantNil:    true,
+		},
+		{
+			name:       "prose mentioning Cisco and frameset path is rejected",
+			statusCode: 200,
+			headers:    map[string]string{"Content-Type": "text/html"},
+			body:       `<html><head><title>Blog</title></head><body><p>Cisco documents /screens/frameset.html for WLC.</p></body></html>`,
 			wantNil:    true,
 		},
 		{

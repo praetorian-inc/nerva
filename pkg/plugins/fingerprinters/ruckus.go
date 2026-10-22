@@ -58,14 +58,14 @@ func (f *RuckusFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fi
 	hasRuckus := strings.Contains(bodyLower, "ruckus")
 
 	switch {
-	case strings.Contains(title, "unleashed login"):
+	case strings.Contains(title, "unleashed login") && hasRuckus:
 		return ruckusResult("cpe:2.3:o:ruckuswireless:unleashed_firmware:*:*:*:*:*:*:*:*"), nil
 	case strings.Contains(bodyLower, "zonedirector") && hasRuckus:
-		return ruckusResult("cpe:2.3:o:ruckuswireless:zonedirector_firmware:*:*:*:*:*:*:*:*"), nil
+		return ruckusResult("cpe:2.3:a:ruckuswireless:ruckus_zonedirector:*:*:*:*:*:*:*:*"), nil
 	case strings.Contains(bodyLower, "smartzone") && hasRuckus:
-		return ruckusResult("cpe:2.3:a:ruckuswireless:smartzone:*:*:*:*:*:*:*:*"), nil
+		return ruckusResult("cpe:2.3:o:commscope:ruckus_smartzone_firmware:*:*:*:*:*:*:*:*"), nil
 	case strings.Contains(title, "ruckus wireless admin") && hasRuckus:
-		return ruckusResult("cpe:2.3:o:ruckuswireless:zonedirector_firmware:*:*:*:*:*:*:*:*"), nil
+		return ruckusResult("cpe:2.3:a:ruckuswireless:ruckus_zonedirector:*:*:*:*:*:*:*:*"), nil
 	default:
 		return nil, nil
 	}

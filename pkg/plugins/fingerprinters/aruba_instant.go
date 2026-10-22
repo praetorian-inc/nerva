@@ -21,14 +21,15 @@ import (
 
 // ArubaInstantFingerprinter detects Aruba Instant AP management UIs.
 //
-// Detection uses exclusive Instant signals plus corroboration so generic HTML
-// (and other Aruba products such as AirWave) cannot match:
+// Detection requires a management-UI marker so generic HTML, reseller pages,
+// and externally hosted captive-portal splash pages cannot match:
 //
-//  1. Exclusive: /swarm.cgi, Instant UI JS (raphael-treemap.min.js),
-//     instant.arubanetworks.com, title "Aruba Instant" or "Instant Access Point"
-//  2. Corroboration: Aruba/arubanetworks brand, or a second exclusive signal
+//  1. HTML title "Aruba Instant" or "Instant Access Point"
+//  2. Instant UI script raphael-treemap.min.js
+//  3. form posting to /swarm.cgi plus (1) or (2)
 //
-// Brand mention alone is not sufficient. Favicon aruba-networks is not Instant.
+// A body link to instant.arubanetworks.com or swarm.cgi plus the word Aruba
+// is not enough. Favicon aruba-networks is not Instant.
 type ArubaInstantFingerprinter struct{}
 
 func init() {
@@ -55,28 +56,14 @@ func (f *ArubaInstantFingerprinter) Fingerprint(resp *http.Response, body []byte
 	bodyLower := strings.ToLower(string(body))
 	title := strings.ToLower(extractHTMLTitle(body))
 
-	hasSwarmCGI := strings.Contains(bodyLower, "swarm.cgi")
-	hasRaphaelTreemap := strings.Contains(bodyLower, "raphael-treemap.min.js")
-	hasInstantHost := strings.Contains(bodyLower, "instant.arubanetworks.com")
-	titleArubaInstant := strings.Contains(title, "aruba instant")
-	titleInstantAP := strings.Contains(title, "instant access point")
-	hasArubaBrand := strings.Contains(bodyLower, "aruba")
-
-	exclusiveCount := 0
-	for _, signal := range []bool{hasSwarmCGI, hasRaphaelTreemap, hasInstantHost, titleArubaInstant, titleInstantAP} {
-		if signal {
-			exclusiveCount++
-		}
-	}
-	if exclusiveCount == 0 {
-		return nil, nil
-	}
-	if !hasArubaBrand && exclusiveCount < 2 {
+	hasInstantTitle := strings.Contains(title, "aruba instant") || strings.Contains(title, "instant access point")
+	hasTreemapJS := strings.Contains(bodyLower, "raphael-treemap.min.js")
+	if !hasInstantTitle && !hasTreemapJS {
 		return nil, nil
 	}
 
 	return &FingerprintResult{
 		Technology: "aruba-instant",
-		CPEs:       []string{"cpe:2.3:a:arubanetworks:aruba_instant:*:*:*:*:*:*:*:*"},
+		CPEs:       []string{"cpe:2.3:o:arubanetworks:instant:*:*:*:*:*:*:*:*"},
 	}, nil
 }
