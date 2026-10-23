@@ -188,8 +188,17 @@ func citrixAdminLocationPath(resp *http.Response) bool {
 	if err != nil {
 		return false
 	}
+	// A redirect to a different host is not evidence that this service is the
+	// ADC GUI; only honor relative or same-host redirects.
+	if u.Host != "" {
+		if resp.Request == nil || resp.Request.URL == nil || !strings.EqualFold(u.Host, resp.Request.URL.Host) {
+			return false
+		}
+	}
+	// Match /menu/neo only as a complete path segment (exact, or followed by a
+	// slash) so that e.g. /menu/neofoo does not match. /ns_gui/ already ends in a slash.
 	p := strings.ToLower(u.Path)
-	return strings.HasPrefix(p, "/menu/neo") || strings.HasPrefix(p, "/ns_gui/")
+	return p == "/menu/neo" || strings.HasPrefix(p, "/menu/neo/") || strings.HasPrefix(p, "/ns_gui/")
 }
 
 func hasCitrixGatewayMarkers(body []byte) bool {

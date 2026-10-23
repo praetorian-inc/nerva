@@ -176,4 +176,16 @@ func TestCitrixADCAdminFingerprinter_RejectsPathEcho(t *testing.T) {
 	result, err = fp.Fingerprint(resp200, []byte(spa))
 	require.NoError(t, err)
 	assert.Nil(t, result, "a generic neo-app SPA must not be detected")
+
+	// A cross-host redirect to /menu/neo is not evidence about this service.
+	crossHost := newCitrix302Resp("https://sso.example.com/menu/neo/", nil, nil)
+	result, err = fp.Fingerprint(crossHost, []byte(""))
+	require.NoError(t, err)
+	assert.Nil(t, result, "a cross-host redirect must not be detected")
+
+	// /menu/neofoo is a different path segment and must not match.
+	neoFoo := newCitrix302Resp("/menu/neofoo", nil, nil)
+	result, err = fp.Fingerprint(neoFoo, []byte(""))
+	require.NoError(t, err)
+	assert.Nil(t, result, "/menu/neofoo must not be treated as the ADC GUI")
 }
