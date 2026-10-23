@@ -32,6 +32,7 @@ import (
 
 	"github.com/praetorian-inc/nerva/pkg/plugins"
 	"github.com/praetorian-inc/nerva/pkg/plugins/fingerprinters"
+	"github.com/praetorian-inc/nerva/pkg/plugins/oseol"
 	utils "github.com/praetorian-inc/nerva/pkg/plugins/pluginutils"
 )
 
@@ -182,6 +183,11 @@ func (p *HTTPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 		service.AnonymousAccess = true
 		service.SecurityFindings = append(service.SecurityFindings, fpFindings...)
 	}
+	if target.Misconfigs {
+		if finding := oseol.Check(append([]string{resp.Header.Get("Server")}, payload.CPEs...)...); finding != nil {
+			service.SecurityFindings = append(service.SecurityFindings, *finding)
+		}
+	}
 	if target.Misconfigs && resp.StatusCode/100 != 3 {
 		service.SecurityFindings = append(service.SecurityFindings, checkMissingSecurityHeaders(resp.Header, false)...)
 		if finding := checkCORSWildcard(resp.Header); finding != nil {
@@ -297,6 +303,9 @@ func (p *HTTPSPlugin) Run(
 	}
 	if target.Misconfigs {
 		service.SecurityFindings = append(service.SecurityFindings, plugins.CheckTLS(conn)...)
+		if finding := oseol.Check(append([]string{resp.Header.Get("Server")}, payload.CPEs...)...); finding != nil {
+			service.SecurityFindings = append(service.SecurityFindings, *finding)
+		}
 		if resp.StatusCode/100 != 3 {
 			service.SecurityFindings = append(service.SecurityFindings, checkMissingSecurityHeaders(resp.Header, true)...)
 			if finding := checkCORSWildcard(resp.Header); finding != nil {

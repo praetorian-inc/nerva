@@ -87,12 +87,34 @@ var findingCatalog = map[string]FindingMeta{
 		Recommendation: "Enable TLS on all HTTP endpoints and redirect plaintext requests to HTTPS.",
 		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N",
 	},
+	// ── PHP findings ─────────────────────────────────────────────────────
+	"exposed-phpinfo": {
+		Title:          "Exposed phpinfo() page",
+		Severity:       SeverityInfo,
+		Impact:         "A reachable phpinfo() page discloses the exact PHP version and SAPI, the build date, the host operating system and distribution, the full list of loaded extensions, absolute filesystem paths, and the server environment (which frequently carries configuration values and secrets passed via environment variables). This gives an attacker a precise map of the technology stack for targeting known vulnerabilities.",
+		Recommendation: "Remove the phpinfo() page from the web root or restrict access to it, and set expose_php=Off. Treat any phpinfo() output reachable without authentication as sensitive information disclosure.",
+		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N",
+	},
+	"php-vulnerable-php2shell": {
+		Title:          "PHP affected by php2shell (CVE-2026-109618/109619)",
+		Severity:       SeverityHigh,
+		Impact:         "The detected PHP version is below the php2shell fix line (patched in 8.2.35 / 8.3.36 / 8.4.27 / 8.5.12; every branch at or below 8.1 is end-of-life with no upstream fix). php2shell is a memory-corruption flaw affecting all common SAPIs — mod_php, php-fpm, php-cgi, FrankenPHP, and LiteSpeed — so it is not scoped out by server integration. Exploitability was not validated remotely, and distributions backport fixes onto frozen version strings, so this is a version-inference finding that must be adjudicated against the build date and distribution.",
+		Recommendation: "Update PHP to the fixed release for the branch (8.2.35 / 8.3.36 / 8.4.27 / 8.5.12 or later), or to the distribution-backported package that carries the fix. For end-of-life branches (<= 8.1) migrate to a supported, patched branch.",
+		CVSS:           "CVSS:4.0/AV:N/AC:H/AT:P/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N",
+	},
 	"http-cleartext-form": {
 		Title:          "Login Form Served Over Cleartext HTTP",
 		Severity:       SeverityLow,
 		Impact:         "Credentials submitted through forms served over unencrypted HTTP are transmitted in plaintext, enabling network-level credential interception.",
 		Recommendation: "Serve all pages containing login or sensitive forms exclusively over HTTPS with HSTS.",
 		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:U/C:H/I:N/A:N",
+	},
+	"pos-poi-management-exposed": {
+		Title:          "POS/POI Management Interface Exposed",
+		Severity:       SeverityMedium,
+		Impact:         "An internet-exposed Verifone or Ingenico payment-terminal management interface lets attackers fingerprint POS/POI devices, attempt default credentials, and target the payment environment from outside the CDE.",
+		Recommendation: "Remove POS/POI management interfaces from the public internet. Restrict administration to a management network and require strong authentication.",
+		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:N",
 	},
 
 	// ── TLS findings ─────────────────────────────────────────────────────
@@ -130,6 +152,27 @@ var findingCatalog = map[string]FindingMeta{
 		Impact:         "Cryptographic keys below recommended minimum sizes (RSA 2048, EC 256) may be factored or broken with current or near-future computing resources, compromising all traffic encrypted with the certificate.",
 		Recommendation: "Generate a new key pair meeting current NIST minimums: RSA 2048+ bits or ECDSA P-256+. Reissue the certificate with the new key.",
 		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:N/A:N",
+	},
+	"tls-anon-cipher": {
+		Title:          "Anonymous TLS Cipher Suite Accepted",
+		Severity:       SeverityHigh,
+		Impact:         "Anonymous (ADH/AECDH) cipher suites provide no server authentication. A network attacker can complete the handshake and decrypt or modify traffic.",
+		Recommendation: "Disable anonymous cipher suites (ADH, AECDH). Restrict the server to authenticated suites such as ECDHE with AES-GCM or ChaCha20-Poly1305.",
+		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N",
+	},
+	"tls-null-cipher": {
+		Title:          "NULL TLS Cipher Suite Accepted",
+		Severity:       SeverityHigh,
+		Impact:         "NULL cipher suites provide no encryption. Application data, including credentials and session tokens, is transmitted in the clear inside TLS framing.",
+		Recommendation: "Disable NULL cipher suites. Require confidentiality-providing suites such as AES-GCM or ChaCha20-Poly1305.",
+		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+	},
+	"tls-export-cipher": {
+		Title:          "EXPORT TLS Cipher Suite Accepted",
+		Severity:       SeverityHigh,
+		Impact:         "EXPORT-grade cipher suites use deliberately weakened keys. Historical attacks (FREAK, Logjam) recover those keys and decrypt the session.",
+		Recommendation: "Disable all EXPORT cipher suites. Use modern key sizes and authenticated encryption.",
+		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
 	},
 
 	// ── SSH findings ─────────────────────────────────────────────────────
@@ -225,6 +268,20 @@ var findingCatalog = map[string]FindingMeta{
 		Recommendation: "Set a strong root password immediately. Restrict root login to localhost and create least-privilege accounts for application access.",
 		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:N",
 	},
+	"oracle-no-auth": {
+		Title:          "Oracle Database Accessible Without Authentication",
+		Severity:       SeverityMedium,
+		Impact:         "Unauthenticated access to Oracle Database allows attackers to read, modify, or delete stored data, including potentially sensitive schemas.",
+		Recommendation: "Require database authentication and disable empty-credential logins. Restrict the TNS listener to trusted network interfaces.",
+		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:N",
+	},
+	"mssql-default-creds": {
+		Title:          "MSSQL sa Default Blank Password",
+		Severity:       SeverityMedium,
+		Impact:         "The sa account accepts a blank password, the documented mixed-mode default on SQL Server 2000/MSDE. Successful login grants administrative access to databases and stored data.",
+		Recommendation: "Set a strong sa password and enable CHECK_POLICY. Prefer Windows Authentication. Restrict network access to trusted clients.",
+		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:N",
+	},
 	"cassandra-no-auth": {
 		Title:          "Cassandra Accessible Without Authentication",
 		Severity:       SeverityMedium,
@@ -244,6 +301,13 @@ var findingCatalog = map[string]FindingMeta{
 		Severity:       SeverityMedium,
 		Impact:         "Unauthenticated access to InfluxDB allows attackers to read or modify time-series data, potentially exposing metrics, monitoring data, or operational telemetry.",
 		Recommendation: "Enable InfluxDB authentication and create users with appropriate privileges. Restrict network access to trusted clients.",
+		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:N",
+	},
+	"elasticsearch-no-auth": {
+		Title:          "Elasticsearch Accessible Without Authentication",
+		Severity:       SeverityMedium,
+		Impact:         "Unauthenticated access to the Elasticsearch HTTP API allows attackers to read cluster identity and, depending on anonymous privileges, search or modify indices that may store sensitive data.",
+		Recommendation: "Enable Elasticsearch security (xpack.security.enabled) and require authentication for HTTP clients. Restrict network access to trusted clients.",
 		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:N",
 	},
 
@@ -382,6 +446,13 @@ var findingCatalog = map[string]FindingMeta{
 		Recommendation: "Migrate the workload to a supported operating system version. If immediate migration is not possible, isolate the host on a restricted network segment and apply compensating controls.",
 		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N",
 	},
+	"os-eol": {
+		Title:          "Vendor-Unsupported Operating System",
+		Severity:       SeverityLow,
+		Impact:         "The host is running an operating system that no longer receives vendor security patches, leaving all known and future vulnerabilities permanently unpatched.",
+		Recommendation: "Migrate the workload to a vendor-supported operating system version. If immediate migration is not possible, isolate the host on a restricted network segment and apply compensating controls.",
+		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N",
+	},
 	"rdp-cleartext-credentials": {
 		Title:          "RDP Standard Security Allows Credential Interception",
 		Severity:       SeverityLow,
@@ -415,6 +486,13 @@ var findingCatalog = map[string]FindingMeta{
 		Severity:       SeverityLow,
 		Impact:         "An exposed AnyDesk service increases the attack surface for unauthorized remote access, especially if default or weak credentials are configured.",
 		Recommendation: "Restrict AnyDesk access to trusted networks. Configure strong passwords and enable two-factor authentication.",
+		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N",
+	},
+	"pcanywhere-exposed": {
+		Title:          "pcAnywhere Service Exposed",
+		Severity:       SeverityLow,
+		Impact:         "An exposed pcAnywhere listener increases the attack surface for unauthorized remote access. The product is end-of-life and has known authentication weaknesses.",
+		Recommendation: "Disable pcAnywhere. Replace it with a supported remote-access solution restricted to trusted networks.",
 		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N",
 	},
 	"pptp-insecure": {
