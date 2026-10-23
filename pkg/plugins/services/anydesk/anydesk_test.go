@@ -336,6 +336,59 @@ func TestAnyDeskPlugin_Run_CheckTLS_Integration(t *testing.T) {
 	}
 }
 
+// countingProbeConn wraps a dialed *tls.Conn the way the scanner's tlsProbeConn
+// does: Unwrap() yields the inner TLS conn for CN inspection, while DialRawTCP
+// is how CheckTLS re-dials for weak-cipher probes. If Run overwrites conn with
+// Unwrap() before CheckTLS, DialRawTCP is dropped and dials stays 0.
+type countingProbeConn struct {
+	net.Conn
+	dials int
+}
+
+func (c *countingProbeConn) Unwrap() net.Conn {
+	return c.Conn
+}
+
+func (c *countingProbeConn) DialRawTCP() (net.Conn, error) {
+	c.dials++
+	return net.Dial("tcp", c.RemoteAddr().String())
+}
+
+func TestAnyDeskPlugin_Run_CheckTLS_PreservesDialRawTCP(t *testing.T) {
+	cert, err := generateTestCert("AnyDesk Client", "AnyDesk Client")
+	if err != nil {
+		t.Fatalf("failed to generate cert: %v", err)
+	}
+
+	addr, cleanup := startTLSServer(t, cert)
+	defer cleanup()
+
+	tlsConn, err := tls.Dial("tcp", addr, &tls.Config{InsecureSkipVerify: true})
+	if err != nil {
+		t.Fatalf("failed to dial TLS: %v", err)
+	}
+	defer tlsConn.Close()
+
+	wrapped := &countingProbeConn{Conn: tlsConn}
+
+	target := plugins.Target{
+		Address:    netip.MustParseAddrPort(addr),
+		Misconfigs: true,
+	}
+
+	p := &AnyDeskPlugin{}
+	service, err := p.Run(wrapped, 5*time.Second, target)
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if service == nil {
+		t.Fatal("Run() returned nil, expected AnyDesk detection")
+	}
+	if wrapped.dials <= 0 {
+		t.Errorf("DialRawTCP invoked %d times, want > 0 (CheckTLS must see the wrapper)", wrapped.dials)
+	}
+}
+
 func TestAnyDeskPlugin_Run_SecurityFinding_MisconfigsFalse(t *testing.T) {
 	cert, err := generateTestCert("AnyDesk Client", "AnyDesk Client")
 	if err != nil {
