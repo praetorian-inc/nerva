@@ -18,8 +18,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/user"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -43,16 +41,6 @@ func checkConfig(config *cliConfig) error {
 	}
 	if config.outputJSON && config.outputCSV {
 		return errors.New("Only one output format can be specified (JSON or CSV)")
-	}
-
-	if config.useUDP && config.verbose {
-		user, err := user.Current()
-		if err != nil {
-			return fmt.Errorf("Failed to retrieve current user (error: %w)", err)
-		}
-		if !((runtime.GOOS == "linux" || runtime.GOOS == "darwin") && user.Uid == "0") {
-			fmt.Fprintln(os.Stderr, "Note: UDP Scan may require root privileges")
-		}
 	}
 
 	if config.showErrors && !(config.outputJSON || config.outputCSV) {
