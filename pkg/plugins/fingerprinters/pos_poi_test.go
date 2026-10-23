@@ -117,7 +117,7 @@ const ingenicoMarketingFixture = `<!DOCTYPE html>
 </body>
 </html>`
 
-func htmlResp(status int) *http.Response {
+func posPoiHTMLResp(status int) *http.Response {
 	h := http.Header{}
 	h.Set("Content-Type", "text/html")
 	return &http.Response{StatusCode: status, Header: h}
@@ -155,10 +155,10 @@ func TestIngenicoTMSFingerprinter_ProbeEndpoint(t *testing.T) {
 
 func TestVerifoneFingerprinter_Match(t *testing.T) {
 	fp := &VerifoneFingerprinter{}
-	assert.True(t, fp.Match(htmlResp(200)))
-	assert.True(t, fp.Match(htmlResp(302)))
-	assert.False(t, fp.Match(htmlResp(401)))
-	assert.False(t, fp.Match(htmlResp(404)))
+	assert.True(t, fp.Match(posPoiHTMLResp(200)))
+	assert.True(t, fp.Match(posPoiHTMLResp(302)))
+	assert.False(t, fp.Match(posPoiHTMLResp(401)))
+	assert.False(t, fp.Match(posPoiHTMLResp(404)))
 	assert.False(t, fp.Match(&http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"application/json"}}}))
 	assert.False(t, fp.Match(&http.Response{StatusCode: 500, Header: http.Header{"Content-Type": []string{"text/html"}}}))
 	assert.False(t, fp.Match(headerResp(302, http.Header{"Location": []string{"/VHQ.Authentication.VHQFederationV1/Account/Login"}})))
@@ -166,14 +166,14 @@ func TestVerifoneFingerprinter_Match(t *testing.T) {
 
 func TestIngenicoFingerprinter_Match(t *testing.T) {
 	fp := &IngenicoFingerprinter{}
-	assert.True(t, fp.Match(htmlResp(200)))
+	assert.True(t, fp.Match(posPoiHTMLResp(200)))
 	assert.False(t, fp.Match(&http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"text/plain"}}}))
 	assert.False(t, fp.Match(headerResp(302, http.Header{"Location": []string{"/emgui/resetPassword.jsp"}})))
 }
 
 func TestVerifoneFingerprinter_LiveVHQIdentifiesAndEmits(t *testing.T) {
 	fp := &VerifoneFingerprinter{}
-	resp := htmlResp(200)
+	resp := posPoiHTMLResp(200)
 	require.True(t, fp.Match(resp))
 	result, err := fp.Fingerprint(resp, []byte(verifoneVHQFixture))
 	require.NoError(t, err)
@@ -189,7 +189,7 @@ func TestVerifoneFingerprinter_LiveVHQIdentifiesAndEmits(t *testing.T) {
 
 func TestIngenicoFingerprinter_LiveEstateIdentifiesAndEmits(t *testing.T) {
 	fp := &IngenicoFingerprinter{}
-	resp := htmlResp(200)
+	resp := posPoiHTMLResp(200)
 	require.True(t, fp.Match(resp))
 	result, err := fp.Fingerprint(resp, []byte(ingenicoEstateFixture))
 	require.NoError(t, err)
@@ -205,7 +205,7 @@ func TestIngenicoFingerprinter_LiveEstateIdentifiesAndEmits(t *testing.T) {
 
 func TestIngenicoFingerprinter_LiveTMSIdentifiesAndEmits(t *testing.T) {
 	fp := &IngenicoTMSFingerprinter{}
-	result, err := fp.Fingerprint(htmlResp(200), []byte(ingenicoTMSFixture))
+	result, err := fp.Fingerprint(posPoiHTMLResp(200), []byte(ingenicoTMSFixture))
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, "ingenico-tms", result.Technology)
@@ -215,8 +215,8 @@ func TestIngenicoFingerprinter_LiveTMSIdentifiesAndEmits(t *testing.T) {
 }
 
 func TestPOSPOI_IngenicoFingerprintersDoNotCrossMatch(t *testing.T) {
-	estate := htmlResp(200)
-	tms := htmlResp(200)
+	estate := posPoiHTMLResp(200)
+	tms := posPoiHTMLResp(200)
 
 	estateOnTMS, err := (&IngenicoTMSFingerprinter{}).Fingerprint(estate, []byte(ingenicoEstateFixture))
 	require.NoError(t, err)
@@ -228,7 +228,7 @@ func TestPOSPOI_IngenicoFingerprintersDoNotCrossMatch(t *testing.T) {
 }
 
 func TestPOSPOI_GenericHTTPDoesNotEmit(t *testing.T) {
-	resp := htmlResp(200)
+	resp := posPoiHTMLResp(200)
 	nginx := &http.Response{
 		StatusCode: 200,
 		Header:     http.Header{"Server": []string{"nginx"}, "Content-Type": []string{"text/html"}},
@@ -253,42 +253,42 @@ func TestPOSPOI_GenericHTTPDoesNotEmit(t *testing.T) {
 
 func TestPOSPOI_MarketingPageWithoutManagementMarkersDoesNotMatch(t *testing.T) {
 	titleOnly := []byte(`<html><head><title>VHQ</title></head><body><p>Copyright Verifone Systems, Inc.</p></body></html>`)
-	v, err := (&VerifoneFingerprinter{}).Fingerprint(htmlResp(200), titleOnly)
+	v, err := (&VerifoneFingerprinter{}).Fingerprint(posPoiHTMLResp(200), titleOnly)
 	require.NoError(t, err)
 	assert.Nil(t, v)
 
 	datasheet := []byte(`<html><head><title>Buy Ingenico Telium iCT220</title></head><body><p>Ingenico Telium iCT220 datasheet</p></body></html>`)
-	i, err := (&IngenicoFingerprinter{}).Fingerprint(htmlResp(200), datasheet)
+	i, err := (&IngenicoFingerprinter{}).Fingerprint(posPoiHTMLResp(200), datasheet)
 	require.NoError(t, err)
 	assert.Nil(t, i)
 
-	vm, err := (&VerifoneFingerprinter{}).Fingerprint(htmlResp(200), []byte(verifoneMarketingFixture))
+	vm, err := (&VerifoneFingerprinter{}).Fingerprint(posPoiHTMLResp(200), []byte(verifoneMarketingFixture))
 	require.NoError(t, err)
 	assert.Nil(t, vm)
 
-	im, err := (&IngenicoFingerprinter{}).Fingerprint(htmlResp(200), []byte(ingenicoMarketingFixture))
+	im, err := (&IngenicoFingerprinter{}).Fingerprint(posPoiHTMLResp(200), []byte(ingenicoMarketingFixture))
 	require.NoError(t, err)
 	assert.Nil(t, im)
 }
 
 func TestPOSPOI_UnverifiedStringsDoNotEmit(t *testing.T) {
 	commander := []byte(`<html><head><title>VeriFone Commander</title></head><body><form><input type="password" name="password"></form></body></html>`)
-	v, err := (&VerifoneFingerprinter{}).Fingerprint(htmlResp(200), commander)
+	v, err := (&VerifoneFingerprinter{}).Fingerprint(posPoiHTMLResp(200), commander)
 	require.NoError(t, err)
 	assert.Nil(t, v)
 
 	configClient := []byte(`<html><head><title>Configuration Client</title></head><body><h1>Verifone Commander</h1><form><input type="password"></form></body></html>`)
-	v2, err := (&VerifoneFingerprinter{}).Fingerprint(htmlResp(200), configClient)
+	v2, err := (&VerifoneFingerprinter{}).Fingerprint(posPoiHTMLResp(200), configClient)
 	require.NoError(t, err)
 	assert.Nil(t, v2)
 
 	telium := []byte(`<html><head><title>Ingenico Telium</title></head><body><form><input type="password" name="password"></form></body></html>`)
-	i, err := (&IngenicoFingerprinter{}).Fingerprint(htmlResp(200), telium)
+	i, err := (&IngenicoFingerprinter{}).Fingerprint(posPoiHTMLResp(200), telium)
 	require.NoError(t, err)
 	assert.Nil(t, i)
 
 	estateExactTitle := []byte(`<html><head><title>The Estate Manager</title></head><body><p>Ingenico</p><form><input type="password"></form></body></html>`)
-	i2, err := (&IngenicoFingerprinter{}).Fingerprint(htmlResp(200), estateExactTitle)
+	i2, err := (&IngenicoFingerprinter{}).Fingerprint(posPoiHTMLResp(200), estateExactTitle)
 	require.NoError(t, err)
 	assert.Nil(t, i2)
 
@@ -345,13 +345,13 @@ func TestPOSPOI_RedirectLocationIsNeverIdentity(t *testing.T) {
 		{
 			name: "verifone catch-all 200 apache on probe path",
 			fp:   &VerifoneFingerprinter{},
-			resp: htmlResp(200),
+			resp: posPoiHTMLResp(200),
 			body: []byte(genericApacheFixture),
 		},
 		{
 			name: "ingenico catch-all 200 apache on probe path",
 			fp:   &IngenicoFingerprinter{},
-			resp: htmlResp(200),
+			resp: posPoiHTMLResp(200),
 			body: []byte(genericApacheFixture),
 		},
 		{
