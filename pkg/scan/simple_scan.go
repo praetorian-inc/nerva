@@ -437,6 +437,10 @@ func simplePluginRunner(
 
 	target.Misconfigs = config.Misconfigs
 	target.Deep = config.Deep
+	scanTarget := target
+	target.DialTCP = func(_ string, _ time.Duration) (net.Conn, error) {
+		return config.DialTCP(scanTarget)
+	}
 	result, err := plugin.Run(conn, config.DefaultTimeout, target)
 
 	// Log probe completion.

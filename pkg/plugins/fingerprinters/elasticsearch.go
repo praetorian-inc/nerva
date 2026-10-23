@@ -80,7 +80,7 @@ func (f *ElasticsearchFingerprinter) Fingerprint(resp *http.Response, body []byt
 	// Clean up version string (remove -SNAPSHOT suffix if present)
 	version = cleanVersionString(version)
 
-	return &FingerprintResult{
+	result := &FingerprintResult{
 		Technology: "elasticsearch",
 		Version:    version,
 		CPEs:       []string{buildElasticsearchCPE(version)},
@@ -89,7 +89,22 @@ func (f *ElasticsearchFingerprinter) Fingerprint(resp *http.Response, body []byt
 			"lucene_version": esResponse.Version.LuceneVersion,
 		},
 		Severity: plugins.SeverityHigh,
-	}, nil
+	}
+	if resp.StatusCode/100 == 2 {
+		result.SecurityFindings = []plugins.SecurityFinding{
+			elasticsearchNoAuthFinding(fmt.Sprintf("Unauthenticated GET / returned HTTP %d Elasticsearch identity JSON", resp.StatusCode)),
+		}
+	}
+	return result, nil
+}
+
+func elasticsearchNoAuthFinding(evidence string) plugins.SecurityFinding {
+	return plugins.SecurityFinding{
+		ID:          "elasticsearch-no-auth",
+		Severity:    plugins.SeverityMedium,
+		Description: "Elasticsearch HTTP API accessible without authentication",
+		Evidence:    evidence,
+	}
 }
 
 // cleanVersionString removes -SNAPSHOT suffix from version strings

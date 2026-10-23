@@ -259,6 +259,7 @@ const (
 	ProtoPCOM              = "pcom"
 	ProtoPFCP              = "pfcp"
 	ProtoPinecone          = "pinecone"
+	ProtoPcAnywhere        = "pcanywhere"
 	ProtoPCWorx            = "pcworx"
 	ProtoPOP3              = "pop3"
 	ProtoPOP3S             = "pop3s"
@@ -711,6 +712,10 @@ func (e Service) Metadata() Metadata {
 		var p ServicePinecone
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
+	case ProtoPcAnywhere:
+		var p ServicePcAnywhere
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
 	case ProtoPCWorx:
 		var p ServicePCWorx
 		_ = json.Unmarshal(e.Raw, &p)
@@ -1051,6 +1056,12 @@ type Target struct {
 	Host       string
 	Misconfigs bool // when true, plugins should populate SecurityFindings
 	Deep       bool // when true, plugins perform additional probes (e.g., admin path discovery)
+	// DialTCP, when non-nil, opens follow-up TCP connections through the scan
+	// engine (proxy-aware). Plugins that need a fresh socket MUST use this
+	// instead of net.DialTimeout. Nil means the caller did not provide an
+	// engine dialer; plugins may fall back to net.DialTimeout only for a
+	// concrete, non-unspecified address (unit tests).
+	DialTCP func(address string, timeout time.Duration) (net.Conn, error)
 }
 
 type Plugin interface {
@@ -2124,6 +2135,12 @@ type ServiceOPCUA struct {
 }
 
 func (e ServiceOPCUA) Type() string { return ProtoOPCUA }
+
+type ServicePcAnywhere struct {
+	CPEs []string `json:"cpes,omitempty"`
+}
+
+func (e ServicePcAnywhere) Type() string { return ProtoPcAnywhere }
 
 type ServicePCWorx struct {
 	PLCType         string   `json:"plc_type,omitempty"`
