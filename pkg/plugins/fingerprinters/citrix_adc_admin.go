@@ -37,6 +37,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 
@@ -52,10 +53,9 @@ var (
 )
 
 var (
-	citrixMenuNeoAsset   = []byte("/menu/neo")
+	citrixMenuNeoAsset   = []byte("/menu/neo/")
 	citrixNsGUIAsset     = []byte("/ns_gui/")
 	citrixNitroAPIAsset  = []byte("/nitro/v1/")
-	citrixNeoAppMarker   = []byte("neo-app")
 	citrixADCAdminCookie = []byte("NITRO_WEB_APPLICATION")
 )
 
@@ -86,15 +86,16 @@ func (f *CitrixADCAdminFingerprinter) ProbeEndpoint() string { return "/menu/neo
 func (f *CitrixADCAdminFingerprinter) ProbeAccept() string { return "text/html" }
 
 func (f *CitrixADCAdminFingerprinter) Match(resp *http.Response) bool {
-	if resp == nil || resp.StatusCode < 200 || resp.StatusCode >= 500 {
+	// 4xx error pages frequently echo the probed path (e.g. a 404 body that
+	// prints "/menu/neo"), so they are not a reliable signal for the GUI.
+	if resp == nil || resp.StatusCode < 200 || resp.StatusCode >= 400 {
 		return false
 	}
 	ct := strings.ToLower(resp.Header.Get("Content-Type"))
 	if ct == "" || strings.Contains(ct, "text/html") || strings.Contains(ct, "application/xhtml+xml") {
 		return true
 	}
-	loc := strings.ToLower(resp.Header.Get("Location"))
-	return strings.Contains(loc, "/menu/neo") || strings.Contains(loc, "/ns_gui/")
+	return citrixAdminLocationPath(resp)
 }
 
 func (f *CitrixADCAdminFingerprinter) Fingerprint(resp *http.Response, body []byte) (*FingerprintResult, error) {
@@ -163,8 +164,7 @@ func isCitrixADCAdminGUI(resp *http.Response, body []byte) bool {
 	if hasCitrixGatewayMarkers(body) {
 		return false
 	}
-	loc := strings.ToLower(resp.Header.Get("Location"))
-	if strings.Contains(loc, "/menu/neo") || strings.Contains(loc, "/ns_gui/") {
+	if citrixAdminLocationPath(resp) {
 		return true
 	}
 	if citrixADCAdminTitlePattern.Match(body) {
@@ -173,8 +173,23 @@ func isCitrixADCAdminGUI(resp *http.Response, body []byte) bool {
 	return bytes.Contains(body, citrixMenuNeoAsset) ||
 		bytes.Contains(body, citrixNsGUIAsset) ||
 		bytes.Contains(body, citrixNitroAPIAsset) ||
-		bytes.Contains(body, citrixNeoAppMarker) ||
 		bytes.Contains(body, citrixADCAdminCookie)
+}
+
+// citrixAdminLocationPath reports whether the Location header redirects into the
+// ADC management GUI, matched on the URL path prefix (not a bare substring, so a
+// login redirect carrying ?next=/menu/neo is not mistaken for the GUI).
+func citrixAdminLocationPath(resp *http.Response) bool {
+	loc := resp.Header.Get("Location")
+	if loc == "" {
+		return false
+	}
+	u, err := url.Parse(loc)
+	if err != nil {
+		return false
+	}
+	p := strings.ToLower(u.Path)
+	return strings.HasPrefix(p, "/menu/neo") || strings.HasPrefix(p, "/ns_gui/")
 }
 
 func hasCitrixGatewayMarkers(body []byte) bool {

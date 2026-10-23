@@ -150,3 +150,30 @@ func TestCitrixADCAdminFinding_CatalogEnrichment(t *testing.T) {
 	assert.NotEmpty(t, f.Impact)
 	assert.NotEmpty(t, f.Recommendation)
 }
+
+func TestCitrixADCAdminFingerprinter_RejectsPathEcho(t *testing.T) {
+	fp := &CitrixADCAdminFingerprinter{}
+
+	// Apache-style 404 that reflects the probed path must not match.
+	notFound := `<html><head><title>404 Not Found</title></head><body>` +
+		`<p>The requested URL /menu/neo was not found on this server.</p></body></html>`
+	resp404 := newCitrixResp(notFound, nil)
+	resp404.StatusCode = 404
+	assert.False(t, fp.Match(resp404), "a 404 must not Match")
+	result, err := fp.Fingerprint(resp404, []byte(notFound))
+	require.NoError(t, err)
+	assert.Nil(t, result, "a 404 echoing the probed path must not be detected")
+
+	// Login redirect carrying the path only in a query param must not match.
+	redir := newCitrix302Resp("/login?next=/menu/neo", nil, nil)
+	result, err = fp.Fingerprint(redir, []byte(""))
+	require.NoError(t, err)
+	assert.Nil(t, result, "a login redirect with ?next=/menu/neo must not be detected")
+
+	// A non-Citrix SPA that only uses the generic neo-app mount id must not match.
+	spa := `<html><head><title>My App</title></head><body><div id="neo-app"></div></body></html>`
+	resp200 := newCitrixResp(spa, nil)
+	result, err = fp.Fingerprint(resp200, []byte(spa))
+	require.NoError(t, err)
+	assert.Nil(t, result, "a generic neo-app SPA must not be detected")
+}
