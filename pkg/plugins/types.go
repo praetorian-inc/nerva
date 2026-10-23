@@ -259,6 +259,7 @@ const (
 	ProtoPCOM              = "pcom"
 	ProtoPFCP              = "pfcp"
 	ProtoPinecone          = "pinecone"
+	ProtoPcAnywhere        = "pcanywhere"
 	ProtoPCWorx            = "pcworx"
 	ProtoPOP3              = "pop3"
 	ProtoPOP3S             = "pop3s"
@@ -709,6 +710,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoPinecone:
 		var p ServicePinecone
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoPcAnywhere:
+		var p ServicePcAnywhere
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoPCWorx:
@@ -2124,6 +2129,12 @@ type ServiceOPCUA struct {
 }
 
 func (e ServiceOPCUA) Type() string { return ProtoOPCUA }
+
+type ServicePcAnywhere struct {
+	CPEs []string `json:"cpes,omitempty"`
+}
+
+func (e ServicePcAnywhere) Type() string { return ProtoPcAnywhere }
 
 type ServicePCWorx struct {
 	PLCType         string   `json:"plc_type,omitempty"`
