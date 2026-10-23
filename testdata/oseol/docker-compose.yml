@@ -1,0 +1,74 @@
+# Official-image OS-EOL fixtures for ENG-9062 (os-eol).
+# Bind to loopback only. Old distros are linux/amd64 (vault/archive packages).
+#
+# HTTP 80  — Server header. Ubuntu Apache/x.y.z (Ubuntu) maps to an LTS;
+#            Debian Apache has no +debN tag and must not fire.
+# SSH  22  — Ubuntu OpenSSH_X.YpZ Ubuntu-* and Debian +debN are the versioned
+#            banners the detector already used.
+
+name: nerva-oseol
+
+x-http-ssh-health: &http-ssh-health
+  test:
+    [
+      "CMD-SHELL",
+      "bash -c 'echo >/dev/tcp/127.0.0.1/80 && echo >/dev/tcp/127.0.0.1/22'",
+    ]
+  interval: 10s
+  timeout: 3s
+  retries: 12
+  start_period: 20s
+
+services:
+  centos7-eol:
+    build:
+      context: .
+      dockerfile: centos7.Dockerfile
+    image: nerva-oseol/centos7:7
+    platform: linux/amd64
+    ports:
+      - "127.0.0.1:18070:80"
+      - "127.0.0.1:22070:22"
+    healthcheck: *http-ssh-health
+
+  ubuntu1604-eol:
+    build:
+      context: .
+      dockerfile: ubuntu1604.Dockerfile
+    image: nerva-oseol/ubuntu1604:16.04
+    platform: linux/amd64
+    ports:
+      - "127.0.0.1:18071:80"
+      - "127.0.0.1:22071:22"
+    healthcheck: *http-ssh-health
+
+  debian10-eol:
+    build:
+      context: .
+      dockerfile: debian10.Dockerfile
+    image: nerva-oseol/debian10:10
+    platform: linux/amd64
+    ports:
+      - "127.0.0.1:18072:80"
+      - "127.0.0.1:22072:22"
+    healthcheck: *http-ssh-health
+
+  ubuntu2404-supported:
+    build:
+      context: .
+      dockerfile: ubuntu2404.Dockerfile
+    image: nerva-oseol/ubuntu2404:24.04
+    ports:
+      - "127.0.0.1:18074:80"
+      - "127.0.0.1:22074:22"
+    healthcheck: *http-ssh-health
+
+  debian13-supported:
+    build:
+      context: .
+      dockerfile: debian13.Dockerfile
+    image: nerva-oseol/debian13:13
+    ports:
+      - "127.0.0.1:18075:80"
+      - "127.0.0.1:22075:22"
+    healthcheck: *http-ssh-health

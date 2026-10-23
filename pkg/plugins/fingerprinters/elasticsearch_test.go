@@ -387,8 +387,11 @@ func TestElasticsearchFingerprinter_Unauth200EmitsNoAuthFinding(t *testing.T) {
 	require.NotNil(t, result)
 	require.Len(t, result.SecurityFindings, 1)
 	assert.Equal(t, "elasticsearch-no-auth", result.SecurityFindings[0].ID)
-	assert.Equal(t, plugins.SeverityHigh, result.SecurityFindings[0].Severity)
 	assert.Contains(t, result.SecurityFindings[0].Evidence, "200")
+	// Severity is authoritative from the catalog via Enrich(); assert the
+	// enriched (final) value operators actually see, not the inline one.
+	result.SecurityFindings[0].Enrich()
+	assert.Equal(t, plugins.SeverityMedium, result.SecurityFindings[0].Severity)
 }
 
 func TestElasticsearchFingerprinter_Auth401DoesNotEmitNoAuthFinding(t *testing.T) {

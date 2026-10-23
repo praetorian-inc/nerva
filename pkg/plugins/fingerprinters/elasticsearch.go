@@ -101,7 +101,7 @@ func (f *ElasticsearchFingerprinter) Fingerprint(resp *http.Response, body []byt
 func elasticsearchNoAuthFinding(evidence string) plugins.SecurityFinding {
 	return plugins.SecurityFinding{
 		ID:          "elasticsearch-no-auth",
-		Severity:    plugins.SeverityHigh,
+		Severity:    plugins.SeverityMedium,
 		Description: "Elasticsearch HTTP API accessible without authentication",
 		Evidence:    evidence,
 	}
