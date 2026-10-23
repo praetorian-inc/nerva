@@ -68,6 +68,31 @@ func newPrefixConn(conn net.Conn, prefix []byte) net.Conn {
 	}
 }
 
+// tlsProbeConn carries a proxy-aware raw TCP dial so CheckTLS extra ClientHellos
+// reuse the scan's routing instead of net.Dial to RemoteAddr (which is the proxy).
+type tlsProbeConn struct {
+	net.Conn
+	dialRaw func() (net.Conn, error)
+	sni     string
+}
+
+func (c *tlsProbeConn) Unwrap() net.Conn { return c.Conn }
+
+func (c *tlsProbeConn) DialRawTCP() (net.Conn, error) { return c.dialRaw() }
+
+func (c *tlsProbeConn) ProbeSNI() string { return c.sni }
+
+func (c *Config) wrapTLSProbe(conn net.Conn, target plugins.Target) net.Conn {
+	sni := target.Host
+	return &tlsProbeConn{
+		Conn: conn,
+		sni:  sni,
+		dialRaw: func() (net.Conn, error) {
+			return c.DialTCP(target)
+		},
+	}
+}
+
 func init() {
 	setupPlugins()
 	cipherSuites := make([]uint16, 0)
@@ -245,6 +270,13 @@ func (c *Config) SimpleScanTarget(target plugins.Target) ([]*plugins.Service, er
 			log.Printf("%v %v-> peer rejected TLS handshake; skipping plaintext probes\n",
 				target.Address.String(), target.Host)
 		}
+		// Weak-only servers (ADH/NULL/EXPORT) reject Go's stdlib ClientHello,
+		// so CheckTLS never runs — probe those suites on a raw TCP dial.
+		if c.Misconfigs {
+			if svc := c.tlsAlertMisconfigService(target); svc != nil {
+				return []*plugins.Service{svc}, nil
+			}
+		}
 		return nil, nil
 	}
 	if isTLS {
@@ -370,6 +402,21 @@ func isRemoteTLSAlert(err error) bool {
 	return errors.As(err, &opErr) && opErr.Op == "remote error"
 }
 
+// tlsAlertMisconfigService probes anonymous/NULL/EXPORT suites after the
+// stdlib handshake failed with a peer TLS alert. CheckTLS requires a
+// *tls.Conn, which these listeners never produce.
+func (c *Config) tlsAlertMisconfigService(target plugins.Target) *plugins.Service {
+	findings := plugins.ProbeWeakCiphers(func() (net.Conn, error) {
+		return c.DialTCP(target)
+	}, target.Host)
+	if len(findings) == 0 {
+		return nil
+	}
+	svc := plugins.CreateServiceFrom(target, nil, true, "", plugins.TCP)
+	svc.SecurityFindings = findings
+	return svc
+}
+
 // This will attempt to close the provided Conn after running the plugin.
 func simplePluginRunner(
 	conn net.Conn,
@@ -464,7 +511,11 @@ func (c *Config) DialTLS(target plugins.Target) (net.Conn, error) {
 		if err != nil {
 			return nil, err
 		}
-		return pd.DialTLS(dialHost, port, config)
+		tlsConn, err := pd.DialTLS(dialHost, port, config)
+		if err != nil {
+			return nil, err
+		}
+		return c.wrapTLSProbe(tlsConn, target), nil
 	}
 
 	// Non-proxy path: Dial TCP first, then wrap with TLS Client
@@ -482,7 +533,7 @@ func (c *Config) DialTLS(target plugins.Target) (net.Conn, error) {
 		return nil, err
 	}
 
-	return tlsConn, nil
+	return c.wrapTLSProbe(tlsConn, target), nil
 }
 
 func resolveLocalFallback(host string, port uint16, network string, d *net.Dialer) (net.Conn, error) {

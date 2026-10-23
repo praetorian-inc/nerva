@@ -61,11 +61,60 @@ type SecurityFinding struct {
 	Evidence       string   `json:"evidence,omitempty"`
 }
 
-// EnrichFindings applies finding catalog metadata to all security findings.
+// EnrichFindings collapses duplicate findings and applies finding catalog
+// metadata to all security findings.
 func (s *Service) EnrichFindings() {
+	s.SecurityFindings = dedupeSecurityFindings(s.SecurityFindings)
 	for i := range s.SecurityFindings {
 		s.SecurityFindings[i].Enrich()
 	}
+}
+
+// perPathFindingIDs lists finding IDs that represent a distinct exposure per
+// location rather than a single per-host condition. For these, findings with
+// different evidence (which names the location) are all kept; only exact
+// duplicates collapse. Every other ID is deduplicated to one per service.
+//
+//nolint:gochecknoglobals // package-level registry by design
+var perPathFindingIDs = map[string]bool{
+	"exposed-phpinfo": true, // one per exposed phpinfo path (/phpinfo.php, /info.php, ...)
+}
+
+// dedupeSecurityFindings collapses findings that share a de-duplication key to a
+// single entry, keeping the most detailed one. The key is the finding ID, so a
+// catalog ID reported by several detectors (for example PHP's php2shell derived
+// from both the root banner and an exposed phpinfo page) appears once per
+// service, and keeping the richest Description + Evidence preserves the
+// highest-confidence detail (e.g. the phpinfo-confirmed SAPI over the behavioral
+// guess). IDs in perPathFindingIDs instead key on ID + Evidence, so distinct
+// exposure locations each survive while exact duplicates still collapse.
+// First-seen order is preserved; ties keep the first occurrence.
+func dedupeSecurityFindings(findings []SecurityFinding) []SecurityFinding {
+	if len(findings) < 2 {
+		return findings
+	}
+	index := make(map[string]int, len(findings))
+	out := make([]SecurityFinding, 0, len(findings))
+	for _, f := range findings {
+		key := f.ID
+		if perPathFindingIDs[f.ID] {
+			key = f.ID + "\x00" + f.Evidence
+		}
+		if i, seen := index[key]; seen {
+			if findingDetail(f) > findingDetail(out[i]) {
+				out[i] = f
+			}
+			continue
+		}
+		index[key] = len(out)
+		out = append(out, f)
+	}
+	return out
+}
+
+// findingDetail scores how detailed a finding is, for duplicate resolution.
+func findingDetail(f SecurityFinding) int {
+	return len(f.Description) + len(f.Evidence)
 }
 
 // Valid returns true if the severity is a recognized value.
@@ -1370,6 +1419,9 @@ type ServiceJetDirect struct {
 	Status           string   `json:"status,omitempty"`
 	FilesystemAccess bool     `json:"filesystem_access,omitempty"`
 	CPEs             []string `json:"cpes,omitempty"`
+	// Inferred is true when the service was classified from a standard raw-print
+	// port without a positive PJL response. Deep scans can set this after a probe fails.
+	Inferred bool `json:"inferred,omitempty"`
 }
 
 func (e ServiceJetDirect) Type() string { return ProtoJetDirect }

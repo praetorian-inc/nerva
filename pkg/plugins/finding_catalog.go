@@ -87,6 +87,21 @@ var findingCatalog = map[string]FindingMeta{
 		Recommendation: "Enable TLS on all HTTP endpoints and redirect plaintext requests to HTTPS.",
 		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N",
 	},
+	// ── PHP findings ─────────────────────────────────────────────────────
+	"exposed-phpinfo": {
+		Title:          "Exposed phpinfo() page",
+		Severity:       SeverityInfo,
+		Impact:         "A reachable phpinfo() page discloses the exact PHP version and SAPI, the build date, the host operating system and distribution, the full list of loaded extensions, absolute filesystem paths, and the server environment (which frequently carries configuration values and secrets passed via environment variables). This gives an attacker a precise map of the technology stack for targeting known vulnerabilities.",
+		Recommendation: "Remove the phpinfo() page from the web root or restrict access to it, and set expose_php=Off. Treat any phpinfo() output reachable without authentication as sensitive information disclosure.",
+		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N",
+	},
+	"php-vulnerable-php2shell": {
+		Title:          "PHP affected by php2shell (CVE-2026-109618/109619)",
+		Severity:       SeverityHigh,
+		Impact:         "The detected PHP version is below the php2shell fix line (patched in 8.2.35 / 8.3.36 / 8.4.27 / 8.5.12; every branch at or below 8.1 is end-of-life with no upstream fix). php2shell is a memory-corruption flaw affecting all common SAPIs — mod_php, php-fpm, php-cgi, FrankenPHP, and LiteSpeed — so it is not scoped out by server integration. Exploitability was not validated remotely, and distributions backport fixes onto frozen version strings, so this is a version-inference finding that must be adjudicated against the build date and distribution.",
+		Recommendation: "Update PHP to the fixed release for the branch (8.2.35 / 8.3.36 / 8.4.27 / 8.5.12 or later), or to the distribution-backported package that carries the fix. For end-of-life branches (<= 8.1) migrate to a supported, patched branch.",
+		CVSS:           "CVSS:4.0/AV:N/AC:H/AT:P/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N",
+	},
 	"http-cleartext-form": {
 		Title:          "Login Form Served Over Cleartext HTTP",
 		Severity:       SeverityLow,
@@ -130,6 +145,27 @@ var findingCatalog = map[string]FindingMeta{
 		Impact:         "Cryptographic keys below recommended minimum sizes (RSA 2048, EC 256) may be factored or broken with current or near-future computing resources, compromising all traffic encrypted with the certificate.",
 		Recommendation: "Generate a new key pair meeting current NIST minimums: RSA 2048+ bits or ECDSA P-256+. Reissue the certificate with the new key.",
 		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:N/A:N",
+	},
+	"tls-anon-cipher": {
+		Title:          "Anonymous TLS Cipher Suite Accepted",
+		Severity:       SeverityHigh,
+		Impact:         "Anonymous (ADH/AECDH) cipher suites provide no server authentication. A network attacker can complete the handshake and decrypt or modify traffic.",
+		Recommendation: "Disable anonymous cipher suites (ADH, AECDH). Restrict the server to authenticated suites such as ECDHE with AES-GCM or ChaCha20-Poly1305.",
+		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N",
+	},
+	"tls-null-cipher": {
+		Title:          "NULL TLS Cipher Suite Accepted",
+		Severity:       SeverityHigh,
+		Impact:         "NULL cipher suites provide no encryption. Application data, including credentials and session tokens, is transmitted in the clear inside TLS framing.",
+		Recommendation: "Disable NULL cipher suites. Require confidentiality-providing suites such as AES-GCM or ChaCha20-Poly1305.",
+		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+	},
+	"tls-export-cipher": {
+		Title:          "EXPORT TLS Cipher Suite Accepted",
+		Severity:       SeverityHigh,
+		Impact:         "EXPORT-grade cipher suites use deliberately weakened keys. Historical attacks (FREAK, Logjam) recover those keys and decrypt the session.",
+		Recommendation: "Disable all EXPORT cipher suites. Use modern key sizes and authenticated encryption.",
+		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
 	},
 
 	// ── SSH findings ─────────────────────────────────────────────────────
@@ -225,6 +261,13 @@ var findingCatalog = map[string]FindingMeta{
 		Recommendation: "Set a strong root password immediately. Restrict root login to localhost and create least-privilege accounts for application access.",
 		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:N",
 	},
+	"mssql-default-creds": {
+		Title:          "MSSQL sa Default Blank Password",
+		Severity:       SeverityMedium,
+		Impact:         "The sa account accepts a blank password, the documented mixed-mode default on SQL Server 2000/MSDE. Successful login grants administrative access to databases and stored data.",
+		Recommendation: "Set a strong sa password and enable CHECK_POLICY. Prefer Windows Authentication. Restrict network access to trusted clients.",
+		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:N",
+	},
 	"cassandra-no-auth": {
 		Title:          "Cassandra Accessible Without Authentication",
 		Severity:       SeverityMedium,
@@ -284,6 +327,20 @@ var findingCatalog = map[string]FindingMeta{
 		Impact:         "Unauthenticated Portainer access grants full container management capabilities, allowing attackers to deploy, modify, or destroy containers and access sensitive environment variables.",
 		Recommendation: "Configure Portainer with strong authentication immediately. Restrict network access to the management interface to trusted administrators.",
 		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:N",
+	},
+	"kudu-unauthenticated-console": {
+		Title:          "Azure App Service Kudu Debug Console Exposed",
+		Severity:       SeverityCritical,
+		Impact:         "An unauthenticated Kudu debug console allows arbitrary command execution on the App Service worker, including dumping environment variables, publishing credentials, and application files. This is the control plane used for Visual Studio remote debugging.",
+		Recommendation: "Require authentication on the SCM site (disable unauthenticated access), restrict SCM to private endpoints or access restrictions, and disable remote debugging when not actively troubleshooting (`az webapp config set --remote-debugging-enabled false`).",
+		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+	},
+	"kudu-unauthenticated-api": {
+		Title:          "Azure App Service Kudu Process API Exposed",
+		Severity:       SeverityHigh,
+		Impact:         "Unauthenticated GET /api/processes discloses worker process IDs and names and is the attach point for Visual Studio remote debugging against App Service.",
+		Recommendation: "Require publishing credentials or Microsoft Entra ID on the SCM site. Do not expose *.scm.azurewebsites.net to untrusted networks. Disable remote debugging when unused.",
+		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:L/A:N",
 	},
 	"jenkins-script-console": {
 		Title:          "Jenkins Script Console Exposed",
@@ -434,11 +491,11 @@ var findingCatalog = map[string]FindingMeta{
 		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N",
 	},
 	"winrm-no-auth": {
-		Title:          "WinRM Basic Authentication Enabled",
-		Severity:       SeverityLow,
-		Impact:         "Basic authentication sends credentials in base64 encoding (not encryption), making them trivially recoverable by network attackers without TLS.",
-		Recommendation: "Disable WinRM Basic authentication. Use Kerberos or CredSSP authentication over HTTPS instead.",
-		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N",
+		Title:          "WinRM Accessible Without Authentication",
+		Severity:       SeverityCritical,
+		Impact:         "An unauthenticated WinRM (WS-Management) endpoint accepts WS-Man requests without credentials, allowing an attacker to execute arbitrary commands on the Windows host and achieve full remote code execution.",
+		Recommendation: "Require authentication on the WinRM listener (Negotiate/Kerberos or CredSSP over HTTPS) and restrict it to trusted management networks. Never expose an unauthenticated WinRM listener.",
+		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
 	},
 	"smb-signing-not-required": {
 		Title:          "SMB Signing Not Required",
@@ -469,7 +526,16 @@ var findingCatalog = map[string]FindingMeta{
 		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N",
 	},
 
-	// ── Kerberos ─────────────────────────────────────────────────────────
+	// ── .NET ─────────────────────────────────────────────────────────────
+	"dotnet-remoting-http-exposed": {
+		Title:          ".NET Remoting HTTP Channel Exposed",
+		Severity:       SeverityHigh,
+		Impact:         "The .NET Remoting HTTP channel performs no authentication or type filtering at the channel layer: In the default configuration an attacker who discovers a valid remoting object URI can submit a crafted serialized payload and achieve unauthenticated remote code execution via deserialization. Exploitation first requires identifying a valid object URI.",
+		Recommendation: "Remove .NET Remoting endpoints from untrusted networks. Migrate affected services to WCF or .NET Core. If the channel must remain, restrict network access to trusted segments and require custom authorization sinks.",
+		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:H",
+	},
+
+	// ── Kerberos ────────────────────────────────────────────────────────
 	"kerberos-weak-etypes": {
 		Title:          "Kerberos Weak Encryption Types Supported",
 		Severity:       SeverityLow,
