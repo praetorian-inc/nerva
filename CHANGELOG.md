@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - WinRM fingerprinter no longer treats HTTP.sys `Microsoft-HTTPAPI` plus HTTP 2xx as unauthenticated WinRM. Generic WCF "Endpoint not found" pages (common on Azure gateways and unused HTTP.sys listeners) were emitted as `winrm-no-auth`. A 2xx is now `winrm-no-auth` only with actual WS-Man SOAP body evidence (IdentifyResponse / WS-Man namespace / WSManFault); a SOAP `Content-Type` or a `Negotiate`/`Kerberos`/`CredSSP` header alone is no longer sufficient. A 401 is auth-required WinRM only with a WS-Man `WWW-Authenticate` challenge. Also corrected the `winrm-no-auth` catalog entry, which was mislabeled "WinRM Basic Authentication Enabled" at Low severity, to Critical unauthenticated remote command execution (CVSS 9.8) so downstream enrichment no longer downgrades it.
 - Removed the misleading `--udp` "may require root" note. Nerva UDP scans use connected datagram sockets and do not need root.
+- Register the DNP3, CODESYS, and SSTP service plugins. Each had a complete implementation and an `init()` that calls `RegisterPlugin`, but none were blank-imported in `pkg/scan/plugin_list.go`, so their `init()` never ran and the plugins never loaded. Added `TestAllServicePluginsRegistered`, which fails if any `pkg/plugins/services/...` package calls `RegisterPlugin` without being imported there, to prevent this class of silent gap from recurring.
 
 ## [1.4.0] - 2026-05-08
 
