@@ -506,8 +506,10 @@ func findingIDs(findings []plugins.SecurityFinding) []string {
 	return ids
 }
 
-func hostAgentSOAP() []byte {
-	return buildSOAPResponse(
+const findingVMwareExposed = "vmware-exposed"
+
+func TestVMwarePlugin_Run_FindingID(t *testing.T) {
+	esxiSOAP := wrapSOAPHTTP(buildSOAPResponse(
 		"VMware ESXi",
 		"VMware ESXi 8.0.2 build-22380479",
 		"VMware, Inc.",
@@ -517,11 +519,8 @@ func hostAgentSOAP() []byte {
 		"8.0.2.0",
 		"vmnix-x86",
 		"embeddedEsx",
-	)
-}
-
-func virtualCenterSOAP() []byte {
-	return buildSOAPResponse(
+	))
+	vcenterSOAP := wrapSOAPHTTP(buildSOAPResponse(
 		"VMware vCenter Server",
 		"VMware vCenter Server 8.0.2 build-22385739",
 		"VMware, Inc.",
@@ -531,69 +530,63 @@ func virtualCenterSOAP() []byte {
 		"8.0.2.0",
 		"linux-x64",
 		"vpx",
-	)
-}
+	))
+	otherSOAP := wrapSOAPHTTP(buildSOAPResponse(
+		"VMware vSphere",
+		"VMware vSphere 8.0.2 build-22380479",
+		"VMware, Inc.",
+		"8.0.2",
+		"22380479",
+		"SomeOther",
+		"8.0.2.0",
+		"linux-x64",
+		"vsphere",
+	))
 
-const (
-	findingEsxiExposed    = "vmware-esxi-exposed"
-	findingVcenterExposed = "vmware-vcenter-exposed"
-)
-
-// TestVMwarePlugin_Run_FindingIDs asserts named exposure IDs on successful
-// identify (HostAgent / VirtualCenter) and their absence on identify failure
-// or when Misconfigs is false.
-func TestVMwarePlugin_Run_FindingIDs(t *testing.T) {
 	tests := []struct {
-		name          string
-		response      []byte
-		misconfigs    bool
-		wantService   bool
-		wantIDs       []string
-		wantAbsentIDs []string
+		name         string
+		response     []byte
+		misconfigs   bool
+		wantService  bool
+		wantID       bool
+		wantEvidence string
 	}{
 		{
-			name:          "hostagent_misconfigs_emits_esxi",
-			response:      wrapSOAPHTTP(hostAgentSOAP()),
-			misconfigs:    true,
-			wantService:   true,
-			wantIDs:       []string{findingEsxiExposed},
-			wantAbsentIDs: []string{findingVcenterExposed},
+			name:         "hostagent_misconfigs_emits",
+			response:     esxiSOAP,
+			misconfigs:   true,
+			wantService:  true,
+			wantID:       true,
+			wantEvidence: "VMware ESXi 8.0.2 build-22380479",
 		},
 		{
-			name:          "virtualcenter_misconfigs_emits_vcenter",
-			response:      wrapSOAPHTTP(virtualCenterSOAP()),
-			misconfigs:    true,
-			wantService:   true,
-			wantIDs:       []string{findingVcenterExposed},
-			wantAbsentIDs: []string{findingEsxiExposed},
+			name:         "virtualcenter_misconfigs_emits",
+			response:     vcenterSOAP,
+			misconfigs:   true,
+			wantService:  true,
+			wantID:       true,
+			wantEvidence: "VMware vCenter Server 8.0.2 build-22385739",
 		},
 		{
-			name:          "http_banner_non_vmware_no_named_ids",
-			response:      []byte("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<html><body>OK</body></html>"),
-			misconfigs:    true,
-			wantService:   false,
-			wantAbsentIDs: []string{findingEsxiExposed, findingVcenterExposed},
+			name:         "other_apitype_misconfigs_emits",
+			response:     otherSOAP,
+			misconfigs:   true,
+			wantService:  true,
+			wantID:       true,
+			wantEvidence: "VMware vSphere 8.0.2 build-22380479",
 		},
 		{
-			name:          "empty_response_no_named_ids",
-			response:      []byte{},
-			misconfigs:    true,
-			wantService:   false,
-			wantAbsentIDs: []string{findingEsxiExposed, findingVcenterExposed},
+			name:        "non_vmware_no_service",
+			response:    []byte("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<html><body>OK</body></html>"),
+			misconfigs:  true,
+			wantService: false,
 		},
 		{
-			name:          "hostagent_misconfigs_false_no_named_ids",
-			response:      wrapSOAPHTTP(hostAgentSOAP()),
-			misconfigs:    false,
-			wantService:   true,
-			wantAbsentIDs: []string{findingEsxiExposed, findingVcenterExposed},
-		},
-		{
-			name:          "virtualcenter_misconfigs_false_no_named_ids",
-			response:      wrapSOAPHTTP(virtualCenterSOAP()),
-			misconfigs:    false,
-			wantService:   true,
-			wantAbsentIDs: []string{findingEsxiExposed, findingVcenterExposed},
+			name:        "hostagent_misconfigs_false_no_id",
+			response:    esxiSOAP,
+			misconfigs:  false,
+			wantService: true,
+			wantID:      false,
 		},
 	}
 
@@ -613,11 +606,18 @@ func TestVMwarePlugin_Run_FindingIDs(t *testing.T) {
 			}
 			require.NotNil(t, service)
 			ids := findingIDs(service.SecurityFindings)
-			for _, id := range tt.wantIDs {
-				assert.Contains(t, ids, id)
-			}
-			for _, id := range tt.wantAbsentIDs {
-				assert.NotContains(t, ids, id)
+			if tt.wantID {
+				assert.Contains(t, ids, findingVMwareExposed)
+				var evidence string
+				for _, f := range service.SecurityFindings {
+					if f.ID == findingVMwareExposed {
+						evidence = f.Evidence
+						break
+					}
+				}
+				assert.Equal(t, tt.wantEvidence, evidence)
+			} else {
+				assert.NotContains(t, ids, findingVMwareExposed)
 			}
 		})
 	}

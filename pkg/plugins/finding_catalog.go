@@ -495,18 +495,11 @@ var findingCatalog = map[string]FindingMeta{
 		Recommendation: "Disable pcAnywhere. Replace it with a supported remote-access solution restricted to trusted networks.",
 		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N",
 	},
-	"vmware-esxi-exposed": {
-		Title:          "VMware ESXi Management Interface Exposed",
+	"vmware-exposed": {
+		Title:          "VMware Management Interface Exposed",
 		Severity:       SeverityLow,
-		Impact:         "An exposed ESXi management interface increases the attack surface for hypervisor compromise. The unauthenticated SOAP /sdk endpoint discloses product version and build, enabling targeting of known ESXi vulnerabilities.",
-		Recommendation: "Restrict ESXi management access to trusted administration networks. Do not expose the vSphere SOAP API (/sdk) to the internet.",
-		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N",
-	},
-	"vmware-vcenter-exposed": {
-		Title:          "VMware vCenter Server Management Interface Exposed",
-		Severity:       SeverityLow,
-		Impact:         "An exposed vCenter Server management interface increases the attack surface for virtual-infrastructure compromise. The unauthenticated SOAP /sdk endpoint discloses product version and build, enabling targeting of known vCenter vulnerabilities.",
-		Recommendation: "Restrict vCenter management access to trusted administration networks. Do not expose the vSphere SOAP API (/sdk) to the internet.",
+		Impact:         "An exposed VMware management interface increases the attack surface for virtual-infrastructure compromise. The unauthenticated SOAP /sdk endpoint discloses product identity, version, and build, enabling targeting of known vulnerabilities.",
+		Recommendation: "Restrict VMware management access to trusted administration networks. Do not expose the vSphere SOAP API (/sdk) to the internet.",
 		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N",
 	},
 

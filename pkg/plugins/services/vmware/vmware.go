@@ -270,22 +270,12 @@ func (p *VMwarePlugin) Run(conn net.Conn, timeout time.Duration, target plugins.
 
 	service := plugins.CreateServiceFrom(target, payload, true, result.Version, plugins.TCPTLS)
 	if target.Misconfigs {
-		switch productType {
-		case "esxi":
-			service.SecurityFindings = append(service.SecurityFindings, plugins.SecurityFinding{
-				ID:          "vmware-esxi-exposed",
-				Severity:    plugins.SeverityLow,
-				Description: "VMware ESXi hypervisor management interface exposed to the network",
-				Evidence:    result.FullName,
-			})
-		case "vcenter":
-			service.SecurityFindings = append(service.SecurityFindings, plugins.SecurityFinding{
-				ID:          "vmware-vcenter-exposed",
-				Severity:    plugins.SeverityLow,
-				Description: "VMware vCenter Server management interface exposed to the network",
-				Evidence:    result.FullName,
-			})
-		}
+		service.SecurityFindings = append(service.SecurityFindings, plugins.SecurityFinding{
+			ID:          "vmware-exposed",
+			Severity:    plugins.SeverityLow,
+			Description: "VMware management interface exposed to the network",
+			Evidence:    result.FullName,
+		})
 		service.SecurityFindings = append(service.SecurityFindings, plugins.CheckTLS(conn)...)
 	}
 	return service, nil
