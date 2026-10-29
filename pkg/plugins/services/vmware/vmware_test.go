@@ -608,13 +608,7 @@ func TestVMwarePlugin_Run_FindingIDs(t *testing.T) {
 			service, err := plugin.Run(&mockConn{readData: tt.response}, time.Second, target)
 			require.NoError(t, err)
 			if !tt.wantService {
-				if service == nil {
-					return
-				}
-				ids := findingIDs(service.SecurityFindings)
-				for _, id := range tt.wantAbsentIDs {
-					assert.NotContains(t, ids, id)
-				}
+				require.Nil(t, service)
 				return
 			}
 			require.NotNil(t, service)
