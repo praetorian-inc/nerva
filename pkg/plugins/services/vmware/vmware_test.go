@@ -15,10 +15,14 @@
 package vmware
 
 import (
+	"net"
+	"net/netip"
 	"testing"
+	"time"
 
 	"github.com/praetorian-inc/nerva/pkg/plugins"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // buildSOAPResponse constructs a full SOAP envelope wrapping the about block.
@@ -261,9 +265,9 @@ func TestParseVMwareResponse(t *testing.T) {
 // correct product type identifiers.
 func TestClassifyVMwareProduct(t *testing.T) {
 	tests := []struct {
-		name        string
-		apiType     string
-		expected    string
+		name     string
+		apiType  string
+		expected string
 	}{
 		{
 			name:     "host_agent_is_esxi",
@@ -462,4 +466,159 @@ func TestPluginMetadata(t *testing.T) {
 
 	assert.True(t, plugin.PortPriority(443), "Port 443 should be prioritized")
 	assert.False(t, plugin.PortPriority(80), "Port 80 should not be prioritized")
+}
+
+// mockConn implements net.Conn for a single Recv (4096-byte Read).
+type mockConn struct {
+	readData  []byte
+	readIndex int
+}
+
+func (m *mockConn) Read(b []byte) (n int, err error) {
+	if m.readIndex >= len(m.readData) {
+		return 0, nil
+	}
+	n = copy(b, m.readData[m.readIndex:])
+	m.readIndex += n
+	return n, nil
+}
+
+func (m *mockConn) Write(b []byte) (n int, err error)  { return len(b), nil }
+func (m *mockConn) Close() error                       { return nil }
+func (m *mockConn) LocalAddr() net.Addr                { return nil }
+func (m *mockConn) RemoteAddr() net.Addr               { return nil }
+func (m *mockConn) SetDeadline(t time.Time) error      { return nil }
+func (m *mockConn) SetReadDeadline(t time.Time) error  { return nil }
+func (m *mockConn) SetWriteDeadline(t time.Time) error { return nil }
+
+func wrapSOAPHTTP(soap []byte) []byte {
+	headers := []byte("HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\n\r\n")
+	out := make([]byte, 0, len(headers)+len(soap))
+	out = append(out, headers...)
+	return append(out, soap...)
+}
+
+func findingIDs(findings []plugins.SecurityFinding) []string {
+	ids := make([]string, 0, len(findings))
+	for _, f := range findings {
+		ids = append(ids, f.ID)
+	}
+	return ids
+}
+
+const findingVMwareExposed = "vmware-exposed"
+
+func TestVMwarePlugin_Run_FindingID(t *testing.T) {
+	esxiSOAP := wrapSOAPHTTP(buildSOAPResponse(
+		"VMware ESXi",
+		"VMware ESXi 8.0.2 build-22380479",
+		"VMware, Inc.",
+		"8.0.2",
+		"22380479",
+		"HostAgent",
+		"8.0.2.0",
+		"vmnix-x86",
+		"embeddedEsx",
+	))
+	vcenterSOAP := wrapSOAPHTTP(buildSOAPResponse(
+		"VMware vCenter Server",
+		"VMware vCenter Server 8.0.2 build-22385739",
+		"VMware, Inc.",
+		"8.0.2",
+		"22385739",
+		"VirtualCenter",
+		"8.0.2.0",
+		"linux-x64",
+		"vpx",
+	))
+	otherSOAP := wrapSOAPHTTP(buildSOAPResponse(
+		"VMware vSphere",
+		"VMware vSphere 8.0.2 build-22380479",
+		"VMware, Inc.",
+		"8.0.2",
+		"22380479",
+		"SomeOther",
+		"8.0.2.0",
+		"linux-x64",
+		"vsphere",
+	))
+
+	tests := []struct {
+		name         string
+		response     []byte
+		misconfigs   bool
+		wantService  bool
+		wantID       bool
+		wantEvidence string
+	}{
+		{
+			name:         "hostagent_misconfigs_emits",
+			response:     esxiSOAP,
+			misconfigs:   true,
+			wantService:  true,
+			wantID:       true,
+			wantEvidence: "VMware ESXi 8.0.2 build-22380479",
+		},
+		{
+			name:         "virtualcenter_misconfigs_emits",
+			response:     vcenterSOAP,
+			misconfigs:   true,
+			wantService:  true,
+			wantID:       true,
+			wantEvidence: "VMware vCenter Server 8.0.2 build-22385739",
+		},
+		{
+			name:         "other_apitype_misconfigs_emits",
+			response:     otherSOAP,
+			misconfigs:   true,
+			wantService:  true,
+			wantID:       true,
+			wantEvidence: "VMware vSphere 8.0.2 build-22380479",
+		},
+		{
+			name:        "non_vmware_no_service",
+			response:    []byte("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<html><body>OK</body></html>"),
+			misconfigs:  true,
+			wantService: false,
+		},
+		{
+			name:        "hostagent_misconfigs_false_no_id",
+			response:    esxiSOAP,
+			misconfigs:  false,
+			wantService: true,
+			wantID:      false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plugin := &VMwarePlugin{}
+			target := plugins.Target{
+				Host:       "192.0.2.1",
+				Address:    netip.MustParseAddrPort("192.0.2.1:443"),
+				Misconfigs: tt.misconfigs,
+			}
+			service, err := plugin.Run(&mockConn{readData: tt.response}, time.Second, target)
+			require.NoError(t, err)
+			if !tt.wantService {
+				require.Nil(t, service)
+				return
+			}
+			require.NotNil(t, service)
+			ids := findingIDs(service.SecurityFindings)
+			if tt.wantID {
+				assert.Contains(t, ids, findingVMwareExposed)
+				var evidence string
+				for _, f := range service.SecurityFindings {
+					if f.ID == findingVMwareExposed {
+						evidence = f.Evidence
+						break
+					}
+				}
+				assert.Equal(t, tt.wantEvidence, evidence)
+			} else {
+				assert.NotContains(t, ids, findingVMwareExposed)
+			}
+		})
+	}
 }

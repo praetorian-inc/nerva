@@ -495,6 +495,14 @@ var findingCatalog = map[string]FindingMeta{
 		Recommendation: "Disable pcAnywhere. Replace it with a supported remote-access solution restricted to trusted networks.",
 		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N",
 	},
+	"vmware-exposed": {
+		Title:          "VMware Management Interface Exposed",
+		Severity:       SeverityLow,
+		Impact:         "An exposed VMware management interface increases the attack surface for virtual-infrastructure compromise. The unauthenticated SOAP /sdk endpoint discloses product identity, version, and build, enabling targeting of known vulnerabilities.",
+		Recommendation: "Restrict VMware management access to trusted administration networks. Do not expose the vSphere SOAP API (/sdk) to the internet.",
+		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N",
+	},
+
 	"pptp-insecure": {
 		Title:          "PPTP VPN Service",
 		Severity:       SeverityLow,
