@@ -15,10 +15,14 @@
 package vmware
 
 import (
+	"net"
+	"net/netip"
 	"testing"
+	"time"
 
 	"github.com/praetorian-inc/nerva/pkg/plugins"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // buildSOAPResponse constructs a full SOAP envelope wrapping the about block.
@@ -261,9 +265,9 @@ func TestParseVMwareResponse(t *testing.T) {
 // correct product type identifiers.
 func TestClassifyVMwareProduct(t *testing.T) {
 	tests := []struct {
-		name        string
-		apiType     string
-		expected    string
+		name     string
+		apiType  string
+		expected string
 	}{
 		{
 			name:     "host_agent_is_esxi",
@@ -462,4 +466,165 @@ func TestPluginMetadata(t *testing.T) {
 
 	assert.True(t, plugin.PortPriority(443), "Port 443 should be prioritized")
 	assert.False(t, plugin.PortPriority(80), "Port 80 should not be prioritized")
+}
+
+// mockConn implements net.Conn for a single Recv (4096-byte Read).
+type mockConn struct {
+	readData  []byte
+	readIndex int
+}
+
+func (m *mockConn) Read(b []byte) (n int, err error) {
+	if m.readIndex >= len(m.readData) {
+		return 0, nil
+	}
+	n = copy(b, m.readData[m.readIndex:])
+	m.readIndex += n
+	return n, nil
+}
+
+func (m *mockConn) Write(b []byte) (n int, err error)  { return len(b), nil }
+func (m *mockConn) Close() error                       { return nil }
+func (m *mockConn) LocalAddr() net.Addr                { return nil }
+func (m *mockConn) RemoteAddr() net.Addr               { return nil }
+func (m *mockConn) SetDeadline(t time.Time) error      { return nil }
+func (m *mockConn) SetReadDeadline(t time.Time) error  { return nil }
+func (m *mockConn) SetWriteDeadline(t time.Time) error { return nil }
+
+func wrapSOAPHTTP(soap []byte) []byte {
+	headers := []byte("HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\n\r\n")
+	out := make([]byte, 0, len(headers)+len(soap))
+	out = append(out, headers...)
+	return append(out, soap...)
+}
+
+func findingIDs(findings []plugins.SecurityFinding) []string {
+	ids := make([]string, 0, len(findings))
+	for _, f := range findings {
+		ids = append(ids, f.ID)
+	}
+	return ids
+}
+
+func hostAgentSOAP() []byte {
+	return buildSOAPResponse(
+		"VMware ESXi",
+		"VMware ESXi 8.0.2 build-22380479",
+		"VMware, Inc.",
+		"8.0.2",
+		"22380479",
+		"HostAgent",
+		"8.0.2.0",
+		"vmnix-x86",
+		"embeddedEsx",
+	)
+}
+
+func virtualCenterSOAP() []byte {
+	return buildSOAPResponse(
+		"VMware vCenter Server",
+		"VMware vCenter Server 8.0.2 build-22385739",
+		"VMware, Inc.",
+		"8.0.2",
+		"22385739",
+		"VirtualCenter",
+		"8.0.2.0",
+		"linux-x64",
+		"vpx",
+	)
+}
+
+const (
+	findingEsxiExposed    = "vmware-esxi-exposed"
+	findingVcenterExposed = "vmware-vcenter-exposed"
+)
+
+// TestVMwarePlugin_Run_FindingIDs asserts named exposure IDs on successful
+// identify (HostAgent / VirtualCenter) and their absence on identify failure
+// or when Misconfigs is false.
+func TestVMwarePlugin_Run_FindingIDs(t *testing.T) {
+	tests := []struct {
+		name          string
+		response      []byte
+		misconfigs    bool
+		wantService   bool
+		wantIDs       []string
+		wantAbsentIDs []string
+	}{
+		{
+			name:          "hostagent_misconfigs_emits_esxi",
+			response:      wrapSOAPHTTP(hostAgentSOAP()),
+			misconfigs:    true,
+			wantService:   true,
+			wantIDs:       []string{findingEsxiExposed},
+			wantAbsentIDs: []string{findingVcenterExposed},
+		},
+		{
+			name:          "virtualcenter_misconfigs_emits_vcenter",
+			response:      wrapSOAPHTTP(virtualCenterSOAP()),
+			misconfigs:    true,
+			wantService:   true,
+			wantIDs:       []string{findingVcenterExposed},
+			wantAbsentIDs: []string{findingEsxiExposed},
+		},
+		{
+			name:          "http_banner_non_vmware_no_named_ids",
+			response:      []byte("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<html><body>OK</body></html>"),
+			misconfigs:    true,
+			wantService:   false,
+			wantAbsentIDs: []string{findingEsxiExposed, findingVcenterExposed},
+		},
+		{
+			name:          "empty_response_no_named_ids",
+			response:      []byte{},
+			misconfigs:    true,
+			wantService:   false,
+			wantAbsentIDs: []string{findingEsxiExposed, findingVcenterExposed},
+		},
+		{
+			name:          "hostagent_misconfigs_false_no_named_ids",
+			response:      wrapSOAPHTTP(hostAgentSOAP()),
+			misconfigs:    false,
+			wantService:   true,
+			wantAbsentIDs: []string{findingEsxiExposed, findingVcenterExposed},
+		},
+		{
+			name:          "virtualcenter_misconfigs_false_no_named_ids",
+			response:      wrapSOAPHTTP(virtualCenterSOAP()),
+			misconfigs:    false,
+			wantService:   true,
+			wantAbsentIDs: []string{findingEsxiExposed, findingVcenterExposed},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plugin := &VMwarePlugin{}
+			target := plugins.Target{
+				Host:       "192.0.2.1",
+				Address:    netip.MustParseAddrPort("192.0.2.1:443"),
+				Misconfigs: tt.misconfigs,
+			}
+			service, err := plugin.Run(&mockConn{readData: tt.response}, time.Second, target)
+			require.NoError(t, err)
+			if !tt.wantService {
+				if service == nil {
+					return
+				}
+				ids := findingIDs(service.SecurityFindings)
+				for _, id := range tt.wantAbsentIDs {
+					assert.NotContains(t, ids, id)
+				}
+				return
+			}
+			require.NotNil(t, service)
+			ids := findingIDs(service.SecurityFindings)
+			for _, id := range tt.wantIDs {
+				assert.Contains(t, ids, id)
+			}
+			for _, id := range tt.wantAbsentIDs {
+				assert.NotContains(t, ids, id)
+			}
+		})
+	}
 }
