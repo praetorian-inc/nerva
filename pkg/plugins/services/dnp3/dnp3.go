@@ -40,6 +40,7 @@ const (
 // DNP3 Function codes (lower 4 bits of control byte)
 const (
 	FuncRequestLinkStatus = 0x09
+	FuncCodeMask          = 0x0F
 )
 
 type DNP3Plugin struct{}
@@ -104,6 +105,12 @@ func (p *DNP3Plugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 		return nil, nil
 	}
 
+	// A conforming device always sends a correct header CRC, so verifying it
+	// rejects unrelated services that merely happen to begin with 0x05 0x64.
+	if !validHeaderCRC(response) {
+		return nil, nil
+	}
+
 	// Valid DNP3 frame detected - parse device role
 	deviceRole := parseDeviceRole(response)
 
@@ -120,7 +127,7 @@ func (p *DNP3Plugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 		SourceAddress:      srcAddr,
 		DestinationAddress: destAddr,
 		DeviceRole:         deviceRole,
-		FunctionCode:       FuncRequestLinkStatus,
+		FunctionCode:       response[3] & FuncCodeMask,
 		CPEs:               []string{}, // DNP3 is a protocol, not a specific product
 	}
 
@@ -171,19 +178,33 @@ func buildRequestLinkStatusProbe() ([]byte, error) {
 
 	// Build frame without CRC
 	frame := []byte{
-		DNP3StartByte1,                  // Start byte 1: 0x05
-		DNP3StartByte2,                  // Start byte 2: 0x64
-		0x05,                            // Length: 5 bytes follow
-		CtrlPRM | FuncRequestLinkStatus, // Control: PRM=1, Func=0x09 (Request Link Status)
-		0x00, 0x00,                      // Destination: 0 (broadcast)
+		DNP3StartByte1, // Start byte 1: 0x05
+		DNP3StartByte2, // Start byte 2: 0x64
+		0x05,           // Length: 5 bytes follow
+		// Control: DIR=1 (we act as the master), PRM=1, Func=0x09 (Request Link Status).
+		// DIR must be set; with DIR=0 the frame claims to originate from an
+		// outstation and conforming devices do not answer it.
+		CtrlDIR | CtrlPRM | FuncRequestLinkStatus,
+		0x00, 0x00, // Destination address: 0
 		byte(srcAddr & 0xFF), byte(srcAddr >> 8), // Source: random address (little-endian)
 	}
 
-	// Calculate and append CRC-16
-	crc := calculateDNP3CRC(frame[1:]) // CRC calculated from byte 1 onwards (excluding first start byte)
+	// Calculate and append CRC-16 over the complete 8-byte header, both start
+	// bytes included, as required by IEEE 1815.
+	crc := calculateDNP3CRC(frame)
 	frame = append(frame, byte(crc&0xFF), byte(crc>>8))
 
 	return frame, nil
+}
+
+// validHeaderCRC reports whether the trailing CRC of a DNP3 link-layer header
+// matches the CRC computed over its first eight bytes.
+func validHeaderCRC(frame []byte) bool {
+	if len(frame) < DNP3MinLength {
+		return false
+	}
+	got := uint16(frame[8]) | (uint16(frame[9]) << 8)
+	return got == calculateDNP3CRC(frame[0:8])
 }
 
 // DNP3 CRC-16 lookup table (polynomial 0x3D65, reversed 0xA6BC)
