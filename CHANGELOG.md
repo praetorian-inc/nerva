@@ -9,11 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Elasticsearch unauthenticated HTTP access finding `elasticsearch-no-auth` on GET / 200 identity JSON (ENG-9055).
+- OS end-of-life detection beyond RDP: emit `os-eol` when banner/CPE metadata identifies vendor-unsupported Ubuntu, Debian, RHEL, or CentOS (ENG-9062). Windows via RDP remains `rdp-eol-os`. Ubuntu HTTP `Server: Apache/x.y.z (Ubuntu)` maps to the shipping LTS the same way OpenSSH banners already do.
+- Fingerprint internet-exposed Verifone VHQ and Ingenico Estate Manager / TMS management UIs; emit `pos-poi-management-exposed` (ENG-9060). Identity is live-captured HTML titles only (`VHQ`, `Ingenico Estate Management`, `TMS Web Access- Login`).
 - CLI-surface drift gate: `make cli-docs` regenerates `docs/CLI.md` and `docs/cli-surface.json` from the live cobra tree; CI fails when documentation drifts (ENG-8010).
+- Citrix ADC management-plane HTTP fingerprinters: `/menu/neo` GUI and `/nitro/v1/config` NITRO API, distinct from Gateway/AAA (`citrix-netscaler`). Emits `citrix-adc-admin-panel-exposed` (Medium) when the admin plane is reachable.
+
 - Azure App Service Kudu (SCM) HTTP fingerprinter: detects `/DebugConsole` via Basic `realm="site"`, App Service AAD SSO, or unauthenticated Kudu console markup. Emits `kudu-unauthenticated-console` (Critical) and `kudu-unauthenticated-api` for unauthenticated `/api/processes` (the attach path for Visual Studio remote debugging).
 
 ### Changed
 
+- Elasticsearch unauthenticated HTTP exposure now reports as `elasticsearch-no-auth` (Medium) instead of the generic `elasticsearch-anon-access` (High). Downstream consumers matching the old finding ID or severity should update.
 - README flag table removed; [docs/CLI.md](docs/CLI.md) is the single flag reference (ENG-8010).
 - cobra 1.5.0 → 1.10.2 and pflag 1.0.5 → 1.0.10, riding in with the capability-sdk pin (ENG-8010).
 - Raise `docker-unauth-api` to Critical (CVSS 9.8). An unauthenticated Docker API is host compromise via privileged containers; catalog previously overwrote plugin High to Medium.

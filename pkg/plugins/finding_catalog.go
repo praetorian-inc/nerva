@@ -87,12 +87,34 @@ var findingCatalog = map[string]FindingMeta{
 		Recommendation: "Enable TLS on all HTTP endpoints and redirect plaintext requests to HTTPS.",
 		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N",
 	},
+	// ── PHP findings ─────────────────────────────────────────────────────
+	"exposed-phpinfo": {
+		Title:          "Exposed phpinfo() page",
+		Severity:       SeverityInfo,
+		Impact:         "A reachable phpinfo() page discloses the exact PHP version and SAPI, the build date, the host operating system and distribution, the full list of loaded extensions, absolute filesystem paths, and the server environment (which frequently carries configuration values and secrets passed via environment variables). This gives an attacker a precise map of the technology stack for targeting known vulnerabilities.",
+		Recommendation: "Remove the phpinfo() page from the web root or restrict access to it, and set expose_php=Off. Treat any phpinfo() output reachable without authentication as sensitive information disclosure.",
+		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N",
+	},
+	"php-vulnerable-php2shell": {
+		Title:          "PHP affected by php2shell (CVE-2026-109618/109619)",
+		Severity:       SeverityHigh,
+		Impact:         "The detected PHP version is below the php2shell fix line (patched in 8.2.35 / 8.3.36 / 8.4.27 / 8.5.12; every branch at or below 8.1 is end-of-life with no upstream fix). php2shell is a memory-corruption flaw affecting all common SAPIs — mod_php, php-fpm, php-cgi, FrankenPHP, and LiteSpeed — so it is not scoped out by server integration. Exploitability was not validated remotely, and distributions backport fixes onto frozen version strings, so this is a version-inference finding that must be adjudicated against the build date and distribution.",
+		Recommendation: "Update PHP to the fixed release for the branch (8.2.35 / 8.3.36 / 8.4.27 / 8.5.12 or later), or to the distribution-backported package that carries the fix. For end-of-life branches (<= 8.1) migrate to a supported, patched branch.",
+		CVSS:           "CVSS:4.0/AV:N/AC:H/AT:P/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N",
+	},
 	"http-cleartext-form": {
 		Title:          "Login Form Served Over Cleartext HTTP",
 		Severity:       SeverityLow,
 		Impact:         "Credentials submitted through forms served over unencrypted HTTP are transmitted in plaintext, enabling network-level credential interception.",
 		Recommendation: "Serve all pages containing login or sensitive forms exclusively over HTTPS with HSTS.",
 		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:U/C:H/I:N/A:N",
+	},
+	"pos-poi-management-exposed": {
+		Title:          "POS/POI Management Interface Exposed",
+		Severity:       SeverityMedium,
+		Impact:         "An internet-exposed Verifone or Ingenico payment-terminal management interface lets attackers fingerprint POS/POI devices, attempt default credentials, and target the payment environment from outside the CDE.",
+		Recommendation: "Remove POS/POI management interfaces from the public internet. Restrict administration to a management network and require strong authentication.",
+		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:N",
 	},
 
 	// ── TLS findings ─────────────────────────────────────────────────────
@@ -246,6 +268,13 @@ var findingCatalog = map[string]FindingMeta{
 		Recommendation: "Set a strong root password immediately. Restrict root login to localhost and create least-privilege accounts for application access.",
 		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:N",
 	},
+	"oracle-no-auth": {
+		Title:          "Oracle Database Accessible Without Authentication",
+		Severity:       SeverityMedium,
+		Impact:         "Unauthenticated access to Oracle Database allows attackers to read, modify, or delete stored data, including potentially sensitive schemas.",
+		Recommendation: "Require database authentication and disable empty-credential logins. Restrict the TNS listener to trusted network interfaces.",
+		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:N",
+	},
 	"mssql-default-creds": {
 		Title:          "MSSQL sa Default Blank Password",
 		Severity:       SeverityMedium,
@@ -272,6 +301,13 @@ var findingCatalog = map[string]FindingMeta{
 		Severity:       SeverityMedium,
 		Impact:         "Unauthenticated access to InfluxDB allows attackers to read or modify time-series data, potentially exposing metrics, monitoring data, or operational telemetry.",
 		Recommendation: "Enable InfluxDB authentication and create users with appropriate privileges. Restrict network access to trusted clients.",
+		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:N",
+	},
+	"elasticsearch-no-auth": {
+		Title:          "Elasticsearch Accessible Without Authentication",
+		Severity:       SeverityMedium,
+		Impact:         "Unauthenticated access to the Elasticsearch HTTP API allows attackers to read cluster identity and, depending on anonymous privileges, search or modify indices that may store sensitive data.",
+		Recommendation: "Enable Elasticsearch security (xpack.security.enabled) and require authentication for HTTP clients. Restrict network access to trusted clients.",
 		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:N",
 	},
 
@@ -410,6 +446,13 @@ var findingCatalog = map[string]FindingMeta{
 		Recommendation: "Migrate the workload to a supported operating system version. If immediate migration is not possible, isolate the host on a restricted network segment and apply compensating controls.",
 		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N",
 	},
+	"os-eol": {
+		Title:          "Vendor-Unsupported Operating System",
+		Severity:       SeverityLow,
+		Impact:         "The host is running an operating system that no longer receives vendor security patches, leaving all known and future vulnerabilities permanently unpatched.",
+		Recommendation: "Migrate the workload to a vendor-supported operating system version. If immediate migration is not possible, isolate the host on a restricted network segment and apply compensating controls.",
+		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N",
+	},
 	"rdp-cleartext-credentials": {
 		Title:          "RDP Standard Security Allows Credential Interception",
 		Severity:       SeverityLow,
@@ -445,6 +488,21 @@ var findingCatalog = map[string]FindingMeta{
 		Recommendation: "Restrict AnyDesk access to trusted networks. Configure strong passwords and enable two-factor authentication.",
 		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N",
 	},
+	"pcanywhere-exposed": {
+		Title:          "pcAnywhere Service Exposed",
+		Severity:       SeverityLow,
+		Impact:         "An exposed pcAnywhere listener increases the attack surface for unauthorized remote access. The product is end-of-life and has known authentication weaknesses.",
+		Recommendation: "Disable pcAnywhere. Replace it with a supported remote-access solution restricted to trusted networks.",
+		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N",
+	},
+	"vmware-exposed": {
+		Title:          "VMware Management Interface Exposed",
+		Severity:       SeverityLow,
+		Impact:         "An exposed VMware management interface increases the attack surface for virtual-infrastructure compromise. The unauthenticated SOAP /sdk endpoint discloses product identity, version, and build, enabling targeting of known vulnerabilities.",
+		Recommendation: "Restrict VMware management access to trusted administration networks. Do not expose the vSphere SOAP API (/sdk) to the internet.",
+		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N",
+	},
+
 	"pptp-insecure": {
 		Title:          "PPTP VPN Service",
 		Severity:       SeverityLow,
@@ -458,6 +516,13 @@ var findingCatalog = map[string]FindingMeta{
 		Impact:         "An unauthenticated OpenVPN management interface allows attackers to disconnect clients, modify configurations, and potentially extract certificates or keys.",
 		Recommendation: "Restrict the OpenVPN management interface to localhost. If remote management is required, enable password authentication and use SSH tunneling.",
 		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:N",
+	},
+	"citrix-adc-admin-panel-exposed": {
+		Title:          "Citrix ADC Management Interface Exposed",
+		Severity:       SeverityMedium,
+		Impact:         "The Citrix ADC / NetScaler management plane (NITRO API and/or configuration GUI) is reachable on this service, distinct from the Gateway or AAA user portal. This expands the attack surface for credential attacks and management-plane CVEs; it is not by itself unauthenticated compromise.",
+		Recommendation: "Bind the management GUI and NITRO API to the NSIP or a dedicated management SNIP. Do not expose /nitro, /menu/neo, or /ns_gui on internet-facing virtual servers. Restrict management access to trusted administration networks.",
+		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N",
 	},
 
 	// ── Windows protocols ────────────────────────────────────────────────

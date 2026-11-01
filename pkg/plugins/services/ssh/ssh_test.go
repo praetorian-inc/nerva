@@ -304,6 +304,35 @@ func TestMakeSSHService_AppliesBannerFingerprinting(t *testing.T) {
 	}
 }
 
+func TestMakeSSHService_OSEol(t *testing.T) {
+	eolBanner := "SSH-2.0-OpenSSH_7.2p2 Ubuntu-4ubuntu2.10"
+	supportedBanner := "SSH-2.0-OpenSSH_9.6p1 Ubuntu-3ubuntu13"
+
+	eol := makeSSHService(plugins.Target{Host: "eol.example", Misconfigs: true}, plugins.ServiceSSH{Banner: eolBanner}, nil, false)
+	if findSSHFinding(eol.SecurityFindings, "os-eol") == nil {
+		t.Fatalf("expected os-eol for %q, got %v", eolBanner, eol.SecurityFindings)
+	}
+
+	supported := makeSSHService(plugins.Target{Host: "ok.example", Misconfigs: true}, plugins.ServiceSSH{Banner: supportedBanner}, nil, false)
+	if findSSHFinding(supported.SecurityFindings, "os-eol") != nil {
+		t.Fatalf("did not expect os-eol for supported Ubuntu banner, got %v", supported.SecurityFindings)
+	}
+
+	noFlag := makeSSHService(plugins.Target{Host: "eol.example"}, plugins.ServiceSSH{Banner: eolBanner}, nil, false)
+	if findSSHFinding(noFlag.SecurityFindings, "os-eol") != nil {
+		t.Fatalf("did not expect os-eol when Misconfigs is false, got %v", noFlag.SecurityFindings)
+	}
+}
+
+func findSSHFinding(findings []plugins.SecurityFinding, id string) *plugins.SecurityFinding {
+	for i := range findings {
+		if findings[i].ID == id {
+			return &findings[i]
+		}
+	}
+	return nil
+}
+
 func TestSSH(t *testing.T) {
 	testcases := []test.Testcase{
 		{
