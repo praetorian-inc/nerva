@@ -1,0 +1,78 @@
+[
+  {
+    "name": "splashtop-ready",
+    "product": "splashtop",
+    "port": 6783,
+    "responseHex": "5352533a526561647900"
+  },
+  {
+    "name": "dameware-greeting",
+    "product": "dameware",
+    "port": 6129,
+    "responseHex": "30110000000000000000000000000040000000000000000000000000010000000000000000000000"
+  },
+  {
+    "name": "realvnc-rfb4-personal",
+    "product": "realvnc",
+    "port": 5900,
+    "responseHex": "524642203030342e3030300a"
+  },
+  {
+    "name": "realvnc-rfb4-enterprise",
+    "product": "realvnc",
+    "port": 5900,
+    "responseHex": "524642203030342e3030310a"
+  },
+  {
+    "name": "realvnc-rfb5",
+    "product": "realvnc",
+    "port": 5900,
+    "responseHex": "524642203030352e3030300a"
+  },
+  {
+    "name": "nomachine-nx",
+    "product": "nomachine",
+    "port": 4000,
+    "probeHex": "4e5853482d352e362e370a",
+    "responseHex": "4e58442d352e362e370a"
+  },
+  {
+    "name": "radmin2",
+    "product": "radmin",
+    "port": 4899,
+    "probeHex": "01000000010000000808",
+    "responseHex": "0100000025090001100801000908"
+  },
+  {
+    "name": "radmin3",
+    "product": "radmin",
+    "port": 4899,
+    "probeHex": "01000000010000000808",
+    "responseHex": "010000002559000212080200590a"
+  },
+  {
+    "name": "radmin-source-blocked",
+    "product": "radmin",
+    "port": 4899,
+    "probeHex": "01000000010000000808",
+    "responseHex": "01000000090000104f2f100000040000001c"
+  },
+  {
+    "name": "netsupport-remote-control",
+    "product": "netsupport",
+    "port": 5405,
+    "responseHex": "0d0002006c61620004000100"
+  },
+  {
+    "name": "realvnc-license-failure",
+    "product": "realvnc",
+    "port": 5900,
+    "responseHex": "524642203030332e3030380a000000000000006a536572766572206c6963656e7365206b6579206973206d697373696e672c20696e76616c6964206f722068617320657870697265642e0a566973697420687474703a2f2f7777772e7265616c766e632e636f6d20746f2070757263686173652061206c6963656e63652e"
+  },
+  {
+    "name": "realvnc-trial-failure",
+    "product": "realvnc",
+    "port": 5900,
+    "responseHex": "524642203030332e3030380a000000000000004d547269616c20706572696f642068617320657870697265642e0a566973697420687474703a2f2f7777772e7265616c766e632e636f6d20746f2070757263686173652061206c6963656e73652e"
+  }
+]

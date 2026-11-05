@@ -404,7 +404,7 @@ Technology detection for web services, organized by category:
 | ChromaDB | HTTP | 8000 |
 | Pinecone | HTTP | 443 |
 
-### Remote Access (6)
+### Remote Access (14)
 
 | Protocol | Transport | Default Ports |
 |----------|-----------|---------------|
@@ -414,6 +414,18 @@ Technology detection for web services, organized by category:
 | VNC | TCP | 5900 |
 | AnyDesk | TCP | 7070 |
 | TeamViewer | TCP | 5938 |
+| Splashtop (shared RAT detector) | TCP | 6783–6785 |
+| Dameware Mini Remote Control (shared RAT detector) | TCP | 6129 |
+| NetSupport remote-control family (shared RAT detector) | TCP | 5405 |
+| RealVNC proprietary RFB / branded license failures (shared RAT detector) | TCP | 5900 |
+| NoMachine NX (shared RAT detector) | TCP | 4000 |
+| Radmin (shared RAT detector) | TCP | 4899 |
+| RustDesk-compatible LAN discovery (shared RAT detector) | UDP | 21119 |
+| LogMeIn / LogMeIn Web Gateway | HTTP/HTTPS | HTTP service port |
+
+The additional remote-access detectors in `pkg/plugins/services/rat/` reuse
+Nerva's shared protocol and HTTP/HTTPS engines. They identify services, not
+installation or unattended-access settings. Port numbers alone are not detections.
 
 ### Web & API (2)
 

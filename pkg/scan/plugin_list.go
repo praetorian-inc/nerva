@@ -138,6 +138,7 @@ import (
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/pulsar"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/qdrant"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/quic"
+	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/rat"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/rdp"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/rdpeudp"
 	_ "github.com/praetorian-inc/nerva/pkg/plugins/services/redis"
