@@ -1,5 +1,5 @@
 # Dockerfile.devcontainer - Development container with SCTP support
-FROM golang:1.25-bookworm
+FROM golang:1.27.0-bookworm
 
 # Install SCTP development libraries and tools
 RUN apt-get update && apt-get install -y \

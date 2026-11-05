@@ -18,7 +18,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"math/big"
+	"io"
 	"net"
 	"regexp"
 	"strconv"
@@ -121,6 +121,12 @@ func checkForOracle(host string, port string) []byte {
 		"(DESCRIPTION=(CONNECT_DATA=(SERVICE_NAME=non-abc-existent-ser-vice-123-a-a-bc-asdf)(CID=(PROGRAM=sqlplus)" +
 			"(HOST=__jdbc__)(USER=)))(ADDRESS=(PROTOCOL=tcp)(HOST=" + host + ")(PORT=" + port + ")))",
 	)
+	return buildTNSConnect(connectData)
+}
+
+// buildTNSConnect wraps the given CONNECT_DATA payload in the fixed TNS
+// Connect-packet header/body shared by every probe in this plugin.
+func buildTNSConnect(connectData []byte) []byte {
 	tnsHeaderPktLen := [2]byte{}
 	binary.BigEndian.PutUint16(tnsHeaderPktLen[:], uint16(len(connectData)+58))
 	tnsHeaderPktCkSm := [2]byte{0x00, 0x00} // This is left empty
@@ -215,16 +221,129 @@ func isOracleDBRunning(response []byte) bool {
 	return bytes.Index(response, beginPattern) > 0
 }
 
+// looksLikeOracleTNS is an additive detection heuristic for hardened 18c/19c+
+// listeners that suppress VSNNUM and reply with an error stack (or a version
+// banner) instead of the classic (DESCRIPTION=(TMP=)(VSNNUM= refuse packet that
+// isOracleDBRunning keys off of. It only ever broadens detection, so it cannot
+// regress the existing behavior.
+//
+// It requires an Oracle-specific RESPONSE marker that is NOT present in the
+// probe this plugin sends. In particular the bare "(DESCRIPTION=" token is
+// deliberately NOT a marker: it is exactly what checkForOracle transmits, so an
+// echo/reflecting service would otherwise be misidentified as Oracle. A bare
+// "VSNNUM=" is likewise insufficient; only a VSNNUM with a non-zero value counts.
+func looksLikeOracleTNS(response []byte) bool {
+	markers := [][]byte{
+		[]byte("ERROR_STACK="),
+		[]byte("(ERR="),
+		[]byte("TNSLSNR"),
+		[]byte("ORA-"),
+	}
+	for _, m := range markers {
+		if bytes.Contains(response, m) {
+			return true
+		}
+	}
+	// A VSNNUM with a non-zero value is Oracle-specific; extractVSNNUM returns
+	// ok=false for a missing field or a zero value.
+	if _, ok := extractVSNNUM(response); ok {
+		return true
+	}
+	return false
+}
+
+var (
+	vsnnumRe  = regexp.MustCompile(`VSNNUM=(\d+)`)
+	errCodeRe = regexp.MustCompile(`ERR=(\d+)`)
+	// bannerVersionRe only matches a dotted version anchored to a "Version" or
+	// "Release" context token. A bare dotted-number fallback is intentionally
+	// NOT used: it matched IP addresses echoed in HOST= (e.g. 192.168.1.1),
+	// whose major component (192) is >= 23 and falsely flipped AICapable on.
+	bannerVersionRe = regexp.MustCompile(`(?:Version|Release)\s+(\d+(?:\.\d+)+)`)
+)
+
+// extractVSNNUM pulls the decimal VSNNUM field out of a TNS response, if present.
+func extractVSNNUM(response []byte) (uint32, bool) {
+	m := vsnnumRe.FindSubmatch(response)
+	if m == nil {
+		return 0, false
+	}
+	v, err := strconv.ParseUint(string(m[1]), 10, 32)
+	if err != nil || v == 0 {
+		return 0, false
+	}
+	return uint32(v), true
+}
+
+// decodeVSNNUM decodes the Oracle VSNNUM bitfield into dotted version form.
+// e.g. 318767104 -> "19.0.0.0.0", 202375680 -> "12.1.0.2.0". Returns "" for 0.
+func decodeVSNNUM(n uint32) string {
+	if n == 0 {
+		return ""
+	}
+	major := n >> 24
+	minor := (n >> 20) & 0x0F
+	patch := (n >> 12) & 0xFF
+	interim := (n >> 8) & 0x0F
+	release := n & 0xFF
+	return fmt.Sprintf("%d.%d.%d.%d.%d", major, minor, patch, interim, release)
+}
+
+// extractBannerVersion regexes a dotted version out of a listener banner such as
+// "TNSLSNR for Linux: Version 19.0.0.0.0" or "... Release 11.2.0.4". The version
+// must be anchored to a "Version"/"Release" token so that unrelated dotted
+// numbers (e.g. an IP address echoed in HOST=) are never mistaken for a version.
+func extractBannerVersion(response []byte) string {
+	if m := bannerVersionRe.FindSubmatch(response); m != nil {
+		return string(m[1])
+	}
+	return ""
+}
+
+// majorVersion returns the leading integer component of a dotted version string.
+func majorVersion(dotted string) int {
+	if dotted == "" {
+		return 0
+	}
+	n, _ := strconv.Atoi(strings.SplitN(dotted, ".", 2)[0])
+	return n
+}
+
+// oracleCPEs builds the CPE 2.3 strings for an Oracle Database instance. Real
+// Oracle DB CVEs key predominantly to the "database_server" product (521 CVEs on
+// NVD vs 66 on "database"), so CPEs are emitted on BOTH products to maximize CVE
+// matching.
+//
+// The CPE version is ALWAYS wildcard "*". VSNNUM (the only version source in
+// practice) exposes just the RU-less *family* version (e.g. 318767104 ->
+// 19.0.0.0.0), but NVD's Oracle DB CVE ranges are keyed to RU-level versions
+// (e.g. 19.3-19.23 for CVE-2024-21123). Emitting a fake-precise family version
+// such as 19.0.0.0 sorts BELOW those ranges and MISSES the CVEs, so a wildcard
+// is used to keep the CPE matchable against every RU range. The full decoded
+// family version is preserved separately in the service Version/metadata field
+// for human reporting.
+func oracleCPEs(version string) []string {
+	return []string{
+		"cpe:2.3:a:oracle:database_server:*:*:*:*:*:*:*:*",
+		"cpe:2.3:a:oracle:database:*:*:*:*:*:*:*:*",
+	}
+}
+
+// parseInfo builds the human-readable Info map from a TNS response. It is
+// panic-safe: fields that are absent (e.g. on hardened listeners that suppress
+// VSNNUM) are simply omitted.
 func parseInfo(response []byte) map[string]any {
-	refuseData := response[12:]
-	code := regexp.MustCompile(`[0-9]+`).FindAllStringSubmatch(string(refuseData), 2)
-	VSNNum := code[0][0]
-	ErrCode := code[1][0]
-	VsNum, _ := strconv.Atoi(VSNNum)
-	version := big.NewInt(int64(VsNum)).Bytes()
-	split := strconv.FormatInt(int64(version[1]), 16)
-	versionStr := fmt.Sprintf("%d.%c.%c.%d.%d", version[0], split[0], split[1], version[2], version[3])
-	return map[string]any{"Oracle TNS Listener Version": versionStr, "VSNNUM": VSNNum, "ERROR_CODE": ErrCode}
+	info := map[string]any{}
+	if n, ok := extractVSNNUM(response); ok {
+		info["VSNNUM"] = strconv.FormatUint(uint64(n), 10)
+		if dotted := decodeVSNNUM(n); dotted != "" {
+			info["Oracle TNS Listener Version"] = dotted
+		}
+	}
+	if m := errCodeRe.FindSubmatch(response); m != nil {
+		info["ERROR_CODE"] = string(m[1])
+	}
+	return info
 }
 
 func (p *ORACLEPlugin) PortPriority(port uint16) bool {
@@ -251,16 +370,289 @@ func (p *ORACLEPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.
 		return nil, nil
 	}
 
-	if isOracleDBRunning(response) {
-		oracleInfo := fmt.Sprintf("%s", parseInfo(response))
-		payload := plugins.ServiceOracle{
-			Info: oracleInfo,
-		}
-		return plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP), nil
+	// Confirm it is an Oracle TNS listener. isOracleDBRunning is the original
+	// (unchanged) VSNNUM refuse-packet check; looksLikeOracleTNS additionally
+	// recognizes hardened 18c/19c+ listeners that reply with an error stack.
+	if !isOracleDBRunning(response) && !looksLikeOracleTNS(response) {
+		return nil, nil
 	}
-	return nil, nil
+
+	// Decode the version: prefer the VSNNUM bitfield (works on legacy
+	// listeners), then a version banner anchored to a Version/Release token.
+	// Note: modern (18c/19c+) listeners typically suppress VSNNUM and do not
+	// return a banner here, so version is often "" on those.
+	version := ""
+	if n, ok := extractVSNNUM(response); ok {
+		version = decodeVSNNUM(n)
+	}
+	if version == "" {
+		version = extractBannerVersion(response)
+	}
+
+	payload := plugins.ServiceOracle{
+		Info:    fmt.Sprintf("%s", parseInfo(response)),
+		Version: version,
+		CPEs:    oracleCPEs(version),
+	}
+	// Best-effort AI-capability inference. Modern listeners suppress VSNNUM so a
+	// version is usually unavailable; in practice this mainly fires on legacy
+	// listeners that still return a decodable VSNNUM (or a version banner).
+	if majorVersion(version) >= 23 {
+		payload.AICapable = true
+		payload.Note = "Oracle AI Database (23ai/26ai) - AI Vector Search / Select AI capable (inferred from version, not confirmed)"
+	}
+
+	service := plugins.CreateServiceFrom(target, payload, false, version, plugins.TCP)
+	if target.Misconfigs && tryEmptyCredentialSession(timeout, target) {
+		service.AnonymousAccess = true
+		service.SecurityFindings = []plugins.SecurityFinding{{
+			ID:          "oracle-no-auth",
+			Severity:    plugins.SeverityMedium,
+			Description: "Oracle Database accessible without authentication",
+			Evidence:    "empty-user logon received AUTH_SESSION_ID without an authentication-required error",
+		}}
+	}
+	return service, nil
 }
 
 func (p *ORACLEPlugin) Priority() int {
 	return 900
+}
+
+// emptyCredentialServiceNames is a short, finite list of well-known Oracle
+// service names used only after TNS fingerprinting succeeds. It is not a
+// wordlist and is not used for default-password guessing.
+var emptyCredentialServiceNames = []string{"XE", "ORCL", "ORCLPDB1", "FREE", "XEPDB1"}
+
+func emptyCredentialConnect(host, port, service string) []byte {
+	connectData := []byte(
+		"(DESCRIPTION=(CONNECT_DATA=(SERVICE_NAME=" + service + ")(CID=(PROGRAM=)" +
+			"(HOST=)(USER=)))(ADDRESS=(PROTOCOL=tcp)(HOST=" + host + ")(PORT=" + port + ")))",
+	)
+	return buildTNSConnect(connectData)
+}
+
+func tnsPacketType(response []byte) int {
+	if len(response) < 5 {
+		return 0
+	}
+	return int(response[4])
+}
+
+func loginIndicatesAuthRequired(response []byte) bool {
+	markers := [][]byte{
+		[]byte("ORA-01017"), []byte("ORA-1017"), []byte("(ERR=1017)"),
+		[]byte("ORA-01005"), []byte("ORA-1005"), []byte("(ERR=1005)"),
+		[]byte("ORA-01004"), []byte("ORA-1004"), []byte("(ERR=1004)"),
+		[]byte("ORA-28218"), []byte("(ERR=28218)"),
+		[]byte("ORA-00988"), []byte("(ERR=988)"),
+	}
+	for _, m := range markers {
+		if bytes.Contains(response, m) {
+			return true
+		}
+	}
+	return false
+}
+
+// canSelfDialOracle skips unspecified addresses (0.0.0.0 / ::) so a
+// hostname/proxy scan does not misdial localhost when no engine dialer is
+// attached. Mirrors weblogic canSelfDialConsole.
+func canSelfDialOracle(target plugins.Target) bool {
+	a := target.Address.Addr()
+	return a.IsValid() && !a.IsUnspecified()
+}
+
+func oracleDialTCP(target plugins.Target) func(string, time.Duration) (net.Conn, error) {
+	if target.DialTCP != nil {
+		return target.DialTCP
+	}
+	if !canSelfDialOracle(target) {
+		return nil
+	}
+	return func(address string, timeout time.Duration) (net.Conn, error) {
+		return net.DialTimeout("tcp", address, timeout)
+	}
+}
+
+func tnsDataPacket(payload []byte) []byte {
+	body := make([]byte, 2+len(payload))
+	copy(body[2:], payload)
+	pkt := make([]byte, 8+len(body))
+	binary.BigEndian.PutUint16(pkt[0:2], uint16(len(pkt)))
+	pkt[4] = 6 // Data
+	copy(pkt[8:], body)
+	return pkt
+}
+
+func ttcClr(b []byte) []byte {
+	if len(b) == 0 {
+		return []byte{0}
+	}
+	out := make([]byte, 1+len(b))
+	out[0] = byte(len(b))
+	copy(out[1:], b)
+	return out
+}
+
+func ttcKeyVal(key, val string) []byte {
+	var buf []byte
+	buf = append(buf, ttcClr([]byte(key))...)
+	buf = append(buf, ttcClr([]byte(val))...)
+	buf = append(buf, 0x00) // associated numeric field, unused
+	return buf
+}
+
+func ttcSetProtocol() []byte {
+	return tnsDataPacket([]byte{0x01, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01, 0x00, 'n', 'e', 'r', 'v', 'a', 0x00})
+}
+
+func ttcSetDataTypes() []byte {
+	return tnsDataPacket([]byte{0x02, 0x00})
+}
+
+func appendEmptyLogonHeader(ttc []byte, fn byte) []byte {
+	ttc = append(ttc, 0x03, fn, 0x00, 0x01)
+	ttc = append(ttc, 0x00)                         // username length 0
+	ttc = append(ttc, 0x04, 0x01, 0x00, 0x00, 0x00) // logon mode NoNewPass
+	ttc = append(ttc, 0x01, 0x01, 0x05, 0x01, 0x01)
+	ttc = append(ttc, 0x00) // empty username
+	return ttc
+}
+
+// emptyUserPreAuth is TTC PreAuth (0x76 / ociGetSessKey) for an empty username
+// after protocol and data-type negotiation. AUTH_SESSKEY in the reply is the
+// phase-1 challenge, not a session.
+func emptyUserPreAuth() []byte {
+	ttc := appendEmptyLogonHeader(nil, 0x76)
+	for _, kv := range [][2]string{
+		{"AUTH_TERMINAL", "unknown"},
+		{"AUTH_PROGRAM_NM", "nerva"},
+		{"AUTH_MACHINE", "unknown"},
+		{"AUTH_PID", "0"},
+		{"AUTH_SID", ""},
+	} {
+		ttc = append(ttc, ttcKeyVal(kv[0], kv[1])...)
+	}
+	return tnsDataPacket(ttc)
+}
+
+// emptyUserAuthPassword is TTC OAUTH (0x73) phase-2 with an empty password.
+// AUTH_SESSION_ID without an auth-required error is a completed empty logon.
+func emptyUserAuthPassword() []byte {
+	ttc := appendEmptyLogonHeader(nil, 0x73)
+	for _, kv := range [][2]string{
+		{"AUTH_PASSWORD", ""},
+		{"AUTH_TERMINAL", "unknown"},
+		{"AUTH_PROGRAM_NM", "nerva"},
+		{"AUTH_MACHINE", "unknown"},
+		{"AUTH_PID", "0"},
+		{"AUTH_SID", ""},
+	} {
+		ttc = append(ttc, ttcKeyVal(kv[0], kv[1])...)
+	}
+	return tnsDataPacket(ttc)
+}
+
+func hasAuthChallenge(response []byte) bool {
+	return tnsPacketType(response) == 6 && bytes.Contains(response, []byte("AUTH_SESSKEY"))
+}
+
+// emptyCredentialSessionSucceeded reports a completed empty-credential logon.
+// AUTH_SESSKEY is the phase-1 challenge and is not sufficient. TNS Accept
+// (type 2) is only listener handoff.
+func emptyCredentialSessionSucceeded(response []byte) bool {
+	if tnsPacketType(response) != 6 {
+		return false
+	}
+	if loginIndicatesAuthRequired(response) {
+		return false
+	}
+	return bytes.Contains(response, []byte("AUTH_SESSION_ID"))
+}
+
+func recvTNS(conn net.Conn, timeout time.Duration) ([]byte, error) {
+	if err := conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+		return nil, err
+	}
+	hdr := make([]byte, 8)
+	if _, err := io.ReadFull(conn, hdr); err != nil {
+		return nil, err
+	}
+	length := int(binary.BigEndian.Uint16(hdr[0:2]))
+	if length < 8 || length > 32*1024 {
+		return nil, io.ErrUnexpectedEOF
+	}
+	pkt := make([]byte, length)
+	copy(pkt, hdr)
+	if _, err := io.ReadFull(conn, pkt[8:]); err != nil {
+		return nil, err
+	}
+	return pkt, nil
+}
+
+func sendTNS(conn net.Conn, pkt []byte, timeout time.Duration) ([]byte, bool) {
+	if err := utils.Send(conn, pkt, timeout); err != nil {
+		return nil, false
+	}
+	response, err := recvTNS(conn, timeout)
+	if err != nil || len(response) == 0 {
+		return nil, false
+	}
+	return response, true
+}
+
+// tryEmptyCredentialSession dials a fresh connection (TNS Refuse closes the
+// fingerprint conversation). After TNS Accept it negotiates TTC, sends
+// empty-user PreAuth, then empty-password OAUTH, and requires AUTH_SESSION_ID
+// without an authentication-required error.
+func tryEmptyCredentialSession(timeout time.Duration, target plugins.Target) bool {
+	dial := oracleDialTCP(target)
+	if dial == nil {
+		return false
+	}
+	host := target.Host
+	if host == "" {
+		host = target.Address.Addr().String()
+	}
+	port := fmt.Sprintf("%d", target.Address.Port())
+	addr := target.Address.String()
+	for _, service := range emptyCredentialServiceNames {
+		if probeEmptyCredentialService(dial, addr, host, port, service, timeout) {
+			return true
+		}
+	}
+	return false
+}
+
+func probeEmptyCredentialService(
+	dial func(string, time.Duration) (net.Conn, error),
+	addr, host, port, service string,
+	timeout time.Duration,
+) bool {
+	conn, err := dial(addr, timeout)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = conn.Close() }()
+
+	response, ok := sendTNS(conn, emptyCredentialConnect(host, port, service), timeout)
+	if !ok || loginIndicatesAuthRequired(response) || tnsPacketType(response) != 2 {
+		return false
+	}
+	if _, ok = sendTNS(conn, ttcSetProtocol(), timeout); !ok {
+		return false
+	}
+	if _, ok = sendTNS(conn, ttcSetDataTypes(), timeout); !ok {
+		return false
+	}
+	preauth, ok := sendTNS(conn, emptyUserPreAuth(), timeout)
+	if !ok || loginIndicatesAuthRequired(preauth) || !hasAuthChallenge(preauth) {
+		return false
+	}
+	phase2, ok := sendTNS(conn, emptyUserAuthPassword(), timeout)
+	if !ok || loginIndicatesAuthRequired(phase2) {
+		return false
+	}
+	return emptyCredentialSessionSucceeded(phase2)
 }

@@ -202,7 +202,10 @@ func (f *KibanaFingerprinter) Fingerprint(resp *http.Response, body []byte) (*Fi
 	if err := json.Unmarshal(body, &statusResp); err == nil {
 		// Require version.number AND at least one Kibana-specific field (name, uuid,
 		// or build_hash) to avoid matching arbitrary JSON with a version.number key.
-		if statusResp.Version.Number != "" &&
+		// Also require status.overall (state or level) to distinguish from OpenSearch,
+		// whose root response has name+version but never a status block.
+		hasStatusBlock := statusResp.Status.Overall.State != "" || statusResp.Status.Overall.Level != ""
+		if statusResp.Version.Number != "" && hasStatusBlock &&
 			(statusResp.Name != "" || statusResp.UUID != "" || statusResp.Version.BuildHash != "") {
 			hasAPISignal = true
 		}

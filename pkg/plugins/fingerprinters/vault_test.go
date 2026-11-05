@@ -309,8 +309,8 @@ func TestVaultUnsealedAnonymous(t *testing.T) {
 	if result == nil {
 		t.Fatal("Fingerprint() returned nil")
 	}
-	if result.Severity != plugins.SeverityCritical {
-		t.Errorf("Severity = %q, want %q", result.Severity, plugins.SeverityCritical)
+	if result.Severity != plugins.SeverityHigh {
+		t.Errorf("Severity = %q, want %q", result.Severity, plugins.SeverityHigh)
 	}
 	if len(result.SecurityFindings) != 1 {
 		t.Fatalf("SecurityFindings count = %d, want 1", len(result.SecurityFindings))
@@ -318,8 +318,8 @@ func TestVaultUnsealedAnonymous(t *testing.T) {
 	if result.SecurityFindings[0].ID != "vault-unsealed-anonymous" {
 		t.Errorf("Finding ID = %q, want %q", result.SecurityFindings[0].ID, "vault-unsealed-anonymous")
 	}
-	if result.SecurityFindings[0].Severity != plugins.SeverityCritical {
-		t.Errorf("Finding Severity = %q, want %q", result.SecurityFindings[0].Severity, plugins.SeverityCritical)
+	if result.SecurityFindings[0].Severity != plugins.SeverityHigh {
+		t.Errorf("Finding Severity = %q, want %q", result.SecurityFindings[0].Severity, plugins.SeverityHigh)
 	}
 	if result.SecurityFindings[0].Evidence != "Vault 1.12.3 reports initialized=true, sealed=false via /v1/sys/health" {
 		t.Errorf("Evidence = %q", result.SecurityFindings[0].Evidence)

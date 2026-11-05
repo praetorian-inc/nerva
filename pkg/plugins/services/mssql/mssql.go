@@ -15,10 +15,14 @@
 package mssql
 
 import (
+	"crypto/tls"
+	"encoding/binary"
 	"fmt"
+	"io"
 	"net"
 	"strings"
 	"time"
+	"unicode/utf16"
 
 	"github.com/praetorian-inc/nerva/pkg/plugins"
 	utils "github.com/praetorian-inc/nerva/pkg/plugins/pluginutils"
@@ -47,7 +51,8 @@ type OptionToken struct {
 type MSSQLPlugin struct{}
 
 type Data struct {
-	Version string
+	Version    string
+	Encryption byte
 }
 
 const MSSQL = "mssql"
@@ -329,7 +334,15 @@ func DetectMSSQL(conn net.Conn, timeout time.Duration) (Data, bool, error) {
 
 	version := fmt.Sprintf("%d.%d.%d\n", MajorVersion, MinorVersion, BuildNumber)
 
-	return Data{Version: version}, true, nil
+	var encryption byte
+	for _, tok := range optionTokens {
+		if tok.PLOptionToken == uint32(ENCRYPTION) && len(tok.PLOptionData) > 0 {
+			encryption = tok.PLOptionData[0]
+			break
+		}
+	}
+
+	return Data{Version: version, Encryption: encryption}, true, nil
 }
 
 func (p *MSSQLPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
@@ -348,7 +361,16 @@ func (p *MSSQLPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.T
 		CPEs: []string{cpe},
 	}
 
-	return plugins.CreateServiceFrom(target, payload, false, data.Version, plugins.TCP), nil
+	service := plugins.CreateServiceFrom(target, payload, false, data.Version, plugins.TCP)
+	if target.Misconfigs && checkBlankSaLogin(conn, timeout, data.Encryption, target.Host) {
+		service.SecurityFindings = []plugins.SecurityFinding{{
+			ID:          "mssql-default-creds",
+			Severity:    plugins.SeverityMedium,
+			Description: "MSSQL sa account accepts the documented blank default password",
+			Evidence:    "Default blank SQL login succeeded",
+		}}
+	}
+	return service, nil
 }
 
 func (p *MSSQLPlugin) Name() string {
@@ -360,4 +382,215 @@ func (p *MSSQLPlugin) Type() plugins.Protocol {
 
 func (p *MSSQLPlugin) Priority() int {
 	return 143
+}
+
+const (
+	encryptOff    byte = 0x00 // ENCRYPT_OFF: LOGIN7 over TLS, LOGINACK plaintext
+	encryptOn     byte = 0x01 // ENCRYPT_ON: entire connection TLS after handshake
+	encryptNotSup byte = 0x02 // ENCRYPT_NOT_SUP: plaintext LOGIN7
+	encryptReq    byte = 0x03 // ENCRYPT_REQ: entire connection TLS after handshake
+)
+
+func probeTLSConfig(host string) *tls.Config {
+	suites := make([]uint16, 0, len(tls.CipherSuites())+len(tls.InsecureCipherSuites()))
+	for _, s := range tls.CipherSuites() {
+		suites = append(suites, s.ID)
+	}
+	for _, s := range tls.InsecureCipherSuites() {
+		suites = append(suites, s.ID)
+	}
+	return &tls.Config{
+		InsecureSkipVerify: true, //nolint:gosec
+		ServerName:         host,
+		CipherSuites:       suites,
+		MinVersion:         tls.VersionTLS10,
+		Renegotiation:      tls.RenegotiateFreelyAsClient,
+	}
+}
+
+func checkBlankSaLogin(conn net.Conn, timeout time.Duration, encryption byte, host string) bool {
+	writeConn := net.Conn(conn)
+	readConn := net.Conn(conn)
+	if encryption != encryptNotSup {
+		prep := &tdsHandshakeConn{Conn: conn, wrap: true}
+		tconn := tls.Client(prep, probeTLSConfig(host))
+		_ = tconn.SetDeadline(time.Now().Add(timeout))
+		if err := tconn.Handshake(); err != nil {
+			return false
+		}
+		prep.wrap = false
+		writeConn = tconn
+		if encryption != encryptOff {
+			readConn = tconn
+		}
+	}
+	if err := utils.Send(writeConn, buildLogin7(), timeout); err != nil {
+		return false
+	}
+	resp, err := recvTDSResponse(readConn, timeout)
+	if err != nil {
+		return false
+	}
+	return hasLoginAck(resp)
+}
+
+func recvTDSResponse(conn net.Conn, timeout time.Duration) ([]byte, error) {
+	if err := conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+		return nil, err
+	}
+	var response []byte
+	for i := 0; i < 32; i++ {
+		header := make([]byte, 8)
+		if _, err := io.ReadFull(conn, header); err != nil {
+			return nil, err
+		}
+		length := int(binary.BigEndian.Uint16(header[2:4]))
+		if length < 8 {
+			return nil, io.ErrUnexpectedEOF
+		}
+		body := make([]byte, length-8)
+		if _, err := io.ReadFull(conn, body); err != nil {
+			return nil, err
+		}
+		if len(response) == 0 {
+			response = append(response, header...)
+		}
+		response = append(response, body...)
+		if header[1]&0x01 != 0 {
+			return response, nil
+		}
+	}
+	return nil, io.ErrUnexpectedEOF
+}
+
+// tdsHandshakeConn wraps TLS handshake records in TDS PRELOGIN (0x12) packets.
+// After Handshake(), wrap is set false so LOGIN7 travels as TLS application data.
+type tdsHandshakeConn struct {
+	net.Conn
+	wrap    bool
+	readBuf []byte
+}
+
+func (c *tdsHandshakeConn) Write(p []byte) (int, error) {
+	if !c.wrap {
+		return c.Conn.Write(p)
+	}
+	const maxPayload = 4088
+	off := 0
+	for off < len(p) {
+		n := len(p) - off
+		if n > maxPayload {
+			n = maxPayload
+		}
+		pkt := make([]byte, 8+n)
+		pkt[0] = 0x12
+		if off+n == len(p) {
+			pkt[1] = 0x01
+		}
+		length := 8 + n
+		pkt[2] = byte(length >> 8)
+		pkt[3] = byte(length)
+		pkt[6] = 0x01
+		copy(pkt[8:], p[off:off+n])
+		if _, err := c.Conn.Write(pkt); err != nil {
+			return off, err
+		}
+		off += n
+	}
+	return len(p), nil
+}
+
+func (c *tdsHandshakeConn) Read(p []byte) (int, error) {
+	if !c.wrap {
+		return c.Conn.Read(p)
+	}
+	if len(c.readBuf) == 0 {
+		hdr := make([]byte, 8)
+		if _, err := io.ReadFull(c.Conn, hdr); err != nil {
+			return 0, err
+		}
+		length := int(hdr[2])<<8 | int(hdr[3])
+		if length < 8 {
+			return 0, io.ErrUnexpectedEOF
+		}
+		body := make([]byte, length-8)
+		if _, err := io.ReadFull(c.Conn, body); err != nil {
+			return 0, err
+		}
+		c.readBuf = body
+	}
+	n := copy(p, c.readBuf)
+	c.readBuf = c.readBuf[n:]
+	return n, nil
+}
+
+func buildLogin7() []byte {
+	host, user, app, clt := utf16LE("nerva"), utf16LE("sa"), utf16LE("nerva"), utf16LE("ODBC")
+	ibHost := 94
+	ibUser := ibHost + len(host)
+	ibPass := ibUser + len(user)
+	ibApp := ibPass
+	ibClt := ibApp + len(app)
+	ibRest := ibClt + len(clt)
+	payload := make([]byte, ibRest)
+	binary.LittleEndian.PutUint32(payload[0:], uint32(len(payload)))
+	binary.LittleEndian.PutUint32(payload[4:], 0x74000004)
+	binary.LittleEndian.PutUint32(payload[8:], 4096)
+	binary.LittleEndian.PutUint32(payload[16:], 1)
+	payload[24], payload[25] = 0xE0, 0x03
+	binary.LittleEndian.PutUint32(payload[32:], 0x00000409)
+	putOL := func(at, ib, cch int) {
+		binary.LittleEndian.PutUint16(payload[at:], uint16(ib))
+		binary.LittleEndian.PutUint16(payload[at+2:], uint16(cch))
+	}
+	putOL(36, ibHost, len(host)/2)
+	putOL(40, ibUser, len(user)/2)
+	putOL(44, ibPass, 0)
+	putOL(48, ibApp, len(app)/2)
+	putOL(52, ibRest, 0)
+	putOL(56, ibRest, 0)
+	putOL(60, ibClt, len(clt)/2)
+	putOL(64, ibRest, 0)
+	putOL(68, ibRest, 0)
+	putOL(78, ibRest, 0)
+	putOL(82, ibRest, 0)
+	putOL(86, ibRest, 0)
+	copy(payload[ibHost:], host)
+	copy(payload[ibUser:], user)
+	copy(payload[ibApp:], app)
+	copy(payload[ibClt:], clt)
+	pktLen := 8 + len(payload)
+	pkt := make([]byte, pktLen)
+	pkt[0], pkt[1], pkt[2], pkt[3], pkt[6] = 0x10, 0x01, byte(pktLen>>8), byte(pktLen), 0x01
+	copy(pkt[8:], payload)
+	return pkt
+}
+
+func utf16LE(s string) []byte {
+	u := utf16.Encode([]rune(s))
+	out := make([]byte, len(u)*2)
+	for i, r := range u {
+		binary.LittleEndian.PutUint16(out[i*2:], r)
+	}
+	return out
+}
+
+func hasLoginAck(resp []byte) bool {
+	if len(resp) < 9 || resp[0] != 0x04 {
+		return false
+	}
+	for i := 8; i < len(resp); {
+		switch resp[i] {
+		case 0xAD: // LOGINACK
+			return true
+		case 0xAA, 0xFD, 0xFE, 0xFF: // ERROR / DONE*
+			return false
+		default:
+			if i+3 > len(resp) {
+				return false
+			}
+			i += 3 + int(binary.LittleEndian.Uint16(resp[i+1:]))
+		}
+	}
+	return false
 }

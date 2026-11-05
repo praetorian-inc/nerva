@@ -1,0 +1,30 @@
+services:
+  spatialstudio-login:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      MODE: login
+      PORT: "4040"
+    ports:
+      - "4040:4040"
+
+  spatialstudio-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      MODE: api
+      PORT: "4040"
+    ports:
+      - "4041:4040"
+
+  spatialstudio-full:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      MODE: full
+      PORT: "4040"
+    ports:
+      - "4042:4040"

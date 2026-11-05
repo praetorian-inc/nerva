@@ -1,0 +1,62 @@
+# Official Elasticsearch 8.x fixtures for ENG-9055 (elasticsearch-no-auth).
+#
+# Image: docker.elastic.co/elasticsearch/elasticsearch:8.15.3
+# Docs:  https://www.elastic.co/docs/deploy-manage/deploy/self-managed/install-elasticsearch-docker-basic
+#        https://www.elastic.co/guide/en/elasticsearch/reference/8.15/security-settings.html
+#
+# Two listeners, both HTTP (TLS off) so Nerva's GET / probe sees the
+# documented status codes rather than a TLS handshake failure:
+#   19200 — security disabled → HTTP 200 JSON with tagline "You Know, for Search"
+#   19201 — security enabled  → HTTP 401 JSON with type "security_exception"
+#
+# Bind to loopback only: the unauth node is an open search API.
+
+services:
+  elasticsearch-unauth:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.3
+    container_name: nerva-elasticsearch-unauth
+    environment:
+      discovery.type: single-node
+      cluster.name: nerva-es-unauth
+      xpack.security.enabled: "false"
+      xpack.security.http.ssl.enabled: "false"
+      xpack.ml.enabled: "false"
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+    mem_limit: 1g
+    ports:
+      - "127.0.0.1:19200:9200"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -sf http://localhost:9200 | grep -q 'You Know, for Search'",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 36
+      start_period: 40s
+
+  elasticsearch-auth:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.3
+    container_name: nerva-elasticsearch-auth
+    environment:
+      discovery.type: single-node
+      cluster.name: nerva-es-auth
+      xpack.security.enabled: "true"
+      xpack.security.http.ssl.enabled: "false"
+      xpack.ml.enabled: "false"
+      ELASTIC_PASSWORD: nervatest
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+    mem_limit: 1g
+    ports:
+      - "127.0.0.1:19201:9200"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "code=$$(curl -s -o /tmp/es-auth.json -w '%{http_code}' http://localhost:9200); test \"$$code\" = 401 && grep -q security_exception /tmp/es-auth.json",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 36
+      start_period: 40s

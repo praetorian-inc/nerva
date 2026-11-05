@@ -96,6 +96,14 @@ naabu -host example.com -silent | nerva
 # https://example.com:443
 ```
 
+<!-- BEGIN generated: cli-subcommands -->
+
+<!-- END generated: cli-subcommands -->
+
+<!-- BEGIN generated: cli-aliases -->
+The full reference — every subcommand, alias and flag, including the ones hidden from `--help` — is generated into [docs/CLI.md](docs/CLI.md).
+<!-- END generated: cli-aliases -->
+
 ## Usage
 
 ```
@@ -112,29 +120,6 @@ EXAMPLES:
   cat targets.txt | nerva
 ```
 
-### Flags
-
-| Flag | Short | Description | Default |
-|------|-------|-------------|---------|
-| `--targets` | `-t` | Target or comma-separated target list | — |
-| `--list` | `-l` | Input file containing targets | — |
-| `--output` | `-o` | Output file path | stdout |
-| `--json` | | Output in JSON format | false |
-| `--csv` | | Output in CSV format | false |
-| `--misconfigs` | | Enable security misconfiguration detection | false |
-| `--proxy` | | Proxy URL (e.g. socks5://127.0.0.1:1080) | — |
-| `--proxy-auth` | | SOCKS5 Proxy Auth (e.g. username:password) | — |
-| `--dns-order` | | DNS resolution order: `p`, `l`, `lp`, `pl` | `lp` |
-| `--fast` | `-f` | Fast mode (default ports only) | false |
-| `--capabilities` | `-c` | List available capabilities and exit | false |
-| `--udp` | `-U` | Run UDP plugins | false |
-| `--sctp` | `-S` | Run SCTP plugins (Linux only) | false |
-| `--timeout` | `-w` | Timeout in milliseconds | 2000 |
-| `--verbose` | `-v` | Verbose output to stderr | false |
-| `--workers` | `-W` | Concurrent scan workers | 50 |
-| `--max-host-conn` | `-H` | Max concurrent connections per host IP (0=unlimited) | 0 |
-| `--rate-limit` | `-R` | Max scans per second globally (0=unlimited) | 0 |
-
 ### Examples
 
 **Multiple targets:**
@@ -149,10 +134,10 @@ nerva -t example.com:22,example.com:80,example.com:443
 nerva -l targets.txt --json -o results.json
 ```
 
-**UDP scanning** (may require root):
+**UDP scanning**:
 
 ```sh
-sudo nerva -t example.com:53 -U
+nerva -t example.com:53 -U
 # dns://example.com:53
 ```
 
@@ -189,6 +174,7 @@ nerva -t example.com:2375 --misconfigs --json
 |------------|----------|-------------|
 | `docker-unauth-api` | Critical | Docker API accessible without authentication |
 | `x11-unauth-access` | Critical | X11 server allows unauthenticated connections |
+| `dotnet-remoting-http-exposed` | High | .NET Remoting HTTP channel exposed (deserialization risk) |
 | `smb-signing-not-required` | Medium | SMB signing not required (relay attack risk) |
 | `telnet-cleartext` | Medium | Telnet transmits credentials in cleartext |
 | `vnc-detected` | Medium | VNC detected (often weak authentication) |
@@ -385,10 +371,11 @@ Technology detection for web services, organized by category:
 | Home Assistant | Home automation platform |
 | UniFi/EdgeOS | Ubiquiti network devices |
 
-#### Other (2)
+#### Other (3)
 
 | Module | Description |
 |--------|-------------|
+| .NET Remoting HTTP | Microsoft .NET Remoting HTTP channel |
 | Go pprof | Go profiling endpoints |
 | NATS | Message broker |
 
@@ -709,11 +696,13 @@ nerva -t example.com:80 -w 5000  # 5 seconds
 
 **Cause**: UDP scanning disabled by default.
 
-**Solution**: Enable with `-U` flag (may require root):
+**Solution**: Enable with `-U` flag:
 
 ```sh
-sudo nerva -t example.com:53 -U
+nerva -t example.com:53 -U
 ```
+
+Nerva UDP scans use connected datagram sockets and do not require root.
 
 ### SCTP not working
 
@@ -751,9 +740,9 @@ Apache 2.0 — see [LICENSE](LICENSE) for details.
 
 Nerva is a maintained fork of [fingerprintx](https://github.com/praetorian-inc/fingerprintx), originally developed by Praetorian's intern class of 2022:
 
-* [Soham Roy](https://github.com/praetorian-sohamroy)
+* Soham Roy
 * [Jue Huang](https://github.com/jue-huang)
-* [Henry Jung](https://github.com/henryjung64)
+* Henry Jung
 * [Tristan Wiesepape](https://github.com/qwetboy10)
 * [Joseph Henry](https://github.com/jwhenry28)
 * [Noah Tutt](https://github.com/noahtutt)

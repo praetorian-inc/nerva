@@ -540,6 +540,10 @@ func TestDockerSecurityFindings(t *testing.T) {
 	if service.SecurityFindings[0].Severity != plugins.SeverityCritical {
 		t.Errorf("expected severity critical, got %s", service.SecurityFindings[0].Severity)
 	}
+	service.SecurityFindings[0].Enrich()
+	if service.SecurityFindings[0].Severity != plugins.SeverityCritical {
+		t.Errorf("catalog Enrich() severity %q, want critical", service.SecurityFindings[0].Severity)
+	}
 }
 
 // TestPluginsDifferentPorts verifies plain and TLS plugins use different ports

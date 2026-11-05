@@ -15,8 +15,42 @@
 package scan
 
 import (
+	"fmt"
+	"strings"
 	"time"
 )
+
+const (
+	ScanDepthFast     = "fast"
+	ScanDepthThorough = "thorough"
+)
+
+// normalizeDepth translates ScanDepth into FastMode and validates the value.
+// After the first call normalizes the config, subsequent calls on the same
+// *Config are read-only and safe to invoke concurrently (e.g. from pool
+// workers). Callers that share a *Config across goroutines must ensure one
+// single-threaded normalizeDepth call completes before concurrent use.
+func (c *Config) normalizeDepth() error {
+	if c.ScanDepth == "" {
+		return nil
+	}
+	lower := strings.ToLower(c.ScanDepth)
+	var wantFast bool
+	switch lower {
+	case ScanDepthFast:
+		wantFast = true
+	case ScanDepthThorough:
+		wantFast = false
+	default:
+		return fmt.Errorf("invalid ScanDepth %q: must be %q or %q", c.ScanDepth, ScanDepthFast, ScanDepthThorough)
+	}
+	if c.ScanDepth == lower && c.FastMode == wantFast {
+		return nil
+	}
+	c.ScanDepth = lower
+	c.FastMode = wantFast
+	return nil
+}
 
 type Config struct {
 	// UDP scan
@@ -26,6 +60,11 @@ type Config struct {
 	SCTP bool
 
 	FastMode bool
+
+	// ScanDepth is "fast", "thorough", or "" (legacy, governed by FastMode alone).
+	// When set, it takes precedence over FastMode for future depth-aware plugin
+	// selection (see LAB-5301); FastMode is still populated for backward compatibility.
+	ScanDepth string
 
 	// The timeout specifies how long certain tasks should wait during the scanning process.
 	// This may include the timeouts set on the handshake process and the time to wait for a response to return.

@@ -337,7 +337,7 @@ func TestPortainerFingerprinter_CheckMisconfigs(t *testing.T) {
 			contentType:      "application/json",
 			expectFinding:    true,
 			expectedID:       "portainer-setup-exposed",
-			expectedSeverity: plugins.SeverityCritical,
+			expectedSeverity: plugins.SeverityHigh,
 		},
 		{
 			name:          "non-Portainer 404 (no JSON content-type) returns nil",

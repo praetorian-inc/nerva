@@ -153,7 +153,7 @@ func checkProtectionLevel(serviceData plugins.ServiceS7comm) []plugins.SecurityF
 	case 1:
 		return []plugins.SecurityFinding{{
 			ID:          "s7comm-no-protection",
-			Severity:    plugins.SeverityCritical,
+			Severity:    plugins.SeverityHigh,
 			Description: "S7comm PLC has no access protection configured",
 			Evidence:    evidence,
 		}}

@@ -1,0 +1,36 @@
+# Live-captured POS/POI management-UI HTTP mocks for ENG-9060.
+# Bind to loopback only. Identity strings are from public login pages
+# (see README.md); no invented Server tokens or guessed titles.
+
+services:
+  verifone:
+    build: .
+    environment:
+      PORT: "8080"
+      MODE: verifone
+    ports:
+      - "127.0.0.1:18081:8080"
+
+  ingenico-estate:
+    build: .
+    environment:
+      PORT: "8080"
+      MODE: ingenico-estate
+    ports:
+      - "127.0.0.1:18082:8080"
+
+  generic:
+    build: .
+    environment:
+      PORT: "8080"
+      MODE: generic
+    ports:
+      - "127.0.0.1:18083:8080"
+
+  ingenico-tms:
+    build: .
+    environment:
+      PORT: "8080"
+      MODE: ingenico-tms
+    ports:
+      - "127.0.0.1:18084:8080"

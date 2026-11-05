@@ -1,0 +1,30 @@
+services:
+  ouaf-only:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      MODE: ouaf
+      PORT: "6501"
+    ports:
+      - "6501:6501"
+
+  uta-only:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      MODE: uta
+      PORT: "6500"
+    ports:
+      - "6500:6500"
+
+  ouaf-uta-combined:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      MODE: both
+      PORT: "6501"
+    ports:
+      - "6503:6501"

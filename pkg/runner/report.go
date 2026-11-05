@@ -70,6 +70,10 @@ func Report(services []plugins.Service) error {
 		}
 	}
 
+	for i := range services {
+		services[i].EnrichFindings()
+	}
+
 	for _, service := range services {
 		switch outputFormat {
 		case JSON:

@@ -1177,7 +1177,7 @@ func TestS7commSecurityFindings(t *testing.T) {
 			misconfigs:       true,
 			wantFindingCount: 1,
 			wantFindingID:    "s7comm-no-protection",
-			wantSeverity:     plugins.SeverityCritical,
+			wantSeverity:     plugins.SeverityHigh,
 			wantEvidenceKeys: []string{"protection_level=1", "module=CPU 1214C DC/DC/DC", "order_code=6ES7 214-1AG40-0XB0"},
 		},
 		{

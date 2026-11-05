@@ -22,10 +22,13 @@ import (
 
 func TestSecurityFinding_JSONRoundTrip(t *testing.T) {
 	original := SecurityFinding{
-		ID:          "ftp-anon-access",
-		Severity:    SeverityHigh,
-		Description: "Anonymous FTP login permitted",
-		Evidence:    "220 FTP server ready\n331 Anonymous login ok",
+		ID:             "ftp-anon-access",
+		Severity:       SeverityHigh,
+		Title:          "FTP Anonymous Access",
+		Description:    "Anonymous FTP login permitted",
+		Impact:         "Attackers can read files without credentials.",
+		Recommendation: "Disable anonymous FTP access.",
+		Evidence:       "220 FTP server ready\n331 Anonymous login ok",
 	}
 
 	data, err := json.Marshal(original)
@@ -44,15 +47,24 @@ func TestSecurityFinding_JSONRoundTrip(t *testing.T) {
 	if got.Severity != original.Severity {
 		t.Errorf("Severity: got %q, want %q", got.Severity, original.Severity)
 	}
+	if got.Title != original.Title {
+		t.Errorf("Title: got %q, want %q", got.Title, original.Title)
+	}
 	if got.Description != original.Description {
 		t.Errorf("Description: got %q, want %q", got.Description, original.Description)
+	}
+	if got.Impact != original.Impact {
+		t.Errorf("Impact: got %q, want %q", got.Impact, original.Impact)
+	}
+	if got.Recommendation != original.Recommendation {
+		t.Errorf("Recommendation: got %q, want %q", got.Recommendation, original.Recommendation)
 	}
 	if got.Evidence != original.Evidence {
 		t.Errorf("Evidence: got %q, want %q", got.Evidence, original.Evidence)
 	}
 }
 
-func TestSecurityFinding_OmitemptyEvidence(t *testing.T) {
+func TestSecurityFinding_OmitemptyFields(t *testing.T) {
 	finding := SecurityFinding{
 		ID:          "ssh-weak-algo",
 		Severity:    SeverityMedium,
@@ -64,8 +76,11 @@ func TestSecurityFinding_OmitemptyEvidence(t *testing.T) {
 		t.Fatalf("json.Marshal failed: %v", err)
 	}
 
-	if strings.Contains(string(data), `"evidence"`) {
-		t.Errorf("expected no 'evidence' key in JSON when Evidence is empty, got: %s", string(data))
+	output := string(data)
+	for _, key := range []string{"evidence", "title", "impact", "recommendation"} {
+		if strings.Contains(output, `"`+key+`"`) {
+			t.Errorf("expected no %q key in JSON when field is empty, got: %s", key, output)
+		}
 	}
 }
 
@@ -164,5 +179,124 @@ func TestSeverity_Valid(t *testing.T) {
 	invalid := Severity("unknown")
 	if invalid.Valid() {
 		t.Errorf("expected Severity(%q).Valid() == false", invalid)
+	}
+}
+
+func TestEnrich_KnownFinding(t *testing.T) {
+	f := SecurityFinding{
+		ID:          "http-missing-hsts",
+		Severity:    SeverityMedium, // wrong severity, should be corrected
+		Description: "HTTP response missing Strict-Transport-Security header",
+	}
+	f.Enrich()
+
+	if f.Title != "Missing HTTP Strict Transport Security" {
+		t.Errorf("Title: got %q, want %q", f.Title, "Missing HTTP Strict Transport Security")
+	}
+	if f.Severity != SeverityLow {
+		t.Errorf("Severity: got %q, want %q", f.Severity, SeverityLow)
+	}
+	if f.Impact == "" {
+		t.Error("Impact should be populated after Enrich()")
+	}
+	if f.Recommendation == "" {
+		t.Error("Recommendation should be populated after Enrich()")
+	}
+	// Description should remain unchanged.
+	if f.Description != "HTTP response missing Strict-Transport-Security header" {
+		t.Errorf("Description should not be modified by Enrich()")
+	}
+}
+
+func TestEnrich_PresetFieldsNotOverwritten(t *testing.T) {
+	f := SecurityFinding{
+		ID:             "http-missing-hsts",
+		Severity:       SeverityHigh,
+		Title:          "Custom Title",
+		Impact:         "Custom Impact",
+		Recommendation: "Custom Recommendation",
+	}
+	f.Enrich()
+
+	if f.Title != "Custom Title" {
+		t.Errorf("Title should not be overwritten when already set, got %q", f.Title)
+	}
+	if f.Impact != "Custom Impact" {
+		t.Errorf("Impact should not be overwritten when already set, got %q", f.Impact)
+	}
+	if f.Recommendation != "Custom Recommendation" {
+		t.Errorf("Recommendation should not be overwritten when already set, got %q", f.Recommendation)
+	}
+	// Severity IS always overwritten by catalog.
+	if f.Severity != SeverityLow {
+		t.Errorf("Severity should be overwritten to catalog value, got %q", f.Severity)
+	}
+}
+
+func TestEnrich_UnknownFinding(t *testing.T) {
+	f := SecurityFinding{
+		ID:          "unknown-finding-id",
+		Severity:    SeverityHigh,
+		Description: "Some unknown finding",
+	}
+	f.Enrich()
+
+	if f.Title != "" {
+		t.Errorf("Title should remain empty for unknown finding, got %q", f.Title)
+	}
+	if f.Severity != SeverityHigh {
+		t.Errorf("Severity should remain unchanged for unknown finding, got %q", f.Severity)
+	}
+}
+
+func TestEnrichFindings_Service(t *testing.T) {
+	svc := Service{
+		IP:        "10.0.0.1",
+		Port:      443,
+		Protocol:  "https",
+		TLS:       true,
+		Transport: "tcp",
+		Raw:       json.RawMessage(`{}`),
+		SecurityFindings: []SecurityFinding{
+			{
+				ID:          "tls-certificate-expired",
+				Severity:    SeverityMedium,
+				Description: "TLS certificate has expired",
+			},
+			{
+				ID:          "http-missing-hsts",
+				Severity:    SeverityMedium,
+				Description: "Missing HSTS header",
+			},
+		},
+	}
+
+	svc.EnrichFindings()
+
+	if svc.SecurityFindings[0].Severity != SeverityLow {
+		t.Errorf("tls-certificate-expired severity: got %q, want %q", svc.SecurityFindings[0].Severity, SeverityLow)
+	}
+	if svc.SecurityFindings[0].Title != "Expired TLS Certificate" {
+		t.Errorf("tls-certificate-expired title: got %q, want %q", svc.SecurityFindings[0].Title, "Expired TLS Certificate")
+	}
+	if svc.SecurityFindings[1].Severity != SeverityLow {
+		t.Errorf("http-missing-hsts severity: got %q, want %q", svc.SecurityFindings[1].Severity, SeverityLow)
+	}
+}
+
+func TestFindingCatalog_AllSeveritiesValid(t *testing.T) {
+	for id, meta := range findingCatalog {
+		if !meta.Severity.Valid() {
+			t.Errorf("finding catalog entry %q has invalid severity %q", id, meta.Severity)
+		}
+		if meta.Title == "" {
+			t.Errorf("finding catalog entry %q has empty Title", id)
+		}
+		if meta.Impact == "" {
+			t.Errorf("finding catalog entry %q has empty Impact", id)
+		}
+		if meta.Recommendation == "" {
+			t.Errorf("finding catalog entry %q has empty Recommendation", id)
+		}
 	}
 }

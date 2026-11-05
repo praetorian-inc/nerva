@@ -68,6 +68,8 @@ release:
   draft: false
   prerelease: auto
   name_template: "Nerva v{{.Version}}"
+  extra_files:
+    - glob: docs/cli-surface.json
 
 sboms:
   - artifacts: archive

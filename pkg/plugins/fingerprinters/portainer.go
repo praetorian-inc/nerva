@@ -159,7 +159,7 @@ func (f *PortainerFingerprinter) CheckMisconfigs(client *http.Client, baseURL, h
 	if resp.StatusCode == 404 && strings.Contains(resp.Header.Get("Content-Type"), "application/json") {
 		return []plugins.SecurityFinding{{
 			ID:          "portainer-setup-exposed",
-			Severity:    plugins.SeverityCritical,
+			Severity:    plugins.SeverityHigh,
 			Description: "Portainer initial setup page exposed — no admin user exists",
 			Evidence:    "GET /api/users/admin/check returned 404",
 		}}

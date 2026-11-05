@@ -313,4 +313,8 @@ func TestJdwpExposedFindingHelper(t *testing.T) {
 	if finding.Evidence != evidence {
 		t.Errorf("expected evidence %q, got %q", evidence, finding.Evidence)
 	}
+	finding.Enrich()
+	if finding.Severity != plugins.SeverityCritical {
+		t.Errorf("catalog Enrich() severity %q, want %q", finding.Severity, plugins.SeverityCritical)
+	}
 }

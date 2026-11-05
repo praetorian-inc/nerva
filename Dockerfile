@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM golang:alpine AS builder
+FROM golang:1.27.0-alpine AS builder
 RUN go install github.com/praetorian-inc/nerva/cmd/nerva@latest
 
 FROM alpine:latest

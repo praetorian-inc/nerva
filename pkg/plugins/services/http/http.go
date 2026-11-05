@@ -32,6 +32,7 @@ import (
 
 	"github.com/praetorian-inc/nerva/pkg/plugins"
 	"github.com/praetorian-inc/nerva/pkg/plugins/fingerprinters"
+	"github.com/praetorian-inc/nerva/pkg/plugins/oseol"
 	utils "github.com/praetorian-inc/nerva/pkg/plugins/pluginutils"
 )
 
@@ -69,19 +70,23 @@ var (
 		8080: {},
 		8081: {},
 		8082: {}, // JFrog Platform Router
+		8123: {}, // ClickHouse HTTP interface
 		8200: {}, // HashiCorp Vault
 		8888: {},
 		9001: {},
 		9080: {},
 		9090: {},
 		9100: {},
+		9191: {}, // PaperCut MF/NG admin web interface
 	}
 
 	commonHTTPSPorts = map[int]struct{}{
 		443:  {},
+		4443: {}, // NAKIVO Backup & Replication web UI
 		5986: {}, // WinRM HTTPS
 		6443: {}, // Kubernetes API server default port
 		8443: {},
+		9192: {}, // PaperCut MF/NG secure admin web interface
 		9398: {}, // Veeam Backup Enterprise Manager legacy REST API
 		9443: {}, // Veeam Backup Enterprise Manager web UI (among others)
 	}
@@ -91,6 +96,9 @@ var (
 	// The leading name component avoids false positives from bare version-like numbers
 	// such as HTTP version fragments ("1.1 proxy").
 	serverVersionRe = regexp.MustCompile(`[A-Za-z][\w.-]*/\d+\.\d+`)
+
+	// cpeVersionToken is what CPE 2.3 accepts in the version field without quoting.
+	cpeVersionToken = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 )
 
 func (p *HTTPPlugin) PortPriority(port uint16) bool {
@@ -174,6 +182,11 @@ func (p *HTTPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 	if target.Misconfigs && len(fpFindings) > 0 {
 		service.AnonymousAccess = true
 		service.SecurityFindings = append(service.SecurityFindings, fpFindings...)
+	}
+	if target.Misconfigs {
+		if finding := oseol.Check(append([]string{resp.Header.Get("Server")}, payload.CPEs...)...); finding != nil {
+			service.SecurityFindings = append(service.SecurityFindings, *finding)
+		}
 	}
 	if target.Misconfigs && resp.StatusCode/100 != 3 {
 		service.SecurityFindings = append(service.SecurityFindings, checkMissingSecurityHeaders(resp.Header, false)...)
@@ -290,6 +303,9 @@ func (p *HTTPSPlugin) Run(
 	}
 	if target.Misconfigs {
 		service.SecurityFindings = append(service.SecurityFindings, plugins.CheckTLS(conn)...)
+		if finding := oseol.Check(append([]string{resp.Header.Get("Server")}, payload.CPEs...)...); finding != nil {
+			service.SecurityFindings = append(service.SecurityFindings, *finding)
+		}
 		if resp.StatusCode/100 != 3 {
 			service.SecurityFindings = append(service.SecurityFindings, checkMissingSecurityHeaders(resp.Header, true)...)
 			if finding := checkCORSWildcard(resp.Header); finding != nil {
@@ -349,6 +365,21 @@ func (p *HTTPSPlugin) FingerprintResponse(resp *http.Response, client *http.Clie
 	return fingerprint(resp, p.analyzer, client, baseURL, host, misconfigs)
 }
 
+// cpeWithWappalyzerVersion writes the version Wappalyzer already parsed onto
+// the technology name ("PHP:8.2.12") into a wildcard CPE. Guard reads CPEs only.
+func cpeWithWappalyzerVersion(tech, cpe string) string {
+	_, version, ok := strings.Cut(tech, ":")
+	if !ok || !cpeVersionToken.MatchString(version) {
+		return cpe
+	}
+	parts := strings.Split(cpe, ":")
+	if len(parts) < 6 || parts[5] != "*" {
+		return cpe
+	}
+	parts[5] = version
+	return strings.Join(parts, ":")
+}
+
 // formatTechnologyWithVersion returns a technology string with version appended if present.
 // This matches wappalyzer's format: "tech:version" (e.g., "kubernetes:1.29.0").
 func formatTechnologyWithVersion(technology, version string) string {
@@ -371,7 +402,7 @@ func checkMissingSecurityHeaders(headers http.Header, checkHSTS bool) []plugins.
 	if checkHSTS && headers.Get("Strict-Transport-Security") == "" {
 		findings = append(findings, plugins.SecurityFinding{
 			ID:          "http-missing-hsts",
-			Severity:    plugins.SeverityMedium,
+			Severity:    plugins.SeverityLow,
 			Description: "HTTP response missing Strict-Transport-Security header",
 			Evidence:    "header not present: Strict-Transport-Security",
 		})
@@ -397,8 +428,8 @@ func checkMissingSecurityHeaders(headers http.Header, checkHSTS bool) []plugins.
 }
 
 // checkCORSWildcard returns a SecurityFinding when Access-Control-Allow-Origin is set to "*".
-// Severity is elevated to Medium when Access-Control-Allow-Credentials is also "true",
-// since browsers reject this combination per the Fetch spec.
+// The credentials variant is Low since browsers reject the wildcard+credentials combination
+// per the Fetch spec; it signals a misconfiguration rather than an exploitable flaw.
 func checkCORSWildcard(headers http.Header) *plugins.SecurityFinding {
 	origin := headers.Get("Access-Control-Allow-Origin")
 	if origin != "*" {
@@ -407,7 +438,7 @@ func checkCORSWildcard(headers http.Header) *plugins.SecurityFinding {
 	if strings.EqualFold(headers.Get("Access-Control-Allow-Credentials"), "true") {
 		return &plugins.SecurityFinding{
 			ID:          "http-cors-wildcard-credentials",
-			Severity:    plugins.SeverityMedium,
+			Severity:    plugins.SeverityLow,
 			Description: "Server sends CORS wildcard with Access-Control-Allow-Credentials: true; browsers reject this combination per the Fetch spec, but it signals a server misconfiguration",
 			Evidence:    "Access-Control-Allow-Origin: * | Access-Control-Allow-Credentials: true",
 		}
@@ -526,7 +557,7 @@ func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *ht
 	for tech, appInfo := range fingerprintResult {
 		technologies = append(technologies, tech)
 		if cpe := appInfo.CPE; cpe != "" {
-			cpes = append(cpes, cpe)
+			cpes = append(cpes, cpeWithWappalyzerVersion(tech, cpe))
 		}
 	}
 
