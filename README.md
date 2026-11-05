@@ -740,9 +740,9 @@ Apache 2.0 — see [LICENSE](LICENSE) for details.
 
 Nerva is a maintained fork of [fingerprintx](https://github.com/praetorian-inc/fingerprintx), originally developed by Praetorian's intern class of 2022:
 
-* [Soham Roy](https://github.com/praetorian-sohamroy)
+* Soham Roy
 * [Jue Huang](https://github.com/jue-huang)
-* [Henry Jung](https://github.com/henryjung64)
+* Henry Jung
 * [Tristan Wiesepape](https://github.com/qwetboy10)
 * [Joseph Henry](https://github.com/jwhenry28)
 * [Noah Tutt](https://github.com/noahtutt)
