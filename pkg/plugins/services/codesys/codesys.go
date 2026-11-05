@@ -48,8 +48,12 @@ func (p *CODESYSPlugin) PortPriority(port uint16) bool {
 func (p *CODESYSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
 	// Try V2 Little-Endian handshake first
 	service, err := p.tryV2Protocol(conn, timeout, target, true)
-	if service != nil || err != nil {
-		return service, err
+	if service != nil {
+		return service, nil
+	}
+	if err != nil {
+		// Hard error (reset). The scanner does not redial this conn.
+		return nil, nil
 	}
 
 	// Try V2 Big-Endian handshake
@@ -85,8 +89,8 @@ func (p *CODESYSPlugin) tryV2Protocol(conn net.Conn, timeout time.Duration, targ
 		return nil, nil
 	}
 
-	// Validate response starts with 0xbb (V2 signature)
-	if response[0] != V2ResponseSignature {
+	// Same two-byte signature the request sends (0xbb 0xbb).
+	if response[0] != V2ResponseSignature || response[1] != V2ResponseSignature {
 		return nil, nil
 	}
 

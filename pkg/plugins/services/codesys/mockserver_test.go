@@ -86,7 +86,8 @@ func (s *MockCODESYSServer) handleConnection(conn net.Conn) {
 	// Build a realistic V2 response
 	// Response format: starts with 0xbb, then info at offsets 65, 97, 129
 	response := make([]byte, 200)
-	response[0] = 0xbb // Signature byte
+	response[0] = 0xbb // Same two-byte signature the request sends
+	response[1] = 0xbb
 
 	// OS Name at offset 65: "Linux"
 	copy(response[65:], []byte("Linux\x00"))
