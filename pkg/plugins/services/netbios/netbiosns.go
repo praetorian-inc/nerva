@@ -106,14 +106,19 @@ func parseNBSTATResponse(data []byte) (plugins.ServiceNetbios, bool) {
 		return plugins.ServiceNetbios{}, false
 	}
 
-	// Skip header (12 bytes) and question section to find the answer.
-	// The question section has a variable-length name, then 4 bytes (QTYPE + QCLASS).
+	// Skip header (12 bytes) and the question section (QDCOUNT entries, each a
+	// variable-length name followed by QTYPE+QCLASS). Real NBSTAT responses
+	// (Samba, Windows) reply with QDCOUNT=0 - the question is not echoed back -
+	// so this must not assume exactly one question is always present.
+	qdCount := (uint16(data[4]) << 8) | uint16(data[5])
 	offset := 12
-	offset = skipDNSName(data, offset)
-	if offset < 0 || offset+4 > len(data) {
-		return plugins.ServiceNetbios{}, false
+	for i := 0; i < int(qdCount); i++ {
+		offset = skipDNSName(data, offset)
+		if offset < 0 || offset+4 > len(data) {
+			return plugins.ServiceNetbios{}, false
+		}
+		offset += 4 // skip QTYPE (2) + QCLASS (2)
 	}
-	offset += 4 // skip QTYPE (2) + QCLASS (2)
 
 	// Now at the answer section. Skip the answer name (may be compressed pointer or literal).
 	offset = skipDNSName(data, offset)
