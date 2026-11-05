@@ -28,6 +28,11 @@ import (
 
 const maxResponseBytes = 512
 
+// Match the scanner's passive banner budget. Once a candidate starts arriving,
+// retain the caller's deadline for completion. RFB greetings get a bounded idle
+// window for optional server-first license failures, not a full-timeout stall.
+const greetingIdleTimeout = 300 * time.Millisecond
+
 // Plugin shares matching and result handling across the passive greeting scan
 // and client-first probes. Each registration gets a fresh connection from Nerva.
 // No login, authentication attempt, remote session, or UDP traversal is performed.
@@ -65,7 +70,8 @@ func (p *Plugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target
 	if timeout <= 0 {
 		return nil, nil
 	}
-	if err := conn.SetDeadline(time.Now().Add(timeout)); err != nil {
+	deadline := time.Now().Add(timeout)
+	if err := conn.SetDeadline(deadline); err != nil {
 		return nil, err
 	}
 	if p.active != nil {
@@ -77,17 +83,32 @@ func (p *Plugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target
 			return nil, io.ErrShortWrite
 		}
 	}
-	return readService(conn, target)
+	return readService(conn, target, deadline, p.active == nil)
 }
 
-func readService(conn net.Conn, target plugins.Target) (*plugins.Service, error) {
+func readService(conn net.Conn, target plugins.Target, deadline time.Time, passive bool) (*plugins.Service, error) {
 	response := make([]byte, maxResponseBytes)
 	length := 0
 	for length < len(response) {
+		readDeadline := deadline
+		if (passive && length == 0) || isRFBGreeting(response[:length]) {
+			if idleDeadline := time.Now().Add(greetingIdleTimeout); idleDeadline.Before(readDeadline) {
+				readDeadline = idleDeadline
+			}
+		}
+		if err := conn.SetReadDeadline(readDeadline); err != nil {
+			if errors.Is(err, net.ErrClosed) || errors.Is(err, io.ErrClosedPipe) {
+				return nil, nil
+			}
+			return nil, err
+		}
 		n, err := conn.Read(response[length:])
 		length += n
 		if product, evidence := identifyResponse(response[:length]); product != "" {
 			return createService(target, product, evidence), nil
+		}
+		if !mayMatchResponse(response[:length]) {
+			return nil, nil
 		}
 		if err != nil {
 			var networkError net.Error

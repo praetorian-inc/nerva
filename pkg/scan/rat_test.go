@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/netip"
+	"sync"
 	"testing"
 	"time"
 
@@ -37,24 +38,22 @@ func TestRATPluginRegisteredBeforeVNC(t *testing.T) {
 func TestRATScanPipeline(t *testing.T) {
 	tests := []struct {
 		name     string
-		address  string
 		response string
 		protocol string
 	}{
-		{"realvnc", "127.0.0.1:5900", "RFB 005.000\n", plugins.ProtoRealVNC},
-		{"generic-vnc-fallback", "127.0.0.1:5900", "RFB 003.008\n", plugins.ProtoVNC},
+		{"realvnc", "RFB 005.000\n", plugins.ProtoRealVNC},
+		{"generic-vnc-fallback", "RFB 003.008\n", plugins.ProtoVNC},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			listener, err := net.Listen("tcp", tc.address)
-			if err != nil {
-				t.Fatalf("fixture requires free loopback port %s: %v", tc.address, err)
-			}
-			defer listener.Close()
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			require.NoError(t, err)
+			var handlers sync.WaitGroup
 			done := make(chan struct{})
 			defer func() {
 				listener.Close()
 				<-done
+				handlers.Wait()
 			}()
 			go func() {
 				defer close(done)
@@ -63,16 +62,29 @@ func TestRATScanPipeline(t *testing.T) {
 					if err != nil {
 						return
 					}
-					conn.SetDeadline(time.Now().Add(time.Second))
-					io.WriteString(conn, tc.response)
-					conn.Close()
+					handlers.Add(1)
+					go func() {
+						defer handlers.Done()
+						defer conn.Close()
+						conn.SetDeadline(time.Now().Add(5 * time.Second))
+						io.WriteString(conn, tc.response)
+						// A VNC server waits for client input after its greeting.
+						// Closing immediately would hide the RAT fallback timeout.
+						var input [1]byte
+						conn.Read(input[:])
+					}()
 				}
 			}()
-			config := Config{FastMode: true, DefaultTimeout: 100 * time.Millisecond, Misconfigs: true}
-			services, err := config.SimpleScanTarget(plugins.Target{Address: netip.MustParseAddrPort(tc.address)})
+			config := Config{ScanDepth: ScanDepthThorough, DefaultTimeout: 100 * time.Millisecond, Misconfigs: true}
+			services, err := config.SimpleScanTarget(plugins.Target{Address: netip.MustParseAddrPort(listener.Addr().String())})
 			require.NoError(t, err)
 			require.Len(t, services, 1)
 			require.Equal(t, tc.protocol, services[0].Protocol)
+			if tc.protocol == plugins.ProtoVNC {
+				require.Equal(t, "003.008", services[0].Version)
+			} else {
+				require.Contains(t, services[0].Metadata().(plugins.ServiceRemoteAccess).Evidence, "RFB 005.000")
+			}
 			require.Empty(t, services[0].SecurityFindings)
 		})
 	}

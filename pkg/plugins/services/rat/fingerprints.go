@@ -50,6 +50,41 @@ func identifyResponse(data []byte) (product, evidence string) {
 	return "", ""
 }
 
+// mayMatchResponse only rejects impossible prefixes, not incomplete signatures.
+func mayMatchResponse(data []byte) bool {
+	for _, prefix := range []string{"SRS:Ready\x00", "\x30\x11\x00\x00", "RFB ", "NXD-", "\x01\x00\x00\x00"} {
+		length := min(len(data), len(prefix))
+		if bytes.Equal(data[:length], []byte(prefix)[:length]) {
+			return true
+		}
+	}
+	// NetSupport starts with a variable byte followed by 00 02 00.
+	for offset, value := range []byte{0, 0, 2, 0} {
+		if offset == 0 {
+			continue
+		}
+		if offset >= len(data) {
+			return true
+		}
+		if data[offset] != value {
+			return false
+		}
+	}
+	return true
+}
+
+func isRFBGreeting(data []byte) bool {
+	if len(data) < 12 || !bytes.HasPrefix(data, []byte("RFB ")) || data[7] != '.' || data[11] != '\n' {
+		return false
+	}
+	for _, offset := range []int{4, 5, 6, 8, 9, 10} {
+		if data[offset] < '0' || data[offset] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 func matchSplashtop(data []byte) (string, bool) {
 	return "SRS:Ready\\0", bytes.HasPrefix(data, []byte("SRS:Ready\x00"))
 }

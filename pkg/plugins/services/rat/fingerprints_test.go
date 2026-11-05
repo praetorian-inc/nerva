@@ -24,6 +24,7 @@ func TestIdentifyResponseFixtures(t *testing.T) {
 			require.Equal(t, fixture.Product, product)
 			require.NotEmpty(t, evidence)
 			for length := 0; length < len(response); length++ {
+				require.True(t, mayMatchResponse(response[:length]), "viable prefix at %d", length)
 				product, _ := identifyResponse(response[:length])
 				require.Empty(t, product, "truncation at %d", length)
 			}

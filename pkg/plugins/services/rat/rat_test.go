@@ -89,7 +89,7 @@ func TestRunBoundedRead(t *testing.T) {
 }
 
 func TestRunSilentListenerAndZeroTimeout(t *testing.T) {
-	for _, timeout := range []time.Duration{0, 20 * time.Millisecond} {
+	for _, timeout := range []time.Duration{0, 20 * time.Millisecond, 2 * time.Second} {
 		client, server := net.Pipe()
 		start := time.Now()
 		service, err := (&Plugin{}).Run(client, timeout, testTarget(6783, true))
@@ -99,6 +99,91 @@ func TestRunSilentListenerAndZeroTimeout(t *testing.T) {
 		require.Nil(t, service)
 		require.Less(t, time.Since(start), time.Second)
 	}
+}
+
+func TestRunDoesNotStallOnOpenUnmatchedGreetings(t *testing.T) {
+	for _, tc := range []struct {
+		name, greeting string
+		active         *fingerprint
+	}{
+		{"unrelated", "HTTP/1.1 200 OK\r\n", nil},
+		{"generic-vnc", "RFB 003.008\n", nil},
+		{"generic-vnc-after-active-probe", "RFB 003.008\n", fingerprintForPort(4000)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client, server := net.Pipe()
+			defer client.Close()
+			defer server.Close()
+			done := make(chan error, 1)
+			go func() {
+				server.SetDeadline(time.Now().Add(2 * time.Second))
+				if tc.active != nil {
+					probe := make([]byte, len(tc.active.probe))
+					if _, err := io.ReadFull(server, probe); err != nil {
+						done <- err
+						return
+					}
+				}
+				_, err := server.Write([]byte(tc.greeting))
+				// Keep the connection open: EOF would hide the timeout regression.
+				done <- err
+			}()
+			start := time.Now()
+			service, err := (&Plugin{active: tc.active}).Run(client, 2*time.Second, testTarget(44444, false))
+			client.Close()
+			require.NoError(t, err)
+			require.Nil(t, service)
+			require.Less(t, time.Since(start), time.Second)
+			require.NoError(t, <-done)
+		})
+	}
+}
+
+func TestRunCompletesDelayedCandidate(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		response []byte
+		split    int
+		delay    time.Duration
+		product  string
+	}{
+		{"slow-fragment", []byte("SRS:Ready\x00"), 1, greetingIdleTimeout + 50*time.Millisecond, plugins.ProtoSplashtop},
+		{"split-license-failure", licenseFailureFixture(t), 12, 20 * time.Millisecond, plugins.ProtoRealVNC},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client, server := net.Pipe()
+			defer client.Close()
+			defer server.Close()
+			done := make(chan error, 1)
+			go func() {
+				server.SetWriteDeadline(time.Now().Add(2 * time.Second))
+				if _, err := server.Write(tc.response[:tc.split]); err != nil {
+					done <- err
+					return
+				}
+				time.Sleep(tc.delay)
+				_, err := server.Write(tc.response[tc.split:])
+				done <- err
+			}()
+			service, err := (&Plugin{}).Run(client, 2*time.Second, testTarget(44444, false))
+			client.Close()
+			require.NoError(t, err)
+			require.NoError(t, <-done)
+			require.NotNil(t, service)
+			require.Equal(t, tc.product, service.Protocol)
+		})
+	}
+}
+
+func licenseFailureFixture(t *testing.T) []byte {
+	t.Helper()
+	for _, fixture := range loadFixtures(t) {
+		if fixture.Name == "realvnc-license-failure" {
+			return decodeHex(t, fixture.ResponseHex)
+		}
+	}
+	t.Fatal("missing RealVNC license failure fixture")
+	return nil
 }
 
 func testTarget(port uint16, misconfigs bool) plugins.Target {
