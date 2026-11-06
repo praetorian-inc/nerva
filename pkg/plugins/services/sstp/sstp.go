@@ -18,6 +18,7 @@ import (
 	"bufio"
 	"crypto/rand"
 	"fmt"
+	"io"
 	"net"
 	"strings"
 	"time"
@@ -29,6 +30,14 @@ import (
 type SSTPluginHTTPS struct{}
 
 const SSTP = "sstp"
+
+// sstpDuplexContentLength is the SSTP handshake length on the request and the
+// positive signal a peer must echo. A generic HTTP 200 is not this value.
+const sstpDuplexContentLength = "18446744073709551615"
+
+// maxSSTPRead bounds the header read. Neighbors use io.LimitReader at 10MB.
+// The duplex length is 2^64-1; the body is never read.
+const maxSSTPRead = 10 * 1024 * 1024
 
 func init() {
 	plugins.RegisterPlugin(&SSTPluginHTTPS{})
@@ -55,16 +64,22 @@ func (p *SSTPluginHTTPS) Run(conn net.Conn, timeout time.Duration, target plugin
 	// Generate a random GUID for SSTPCORRELATIONID
 	correlationID := generateGUID()
 
+	host := conn.RemoteAddr().String()
+	if target.Host != "" {
+		host = target.Host
+	}
+
 	// Construct the SSTP_DUPLEX_POST request
 	// The special URI is /sra_{BA195980-CD49-458b-9E23-C84EE0ADCD75}/
 	request := fmt.Sprintf(
 		"SSTP_DUPLEX_POST /sra_{BA195980-CD49-458b-9E23-C84EE0ADCD75}/ HTTP/1.1\r\n"+
 			"Host: %s\r\n"+
 			"SSTPCORRELATIONID: %s\r\n"+
-			"Content-Length: 18446744073709551615\r\n"+
+			"Content-Length: %s\r\n"+
 			"\r\n",
-		conn.RemoteAddr().String(),
+		host,
 		correlationID,
+		sstpDuplexContentLength,
 	)
 
 	// Write the request manually (SSTP_DUPLEX_POST is not a standard HTTP method)
@@ -73,8 +88,8 @@ func (p *SSTPluginHTTPS) Run(conn net.Conn, timeout time.Duration, target plugin
 		return nil, &utils.RequestError{Message: err.Error()}
 	}
 
-	// Read and parse the response
-	reader := bufio.NewReader(conn)
+	// Read and parse the response. LimitReader matches other service plugins.
+	reader := bufio.NewReader(io.LimitReader(conn, maxSSTPRead))
 
 	// Read status line
 	statusLine, err := reader.ReadString('\n')
@@ -93,8 +108,9 @@ func (p *SSTPluginHTTPS) Run(conn net.Conn, timeout time.Duration, target plugin
 		return nil, nil
 	}
 
-	// Parse headers to find Server header
+	// Parse headers. The duplex Content-Length is the positive SSTP signal.
 	serverHeader := ""
+	duplex := false
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
@@ -106,13 +122,22 @@ func (p *SSTPluginHTTPS) Run(conn net.Conn, timeout time.Duration, target plugin
 			break
 		}
 
-		// Look for Server header
-		if strings.HasPrefix(strings.ToLower(line), "server:") {
+		lower := strings.ToLower(line)
+		if strings.HasPrefix(lower, "server:") {
 			parts := strings.SplitN(line, ":", 2)
 			if len(parts) == 2 {
 				serverHeader = strings.TrimSpace(parts[1])
 			}
 		}
+		if strings.HasPrefix(lower, "content-length:") {
+			parts := strings.SplitN(line, ":", 2)
+			if len(parts) == 2 && strings.TrimSpace(parts[1]) == sstpDuplexContentLength {
+				duplex = true
+			}
+		}
+	}
+	if !duplex {
+		return nil, nil
 	}
 
 	// Identify vendor based on Server header
@@ -152,8 +177,7 @@ func (p *SSTPluginHTTPS) Type() plugins.Protocol {
 }
 
 func (p *SSTPluginHTTPS) Priority() int {
-	// Priority 300 to run before generic HTTPS (which has priority 1)
-	return 300
+	return -1 // Runs before generic HTTPS (priority 1); nil on a non-SSTP peer lets HTTPS run
 }
 
 func (p *SSTPluginHTTPS) Name() string {

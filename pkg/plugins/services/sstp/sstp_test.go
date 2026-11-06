@@ -307,9 +307,80 @@ func TestSSTPPlugin_Name(t *testing.T) {
 func TestSSTPPlugin_Priority(t *testing.T) {
 	plugin := &SSTPluginHTTPS{}
 
-	// SSTP should run before generic HTTPS (priority 300 suggested)
-	priority := plugin.Priority()
-	if priority <= 1 {
-		t.Errorf("Expected Priority() > 1 to run before HTTPS, got %d", priority)
+	// simple_scan sorts Priority() ascending and returns on the first service.
+	// HTTPS is 1. Match glassfish (-1) so SSTP runs first and can return nil.
+	if plugin.Priority() != -1 {
+		t.Errorf("Expected Priority() -1 so SSTP runs before HTTPS (priority 1), got %d", plugin.Priority())
+	}
+}
+
+func TestSSTPPlugin_HTTP200WithoutDuplexContentLength(t *testing.T) {
+	server, client := net.Pipe()
+	go func() {
+		defer server.Close()
+		reader := bufio.NewReader(server)
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil || strings.TrimSpace(line) == "" {
+				break
+			}
+		}
+		_, _ = server.Write([]byte("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nServer: nginx\r\n\r\n"))
+	}()
+
+	plugin := &SSTPluginHTTPS{}
+	service, err := plugin.Run(client, 2*time.Second, plugins.Target{Host: "example.com"})
+	if err != nil {
+		t.Fatalf("non-SSTP peer should be a miss, not an error: %v", err)
+	}
+	if service != nil {
+		t.Fatal("HTTP 200 without duplex content-length must not be SSTP")
+	}
+}
+
+func TestSSTPPlugin_RequestUsesTargetHostAndDuplexLength(t *testing.T) {
+	server, client := net.Pipe()
+	type captured struct {
+		host   string
+		duplex bool
+	}
+	done := make(chan captured, 1)
+	go func() {
+		defer server.Close()
+		reader := bufio.NewReader(server)
+		var got captured
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				done <- got
+				return
+			}
+			if strings.HasPrefix(strings.ToLower(line), "host:") {
+				got.host = strings.TrimSpace(line[len("Host:"):])
+			}
+			if strings.Contains(line, sstpDuplexContentLength) {
+				got.duplex = true
+			}
+			if strings.TrimSpace(line) == "" {
+				break
+			}
+		}
+		_, _ = server.Write([]byte("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n"))
+		done <- got
+	}()
+
+	plugin := &SSTPluginHTTPS{}
+	_, _ = plugin.Run(client, 2*time.Second, plugins.Target{Host: "vpn.example"})
+
+	select {
+	case got := <-done:
+		if got.host != "vpn.example" {
+			t.Errorf("Host = %q, want target.Host", got.host)
+		}
+		if !got.duplex {
+			t.Error("request must keep the duplex Content-Length handshake")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out reading SSTP request")
 	}
 }

@@ -43,11 +43,9 @@ func TestCRCCalculation(t *testing.T) {
 			expected: 0xFFFF, // Complement of 0x0000
 		},
 		{
-			name: "dnp3 header without CRC (from buildRequestLinkStatusProbe)",
-			data: []byte{0x64, 0x05, 0x49, 0x00, 0x00, 0x00, 0x01},
-			// Calculate expected CRC for this specific data
-			// This test verifies CRC calculation is consistent
-			expected: calculateDNP3CRC([]byte{0x64, 0x05, 0x49, 0x00, 0x00, 0x00, 0x01}),
+			name:     "captured link-status header",
+			data:     []byte{0x05, 0x64, 0x05, 0xc9, 0x00, 0x00, 0x00, 0x00},
+			expected: 0x4c36, // trailer of 05 64 05 c9 00 00 00 00 36 4c
 		},
 	}
 
@@ -100,11 +98,10 @@ func TestParseShodanFrame(t *testing.T) {
 	funcCode := controlByte & 0x0F
 	assert.Equal(t, byte(FuncRequestLinkStatus), funcCode, "Function code should be 0x09 (Request Link Status)")
 
-	// Note: CRC validation is covered by TestCRCCalculation and TestBuildRequestLinkStatusProbe.
-	// The Shodan-captured frame's CRC (0x4c36) doesn't match our DNP3 CRC calculation (0x026c)
-	// for the header bytes [0x64, 0x05, 0xc9, 0x00, 0x00, 0x00, 0x00].
-	// This is expected - the captured frame may use a different CRC variant or have errors.
-	// The important validation here is the frame structure and control byte parsing.
+	// Captured trailer 36 4c is the CRC over the full header, including both start bytes.
+	trailer := uint16(frame[8]) | uint16(frame[9])<<8
+	assert.Equal(t, uint16(0x4c36), trailer)
+	assert.Equal(t, trailer, calculateDNP3CRC(frame[:8]), "captured frame CRC must cover the header bytes")
 }
 
 // TestParseDeviceRole tests device role detection from control byte
@@ -170,9 +167,9 @@ func TestBuildRequestLinkStatusProbe(t *testing.T) {
 	// Verify length byte (should be 0x05 - 5 bytes follow)
 	assert.Equal(t, byte(0x05), probe[2], "Length byte should be 0x05")
 
-	// Verify control byte should be 0x49 (PRM=1, Func=0x09)
-	expectedControl := byte(CtrlPRM | FuncRequestLinkStatus) // 0x40 | 0x09 = 0x49
-	assert.Equal(t, expectedControl, probe[3], "Control byte should be PRM | FuncRequestLinkStatus (0x49)")
+	// Captured control 0xc9 has DIR set, plus PRM and Request Link Status.
+	expectedControl := byte(CtrlDIR | CtrlPRM | FuncRequestLinkStatus) // 0xc9
+	assert.Equal(t, expectedControl, probe[3], "Control byte should be DIR | PRM | FuncRequestLinkStatus (0xc9)")
 
 	// Verify destination address is broadcast (0x00 0x00)
 	assert.Equal(t, byte(0x00), probe[4], "Destination address low byte should be 0x00")
@@ -188,9 +185,9 @@ func TestBuildRequestLinkStatusProbe(t *testing.T) {
 	crcHigh := probe[9]
 	crcFromProbe := uint16(crcLow) | (uint16(crcHigh) << 8)
 
-	// Calculate expected CRC for verification
-	expectedCRC := calculateDNP3CRC(probe[1:8]) // CRC from byte 1 to byte 7 (excluding first start byte)
-	assert.Equal(t, expectedCRC, crcFromProbe, "CRC should match calculated CRC")
+	// Same header range that validates the captured frame, including both start bytes.
+	expectedCRC := calculateDNP3CRC(probe[:8])
+	assert.Equal(t, expectedCRC, crcFromProbe, "CRC should cover the header bytes including both start bytes")
 
 	// Verify the probe can be parsed as a valid DNP3 frame
 	assert.GreaterOrEqual(t, len(probe), DNP3MinLength, "Probe should meet minimum DNP3 length")
@@ -288,8 +285,7 @@ func buildValidDNP3Response() []byte {
 		0x01, 0x00, // Dest address (our address, little-endian)
 		0x00, 0x00, // Src address (outstation address)
 	}
-	// Calculate CRC for bytes 1-7 (excluding first start byte)
-	crc := calculateDNP3CRC(frame[1:])
+	crc := calculateDNP3CRC(frame)
 	frame = append(frame, byte(crc&0xFF), byte(crc>>8))
 	return frame
 }
@@ -376,7 +372,7 @@ func buildMasterDNP3Response() []byte {
 		0x01, 0x00, // Dest address (little-endian)
 		0x00, 0x00, // Src address (outstation address)
 	}
-	crc := calculateDNP3CRC(frame[1:])
+	crc := calculateDNP3CRC(frame)
 	frame = append(frame, byte(crc&0xFF), byte(crc>>8))
 	return frame
 }

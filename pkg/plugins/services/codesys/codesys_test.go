@@ -16,6 +16,7 @@ package codesys
 
 import (
 	"bytes"
+	"io"
 	"net"
 	"testing"
 	"time"
@@ -50,7 +51,8 @@ func (mc *mockConn) SetWriteDeadline(t time.Time) error { return nil }
 // buildMockV2Response creates a mock V2 protocol response
 func buildMockV2Response() []byte {
 	response := make([]byte, 150)
-	response[0] = 0xbb // Valid V2 signature
+	response[0] = 0xbb // Same two-byte signature the request sends
+	response[1] = 0xbb
 
 	// Add mock metadata at expected offsets
 	osName := "Windows"
@@ -100,6 +102,15 @@ func TestCODESYSV2Detection(t *testing.T) {
 			name:           "Response too short",
 			response:       []byte{0xbb, 0x01},
 			expectDetected: false, // Too short - minimum 10 bytes required (CWE-125 fix)
+		},
+		{
+			name: "only first signature byte",
+			response: func() []byte {
+				buf := make([]byte, 150)
+				buf[0] = 0xbb
+				return buf
+			}(),
+			expectDetected: false,
 		},
 	}
 
@@ -235,5 +246,69 @@ func TestExtractVersionFromProduct(t *testing.T) {
 					tt.productType, result, tt.expectedVersion)
 			}
 		})
+	}
+}
+
+type scriptedRead struct {
+	data []byte
+	err  error
+}
+
+type scriptedConn struct {
+	reads []scriptedRead
+	i     int
+}
+
+func (c *scriptedConn) Read(b []byte) (int, error) {
+	if c.i >= len(c.reads) {
+		return 0, io.EOF
+	}
+	r := c.reads[c.i]
+	c.i++
+	n := copy(b, r.data)
+	return n, r.err
+}
+
+func (c *scriptedConn) Write(b []byte) (int, error)        { return len(b), nil }
+func (c *scriptedConn) Close() error                       { return nil }
+func (c *scriptedConn) LocalAddr() net.Addr                { return nil }
+func (c *scriptedConn) RemoteAddr() net.Addr               { return nil }
+func (c *scriptedConn) SetDeadline(t time.Time) error      { return nil }
+func (c *scriptedConn) SetReadDeadline(t time.Time) error  { return nil }
+func (c *scriptedConn) SetWriteDeadline(t time.Time) error { return nil }
+
+type timeoutErr struct{}
+
+func (timeoutErr) Error() string   { return "i/o timeout" }
+func (timeoutErr) Timeout() bool   { return true }
+func (timeoutErr) Temporary() bool { return true }
+
+func TestCODESYSHardErrorIsMiss(t *testing.T) {
+	conn := &scriptedConn{reads: []scriptedRead{
+		{err: io.ErrClosedPipe},
+		{data: buildMockV2Response()},
+	}}
+	plugin := &CODESYSPlugin{}
+	result, err := plugin.Run(conn, time.Second, plugins.Target{Host: "127.0.0.1"})
+	if err != nil {
+		t.Fatalf("reset should be a miss, not a scan error: %v", err)
+	}
+	if result != nil {
+		t.Fatal("reset must not continue on a dead connection")
+	}
+}
+
+func TestCODESYSTimeoutEmptyTriesBigEndian(t *testing.T) {
+	conn := &scriptedConn{reads: []scriptedRead{
+		{err: timeoutErr{}},
+		{data: buildMockV2Response()},
+	}}
+	plugin := &CODESYSPlugin{}
+	result, err := plugin.Run(conn, time.Second, plugins.Target{Host: "127.0.0.1"})
+	if err != nil {
+		t.Fatalf("timeout-as-empty should try big-endian, got error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("timeout-as-empty should still detect a big-endian response")
 	}
 }
