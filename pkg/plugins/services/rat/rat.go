@@ -79,9 +79,6 @@ func (p *Plugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target
 		if err != nil {
 			return nil, err
 		}
-		if n != len(p.active.probe) {
-			return nil, io.ErrShortWrite
-		}
 	}
 	return readService(conn, target, deadline, p.active == nil)
 }
