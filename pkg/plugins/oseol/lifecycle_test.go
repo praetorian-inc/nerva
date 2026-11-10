@@ -66,14 +66,14 @@ func TestCheckUsesFinalSupportedDay(t *testing.T) {
 }
 
 func TestWindowsInferenceRequiresEveryCandidateCutoff(t *testing.T) {
-	if end := latestWindowsSupportEnd([]string{"windows/7", "windows-server/unknown"}); !end.IsZero() {
+	if end, _ := latestSupportEnd([]string{"windows/7", "windows-server/unknown"}); !end.IsZero() {
 		t.Fatalf("unknown candidate produced a verdict: %s", end)
 	}
 }
 
 func TestWindowsInferenceUsesLatestCandidate(t *testing.T) {
 	serverEnd, _ := lifecycleEnd("windows-server", "2012")
-	end := latestWindowsSupportEnd([]string{"windows/8", "windows-server/2012"})
+	end, _ := latestSupportEnd([]string{"windows/8", "windows-server/2012"})
 	if end.IsZero() || !end.Equal(serverEnd) {
 		t.Fatalf("expected later server cutoff %s, got %s", serverEnd, end)
 	}
@@ -82,7 +82,7 @@ func TestWindowsInferenceUsesLatestCandidate(t *testing.T) {
 func TestWindowsVersionUnsupportedFollowsRefreshedDates(t *testing.T) {
 	original := now
 	t.Cleanup(func() { now = original })
-	end := latestWindowsSupportEnd(legacyWindows["6.2"].candidates)
+	end, _ := latestSupportEnd(legacyWindows["6.2"].candidates)
 	if end.IsZero() {
 		t.Fatal("missing Windows fixture")
 	}

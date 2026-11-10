@@ -24,7 +24,6 @@
 package oseol
 
 import (
-	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -54,7 +53,6 @@ type release struct {
 	family  family
 	version string
 	name    string
-	eol     time.Time
 }
 
 func date(y int, m time.Month, d int) time.Time {
@@ -86,8 +84,6 @@ var ubuntuApache = map[string]string{
 }
 
 var (
-	cpe23OS      = regexp.MustCompile(`(?i)cpe:2\.3:o:([^:]+):([^:]+):([^:]+)`)
-	cpe22OS      = regexp.MustCompile(`(?i)cpe:/o:([^:]+):([^:]+):([^:]+)`)
 	debVer       = regexp.MustCompile(`(?i)\+deb(\d+)`)
 	elVer        = regexp.MustCompile(`(?i)\.el(\d+)(?:_\d+)?`)
 	ubuntuY      = regexp.MustCompile(`(?i)ubuntu(?:0\.)?(?:[ /])?(\d{2}\.\d{2})`)
@@ -106,21 +102,34 @@ func Check(texts ...string) *plugins.SecurityFinding {
 		if text == "" {
 			continue
 		}
-		if rel, evidence := identify(text); rel != nil && !now().Before(rel.eol.AddDate(0, 0, 1)) {
-			return &plugins.SecurityFinding{
-				ID:          FindingID,
-				Severity:    plugins.SeverityLow,
-				Description: fmt.Sprintf("Host is running vendor-unsupported OS: %s", rel.name),
-				Evidence:    evidence,
+		if len(text) > maxEvidenceBytes {
+			text = text[:maxEvidenceBytes]
+		}
+		if rel, evidence := identify(text); rel != nil {
+			identified := osEvidence{name: rel.name, method: "banner/CPE inference", text: evidence,
+				candidates: []string{string(rel.family) + "/" + rel.version}}
+			if finding := identified.finding(); finding != nil {
+				return finding
 			}
 		}
 	}
 	return nil
 }
 
+// WindowsVersionUnsupported is the legacy RDP adapter. Windows evidence uses
+// the same all-candidates assessment as every other OS; there is no Windows EOL engine.
+func WindowsVersionUnsupported(version string) bool {
+	evidence := windowsVersionEvidence(version, "")
+	if evidence == nil {
+		return false
+	}
+	_, unsupported := assessLifecycle(evidence.candidates)
+	return unsupported
+}
+
 func identify(text string) (*release, string) {
-	if rel, ev := fromCPE(text); rel != nil {
-		return rel, ev
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(text)), "cpe:") {
+		return fromCPE(text)
 	}
 	if rel, ev := fromDebianDeb(text); rel != nil {
 		return rel, ev
@@ -144,45 +153,26 @@ func identify(text string) (*release, string) {
 }
 
 func lookup(f family, version string) *release {
-	end, _ := lifecycleEnd(string(f), version)
-	if end.IsZero() {
+	vendor, product := linuxProduct(f)
+	if vendor == "" || !versionToken.MatchString(version) {
 		return nil
 	}
-	vendor, product := linuxProduct(f)
-	return &release{f, version, productName(vendor, product) + " " + version, end.AddDate(0, 0, -1)}
+	return &release{f, version, productName(vendor, product) + " " + version}
 }
 
 func fromCPE(text string) (*release, string) {
-	for _, re := range []*regexp.Regexp{cpe23OS, cpe22OS} {
-		m := re.FindStringSubmatch(text)
-		if m == nil {
-			continue
-		}
-		vendor, product, version := strings.ToLower(m[1]), strings.ToLower(m[2]), m[3]
-		f, ver := cpeFamilyVersion(vendor, product, version)
-		if f == "" || ver == "" {
-			continue
-		}
-		if rel := lookup(f, ver); rel != nil {
-			return rel, m[0]
-		}
+	part, vendor, product, version, valid := parseCPE(strings.TrimSpace(text))
+	if !valid || part != "o" {
+		return nil, ""
+	}
+	definition := findProduct(vendor, product)
+	if definition == nil || definition.legacyFamily == "" {
+		return nil, ""
+	}
+	if rel := lookup(definition.legacyFamily, definition.release(product, version)); rel != nil {
+		return rel, text
 	}
 	return nil, ""
-}
-
-func cpeFamilyVersion(vendor, product, version string) (family, string) {
-	switch {
-	case vendor == "canonical" && strings.Contains(product, "ubuntu"):
-		return familyUbuntu, ubuntuVersion(version)
-	case vendor == "debian" && strings.Contains(product, "debian"):
-		return familyDebian, major(version)
-	case vendor == "redhat" && strings.Contains(product, "enterprise_linux"):
-		return familyRHEL, major(version)
-	case vendor == "centos" && strings.Contains(product, "centos"):
-		return familyCentOS, major(version)
-	default:
-		return "", ""
-	}
 }
 
 func ubuntuVersion(v string) string {

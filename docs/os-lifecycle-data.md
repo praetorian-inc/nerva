@@ -2,6 +2,14 @@
 
 Nerva embeds `pkg/plugins/oseol/data/lifecycle.json`. It does **not** query a lifecycle service while scanning. Identification rules stay in Go; release dates live only in this generated snapshot. Unknown dates/releases produce no EOL verdict, but identified OS versions can still be recorded as inventory.
 
+## Identification and assessment
+
+- `products.go` is the reviewed product registry: canonical CPE identities, explicit aliases, bounded banner patterns, release normalization, lifecycle-feed mappings, and device-scope guards. Patterns extract version tokens instead of enumerating supported releases. Windows Server years and R revisions are version-independent.
+- `identify.go` parses structured CPEs before considering banner/package evidence. A package heuristic cannot override a different explicit OS CPE. Conflicting explicit releases suppress a verdict; an unmapped explicit OS CPE cannot fall back to an IIS guess. Unknown releases remain inventory without an EOL claim.
+- `windows.go` only translates IIS/NTLM evidence into candidate OS releases. Those stable protocol mappings are not lifecycle dates and are not a separate Windows EOL implementation. Unknown or conflicting versions yield no candidate; ambiguous evidence never invents a single OS CPE.
+- `assessment.go` applies the same all-candidates-known-and-expired rule and finding formatter to every OS. Direct identification supplies one candidate; ambiguous protocol evidence supplies several. The legacy RDP helper delegates to this evaluator and retains its existing severity rules.
+- Banner matching uses Go's bounded, linear-time regex engine on at most 4 KiB per evidence string. The registry scales with product grammars, not the number of releases. Weekly refreshes update lifecycle facts only, not executable detection patterns.
+
 ## Weekly, review-only refresh
 
 `.github/workflows/refresh-os-lifecycle.yml` runs every Monday at **06:17 UTC**, and supports manual dispatch on `main`. It:

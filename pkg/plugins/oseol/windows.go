@@ -2,16 +2,14 @@ package oseol
 
 import (
 	"encoding/json"
-	"fmt"
+	"regexp"
 	"strings"
-	"time"
 
 	"github.com/praetorian-inc/nerva/pkg/plugins"
 )
 
-// IIS versions and NTLM versions identify sets of Windows releases, not always
-// one SKU. Only report EOL when every candidate is past ordinary security support.
-// Do not turn those sets into a fabricated single-product OS CPE.
+// IIS and NTLM identify candidate OS families, not a guaranteed edition/SKU.
+// This file only decodes that evidence; assessment.go owns every EOL decision.
 // https://learn.microsoft.com/en-us/windows/win32/sysinfo/operating-system-version
 var legacyWindows = map[string]struct {
 	name       string
@@ -27,67 +25,48 @@ var legacyWindows = map[string]struct {
 }
 
 var iisWindows = map[string]string{"6.0": "5.2", "7.0": "6.0", "7.5": "6.1", "8.0": "6.2", "8.5": "6.3"}
+var iisVersion = regexp.MustCompile(`(?i)\bMicrosoft-IIS/(\d+\.\d+)\b`)
+var ntlmVersion = regexp.MustCompile(`^\d+\.\d+\.\d+$`)
 
-func windowsFinding(service *plugins.Service, metadata map[string]json.RawMessage, texts []string) *plugins.SecurityFinding {
+func identifyWindowsEvidence(protocol string, metadata map[string]json.RawMessage, texts []string) *osEvidence {
 	var version, evidence string
-	switch service.Protocol {
+	switch protocol {
 	case plugins.ProtoHTTP, plugins.ProtoHTTPS:
-		for _, text := range texts {
-			if match := iisVersion.FindStringSubmatch(text); match != nil {
-				version, evidence = iisWindows[match[1]], match[0]
-			}
-		}
+		version, evidence = identifyIIS(texts)
 	case plugins.ProtoSMB, plugins.ProtoRDP:
 		var reported string
-		if json.Unmarshal(metadata["os_version"], &reported) == nil && versionToken.MatchString(reported) {
+		if json.Unmarshal(metadata["os_version"], &reported) == nil && len(reported) <= maxEvidenceBytes && ntlmVersion.MatchString(reported) {
 			parts := strings.Split(reported, ".")
-			if len(parts) == 3 {
-				version = strings.Join(parts[:2], ".")
-				evidence = "NTLM version " + reported
+			version = strings.Join(parts[:2], ".")
+			evidence = "NTLM version " + reported
+		}
+	}
+	return windowsVersionEvidence(version, evidence)
+}
+
+func identifyIIS(texts []string) (version, evidence string) {
+	for _, text := range texts {
+		if len(text) > maxEvidenceBytes {
+			text = text[:maxEvidenceBytes]
+		}
+		for _, match := range iisVersion.FindAllStringSubmatch(text, -1) {
+			candidate, known := iisWindows[match[1]]
+			if !known || (version != "" && version != candidate) {
+				return "", "" // Conflicting/unknown versions must not be last-wins.
 			}
+			version, evidence = candidate, match[0]
 		}
 	}
-	candidate, ok := legacyWindows[version]
-	if !ok {
-		return nil // In particular, IIS 10.0 / NT 10.0 is not an EOL verdict.
-	}
-	end := latestWindowsSupportEnd(candidate.candidates)
-	if end.IsZero() || now().Before(end) {
-		return nil
-	}
-	id := FindingID
-	if service.Protocol == plugins.ProtoRDP {
-		id = "rdp-eol-os"
-	}
-	return &plugins.SecurityFinding{
-		ID: id, Severity: plugins.SeverityLow,
-		Description: fmt.Sprintf("Service indicates an end-of-life Windows release: %s. This is an inference, not an authenticated OS identification; the exact edition is unresolved. All listed candidates ended ordinary security support by %s; paid extended support is not determined. Evidence: %s. Lifecycle: https://learn.microsoft.com/en-us/lifecycle/products/", candidate.name, end.AddDate(0, 0, -1).Format(time.DateOnly), evidence),
-		Evidence:    evidence,
-	}
+	return
 }
 
-// WindowsVersionUnsupported checks an identified NT version against the refreshed
-// support dates for every candidate OS. It does not identify an edition or SKU.
-func WindowsVersionUnsupported(version string) bool {
+func windowsVersionEvidence(version, evidence string) *osEvidence {
 	candidate, ok := legacyWindows[version]
 	if !ok {
-		return false
+		return nil // In particular, IIS 10 / NT 10 identifies too many releases.
 	}
-	end := latestWindowsSupportEnd(candidate.candidates)
-	return !end.IsZero() && !now().Before(end)
-}
-
-func latestWindowsSupportEnd(candidates []string) time.Time {
-	var latest time.Time
-	for _, candidate := range candidates {
-		product, version, _ := strings.Cut(candidate, "/")
-		end, _ := lifecycleEnd(product, version)
-		if end.IsZero() {
-			return time.Time{} // Every possible release must have a known cutoff.
-		}
-		if end.After(latest) {
-			latest = end
-		}
+	return &osEvidence{
+		name: candidate.name, method: "service-version inference", text: evidence,
+		candidates: candidate.candidates, ambiguous: true,
 	}
-	return latest
 }

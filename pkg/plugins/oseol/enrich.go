@@ -3,7 +3,6 @@ package oseol
 import (
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"slices"
 	"strings"
 
@@ -24,25 +23,7 @@ func Enrich(service *plugins.Service, misconfigs bool) {
 	var cpes []string
 	_ = json.Unmarshal(metadata["cpes"], &cpes)
 	texts := serviceOSTexts(service, metadata)
-	var observations []observation
-	for _, cpe := range cpes {
-		if identified, ok := identifyCPE(cpe); ok {
-			observations = append(observations, identified)
-		}
-	}
-	for _, text := range texts {
-		identified := identifyText(text)
-		if service.Protocol == plugins.ProtoRDP {
-			if strings.Contains(strings.ToLower(text), " or ") {
-				continue
-			}
-			for i := range identified {
-				identified[i].method = "RDP negotiation signature inference"
-			}
-		}
-		observations = append(observations, identified...)
-	}
-	hasOSIdentification := len(observations) > 0
+	observations, hasOSIdentification := identifyService(cpes, texts, service.Protocol)
 	observations = consistentObservations(observations)
 
 	for _, identified := range observations {
@@ -52,9 +33,6 @@ func Enrich(service *plugins.Service, misconfigs bool) {
 		}
 		if misconfigs {
 			if finding := identified.finding(texts); finding != nil {
-				if service.Protocol == plugins.ProtoRDP {
-					finding.ID = "rdp-eol-os"
-				}
 				addFinding(service, *finding)
 			}
 		}
@@ -64,8 +42,10 @@ func Enrich(service *plugins.Service, misconfigs bool) {
 		service.Raw, _ = json.Marshal(metadata)
 	}
 	if misconfigs && !hasOSIdentification {
-		if finding := windowsFinding(service, metadata, texts); finding != nil {
-			addFinding(service, *finding)
+		if evidence := identifyWindowsEvidence(service.Protocol, metadata, texts); evidence != nil {
+			if finding := evidence.finding(); finding != nil {
+				addFinding(service, *finding)
+			}
 		}
 	}
 }
@@ -142,25 +122,6 @@ func consistentObservations(observations []observation) []observation {
 	return result
 }
 
-func (o observation) finding(texts []string) *plugins.SecurityFinding {
-	end, source := o.lifecycle()
-	if end.IsZero() || now().Before(end) {
-		return nil
-	}
-	if o.product == "ios_xe" && !ciscoRouterOrSwitch(texts) {
-		return nil // IOS XE bulletins exclude APs; a software CPE cannot distinguish them.
-	}
-	name := productName(o.vendor, o.product)
-	if o.version != "*" {
-		name += " " + o.version
-	}
-	return &plugins.SecurityFinding{
-		ID: FindingID, Severity: plugins.SeverityLow,
-		Description: fmt.Sprintf("Detected %s (%s). Vendor security support ended %s; paid extensions and device-specific exceptions are not established by this scan. Evidence: %s. Lifecycle: %s", name, o.method, end.AddDate(0, 0, -1).Format("2006-01-02"), o.evidence, source),
-		Evidence:    o.evidence,
-	}
-}
-
 func ciscoRouterOrSwitch(texts []string) bool {
 	text := strings.ToLower(strings.Join(texts, "\n"))
 	if strings.Contains(text, "aironet") || strings.Contains(text, "access point") {
@@ -170,6 +131,9 @@ func ciscoRouterOrSwitch(texts []string) bool {
 }
 
 func addFinding(service *plugins.Service, finding plugins.SecurityFinding) {
+	if service.Protocol == plugins.ProtoRDP {
+		finding.ID = "rdp-eol-os"
+	}
 	for i, existing := range service.SecurityFindings {
 		if existing.ID == finding.ID {
 			// Prefer the lifecycle explanation, including its evidence and source,
