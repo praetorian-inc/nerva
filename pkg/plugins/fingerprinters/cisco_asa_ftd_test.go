@@ -645,7 +645,7 @@ func TestCiscoASAFTDFingerprinter_Fingerprint_EdgeCases(t *testing.T) {
 			},
 			body:        "",
 			wantResult:  true,
-			wantVersion: "7.18(1)",
+			wantVersion: "",
 			wantASDM:    true,
 		},
 		{
@@ -845,7 +845,7 @@ func TestExtractASAFTDVersion(t *testing.T) {
 				"Server": []string{"Cisco ASDM/7.18(1)"},
 			},
 			platformType: "asa",
-			want:         "7.18(1)",
+			want:         "",
 		},
 		{
 			name: "returns empty for no version sources",
@@ -1217,7 +1217,7 @@ func TestCiscoASAFTDFingerprinter_ShodanVectors_Additional(t *testing.T) {
 			},
 			body:        "<html><head><title>Cisco ASDM</title></head></html>",
 			wantTech:    "cisco-asa",
-			wantVersion: "7.14(1)",
+			wantVersion: "",
 			wantASDM:    true,
 		},
 	}

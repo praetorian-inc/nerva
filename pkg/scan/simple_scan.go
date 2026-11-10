@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/praetorian-inc/nerva/pkg/plugins"
+	"github.com/praetorian-inc/nerva/pkg/plugins/oseol"
 )
 
 var dialer = &net.Dialer{
@@ -442,6 +443,9 @@ func simplePluginRunner(
 		return config.DialTCP(scanTarget)
 	}
 	result, err := plugin.Run(conn, config.DefaultTimeout, target)
+	if err == nil {
+		oseol.Enrich(result, config.Misconfigs)
+	}
 
 	// Log probe completion.
 	if config.Verbose {
