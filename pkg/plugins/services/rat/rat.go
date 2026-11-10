@@ -75,7 +75,7 @@ func (p *Plugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target
 		return nil, err
 	}
 	if p.active != nil {
-		n, err := io.WriteString(conn, p.active.probe)
+		_, err := io.WriteString(conn, p.active.probe)
 		if err != nil {
 			return nil, err
 		}
