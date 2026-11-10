@@ -19,8 +19,8 @@
 // versions are not a release id (DSAs rewrite them); Debian needs +debN.
 //
 // End-of-life dates are the end of vendor standard/LTS security maintenance,
-// not paid extras (Ubuntu Pro/ESM, Debian ELTS, RHEL ELS). Sources are cited
-// on each table. Do not invent versions, banners, or dates.
+// not paid extras (Ubuntu Pro/ESM, Debian ELTS, RHEL ELS). Dates and sources
+// come from the embedded, automatically refreshed snapshot. Do not invent dates.
 package oseol
 
 import (
@@ -59,47 +59,6 @@ type release struct {
 
 func date(y int, m time.Month, d int) time.Time {
 	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
-}
-
-// Vendor standard-support end dates. Keyed by family + version.
-//
-// Ubuntu: https://ubuntu.com/about/release-cycle and
-// https://ubuntu.com/desktop/developers (End of Standard Support).
-// Debian LTS: https://wiki.debian.org/DebianReleases (EOL LTS column) and
-// https://wiki.debian.org/LTS.
-// RHEL: https://access.redhat.com/support/policy/updates/errata and
-// https://access.redhat.com/articles/4038291 (RHEL 6/7 maintenance end).
-// CentOS: https://www.centos.org/centos-linux-eol and
-// https://blog.centos.org/2023/04/end-dates-are-coming-for-centos-stream-8-and-centos-linux-7/.
-var catalog = map[family]map[string]release{
-	familyUbuntu: {
-		"14.04": {familyUbuntu, "14.04", "Ubuntu 14.04 LTS", date(2019, time.April, 30)},
-		"16.04": {familyUbuntu, "16.04", "Ubuntu 16.04 LTS", date(2021, time.April, 30)},
-		"18.04": {familyUbuntu, "18.04", "Ubuntu 18.04 LTS", date(2023, time.May, 31)},
-		"20.04": {familyUbuntu, "20.04", "Ubuntu 20.04 LTS", date(2025, time.May, 31)},
-		"22.04": {familyUbuntu, "22.04", "Ubuntu 22.04 LTS", date(2027, time.May, 31)},
-		"24.04": {familyUbuntu, "24.04", "Ubuntu 24.04 LTS", date(2029, time.May, 31)},
-		"26.04": {familyUbuntu, "26.04", "Ubuntu 26.04 LTS", date(2031, time.May, 31)},
-	},
-	familyDebian: {
-		"8":  {familyDebian, "8", "Debian 8 (Jessie)", date(2020, time.June, 30)},
-		"9":  {familyDebian, "9", "Debian 9 (Stretch)", date(2022, time.June, 30)},
-		"10": {familyDebian, "10", "Debian 10 (Buster)", date(2024, time.June, 30)},
-		"11": {familyDebian, "11", "Debian 11 (Bullseye)", date(2026, time.August, 31)},
-		"12": {familyDebian, "12", "Debian 12 (Bookworm)", date(2028, time.June, 30)},
-		"13": {familyDebian, "13", "Debian 13 (Trixie)", date(2030, time.June, 30)},
-	},
-	familyRHEL: {
-		"6": {familyRHEL, "6", "RHEL 6", date(2020, time.November, 30)},
-		"7": {familyRHEL, "7", "RHEL 7", date(2024, time.June, 30)},
-		"8": {familyRHEL, "8", "RHEL 8", date(2029, time.May, 31)},
-		"9": {familyRHEL, "9", "RHEL 9", date(2032, time.May, 31)},
-	},
-	familyCentOS: {
-		"6": {familyCentOS, "6", "CentOS Linux 6", date(2020, time.November, 30)},
-		"7": {familyCentOS, "7", "CentOS Linux 7", date(2024, time.June, 30)},
-		"8": {familyCentOS, "8", "CentOS Linux 8", date(2021, time.December, 31)},
-	},
 }
 
 // ubuntuOpenSSH maps OpenSSH_X.YpZ in an Ubuntu-tagged SSH banner to the LTS
@@ -147,7 +106,7 @@ func Check(texts ...string) *plugins.SecurityFinding {
 		if text == "" {
 			continue
 		}
-		if rel, evidence := identify(text); rel != nil && !now().Before(rel.eol) {
+		if rel, evidence := identify(text); rel != nil && !now().Before(rel.eol.AddDate(0, 0, 1)) {
 			return &plugins.SecurityFinding{
 				ID:          FindingID,
 				Severity:    plugins.SeverityLow,
@@ -185,15 +144,12 @@ func identify(text string) (*release, string) {
 }
 
 func lookup(f family, version string) *release {
-	byVer, ok := catalog[f]
-	if !ok {
+	end, _ := lifecycleEnd(string(f), version)
+	if end.IsZero() {
 		return nil
 	}
-	rel, ok := byVer[version]
-	if !ok {
-		return nil
-	}
-	return &rel
+	vendor, product := linuxProduct(f)
+	return &release{f, version, productName(vendor, product) + " " + version, end.AddDate(0, 0, -1)}
 }
 
 func fromCPE(text string) (*release, string) {

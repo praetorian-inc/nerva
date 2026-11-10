@@ -29,7 +29,7 @@ func TestEnrich_OSInventoryAndEOL(t *testing.T) {
 		{"windows smb", "smb", `{"os_version":"5.2.3790"}`, "", "os-eol", "NTLM version 5.2.3790"},
 		{"windows rdp", "rdp", `{"fingerprint":"Windows Server 2003"}`, "microsoft:windows_server_2003:*:", "rdp-eol-os", "signature inference"},
 		{"supported ubuntu", "https", `{"response_headers":{"Server":["Apache/2.4.58 (Ubuntu)"]}}`, "canonical:ubuntu_linux:24.04:", "", ""},
-		{"unlisted ubuntu", "ssh", `{"banner":"Ubuntu 28.04"}`, "canonical:ubuntu_linux:28.04:", "", ""},
+		{"unlisted ubuntu", "ssh", `{"banner":"Ubuntu 99.99"}`, "canonical:ubuntu_linux:99.99:", "", ""},
 		{"stream not linux", "snmp", `{"description":"CentOS Stream 9"}`, "centos:centos_stream:9:", "", ""},
 		{"freebsd release not openssh", "ssh", `{"banner":"SSH-2.0-OpenSSH_9.5 FreeBSD-20231004"}`, "", "", ""},
 		{"iis inference cannot override explicit OS", "http", `{"response_headers":{"Server":["Microsoft-IIS/6.0 Ubuntu 24.04"]}}`, "canonical:ubuntu_linux:24.04:", "", ""},

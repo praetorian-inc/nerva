@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/praetorian-inc/nerva/pkg/plugins"
+	"github.com/praetorian-inc/nerva/pkg/plugins/oseol"
 	utils "github.com/praetorian-inc/nerva/pkg/plugins/pluginutils"
 )
 
@@ -36,13 +37,15 @@ type eolEntry struct {
 	severity plugins.Severity
 }
 
-var eolOSSeverity = map[string]plugins.Severity{
-	"Windows 2000":                plugins.SeverityCritical,
-	"Windows Server 2003":         plugins.SeverityCritical,
-	"Windows Server 2008":         plugins.SeverityHigh,
-	"Windows 7 or Server 2008 R2": plugins.SeverityHigh,
-	"Windows Server 2008 R2 DC":   plugins.SeverityHigh,
-	"Windows 8 or Server 2012":    plugins.SeverityMedium,
+// These are fingerprint-to-NT-version mappings, not permanent EOL verdicts.
+// Ordinary security-support dates come from oseol's refreshed snapshot.
+var windowsFingerprintVersion = map[string]string{
+	"Windows 2000":                "5.0",
+	"Windows Server 2003":         "5.2",
+	"Windows Server 2008":         "6.0",
+	"Windows 7 or Server 2008 R2": "6.1",
+	"Windows Server 2008 R2 DC":   "6.1",
+	"Windows 8 or Server 2012":    "6.2",
 }
 
 var eolVersionMap = map[string]eolEntry{
@@ -421,13 +424,13 @@ func DetectRDPAuth(conn net.Conn, timeout time.Duration) (*plugins.ServiceRDP, b
 // checkEOLOS maps an OS fingerprint string (from guessOS) to a SecurityFinding
 // if the OS is end-of-life. Returns nil if the OS is not EOL or fingerprint is empty.
 func checkEOLOS(fingerprint string) *plugins.SecurityFinding {
-	severity, ok := eolOSSeverity[fingerprint]
-	if !ok {
+	version, ok := windowsFingerprintVersion[fingerprint]
+	if !ok || !oseol.WindowsVersionUnsupported(version) {
 		return nil
 	}
 	return &plugins.SecurityFinding{
 		ID:          "rdp-eol-os",
-		Severity:    severity,
+		Severity:    eolVersionMap[version].severity,
 		Description: fmt.Sprintf("RDP service running end-of-life OS: %s", fingerprint),
 		Evidence:    fingerprint,
 	}
@@ -450,7 +453,7 @@ func checkEOLOSVersion(osVersion string) *plugins.SecurityFinding {
 	}
 	key := fmt.Sprintf("%d.%d", major, minor)
 	entry, ok := eolVersionMap[key]
-	if !ok {
+	if !ok || !oseol.WindowsVersionUnsupported(key) {
 		return nil
 	}
 	return &plugins.SecurityFinding{

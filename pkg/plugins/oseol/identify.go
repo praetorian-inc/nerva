@@ -157,41 +157,33 @@ func (o observation) cpe() string {
 }
 
 func (o observation) lifecycle() (time.Time, string) {
-	var f family
+	product, version := "", o.version
 	switch o.vendor + ":" + o.product {
 	case "canonical:ubuntu_linux":
-		f = familyUbuntu
+		product, version = "ubuntu", ubuntuVersion(version)
 	case "debian:debian_linux":
-		f = familyDebian
+		product, version = "debian", major(version)
 	case "redhat:enterprise_linux":
-		f = familyRHEL
+		product, version = "rhel", major(version)
 	case "centos:centos":
-		f = familyCentOS
-	}
-	if f != "" {
-		version := major(o.version)
-		if f == familyUbuntu {
-			version = ubuntuVersion(o.version)
-		}
-		if rel := lookup(f, version); rel != nil {
-			return rel.eol.AddDate(0, 0, 1), linuxLifecycleSources[f]
-		}
-	}
-	key := o.version
-	if o.vendor == "microsoft" {
-		key = o.product
-	} else if o.product == "ios_xe" {
-		parts := strings.Split(o.version, ".")
+		product, version = "centos", major(version)
+	case "centos:centos_stream":
+		product, version = "centos-stream", major(version)
+	case "fedoraproject:fedora":
+		product = "fedora"
+	case "freebsd:freebsd":
+		product = "freebsd"
+	case "cisco:ios_xe":
+		parts := strings.Split(version, ".")
 		if len(parts) < 2 {
 			return time.Time{}, ""
 		}
-		key = strings.Join(parts[:2], ".")
+		product, version = "cisco-ios-xe", strings.Join(parts[:2], ".")
+	default:
+		if o.vendor == "microsoft" && strings.HasPrefix(o.product, "windows_server_") {
+			product = "windows-server"
+			version = strings.ReplaceAll(strings.TrimPrefix(o.product, "windows_server_"), "_", "-")
+		}
 	}
-	rule := lifecycleDates[o.vendor+":"+o.product][key]
-	if rule.end == "" {
-		return time.Time{}, ""
-	}
-	end, _ := time.Parse("2006-01-02", rule.end)
-	// Published dates are the last supported day, not the first unsupported day.
-	return end.AddDate(0, 0, 1), rule.source
+	return lifecycleEnd(product, version)
 }
