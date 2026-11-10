@@ -336,6 +336,10 @@ func (e Service) Type() string { return TypeService }
 
 func (e Service) Metadata() Metadata {
 	switch e.Protocol {
+	case ProtoSplashtop, ProtoDameware, ProtoRealVNC, ProtoNoMachine, ProtoRadmin, ProtoNetSupport, ProtoRustDeskDiscovery:
+		var p ServiceRemoteAccess
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
 	case ProtoElasticsearch:
 		var p ServiceElasticsearch
 		_ = json.Unmarshal(e.Raw, &p)
