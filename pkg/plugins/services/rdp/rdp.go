@@ -20,38 +20,35 @@ import (
 	"fmt"
 	"net"
 	"reflect"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/praetorian-inc/nerva/pkg/plugins"
+	"github.com/praetorian-inc/nerva/pkg/plugins/oseol"
 	utils "github.com/praetorian-inc/nerva/pkg/plugins/pluginutils"
 )
 
 type RDPPlugin struct{}
 type TLSPlugin struct{}
 
-type eolEntry struct {
-	name     string
-	severity plugins.Severity
+// These are fingerprint-to-NT-version mappings, not permanent EOL verdicts.
+// Ordinary security-support dates come from oseol's refreshed snapshot.
+var windowsFingerprintVersion = map[string]string{
+	"Windows 2000":                "5.0",
+	"Windows Server 2003":         "5.2",
+	"Windows Server 2008":         "6.0",
+	"Windows 7 or Server 2008 R2": "6.1",
+	"Windows Server 2008 R2 DC":   "6.1",
+	"Windows 8 or Server 2012":    "6.2",
 }
 
-var eolOSSeverity = map[string]plugins.Severity{
-	"Windows 2000":                plugins.SeverityCritical,
-	"Windows Server 2003":         plugins.SeverityCritical,
-	"Windows Server 2008":         plugins.SeverityHigh,
-	"Windows 7 or Server 2008 R2": plugins.SeverityHigh,
-	"Windows Server 2008 R2 DC":   plugins.SeverityHigh,
-	"Windows 8 or Server 2012":    plugins.SeverityMedium,
-}
-
-var eolVersionMap = map[string]eolEntry{
-	"5.0": {"Windows 2000", plugins.SeverityCritical},
-	"5.2": {"Windows Server 2003", plugins.SeverityCritical},
-	"6.0": {"Windows Server 2008 or Vista", plugins.SeverityHigh},
-	"6.1": {"Windows 7 or Server 2008 R2", plugins.SeverityHigh},
-	"6.2": {"Windows 8 or Server 2012", plugins.SeverityMedium},
-	"6.3": {"Windows 8.1 or Server 2012 R2", plugins.SeverityMedium},
+var windowsVersionSeverity = map[string]plugins.Severity{
+	"5.0": plugins.SeverityCritical,
+	"5.2": plugins.SeverityCritical,
+	"6.0": plugins.SeverityHigh,
+	"6.1": plugins.SeverityHigh,
+	"6.2": plugins.SeverityMedium,
+	"6.3": plugins.SeverityMedium,
 }
 
 const RDP = "rdp"
@@ -421,44 +418,29 @@ func DetectRDPAuth(conn net.Conn, timeout time.Duration) (*plugins.ServiceRDP, b
 // checkEOLOS maps an OS fingerprint string (from guessOS) to a SecurityFinding
 // if the OS is end-of-life. Returns nil if the OS is not EOL or fingerprint is empty.
 func checkEOLOS(fingerprint string) *plugins.SecurityFinding {
-	severity, ok := eolOSSeverity[fingerprint]
-	if !ok {
-		return nil
-	}
-	return &plugins.SecurityFinding{
-		ID:          "rdp-eol-os",
-		Severity:    severity,
-		Description: fmt.Sprintf("RDP service running end-of-life OS: %s", fingerprint),
-		Evidence:    fingerprint,
-	}
+	return rdpEOLFinding(windowsFingerprintVersion[fingerprint], fingerprint)
 }
 
 // checkEOLOSVersion maps a "Major.Minor.Build" version string (from NTLM OSVersion)
 // to a SecurityFinding if the OS is end-of-life. Returns nil if not EOL or parse error.
 func checkEOLOSVersion(osVersion string) *plugins.SecurityFinding {
-	parts := strings.SplitN(osVersion, ".", 3)
-	if len(parts) < 2 {
+	if strings.Count(osVersion, ".") != 2 {
 		return nil
 	}
-	major, err := strconv.Atoi(parts[0])
-	if err != nil {
+	return rdpEOLFinding(osVersion, osVersion)
+}
+
+func rdpEOLFinding(version, evidence string) *plugins.SecurityFinding {
+	finding := oseol.WindowsVersionFinding(version, evidence)
+	if finding == nil {
 		return nil
 	}
-	minor, err := strconv.Atoi(parts[1])
-	if err != nil {
+	severity, known := windowsVersionSeverity[strings.Join(strings.Split(version, ".")[:2], ".")]
+	if !known {
 		return nil
 	}
-	key := fmt.Sprintf("%d.%d", major, minor)
-	entry, ok := eolVersionMap[key]
-	if !ok {
-		return nil
-	}
-	return &plugins.SecurityFinding{
-		ID:          "rdp-eol-os",
-		Severity:    entry.severity,
-		Description: fmt.Sprintf("RDP service running end-of-life OS: %s", entry.name),
-		Evidence:    osVersion,
-	}
+	finding.ID, finding.Severity = "rdp-eol-os", severity
+	return finding
 }
 
 func (p *RDPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
