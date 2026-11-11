@@ -39,7 +39,7 @@ def refresh(sources, previous, fetch=None, refreshed_at=None):
         if not re.fullmatch(r"[a-z0-9-]+", product):
             raise ValueError(f"Invalid product identifier: {product}")
         products[product] = normalize_product(product, policy, fetch(API + product))
-    snapshot = {"schema_version": 1, "products": products}
+    snapshot = {"schema_version": 2, "products": products}
     if previous is not None:
         validate_previous(previous, snapshot)
         if previous["products"] == products:
@@ -90,7 +90,7 @@ def normalize_product(product, policy, payload):
             validate_date(start)
             if end < start:
                 raise ValueError(f"Support ends before release: {product}/{name}")
-        releases[name] = {"end": end}
+        releases[name] = end
     if product in ("windows-server", "windows"):
         releases = windows_release_families(releases)
     return {
@@ -112,28 +112,28 @@ def windows_release_families(releases):
     # date across the family's SPs, not the original RTM/SP0 support deadline.
     # Keep distinct R2/SAC/LTSC/edition families distinct.
     families = {}
-    for name, entry in releases.items():
+    for name, end in releases.items():
         family = re.sub(r"-sp\d+$", "", name)
-        families.setdefault(family, []).append(entry["end"])
+        families.setdefault(family, []).append(end)
     for family, ends in families.items():
-        releases[family] = {"end": None if None in ends else max(ends)}
+        releases[family] = None if None in ends else max(ends)
     # Server 2003 R2 shares Server 2003's support lifecycle. See sources doc.
     if "2003" in releases:
-        releases["2003-r2"] = dict(releases["2003"])
+        releases.setdefault("2003-r2", releases["2003"])
     return releases
 
 
 def validate_previous(previous, snapshot):
-    if previous.get("schema_version") != 1:
+    if previous.get("schema_version") != 2:
         raise ValueError("Unsupported previous snapshot schema")
     for product, old in previous["products"].items():
         if product not in snapshot["products"]:
             raise ValueError(f"Refresh would remove product {product}")
         new = snapshot["products"][product]["releases"]
-        for release, entry in old["releases"].items():
+        for release, end in old["releases"].items():
             if release not in new:
                 raise ValueError(f"Upstream lost release {product}/{release}; refusing partial refresh")
-            if entry["end"] is not None and new[release]["end"] is None:
+            if end is not None and new[release] is None:
                 raise ValueError(f"Upstream lost date {product}/{release}; review manually")
 
 

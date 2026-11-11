@@ -15,15 +15,11 @@ var lifecycleJSON []byte
 
 // The snapshot is refreshed by a weekly PR, never by a scan-time network call.
 // End dates are the final supported calendar day; nil means no known cutoff.
-type lifecycleRelease struct {
-	End *string `json:"end"`
-}
-
 type lifecycleProduct struct {
-	Source    string                      `json:"source"`
-	VendorURL string                      `json:"vendor_url"`
-	Support   string                      `json:"support"`
-	Releases  map[string]lifecycleRelease `json:"releases"`
+	Source    string             `json:"source"`
+	VendorURL string             `json:"vendor_url"`
+	Support   string             `json:"support"`
+	Releases  map[string]*string `json:"releases"`
 }
 
 type lifecycleSnapshot struct {
@@ -52,7 +48,7 @@ func parseLifecycle(data []byte) (lifecycleSnapshot, error) {
 	if err := decoder.Decode(new(any)); err != io.EOF {
 		return snapshot, fmt.Errorf("unexpected trailing lifecycle data")
 	}
-	if snapshot.SchemaVersion != 1 || len(snapshot.Products) == 0 {
+	if snapshot.SchemaVersion != 2 || len(snapshot.Products) == 0 {
 		return snapshot, fmt.Errorf("unsupported or empty lifecycle snapshot")
 	}
 	if _, err := time.Parse(time.RFC3339, snapshot.RefreshedAt); err != nil {
@@ -63,12 +59,12 @@ func parseLifecycle(data []byte) (lifecycleSnapshot, error) {
 			!strings.HasPrefix(product.Source, "https://") || !strings.HasPrefix(product.VendorURL, "https://") {
 			return snapshot, fmt.Errorf("invalid lifecycle product %q", name)
 		}
-		for version, release := range product.Releases {
+		for version, end := range product.Releases {
 			if version == "" {
 				return snapshot, fmt.Errorf("empty release in %s", name)
 			}
-			if release.End != nil {
-				if _, err := time.Parse(time.DateOnly, *release.End); err != nil {
+			if end != nil {
+				if _, err := time.Parse(time.DateOnly, *end); err != nil {
 					return snapshot, fmt.Errorf("invalid cutoff for %s/%s: %w", name, version, err)
 				}
 			}
@@ -82,10 +78,10 @@ func lifecycleEnd(product, version string) (time.Time, string) {
 	if !ok {
 		return time.Time{}, ""
 	}
-	release, ok := entry.Releases[version]
-	if !ok || release.End == nil {
+	endDate, ok := entry.Releases[version]
+	if !ok || endDate == nil {
 		return time.Time{}, ""
 	}
-	end, _ := time.Parse(time.DateOnly, *release.End) // Validated on load.
+	end, _ := time.Parse(time.DateOnly, *endDate) // Validated on load.
 	return end.AddDate(0, 0, 1), entry.VendorURL + " (data: " + entry.Source + ")"
 }

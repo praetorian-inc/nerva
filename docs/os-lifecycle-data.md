@@ -6,6 +6,7 @@ Nerva embeds `pkg/plugins/oseol/data/lifecycle.json`. It does **not** query a li
 
 - `products.go` is the reviewed product registry: canonical CPE identities, explicit aliases, bounded banner patterns, release normalization, lifecycle-feed mappings, and device-scope guards. Patterns extract version tokens instead of enumerating supported releases. Windows Server years and R revisions are version-independent.
 - `identify.go` parses structured CPEs before considering banner/package evidence. A package heuristic cannot override a different explicit OS CPE. Conflicting explicit releases suppress a verdict; an unmapped explicit OS CPE cannot fall back to an IIS guess. Unknown releases remain inventory without an EOL claim.
+- `packages.go` contains fallback package-release evidence and reviewed shipped-package mappings, not another OS parser or lifecycle engine. Conflicting package releases use the same consistency checks as explicit identities.
 - `windows.go` only translates IIS/NTLM evidence into candidate OS releases. Those stable protocol mappings are not lifecycle dates and are not a separate Windows EOL implementation. Unknown or conflicting versions yield no candidate; ambiguous evidence never invents a single OS CPE.
 - `assessment.go` applies the same all-candidates-known-and-expired rule and finding formatter to every OS. Direct identification supplies one candidate; ambiguous protocol evidence supplies several. The legacy RDP helper delegates to this evaluator and retains its existing severity rules.
 - Banner matching uses Go's bounded, linear-time regex engine on at most 4 KiB per evidence string. The registry scales with product grammars, not the number of releases. Weekly refreshes update lifecycle facts only, not executable detection patterns.
@@ -23,6 +24,8 @@ Nerva embeds `pkg/plugins/oseol/data/lifecycle.json`. It does **not** query a li
 There is **no direct push to main, automatic approval, merge, or auto-merge step**. Enable GitHub Actions' permission to create pull requests in repository settings. Protect `main` with required human review/status checks; workflow YAML alone cannot restrict every other actor with repository write access. The workflow does not change repository protections.
 
 The default `GITHUB_TOKEN` may not trigger other workflows from its generated PR. The refresh job performs targeted validation before creating the PR; maintainers must run any required checks before merging. Do not bypass protection or give the updater approval/merge privileges to work around this.
+
+Snapshot schema v2 maps each release directly to its final supported date (or `null` when unknown). The generator and embedded-data loader validate the same schema.
 
 No-op refreshes retain the prior timestamp and do not produce timestamp-only PRs. `refreshed_at` means the last **changed** snapshot, not the last successful polling attempt; workflow history records unchanged successful checks. Releases disappearing or losing a known date require manual investigation, not silent deletion. Changed dates and newly published releases become reviewable diffs.
 

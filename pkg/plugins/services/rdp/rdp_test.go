@@ -19,6 +19,7 @@ import (
 	"encoding/binary"
 	"net"
 	"net/netip"
+	"strings"
 	"testing"
 	"time"
 
@@ -404,6 +405,10 @@ func TestCheckEOLOSVersion(t *testing.T) {
 		{"6.2.9200", false, plugins.SeverityMedium},
 		{"6.3.9600", false, plugins.SeverityMedium},
 		{"10.0.19041", true, ""},
+		{"6.1", true, ""},
+		{"6.1.7601oops", true, ""},
+		{"6.1.7601.1", true, ""},
+		{"-6.1.7601", true, ""},
 		{"", true, ""},
 		{"invalid", true, ""},
 	}
@@ -426,6 +431,9 @@ func TestCheckEOLOSVersion(t *testing.T) {
 			}
 			if finding.Severity != tt.expectedSeverity {
 				t.Errorf("finding.Severity = %q, want %q", finding.Severity, tt.expectedSeverity)
+			}
+			if finding.Evidence != tt.osVersion || !strings.Contains(finding.Description, "Lifecycle:") {
+				t.Fatalf("RDP bypassed shared evidence/formatting: %+v", finding)
 			}
 		})
 	}
@@ -466,7 +474,7 @@ func createNTLMChallengeResponseWithVersion(major, minor, build uint16) []byte {
 	// Point to right after the 56-byte fixed header (offset from NTLM start = 56,
 	// but our buffer has a 4-byte ASN.1 prefix before NTLM, so NTLM starts at offset 4).
 	// DetectRDPAuth strips bytes before NTLMSSP, so offsets are relative to NTLM start.
-	targetInfoOffset := uint32(56) // offset from NTLM start
+	targetInfoOffset := uint32(56)                        // offset from NTLM start
 	_ = binary.Write(buf, binary.LittleEndian, uint16(4)) // terminator AV_PAIR = 4 bytes
 	_ = binary.Write(buf, binary.LittleEndian, uint16(4))
 	_ = binary.Write(buf, binary.LittleEndian, targetInfoOffset)
@@ -569,9 +577,9 @@ func TestRDPPlugin_NLADisabled(t *testing.T) {
 	// flags (0x00), length (0x08, 0x00), then selectedProtocol = 0x01 0x00 0x00 0x00.
 	nlaDisabledResponse := []byte{
 		0x03, 0x00, 0x00, 0x13, 0x0e, 0xd0, 0x00, 0x00, 0x12, 0x34, 0x00, // generic signature (11 bytes)
-		0x02,                   // typeNegRSP
-		0x00,                   // flags
-		0x08, 0x00,             // length
+		0x02,       // typeNegRSP
+		0x00,       // flags
+		0x08, 0x00, // length
 		0x01, 0x00, 0x00, 0x00, // selectedProtocol = 0x01 (SSL only)
 	}
 	conn := &mockConn{readData: nlaDisabledResponse}
@@ -606,9 +614,9 @@ func TestRDPPlugin_MisconfigsFalse(t *testing.T) {
 	// Same response as TestRDPPlugin_NLADisabled but with Misconfigs=false.
 	nlaDisabledResponse := []byte{
 		0x03, 0x00, 0x00, 0x13, 0x0e, 0xd0, 0x00, 0x00, 0x12, 0x34, 0x00, // generic signature (11 bytes)
-		0x02,                   // typeNegRSP
-		0x00,                   // flags
-		0x08, 0x00,             // length
+		0x02,       // typeNegRSP
+		0x00,       // flags
+		0x08, 0x00, // length
 		0x01, 0x00, 0x00, 0x00, // selectedProtocol = 0x01 (SSL only)
 	}
 	conn := &mockConn{readData: nlaDisabledResponse}

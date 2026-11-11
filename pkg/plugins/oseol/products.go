@@ -3,6 +3,7 @@ package oseol
 import (
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -12,11 +13,10 @@ import (
 type productDefinition struct {
 	vendor, product, name string
 	part, feed            string
-	legacyFamily          family
+	legacyCheck           bool
 	aliases               []string
 	normalizeRelease      func(string) string
 	banners               []*regexp.Regexp
-	packagePattern        *regexp.Regexp
 	productPattern        *regexp.Regexp // Release encoded in the CPE product name.
 	productPrefix         string
 	eligibleEvidence      func([]string) bool
@@ -24,22 +24,22 @@ type productDefinition struct {
 
 var products = []productDefinition{
 	{
-		vendor: "canonical", product: "ubuntu_linux", name: "Ubuntu", part: "o", feed: "ubuntu", legacyFamily: familyUbuntu,
+		vendor: "canonical", product: "ubuntu_linux", name: "Ubuntu", part: "o", feed: "ubuntu", legacyCheck: true,
 		aliases: []string{"canonical:ubuntu"}, normalizeRelease: ubuntuVersion,
 		banners: []*regexp.Regexp{regexp.MustCompile(`(?i)\bUbuntu(?: Linux)?[ /]+(\d{2}\.\d{2})(?:\.\d+)?\b`)},
 	},
 	{
-		vendor: "debian", product: "debian_linux", name: "Debian", part: "o", feed: "debian", legacyFamily: familyDebian,
+		vendor: "debian", product: "debian_linux", name: "Debian", part: "o", feed: "debian", legacyCheck: true,
 		normalizeRelease: major,
 		banners:          []*regexp.Regexp{regexp.MustCompile(`(?i)\bDebian(?: GNU/Linux)?[ /]+(\d+(?:\.\d+)*)\b`)},
 	},
 	{
-		vendor: "redhat", product: "enterprise_linux", name: "RHEL", part: "o", feed: "rhel", legacyFamily: familyRHEL,
+		vendor: "redhat", product: "enterprise_linux", name: "RHEL", part: "o", feed: "rhel", legacyCheck: true,
 		aliases: []string{"redhat:enterprise_linux_server"}, normalizeRelease: major,
-		banners: []*regexp.Regexp{regexp.MustCompile(`(?i)\bRed Hat Enterprise Linux(?: Server)?(?: release)?[ /]+(\d+(?:\.\d+)*)\b`)},
+		banners: []*regexp.Regexp{regexp.MustCompile(`(?i)\bRed Hat(?: Enterprise Linux)?(?: Server)?(?: release)?[ /]+(\d+(?:\.\d+)*)\b`)},
 	},
 	{
-		vendor: "centos", product: "centos", name: "CentOS Linux", part: "o", feed: "centos", legacyFamily: familyCentOS,
+		vendor: "centos", product: "centos", name: "CentOS Linux", part: "o", feed: "centos", legacyCheck: true,
 		normalizeRelease: major,
 		banners:          []*regexp.Regexp{regexp.MustCompile(`(?i)\bCentOS(?: Linux)?(?: release)?[ /]+(\d+(?:\.\d+)*)\b`)},
 	},
@@ -50,8 +50,7 @@ var products = []productDefinition{
 	},
 	{
 		vendor: "fedoraproject", product: "fedora", name: "Fedora", part: "o", feed: "fedora",
-		banners:        []*regexp.Regexp{regexp.MustCompile(`(?i)\bFedora(?: Linux| Core)?(?: release)?[ /]+(\d+)\b`)},
-		packagePattern: regexp.MustCompile(`(?i)\b[^\s]*\.fc(\d+)\b`),
+		banners: []*regexp.Regexp{regexp.MustCompile(`(?i)\bFedora(?: Linux| Core)?(?: release)?[ /]+(\d+)\b`)},
 	},
 	{
 		vendor: "freebsd", product: "freebsd", name: "FreeBSD", part: "o", feed: "freebsd",
@@ -140,18 +139,20 @@ func minorRelease(version string) string {
 	return strings.Join(parts[:2], ".")
 }
 
-func linuxProduct(f family) (string, string) {
-	for _, product := range products {
-		if f != "" && product.legacyFamily == f {
-			return product.vendor, product.product
-		}
-	}
-	return "", ""
-}
-
-func productName(vendor, product string) string {
-	if definition := findProduct(vendor, product); definition != nil {
-		return definition.displayName(product)
+func ubuntuVersion(version string) string {
+	parts := strings.Split(version, ".")
+	if len(parts) >= 2 && len(parts[0]) == 2 && len(parts[1]) == 2 {
+		return minorRelease(version)
 	}
 	return ""
+}
+
+func major(version string) string {
+	if i := strings.IndexAny(version, ".-"); i > 0 {
+		version = version[:i]
+	}
+	if _, err := strconv.Atoi(version); err != nil {
+		return ""
+	}
+	return version
 }

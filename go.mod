@@ -3,6 +3,7 @@ module github.com/praetorian-inc/nerva
 go 1.27.0
 
 require (
+	github.com/go-asn1-ber/asn1-ber v1.5.8
 	github.com/ishidawataru/sctp v0.0.0-20251114114122-19ddcbc6aae2
 	github.com/ory/dockertest/v3 v3.12.0
 	github.com/praetorian-inc/capability-sdk v0.0.0-20260911151812-1c832477930f

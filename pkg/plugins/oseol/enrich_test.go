@@ -40,6 +40,8 @@ func TestEnrich_OSInventoryAndEOL(t *testing.T) {
 		{"cisco unknown device", "http", `{"cpes":["cpe:2.3:o:cisco:ios_xe:17.3.5:*:*:*:*:*:*:*"]}`, "cisco:ios_xe:17.3.5:", "", ""},
 		{"conflicting families", "ftp", `{"banner":"FreeBSD 12.4-RELEASE Ubuntu 24.04"}`, "", "", ""},
 		{"generic linux", "http", `{"cpes":["cpe:2.3:o:linux:linux_kernel:*:*:*:*:*:*:*:*"]}`, "", "", ""},
+		{"unversioned OS blocks IIS guess", "http", `{"cpes":["cpe:/o:microsoft:windows_11"],"response_headers":{"Server":["Microsoft-IIS/6.0"]}}`, "", "", ""},
+		{"generic kernel allows distro banner", "http", `{"cpes":["cpe:/o:linux:linux_kernel"],"response_headers":{"Server":["Ubuntu 24.04"]}}`, "canonical:ubuntu_linux:24.04:", "", ""},
 		{"fedora cpe", "http", `{"cpes":["cpe:2.3:o:fedoraproject:fedora:38:*:*:*:*:*:*:*"]}`, "fedoraproject:fedora:38:", "os-eol", "cpe:2.3"},
 		{"freebsd phpinfo", "http", `{"fingerprint_metadata":{"php":{"system":"FreeBSD host 12.4-RELEASE FreeBSD 12.4-RELEASE"}}}`, "freebsd:freebsd:12.4:", "os-eol", "12.4"},
 	}
@@ -102,6 +104,23 @@ func TestEnrich_Telnet(t *testing.T) {
 	Enrich(service, true)
 	if len(service.SecurityFindings) != 1 {
 		t.Fatalf("findings: %+v", service.SecurityFindings)
+	}
+}
+
+func TestEnrich_PreservesExistingFindingMetadata(t *testing.T) {
+	service := &plugins.Service{Protocol: "rdp", Raw: json.RawMessage(`{"fingerprint":"Windows Server 2003"}`),
+		SecurityFindings: []plugins.SecurityFinding{{ID: "rdp-eol-os", Severity: plugins.SeverityCritical,
+			Title: "existing title", Description: "legacy finding", Impact: "existing impact", Recommendation: "existing remediation", CVSS: "existing vector"}}}
+	Enrich(service, true)
+	if len(service.SecurityFindings) != 1 {
+		t.Fatalf("duplicate EOL findings: %+v", service.SecurityFindings)
+	}
+	finding := service.SecurityFindings[0]
+	if finding.Severity != plugins.SeverityCritical || finding.Title != "existing title" || finding.Impact != "existing impact" || finding.Recommendation != "existing remediation" || finding.CVSS != "existing vector" {
+		t.Fatalf("richer evidence discarded existing metadata: %+v", finding)
+	}
+	if !strings.Contains(finding.Description, "Lifecycle:") {
+		t.Fatal("missing shared lifecycle explanation")
 	}
 }
 

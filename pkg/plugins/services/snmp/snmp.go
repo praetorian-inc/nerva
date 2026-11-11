@@ -15,10 +15,11 @@
 package snmp
 
 import (
-	"encoding/asn1"
+	"bytes"
 	"net"
 	"time"
 
+	ber "github.com/go-asn1-ber/asn1-ber"
 	"github.com/praetorian-inc/nerva/pkg/plugins"
 	utils "github.com/praetorian-inc/nerva/pkg/plugins/pluginutils"
 )
@@ -69,40 +70,53 @@ func (f *SNMPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 	return nil, nil
 }
 
-// parseDescription validates the response to our public-community sysDescr GET.
-// ASN.1 lengths and varbind types are decoded, never inferred from byte offsets.
+// SNMP uses BER, not the stricter DER accepted by encoding/asn1. Decode with
+// the BER library, then validate the response to our public-community sysDescr GET.
 func parseDescription(response []byte) (string, bool) {
-	var message struct {
-		Version   int
-		Community []byte
-		PDU       asn1.RawValue
-	}
-	rest, err := asn1.Unmarshal(response, &message)
-	if err != nil || len(rest) != 0 || message.Version != 0 || string(message.Community) != "public" || message.PDU.Class != 2 || message.PDU.Tag != 2 || !message.PDU.IsCompound {
+	if len(response) > 65535 {
 		return "", false
 	}
-	sequence, err := asn1.Marshal(asn1.RawValue{Tag: 16, IsCompound: true, Bytes: message.PDU.Bytes})
-	if err != nil {
+	reader := bytes.NewReader(response)
+	message, err := ber.ReadPacket(reader)
+	if err != nil || reader.Len() != 0 || !isSequence(message) || len(message.Children) != 3 {
 		return "", false
 	}
-	var pdu struct {
-		RequestID   int64
-		ErrorStatus int
-		ErrorIndex  int
-		Bindings    []struct {
-			Name  asn1.ObjectIdentifier
-			Value asn1.RawValue
+	version, community, pdu := message.Children[0], message.Children[1], message.Children[2]
+	if !integerEquals(version, 0) || !isPrimitive(community, ber.TagOctetString) || string(community.ByteValue) != "public" {
+		return "", false
+	}
+	if pdu.ClassType != ber.ClassContext || pdu.TagType != ber.TypeConstructed || pdu.Tag != 2 || len(pdu.Children) != 4 {
+		return "", false
+	}
+	if !integerEquals(pdu.Children[0], -1) || !integerEquals(pdu.Children[1], 0) || !integerEquals(pdu.Children[2], 0) || !isSequence(pdu.Children[3]) {
+		return "", false
+	}
+	for _, binding := range pdu.Children[3].Children {
+		if !isSequence(binding) || len(binding.Children) != 2 {
+			return "", false
 		}
-	}
-	if rest, err = asn1.Unmarshal(sequence, &pdu); err != nil || len(rest) != 0 || pdu.RequestID != -1 || pdu.ErrorStatus != 0 {
-		return "", false
-	}
-	for _, binding := range pdu.Bindings {
-		if binding.Name.Equal(asn1.ObjectIdentifier{1, 3, 6, 1, 2, 1, 1, 1, 0}) && binding.Value.Class == 0 && binding.Value.Tag == 4 && !binding.Value.IsCompound {
-			return string(binding.Value.Bytes), true
+		oid, value := binding.Children[0], binding.Children[1]
+		if isPrimitive(oid, ber.TagObjectIdentifier) && oid.Value == "1.3.6.1.2.1.1.1.0" && isPrimitive(value, ber.TagOctetString) {
+			return string(value.ByteValue), true
 		}
 	}
 	return "", false
+}
+
+func isSequence(packet *ber.Packet) bool {
+	return packet.ClassType == ber.ClassUniversal && packet.TagType == ber.TypeConstructed && packet.Tag == ber.TagSequence
+}
+
+func isPrimitive(packet *ber.Packet, tag ber.Tag) bool {
+	return packet.ClassType == ber.ClassUniversal && packet.TagType == ber.TypePrimitive && packet.Tag == tag
+}
+
+func integerEquals(packet *ber.Packet, expected int64) bool {
+	if !isPrimitive(packet, ber.TagInteger) || len(packet.ByteValue) == 0 {
+		return false
+	}
+	value, err := ber.ParseInt64(packet.ByteValue)
+	return err == nil && value == expected
 }
 
 func (f *SNMPPlugin) Name() string {

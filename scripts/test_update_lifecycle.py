@@ -22,12 +22,12 @@ def feed(product="fedora", **release_changes):
 class LifecycleRefreshTests(unittest.TestCase):
     def test_selects_security_support_not_feature_or_paid_support(self):
         product = updater.normalize_product("fedora", POLICY, feed())
-        self.assertEqual(product["releases"]["38"]["end"], "2024-05-21")
+        self.assertEqual(product["releases"]["38"], "2024-05-21")
         self.assertEqual(product["source"], updater.API + "fedora")
 
     def test_preserves_unknown_cutoff_without_inventing_a_date(self):
         product = updater.normalize_product("fedora", POLICY, feed(eolFrom=None))
-        self.assertIsNone(product["releases"]["38"]["end"])
+        self.assertIsNone(product["releases"]["38"])
 
     def test_rejects_bad_or_boolean_dates(self):
         for value in [True, False, "2024-02-30", "2024-5-21", "", 123]:
@@ -55,17 +55,21 @@ class LifecycleRefreshTests(unittest.TestCase):
                 updater.normalize_product("fedora", POLICY, payload)
 
     def test_windows_uses_latest_service_pack_without_collapsing_r2(self):
-        releases = {"2003": {"end": "2007-04-10"}, "2003-sp2": {"end": "2015-07-14"},
-                    "2008": {"end": "2011-07-12"}, "2008-r2-sp1": {"end": "2020-01-14"}}
+        releases = {"2003": "2007-04-10", "2003-sp2": "2015-07-14",
+                    "2008": "2011-07-12", "2008-r2-sp1": "2020-01-14"}
         result = updater.windows_release_families(releases)
-        self.assertEqual(result["2003"], {"end": "2015-07-14"})
+        self.assertEqual(result["2003"], "2015-07-14")
         self.assertEqual(result["2003-r2"], result["2003"])
-        self.assertEqual(result["2008"], {"end": "2011-07-12"})
-        self.assertEqual(result["2008-r2"], {"end": "2020-01-14"})
+        self.assertEqual(result["2008"], "2011-07-12")
+        self.assertEqual(result["2008-r2"], "2020-01-14")
+
+    def test_explicit_r2_lifecycle_is_not_overwritten_by_alias(self):
+        result = updater.windows_release_families({"2003": "2015-07-14", "2003-r2": None})
+        self.assertIsNone(result["2003-r2"])
 
     def test_windows_unknown_service_pack_prevents_eol_verdict(self):
-        result = updater.windows_release_families({"2003": {"end": "2007-04-10"}, "2003-sp2": {"end": None}})
-        self.assertIsNone(result["2003"]["end"])
+        result = updater.windows_release_families({"2003": "2007-04-10", "2003-sp2": None})
+        self.assertIsNone(result["2003"])
 
     def test_unchanged_data_keeps_original_timestamp(self):
         old = updater.refresh({"fedora": POLICY}, None, lambda _: feed(), "2026-01-01T00:00:00Z")
@@ -76,7 +80,7 @@ class LifecycleRefreshTests(unittest.TestCase):
         old = updater.refresh({"fedora": POLICY}, None, lambda _: feed(), "2026-01-01T00:00:00Z")
         new = updater.refresh({"fedora": POLICY}, old, lambda _: feed(eolFrom="2024-06-01"), "2026-01-08T00:00:00Z")
         self.assertEqual(new["refreshed_at"], "2026-01-08T00:00:00Z")
-        self.assertEqual(new["products"]["fedora"]["releases"]["38"]["end"], "2024-06-01")
+        self.assertEqual(new["products"]["fedora"]["releases"]["38"], "2024-06-01")
 
     def test_rejects_disappearing_release_or_date(self):
         old = updater.refresh({"fedora": POLICY}, None, lambda _: feed())

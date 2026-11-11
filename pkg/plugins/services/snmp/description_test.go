@@ -1,12 +1,13 @@
 package snmp
 
 import (
+	"bytes"
 	"encoding/asn1"
 	"strings"
 	"testing"
 )
 
-func descriptionResponse(t *testing.T, description string) []byte {
+func descriptionResponse(t testing.TB, description string) []byte {
 	t.Helper()
 	pdu, err := asn1.Marshal(struct {
 		RequestID   int
@@ -44,6 +45,43 @@ func TestParseDescription_LongBERLengths(t *testing.T) {
 	if !ok || got != description {
 		t.Fatalf("got %q, %v", got, ok)
 	}
+}
+
+func TestParseDescription_AcceptsBERLengthEncoding(t *testing.T) {
+	response := descriptionResponse(t, "FreeBSD 12.4-RELEASE")
+	// SNMP uses BER, which permits long-form lengths even below 128 bytes.
+	response = append([]byte{response[0], 0x82, 0, response[1]}, response[2:]...)
+	if got, ok := parseDescription(response); !ok || got != "FreeBSD 12.4-RELEASE" {
+		t.Fatalf("valid BER response rejected: %q, %v", got, ok)
+	}
+}
+
+func TestParseDescription_RejectsDifferentRequestOrCommunity(t *testing.T) {
+	valid := descriptionResponse(t, "Fedora 38")
+	for _, response := range [][]byte{
+		bytes.Replace(valid, []byte("public"), []byte("secret"), 1),
+		bytes.Replace(valid, []byte{2, 1, 0xff}, []byte{2, 1, 1}, 1),
+		bytes.Replace(valid, []byte{2, 1, 0xff, 2, 1, 0, 2, 1, 0}, []byte{2, 1, 0xff, 2, 1, 1, 2, 1, 0}, 1),
+		bytes.Replace(valid, []byte{2, 1, 0xff, 2, 1, 0, 2, 1, 0}, []byte{2, 1, 0xff, 2, 1, 0, 2, 1, 1}, 1),
+		bytes.Replace(valid, []byte{6, 8, 43, 6, 1, 2, 1, 1, 1, 0}, []byte{6, 8, 43, 6, 1, 2, 1, 1, 2, 0}, 1),
+	} {
+		if _, ok := parseDescription(response); ok {
+			t.Fatalf("accepted unrelated response: %x", response)
+		}
+	}
+}
+
+func FuzzParseDescription(f *testing.F) {
+	f.Add(descriptionResponse(f, "FreeBSD 12.4-RELEASE"))
+	f.Add(descriptionResponse(f, strings.Repeat("x", 200)))
+	f.Add([]byte{0x30, 0x84, 0x7f, 0xff, 0xff, 0xff})
+	f.Add([]byte{})
+	f.Fuzz(func(t *testing.T, data []byte) {
+		description, ok := parseDescription(data)
+		if ok && len(description) > len(data) {
+			t.Fatal("decoded description exceeds response size")
+		}
+	})
 }
 
 func TestParseDescription_RejectsMalformed(t *testing.T) {

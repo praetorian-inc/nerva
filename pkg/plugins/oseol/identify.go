@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
-	"time"
 )
 
 // Identification is independent of lifecycle coverage. An unknown release can
@@ -32,8 +31,11 @@ func identifyService(cpes, texts []string, protocol string) ([]observation, bool
 			continue
 		}
 		part, _, _, version, valid := parseCPE(cpe)
-		if valid && part == "o" && version != "*" {
-			return nil, true
+		if valid && part == "o" {
+			hasStructuredOS = true
+			if version != "*" {
+				return nil, true
+			}
 		}
 	}
 	structured := observations
@@ -88,21 +90,7 @@ func identifyText(text string) []observation {
 	if len(found) > 0 {
 		return found
 	}
-	for i := range products {
-		product := &products[i]
-		if product.packagePattern == nil {
-			continue
-		}
-		if match := product.packagePattern.FindStringSubmatch(text); match != nil {
-			return []observation{product.observed(match[1], match[0], "package release inference")}
-		}
-	}
-	if rel, _ := identify(text); rel != nil {
-		vendor, product := linuxProduct(rel.family)
-		return []observation{{vendor: vendor, product: product, version: rel.version,
-			evidence: strings.TrimSpace(text), method: "banner/package inference"}}
-	}
-	return nil
+	return identifyPackages(text)
 }
 
 func identifyCPE(value string) (observation, bool) {
@@ -145,12 +133,4 @@ func parseCPE(value string) (part, vendor, product, version string, valid bool) 
 func (o observation) cpe() string {
 	definition := findProduct(o.vendor, o.product)
 	return fmt.Sprintf("cpe:2.3:%s:%s:%s:%s:*:*:*:*:*:*:*", definition.part, o.vendor, o.product, o.version)
-}
-
-func (o observation) lifecycle() (time.Time, string) {
-	definition := findProduct(o.vendor, o.product)
-	if definition == nil {
-		return time.Time{}, ""
-	}
-	return lifecycleEnd(definition.feed, definition.release(o.product, o.version))
 }

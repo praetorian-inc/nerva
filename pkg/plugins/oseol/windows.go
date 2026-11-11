@@ -35,10 +35,8 @@ func identifyWindowsEvidence(protocol string, metadata map[string]json.RawMessag
 		version, evidence = identifyIIS(texts)
 	case plugins.ProtoSMB, plugins.ProtoRDP:
 		var reported string
-		if json.Unmarshal(metadata["os_version"], &reported) == nil && len(reported) <= maxEvidenceBytes && ntlmVersion.MatchString(reported) {
-			parts := strings.Split(reported, ".")
-			version = strings.Join(parts[:2], ".")
-			evidence = "NTLM version " + reported
+		if json.Unmarshal(metadata["os_version"], &reported) == nil && len(reported) <= maxEvidenceBytes && strings.Count(reported, ".") == 2 {
+			version, evidence = reported, "NTLM version "+reported
 		}
 	}
 	return windowsVersionEvidence(version, evidence)
@@ -61,6 +59,15 @@ func identifyIIS(texts []string) (version, evidence string) {
 }
 
 func windowsVersionEvidence(version, evidence string) *osEvidence {
+	if len(version) > maxEvidenceBytes {
+		return nil
+	}
+	if strings.Count(version, ".") == 2 {
+		if !ntlmVersion.MatchString(version) {
+			return nil
+		}
+		version = minorRelease(version)
+	}
 	candidate, ok := legacyWindows[version]
 	if !ok {
 		return nil // In particular, IIS 10 / NT 10 identifies too many releases.

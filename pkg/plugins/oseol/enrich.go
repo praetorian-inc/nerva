@@ -93,33 +93,19 @@ func serviceOSTexts(service *plugins.Service, metadata map[string]json.RawMessag
 }
 
 func consistentObservations(observations []observation) []observation {
-	byProduct := make(map[string]observation)
-	conflicts := make(map[string]bool)
-	var order []string
-	for _, identified := range observations {
-		key := identified.vendor + ":" + identified.product
-		if existing, ok := byProduct[key]; ok {
-			if existing.version != identified.version {
-				conflicts[key] = true
-			} else if existing.method == "scanner CPE" && identified.method != "scanner CPE" {
-				byProduct[key] = identified
-			}
-			continue
-		}
-		byProduct[key] = identified
-		order = append(order, key)
-	}
-	// Different OS products on one service are conflicting host evidence too.
-	if len(order) > 1 {
+	if len(observations) == 0 {
 		return nil
 	}
-	var result []observation
-	for _, key := range order {
-		if !conflicts[key] {
-			result = append(result, byProduct[key])
+	selected := observations[0]
+	for _, observed := range observations[1:] {
+		if selected.vendor != observed.vendor || selected.product != observed.product || selected.version != observed.version {
+			return nil // At most one consistent OS identity can survive.
+		}
+		if selected.method == "scanner CPE" && observed.method != "scanner CPE" {
+			selected = observed
 		}
 	}
-	return result
+	return []observation{selected}
 }
 
 func ciscoRouterOrSwitch(texts []string) bool {
@@ -139,7 +125,8 @@ func addFinding(service *plugins.Service, finding plugins.SecurityFinding) {
 			// Prefer the lifecycle explanation, including its evidence and source,
 			// over a legacy finding that Guard cannot preserve in full.
 			if len(finding.Description) > len(existing.Description) {
-				service.SecurityFindings[i] = finding
+				service.SecurityFindings[i].Description = finding.Description
+				service.SecurityFindings[i].Evidence = finding.Evidence
 			}
 			return
 		}
