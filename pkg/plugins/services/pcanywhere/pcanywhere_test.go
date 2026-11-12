@@ -70,7 +70,7 @@ func TestCheckPcAnywhereTCP(t *testing.T) {
 		{name: "nmap Please press Enter", data: []byte("Please press <Enter>"), wantErr: false},
 		{name: "Enter prompt uppercase key token", data: []byte("Please press <ENTER>"), wantErr: false},
 		{name: "Enter prompt mixed case", data: []byte("PLEASE PRESS <Enter>..."), wantErr: false},
-		{name: "Enter prompt without Please prefix", data: []byte("Press <Enter> to continue"), wantErr: false},
+		{name: "Enter prompt without Please prefix", data: []byte("Press <Enter> to continue"), wantErr: true},
 		{name: "Enter prompt recorded CRLF and spaced ellipsis", data: fixtureEnterPrompt, wantErr: false},
 		{name: "nmap pcanywheredata banner", data: fixtureNmapBanner, wantErr: false},
 		{name: "ST prefix false positive", data: []byte("STATUS OK\r\n"), wantErr: true},
