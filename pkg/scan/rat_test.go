@@ -82,10 +82,12 @@ func TestRATScanPipeline(t *testing.T) {
 			require.Equal(t, tc.protocol, services[0].Protocol)
 			if tc.protocol == plugins.ProtoVNC {
 				require.Equal(t, "003.008", services[0].Version)
+				require.Len(t, services[0].SecurityFindings, 1)
+				require.Equal(t, "vnc-exposed", services[0].SecurityFindings[0].ID)
 			} else {
 				require.Contains(t, services[0].Metadata().(plugins.ServiceRemoteAccess).Evidence, "RFB 005.000")
+				require.Empty(t, services[0].SecurityFindings)
 			}
-			require.Empty(t, services[0].SecurityFindings)
 		})
 	}
 }

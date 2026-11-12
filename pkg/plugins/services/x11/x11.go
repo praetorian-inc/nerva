@@ -133,6 +133,13 @@ func (p *Plugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target
 			Description: "X11 server grants access without authentication",
 			Evidence:    fmt.Sprintf("X11 connection accepted with status=Success (display :%d)", info.DisplayNumber),
 		}}
+	} else if target.Misconfigs {
+		service.SecurityFindings = []plugins.SecurityFinding{{
+			ID:          "x11-exposed",
+			Severity:    plugins.SeverityLow,
+			Description: "X11 remote display listener exposed to the network",
+			Evidence:    fmt.Sprintf("X11 setup Failed/Authenticate (display :%d)", info.DisplayNumber),
+		}}
 	}
 	return service, nil
 }
