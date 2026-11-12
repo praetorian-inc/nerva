@@ -65,12 +65,9 @@ func TestSNMPSecurityFindings(t *testing.T) {
 	// Build a mock SNMP response containing "public" and the RequestID bytes,
 	// with enough bytes after "public"+33 for a version string.
 	requestID := []byte{0x2b, 0x06, 0x01, 0x02, 0x01, 0x01, 0x01, 0x00}
-	// Craft response: padding + "public" + 33 bytes of padding + sysDescr + requestID bytes
+	// GetResponse PDU (0xa2) after community, then printable sysDescr.
 	sysDescr := "Linux test 5.4.0"
-	padding := make([]byte, 10)
-	afterPublic := make([]byte, 33)
-	response := append(padding, []byte("public")...)
-	response = append(response, afterPublic...)
+	response := append([]byte("public"), 0xa2)
 	response = append(response, []byte(sysDescr)...)
 	response = append(response, requestID...)
 
@@ -128,10 +125,7 @@ func TestSNMPSecurityFindings(t *testing.T) {
 func TestSNMPSecurityFindingsDisabled(t *testing.T) {
 	requestID := []byte{0x2b, 0x06, 0x01, 0x02, 0x01, 0x01, 0x01, 0x00}
 	sysDescr := "Linux test 5.4.0"
-	padding := make([]byte, 10)
-	afterPublic := make([]byte, 33)
-	response := append(padding, []byte("public")...)
-	response = append(response, afterPublic...)
+	response := append([]byte("public"), 0xa2)
 	response = append(response, []byte(sysDescr)...)
 	response = append(response, requestID...)
 
@@ -183,7 +177,9 @@ func TestSNMPSecurityFindingsDisabled(t *testing.T) {
 // must identify SNMP but must not emit snmp-default-community (port exposure only).
 func TestSNMPPublicEchoDoesNotEmitFinding(t *testing.T) {
 	requestID := []byte{0x2b, 0x06, 0x01, 0x02, 0x01, 0x01, 0x01, 0x00}
-	response := append([]byte("public"), requestID...)
+	// Echo of our GET uses PDU 0xa0, not GetResponse 0xa2.
+	response := append([]byte("public"), 0xa0)
+	response = append(response, requestID...)
 
 	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
@@ -233,10 +229,7 @@ func TestSNMPPublicEchoDoesNotEmitFinding(t *testing.T) {
 func TestSNMPDefaultCommunitySingleShot(t *testing.T) {
 	requestID := []byte{0x2b, 0x06, 0x01, 0x02, 0x01, 0x01, 0x01, 0x00}
 	sysDescr := "Linux test 5.4.0"
-	padding := make([]byte, 10)
-	afterPublic := make([]byte, 33)
-	response := append(padding, []byte("public")...)
-	response = append(response, afterPublic...)
+	response := append([]byte("public"), 0xa2)
 	response = append(response, []byte(sysDescr)...)
 	response = append(response, requestID...)
 

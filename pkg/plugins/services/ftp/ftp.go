@@ -184,7 +184,7 @@ func (p *FTPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 		return nil, nil
 	}
 
-	banner := string(response)
+	banner := drainFTPWelcome(conn, timeout, string(response))
 
 	// Phase 1: Detection - Determine if this is FTP using whitelist approach
 	port := target.Address.Port()
@@ -211,33 +211,66 @@ func (p *FTPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 	service := plugins.CreateServiceFrom(target, payload, false, version, plugins.TCP)
 	if target.Misconfigs {
 		service.SecurityFindings = []plugins.SecurityFinding{ftpCleartextFinding()}
-		if probeAnonymousFTP(conn, timeout) {
+		if ok, evidence := probeAnonymousFTP(conn, timeout); ok {
 			service.AnonymousAccess = true
-			service.SecurityFindings = append(service.SecurityFindings, ftpAnonymousLoginFinding())
+			service.SecurityFindings = append(service.SecurityFindings, ftpAnonymousLoginFinding(evidence))
 		}
 	}
 	return service, nil
 }
 
+// drainFTPWelcome reads until a completion line (`NNN `) so a 220- multiline
+// banner is not mistaken for the USER reply.
+func drainFTPWelcome(conn net.Conn, timeout time.Duration, initial string) string {
+	banner := initial
+	for i := 0; i < 8; i++ {
+		if ftpWelcomeComplete(banner) {
+			return banner
+		}
+		more, err := utils.Recv(conn, timeout)
+		if err != nil || len(more) == 0 {
+			return banner
+		}
+		banner += string(more)
+	}
+	return banner
+}
+
+func ftpWelcomeComplete(banner string) bool {
+	normalized := strings.ReplaceAll(banner, "\r\n", "\n")
+	lines := strings.Split(normalized, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimRight(lines[i], "\r")
+		if line == "" {
+			continue
+		}
+		return len(line) >= 4 && line[0] >= '0' && line[0] <= '9' && line[3] == ' '
+	}
+	return false
+}
+
 // probeAnonymousFTP sends a single USER anonymous (and empty PASS if 331).
 // It is independent of FTP banner family once the service is already detected.
-func probeAnonymousFTP(conn net.Conn, timeout time.Duration) bool {
+func probeAnonymousFTP(conn net.Conn, timeout time.Duration) (bool, string) {
 	resp, err := utils.SendRecv(conn, []byte("USER anonymous\r\n"), timeout)
 	if err != nil || len(resp) == 0 {
-		return false
+		return false, ""
 	}
 	body := string(resp)
 	if strings.HasPrefix(body, "230") {
-		return true
+		return true, "anonymous login 230 after USER"
 	}
 	if !strings.HasPrefix(body, "331") {
-		return false
+		return false, ""
 	}
 	resp, err = utils.SendRecv(conn, []byte("PASS \r\n"), timeout)
 	if err != nil || len(resp) == 0 {
-		return false
+		return false, ""
 	}
-	return strings.HasPrefix(string(resp), "230")
+	if strings.HasPrefix(string(resp), "230") {
+		return true, "anonymous login 230 after USER 331 and empty PASS"
+	}
+	return false, ""
 }
 
 func ftpCleartextFinding() plugins.SecurityFinding {
@@ -248,12 +281,12 @@ func ftpCleartextFinding() plugins.SecurityFinding {
 	}
 }
 
-func ftpAnonymousLoginFinding() plugins.SecurityFinding {
+func ftpAnonymousLoginFinding(evidence string) plugins.SecurityFinding {
 	return plugins.SecurityFinding{
 		ID:          "ftp-anonymous-login",
 		Severity:    plugins.SeverityMedium,
 		Description: "FTP permits anonymous login",
-		Evidence:    "USER anonymous succeeded with 230",
+		Evidence:    evidence,
 	}
 }
 
