@@ -19,7 +19,6 @@ import (
 	"io"
 	"net"
 	"net/netip"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -147,14 +146,46 @@ func TestPortPriorityNeverWellKnown(t *testing.T) {
 	}
 }
 
-func TestHasBackdoorWord(t *testing.T) {
-	if !hasBackdoorWord("backdoor") {
-		t.Error("plain backdoor should match")
+func TestFalsePositiveBannersDoNotEmit(t *testing.T) {
+	banners := []string{
+		"220 backdoor.example.com service ready\r\n",
+		"Welcome to backdoor-lab\n",
+		"Backdoor protection enabled\n",
+		"Server: bash-4.4#1-Debian\r\n",
+		"bash-completion#section\n",
 	}
-	if hasBackdoorWord("backdoored images") {
-		t.Error("backdoored should not match as the label")
+	for _, banner := range banners {
+		t.Run(banner, func(t *testing.T) {
+			svc, conn := runAgainst(t, []byte(banner))
+			if conn.writes.Load() != 0 {
+				t.Fatalf("wrote %d times", conn.writes.Load())
+			}
+			if svc != nil {
+				t.Fatalf("false positive protocol %q finding %v", svc.Protocol, svc.SecurityFindings)
+			}
+		})
 	}
-	if !hasBackdoorWord(strings.ToLower("Service: BACKDOOR")) {
-		t.Error("BACKDOOR word should match")
+}
+
+func TestEmitsWithoutMisconfigs(t *testing.T) {
+	addr, stop := serveBanner(t, []byte("bash: no job control in this shell\n"))
+	t.Cleanup(stop)
+	raw, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	port := raw.RemoteAddr().(*net.TCPAddr).Port
+	target := plugins.Target{
+		Host:       "127.0.0.1",
+		Address:    netip.MustParseAddrPort(fmt.Sprintf("127.0.0.1:%d", port)),
+		Misconfigs: false,
+	}
+	svc, err := (&Plugin{}).Run(raw, 5*time.Second, target)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if svc == nil || len(svc.SecurityFindings) != 1 || svc.SecurityFindings[0].ID != findingID {
+		t.Fatalf("malware finding must emit without Misconfigs, got %#v", svc)
 	}
 }

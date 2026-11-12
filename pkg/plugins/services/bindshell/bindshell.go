@@ -23,7 +23,6 @@ import (
 	"regexp"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/praetorian-inc/nerva/pkg/plugins"
 	utils "github.com/praetorian-inc/nerva/pkg/plugins/pluginutils"
@@ -37,7 +36,9 @@ const (
 var (
 	noJobControl = []byte("no job control in this shell")
 	nmapBackdoor = []byte("**BACKDOOR**")
-	bashPrompt   = regexp.MustCompile(`bash-[^\s]*#`)
+	// Line-anchored bash prompt (ticket fixture bash-*#). Unanchored matching
+	// would fire on package tags and Server headers.
+	bashPrompt = regexp.MustCompile(`(?m)^bash-[0-9][\w.-]*#`)
 )
 
 type Plugin struct{}
@@ -50,7 +51,9 @@ func (p *Plugin) Name() string { return protocolName }
 
 func (p *Plugin) Type() plugins.Protocol { return plugins.TCP }
 
-func (p *Plugin) Priority() int { return 80 }
+// Priority is negative so this Recv-only detector runs before HTTP/Echo
+// probes that write to the connection (simple_scan sorts ascending).
+func (p *Plugin) Priority() int { return -1 }
 
 // PortPriority is always false: bind-shells and BACKDOOR labels are not a
 // well-known port identity.
@@ -90,8 +93,7 @@ func (p *Plugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target
 }
 
 func classify(banner []byte) (kind string, ok bool) {
-	lower := bytes.ToLower(banner)
-	if bytes.Contains(lower, bytes.ToLower(noJobControl)) {
+	if bytes.Contains(bytes.ToLower(banner), noJobControl) {
 		return "bind-shell", true
 	}
 	if bashPrompt.Match(banner) {
@@ -100,25 +102,10 @@ func classify(banner []byte) (kind string, ok bool) {
 	if bytes.Contains(bytes.ToUpper(banner), nmapBackdoor) {
 		return "backdoor", true
 	}
-	if hasBackdoorWord(string(lower)) {
+	// Ticket AC: Port service label is `backdoor` — the whole trimmed banner,
+	// not a word embedded in a MOTD or hostname.
+	if strings.EqualFold(strings.TrimSpace(string(banner)), "backdoor") {
 		return "backdoor", true
 	}
 	return "", false
-}
-
-func hasBackdoorWord(lower string) bool {
-	const word = "backdoor"
-	for {
-		i := strings.Index(lower, word)
-		if i < 0 {
-			return false
-		}
-		leftOK := i == 0 || !unicode.IsLetter(rune(lower[i-1]))
-		right := i + len(word)
-		rightOK := right == len(lower) || !unicode.IsLetter(rune(lower[right]))
-		if leftOK && rightOK {
-			return true
-		}
-		lower = lower[i+len(word):]
-	}
 }
