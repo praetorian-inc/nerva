@@ -674,7 +674,7 @@ func TestTLSVersionName(t *testing.T) {
 		{tls.VersionTLS11, "TLS 1.1"},
 		{tls.VersionTLS12, "TLS 1.2"},
 		{tls.VersionTLS13, "TLS 1.3"},
-		{0x0300, "unknown (0x0300)"}, // SSL 3.0 – unrecognised
+		{0x0300, "SSL 3.0"},
 		{0xffff, "unknown (0xffff)"}, // arbitrary unknown value
 	}
 
@@ -976,6 +976,8 @@ func TestProbeWeakCiphers_WeakOnlyServerNoHandshake(t *testing.T) {
 		{name: "ADH", suite: 0x0034, id: findingTLSAnonCipher},
 		{name: "NULL", suite: 0x0002, id: findingTLSNullCipher},
 		{name: "EXPORT", suite: 0x0003, id: findingTLSExportCipher},
+		{name: "RC4", suite: 0x0005, id: findingTLSRC4Cipher},
+		{name: "3DES", suite: 0x000A, id: findingTLS3DESCipher},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1025,7 +1027,7 @@ func TestCheckTLS_ModernServerDoesNotEmitWeakCipherIDs(t *testing.T) {
 	findings := CheckTLS(conn)
 	for _, f := range findings {
 		switch f.ID {
-		case findingTLSAnonCipher, findingTLSNullCipher, findingTLSExportCipher:
+		case findingTLSAnonCipher, findingTLSNullCipher, findingTLSExportCipher, findingTLSRC4Cipher, findingTLS3DESCipher:
 			t.Errorf("modern-only server emitted %s: %+v", f.ID, findings)
 		}
 	}

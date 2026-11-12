@@ -362,13 +362,23 @@ func (p *MSSQLPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.T
 	}
 
 	service := plugins.CreateServiceFrom(target, payload, false, data.Version, plugins.TCP)
-	if target.Misconfigs && checkBlankSaLogin(conn, timeout, data.Encryption, target.Host) {
-		service.SecurityFindings = []plugins.SecurityFinding{{
-			ID:          "mssql-default-creds",
-			Severity:    plugins.SeverityMedium,
-			Description: "MSSQL sa account accepts the documented blank default password",
-			Evidence:    "Default blank SQL login succeeded",
-		}}
+	if target.Misconfigs {
+		if checkBlankSaLogin(conn, timeout, data.Encryption, target.Host) {
+			service.SecurityFindings = []plugins.SecurityFinding{{
+				ID:          "mssql-default-creds",
+				Severity:    plugins.SeverityMedium,
+				Description: "MSSQL sa account accepts the documented blank default password",
+				Evidence:    "Default blank SQL login succeeded",
+			}}
+		}
+		if data.Encryption != encryptNotSup {
+			if addr := conn.RemoteAddr(); addr != nil {
+				offered := plugins.ProbeOfferedTLSVersions(func() (net.Conn, error) {
+					return dialMSSQLReadyForTLS(addr.String(), timeout)
+				}, target.Host)
+				service.SecurityFindings = append(service.SecurityFindings, offered...)
+			}
+		}
 	}
 	return service, nil
 }
@@ -390,6 +400,22 @@ const (
 	encryptNotSup byte = 0x02 // ENCRYPT_NOT_SUP: plaintext LOGIN7
 	encryptReq    byte = 0x03 // ENCRYPT_REQ: entire connection TLS after handshake
 )
+
+func dialMSSQLReadyForTLS(addr string, timeout time.Duration) (net.Conn, error) {
+	c, err := net.DialTimeout("tcp", addr, timeout)
+	if err != nil {
+		return nil, err
+	}
+	data, check, err := DetectMSSQL(c, timeout)
+	if err != nil || !check || data.Encryption == encryptNotSup {
+		c.Close()
+		if err != nil {
+			return nil, err
+		}
+		return nil, fmt.Errorf("mssql: TLS not offered")
+	}
+	return &tdsHandshakeConn{Conn: c, wrap: true}, nil
+}
 
 func probeTLSConfig(host string) *tls.Config {
 	suites := make([]uint16, 0, len(tls.CipherSuites())+len(tls.InsecureCipherSuites()))

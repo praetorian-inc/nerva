@@ -48,6 +48,8 @@ func TestPOP3SecurityFindings(t *testing.T) {
 		buf := make([]byte, 256)
 		_, _ = conn.Read(buf)
 		_, _ = conn.Write([]byte("-ERR unknown command\r\n"))
+		_, _ = conn.Read(buf)
+		_, _ = conn.Write([]byte("-ERR STLS not supported\r\n"))
 	}()
 
 	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", serverPort), 5*time.Second)
@@ -105,6 +107,8 @@ func TestPOP3SecurityFindingsDisabled(t *testing.T) {
 		buf := make([]byte, 256)
 		_, _ = conn.Read(buf)
 		_, _ = conn.Write([]byte("-ERR unknown command\r\n"))
+		_, _ = conn.Read(buf)
+		_, _ = conn.Write([]byte("-ERR STLS not supported\r\n"))
 	}()
 
 	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", serverPort), 5*time.Second)

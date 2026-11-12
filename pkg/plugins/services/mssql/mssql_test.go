@@ -203,45 +203,49 @@ func startMockTDS(t *testing.T, unauth bool, expectLogin bool, encryption byte) 
 	}
 
 	go func() {
-		conn, err := listener.Accept()
-		if err != nil {
-			return
-		}
-		defer conn.Close()
-		_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
-		buf := make([]byte, 4096)
-		if _, err := conn.Read(buf); err != nil {
-			return
-		}
-		if _, err := conn.Write(buildMockPreloginResponse(encryption)); err != nil {
-			return
-		}
-		if !expectLogin {
-			return
-		}
-
-		loginSrc := net.Conn(conn)
-		replyDst := net.Conn(conn)
-		if encryption != encryptNotSup {
-			prep := &tdsHandshakeConn{Conn: conn, wrap: true}
-			tln := tls.Server(prep, &tls.Config{Certificates: []tls.Certificate{cert}})
-			if err := tln.Handshake(); err != nil {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
 				return
 			}
-			prep.wrap = false
-			loginSrc = tln
-			if encryption != encryptOff {
-				replyDst = tln
-			}
+			go func(conn net.Conn) {
+				defer conn.Close()
+				_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+				buf := make([]byte, 4096)
+				if _, err := conn.Read(buf); err != nil {
+					return
+				}
+				if _, err := conn.Write(buildMockPreloginResponse(encryption)); err != nil {
+					return
+				}
+				if !expectLogin {
+					return
+				}
+
+				loginSrc := net.Conn(conn)
+				replyDst := net.Conn(conn)
+				if encryption != encryptNotSup {
+					prep := &tdsHandshakeConn{Conn: conn, wrap: true}
+					tln := tls.Server(prep, &tls.Config{Certificates: []tls.Certificate{cert}})
+					if err := tln.Handshake(); err != nil {
+						return
+					}
+					prep.wrap = false
+					loginSrc = tln
+					if encryption != encryptOff {
+						replyDst = tln
+					}
+				}
+				if err := readMockTDSPacket(loginSrc); err != nil {
+					return
+				}
+				reply := buildMockLoginError()
+				if unauth {
+					reply = buildMockLoginAck()
+				}
+				_, _ = replyDst.Write(reply)
+			}(conn)
 		}
-		if err := readMockTDSPacket(loginSrc); err != nil {
-			return
-		}
-		reply := buildMockLoginError()
-		if unauth {
-			reply = buildMockLoginAck()
-		}
-		_, _ = replyDst.Write(reply)
 	}()
 
 	return listener.Addr().String(), func() { _ = listener.Close() }
