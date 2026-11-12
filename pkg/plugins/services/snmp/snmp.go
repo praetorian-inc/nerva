@@ -47,7 +47,6 @@ func (f *SNMPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 		0x30, 0x0e, 0x30, 0x0c, 0x06, 0x08, 0x2b, 0x06, // Object ID
 		0x01, 0x02, 0x01, 0x01, 0x01, 0x00, 0x05, 0x00,
 	}
-	InfoOffset := 33
 
 	response, err := utils.SendRecv(conn, InitialConnectionPackage, timeout)
 	if err != nil {
@@ -61,26 +60,39 @@ func (f *SNMPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 	if idx == -1 {
 		return nil, nil
 	}
-	stringBegin := idx + InfoOffset
-	if bytes.Contains(response, RequestID) {
-		var service *plugins.Service
-		if stringBegin < len(response) {
-			service = plugins.CreateServiceFrom(target, plugins.ServiceSNMP{}, false,
-				string(response[stringBegin:]), plugins.UDP)
-		} else {
-			service = plugins.CreateServiceFrom(target, plugins.ServiceSNMP{}, false, "", plugins.UDP)
-		}
-		if target.Misconfigs {
-			service.SecurityFindings = []plugins.SecurityFinding{{
-				ID:          "snmp-default-community",
-				Severity:    plugins.SeverityHigh,
-				Description: "SNMP service responds to default 'public' community string",
-				Evidence:    "community_string=public",
-			}}
-		}
-		return service, nil
+	if !bytes.Contains(response, RequestID) {
+		return nil, nil
 	}
-	return nil, nil
+	pduOff := idx + len("public")
+	isGetResponse := pduOff < len(response) && response[pduOff] == 0xa2
+	sysDescr := printableSNMPOctet(response[pduOff:])
+	service := plugins.CreateServiceFrom(target, plugins.ServiceSNMP{}, false, sysDescr, plugins.UDP)
+	// Echo of our GET is PDU 0xa0. A GetResponse (0xa2) means public was accepted.
+	if target.Misconfigs && isGetResponse {
+		evidence := "community_string=public"
+		if sysDescr != "" {
+			evidence += " sysDescr=" + sysDescr
+		}
+		service.SecurityFindings = []plugins.SecurityFinding{{
+			ID:          "snmp-default-community",
+			Severity:    plugins.SeverityHigh,
+			Description: "SNMP service responds to default 'public' community string",
+			Evidence:    evidence,
+		}}
+	}
+	return service, nil
+}
+
+func printableSNMPOctet(b []byte) string {
+	var out strings.Builder
+	for _, c := range b {
+		if c >= 32 && c < 127 {
+			out.WriteByte(c)
+		} else if out.Len() > 0 {
+			break
+		}
+	}
+	return strings.TrimSpace(out.String())
 }
 
 func (f *SNMPPlugin) Name() string {

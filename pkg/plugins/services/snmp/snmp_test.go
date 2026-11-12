@@ -18,10 +18,13 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/ory/dockertest/v3"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/praetorian-inc/nerva/pkg/plugins"
 	"github.com/praetorian-inc/nerva/pkg/test"
@@ -62,12 +65,9 @@ func TestSNMPSecurityFindings(t *testing.T) {
 	// Build a mock SNMP response containing "public" and the RequestID bytes,
 	// with enough bytes after "public"+33 for a version string.
 	requestID := []byte{0x2b, 0x06, 0x01, 0x02, 0x01, 0x01, 0x01, 0x00}
-	// Craft response: padding + "public" + 33 bytes of padding + sysDescr + requestID bytes
+	// GetResponse PDU (0xa2) after community, then printable sysDescr.
 	sysDescr := "Linux test 5.4.0"
-	padding := make([]byte, 10)
-	afterPublic := make([]byte, 33)
-	response := append(padding, []byte("public")...)
-	response = append(response, afterPublic...)
+	response := append([]byte("public"), 0xa2)
 	response = append(response, []byte(sysDescr)...)
 	response = append(response, requestID...)
 
@@ -125,10 +125,7 @@ func TestSNMPSecurityFindings(t *testing.T) {
 func TestSNMPSecurityFindingsDisabled(t *testing.T) {
 	requestID := []byte{0x2b, 0x06, 0x01, 0x02, 0x01, 0x01, 0x01, 0x00}
 	sysDescr := "Linux test 5.4.0"
-	padding := make([]byte, 10)
-	afterPublic := make([]byte, 33)
-	response := append(padding, []byte("public")...)
-	response = append(response, afterPublic...)
+	response := append([]byte("public"), 0xa2)
 	response = append(response, []byte(sysDescr)...)
 	response = append(response, requestID...)
 
@@ -174,4 +171,101 @@ func TestSNMPSecurityFindingsDisabled(t *testing.T) {
 	if len(service.SecurityFindings) != 0 {
 		t.Fatalf("expected 0 findings, got %d", len(service.SecurityFindings))
 	}
+}
+
+// TestSNMPPublicEchoDoesNotEmitFinding: public + OID with no sysDescr remainder
+// must identify SNMP but must not emit snmp-default-community (port exposure only).
+func TestSNMPPublicEchoDoesNotEmitFinding(t *testing.T) {
+	requestID := []byte{0x2b, 0x06, 0x01, 0x02, 0x01, 0x01, 0x01, 0x00}
+	// Echo of our GET uses PDU 0xa0, not GetResponse 0xa2.
+	response := append([]byte("public"), 0xa0)
+	response = append(response, requestID...)
+
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Failed to start mock UDP server: %v", err)
+	}
+	defer pc.Close()
+
+	serverAddr := pc.LocalAddr().String()
+
+	go func() {
+		buf := make([]byte, 4096)
+		n, addr, err := pc.ReadFrom(buf)
+		if err != nil || n == 0 {
+			return
+		}
+		_, _ = pc.WriteTo(response, addr)
+	}()
+
+	conn, err := net.DialTimeout("udp", serverAddr, 5*time.Second)
+	if err != nil {
+		t.Fatalf("Failed to connect to mock server: %v", err)
+	}
+	defer conn.Close()
+
+	addrPort := netip.MustParseAddrPort(fmt.Sprintf("127.0.0.1:%s", serverAddr[len("127.0.0.1:"):]))
+	plugin := &SNMPPlugin{}
+	service, err := plugin.Run(conn, 5*time.Second, plugins.Target{
+		Host:       "127.0.0.1",
+		Address:    addrPort,
+		Misconfigs: true,
+	})
+	if err != nil {
+		t.Fatalf("Run() returned unexpected error: %v", err)
+	}
+	if service == nil {
+		t.Fatal("Run() returned nil, want SNMP service without default-community finding")
+	}
+	for _, f := range service.SecurityFindings {
+		if f.ID == "snmp-default-community" {
+			t.Fatal("public echo without sysDescr must not emit snmp-default-community")
+		}
+	}
+}
+
+// TestSNMPDefaultCommunitySingleShot proves I5: one SNMPv1 GET with community
+// public. A community/password list would increment the datagram count.
+func TestSNMPDefaultCommunitySingleShot(t *testing.T) {
+	requestID := []byte{0x2b, 0x06, 0x01, 0x02, 0x01, 0x01, 0x01, 0x00}
+	sysDescr := "Linux test 5.4.0"
+	response := append([]byte("public"), 0xa2)
+	response = append(response, []byte(sysDescr)...)
+	response = append(response, requestID...)
+
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer pc.Close()
+
+	var n atomic.Int32
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			nn, addr, err := pc.ReadFrom(buf)
+			if err != nil {
+				return
+			}
+			if nn == 0 {
+				continue
+			}
+			n.Add(1)
+			_, _ = pc.WriteTo(response, addr)
+		}
+	}()
+
+	conn, err := net.DialTimeout("udp", pc.LocalAddr().String(), 5*time.Second)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	plugin := &SNMPPlugin{}
+	service, err := plugin.Run(conn, 5*time.Second, plugins.Target{
+		Host:       "127.0.0.1",
+		Address:    netip.MustParseAddrPort(pc.LocalAddr().String()),
+		Misconfigs: true,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, service)
+	assert.Equal(t, int32(1), n.Load(), "SNMP detector must send a single GET")
+	require.NotEmpty(t, service.SecurityFindings)
+	assert.Equal(t, "snmp-default-community", service.SecurityFindings[0].ID)
 }
