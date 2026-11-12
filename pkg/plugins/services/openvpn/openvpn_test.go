@@ -15,6 +15,8 @@
 package openvpn
 
 import (
+	"encoding/binary"
+	"io"
 	"net"
 	"net/netip"
 	"testing"
@@ -26,19 +28,43 @@ import (
 )
 
 type echoResetConn struct {
-	written  []byte
-	readOnce bool
+	written []byte
+	toRead  []byte
+	off     int
+}
+
+func (m *echoResetConn) serverReset() []byte {
+	pkt := m.written
+	payload := make([]byte, 14)
+	payload[0] = 8 << 3 // PControlHardResetServerV2
+	tcp := len(pkt) >= 2 && int(binary.BigEndian.Uint16(pkt[:2])) == len(pkt)-2
+	if tcp {
+		if len(pkt) < 11 {
+			return nil
+		}
+		copy(payload[1:9], pkt[3:11])
+		out := make([]byte, 16)
+		binary.BigEndian.PutUint16(out[:2], 14)
+		copy(out[2:], payload)
+		return out
+	}
+	if len(pkt) < 9 {
+		return nil
+	}
+	copy(payload[1:9], pkt[1:9])
+	return payload
 }
 
 func (m *echoResetConn) Read(b []byte) (n int, err error) {
-	if m.readOnce || len(m.written) < 9 {
-		return 0, nil
+	if m.toRead == nil {
+		m.toRead = m.serverReset()
 	}
-	m.readOnce = true
-	resp := make([]byte, 14)
-	resp[0] = 8 << 3 // PControlHardResetServerV2
-	copy(resp[1:9], m.written[1:9])
-	return copy(b, resp), nil
+	if m.off >= len(m.toRead) {
+		return 0, io.EOF
+	}
+	n = copy(b, m.toRead[m.off:])
+	m.off += n
+	return n, nil
 }
 
 func (m *echoResetConn) Write(b []byte) (n int, err error) {

@@ -16,6 +16,8 @@ package openvpn
 
 import (
 	"crypto/rand"
+	"encoding/binary"
+	"io"
 	"net"
 	"reflect"
 	"time"
@@ -63,7 +65,7 @@ func detectOpenVPN(conn net.Conn, timeout time.Duration, target plugins.Target, 
 		return nil, &utils.RandomizeError{Message: "session ID"}
 	}
 
-	response, err := utils.SendRecv(conn, InitialConnectionPackage, timeout)
+	response, err := sendRecvOpenVPN(conn, InitialConnectionPackage, timeout, transport == plugins.TCP)
 	if err != nil {
 		return nil, err
 	}
@@ -92,6 +94,38 @@ func detectOpenVPN(conn net.Conn, timeout time.Duration, target plugins.Target, 
 		}
 	}
 	return nil, nil
+}
+
+// sendRecvOpenVPN exchanges one OpenVPN control packet. TCP mode prepends and
+// strips the 2-byte big-endian length prefix required by the OpenVPN stream
+// protocol; UDP mode sends the datagram as-is.
+func sendRecvOpenVPN(conn net.Conn, pkt []byte, timeout time.Duration, tcp bool) ([]byte, error) {
+	if !tcp {
+		return utils.SendRecv(conn, pkt, timeout)
+	}
+	if len(pkt) == 0 || len(pkt) > 0xffff {
+		return nil, nil
+	}
+	framed := make([]byte, 2+len(pkt))
+	binary.BigEndian.PutUint16(framed[:2], uint16(len(pkt)))
+	copy(framed[2:], pkt)
+	if err := utils.Send(conn, framed, timeout); err != nil {
+		return nil, err
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(timeout))
+	var hdr [2]byte
+	if _, err := io.ReadFull(conn, hdr[:]); err != nil {
+		return []byte{}, nil
+	}
+	n := int(binary.BigEndian.Uint16(hdr[:]))
+	if n == 0 || n > 2048 {
+		return nil, nil
+	}
+	body := make([]byte, n)
+	if _, err := io.ReadFull(conn, body); err != nil {
+		return []byte{}, nil
+	}
+	return body, nil
 }
 
 func (p *Plugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
