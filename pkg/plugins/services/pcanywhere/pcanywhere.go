@@ -30,6 +30,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/praetorian-inc/nerva/pkg/plugins"
@@ -63,8 +64,11 @@ func checkPcAnywhereTCP(data []byte) error {
 		return invalid
 	}
 	// nmap pcanywhere-brute.nse: hello 00000000, host replies with
-	// "Please press <Enter>".
-	if bytes.Contains(data, []byte("Please press <Enter>")) {
+	// "Please press <Enter>". Real listeners vary case of that phrase;
+	// keep the distinctive "please" prefix so generic "Press <Enter>
+	// to continue" terminal banners are not classified as pcAnywhere.
+	lower := strings.ToLower(string(data))
+	if strings.Contains(lower, "please press <enter>") {
 		return nil
 	}
 	// GIAC: host responds with "ST" then NULs, not an arbitrary ST… banner.
