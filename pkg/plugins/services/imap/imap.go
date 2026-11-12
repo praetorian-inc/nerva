@@ -69,7 +69,7 @@ func checkGreeting(response []byte) bool {
 /* 		S: * CAPABILITY <list of supported features>\r\n
 /* 		S: 1234 OK <status information>\r\n
 */
-func checkCapability(conn net.Conn, timeout time.Duration) (bool, error) {
+func checkCapability(conn net.Conn, timeout time.Duration) ([]string, bool, error) {
 	/* The tag will always be reflected in the server output. Using a random-
 	/* looking/nonsensical tag decreases the possibility of false positive */
 	tag := "7FYWU8I4"
@@ -77,10 +77,10 @@ func checkCapability(conn net.Conn, timeout time.Duration) (bool, error) {
 
 	response, err := utils.SendRecv(conn, msg, timeout)
 	if err != nil {
-		return false, err
+		return nil, false, err
 	}
 	if len(response) == 0 {
-		return true, &utils.ServerNotEnable{}
+		return nil, true, &utils.ServerNotEnable{}
 	}
 
 	/* Sometimes servers send all the data in one packet
@@ -88,7 +88,7 @@ func checkCapability(conn net.Conn, timeout time.Duration) (bool, error) {
 	srvResponses := strings.Split(string(response), "\r\n")
 
 	if len(srvResponses) < 2 {
-		return true, &utils.InvalidResponseError{Service: IMAP}
+		return nil, true, &utils.InvalidResponseError{Service: IMAP}
 	}
 
 	capData := strings.ToUpper(srvResponses[0])
@@ -98,10 +98,10 @@ func checkCapability(conn net.Conn, timeout time.Duration) (bool, error) {
 	if status == "" {
 		response, err := utils.Recv(conn, timeout)
 		if err != nil {
-			return false, err
+			return nil, false, err
 		}
 		if len(response) == 0 {
-			return true, &utils.ServerNotEnable{}
+			return nil, true, &utils.ServerNotEnable{}
 		}
 		status = string(response)
 	}
@@ -109,36 +109,61 @@ func checkCapability(conn net.Conn, timeout time.Duration) (bool, error) {
 	/* Make sure server response matches RFC 3501, pages 68 (capability) and 88
 	/* (response-tagged) */
 	if !strings.HasPrefix(capData, "* CAPABILITY") || !strings.HasPrefix(status, tag) {
-		return true, &utils.InvalidResponseErrorInfo{Service: IMAP, Info: "missing capability info"}
+		return nil, true, &utils.InvalidResponseErrorInfo{Service: IMAP, Info: "missing capability info"}
 	}
 
-	// imap
-	return false, nil
+	return parseCapabilityTokens(capData), false, nil
+}
+
+func parseCapabilityTokens(capData string) []string {
+	rest := strings.TrimSpace(strings.TrimPrefix(capData, "* CAPABILITY"))
+	if rest == "" {
+		return nil
+	}
+	return strings.Fields(rest)
+}
+
+// offersCleartextAUTH reports whether pre-STARTTLS CAPABILITY advertises a
+// cleartext SASL mechanism (AUTH=PLAIN or AUTH=LOGIN). STARTTLS in the same
+// list does not suppress this — PLAIN offered before TLS still counts.
+func offersCleartextAUTH(caps []string) bool {
+	for _, tok := range caps {
+		switch tok {
+		case "AUTH=PLAIN", "AUTH=LOGIN":
+			return true
+		}
+	}
+	return false
 }
 
 func DetectIMAP(conn net.Conn, timeout time.Duration) (string, bool, error) {
+	banner, _, notIMAP, err := detectIMAP(conn, timeout)
+	return banner, notIMAP, err
+}
+
+func detectIMAP(conn net.Conn, timeout time.Duration) (string, []string, bool, error) {
 	/* Server has to specify a greeting upon completing the TCP handshake as
 	/* per RFC 3501 (page 14). If we don't get a greeting, this ain't IMAP. */
 	response, err := utils.Recv(conn, timeout)
 	if err != nil {
-		return "", false, err
+		return "", nil, false, err
 	}
 	if len(response) == 0 {
-		return "", true, &utils.ServerNotEnable{}
+		return "", nil, true, &utils.ServerNotEnable{}
 	}
 
 	if !checkGreeting(response) {
-		return "", true, &utils.InvalidResponseErrorInfo{
+		return "", nil, true, &utils.InvalidResponseErrorInfo{
 			Service: IMAP,
 			Info:    "did not receive expected imap greeting banner",
 		}
 	}
-	check, err := checkCapability(conn, timeout)
-	return string(response[5:]), check, err
+	caps, notIMAP, err := checkCapability(conn, timeout)
+	return string(response[5:]), caps, notIMAP, err
 }
 
 func (p *IMAPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
-	result, check, err := DetectIMAP(conn, timeout)
+	result, caps, check, err := detectIMAP(conn, timeout)
 	if err != nil && check { // service is not running IMAP
 		return nil, nil
 	} else if err != nil && !check { // plugin error
@@ -150,12 +175,12 @@ func (p *IMAPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 		Banner: result,
 	}
 	service := plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP)
-	if target.Misconfigs {
+	if target.Misconfigs && offersCleartextAUTH(caps) {
 		service.SecurityFindings = []plugins.SecurityFinding{{
 			ID:          "imap-cleartext",
 			Severity:    plugins.SeverityMedium,
 			Description: "IMAP transmits data including credentials in cleartext",
-			Evidence:    result,
+			Evidence:    strings.Join(caps, " "),
 		}}
 	}
 	return service, nil
