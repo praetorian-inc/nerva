@@ -17,6 +17,7 @@ package mssql
 import (
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"time"
 
@@ -348,7 +349,49 @@ func (p *MSSQLPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.T
 		CPEs: []string{cpe},
 	}
 
-	return plugins.CreateServiceFrom(target, payload, false, data.Version, plugins.TCP), nil
+	service := plugins.CreateServiceFrom(target, payload, false, data.Version, plugins.TCP)
+	if target.Misconfigs {
+		if finding := checkMSSQLEOL(data.Version); finding != nil {
+			service.SecurityFindings = append(service.SecurityFindings, *finding)
+		}
+	}
+	return service, nil
+}
+
+type eolEntry struct {
+	name     string
+	severity plugins.Severity
+}
+
+var mssqlEOLMap = map[string]eolEntry{
+	"9.0": {"SQL Server 2005", plugins.SeverityLow},
+}
+
+// checkMSSQLEOL maps a TDS VERSION string (possibly with a trailing newline)
+// to a SecurityFinding if the SQL Server version is end-of-life.
+func checkMSSQLEOL(version string) *plugins.SecurityFinding {
+	parts := strings.SplitN(strings.TrimSpace(version), ".", 3)
+	if len(parts) < 2 {
+		return nil
+	}
+	major, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return nil
+	}
+	minor, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return nil
+	}
+	entry, ok := mssqlEOLMap[fmt.Sprintf("%d.%d", major, minor)]
+	if !ok {
+		return nil
+	}
+	return &plugins.SecurityFinding{
+		ID:          "mssql-eol",
+		Severity:    entry.severity,
+		Description: fmt.Sprintf("SQL Server running end-of-life version: %s", entry.name),
+		Evidence:    strings.TrimSpace(version),
+	}
 }
 
 func (p *MSSQLPlugin) Name() string {

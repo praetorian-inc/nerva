@@ -388,6 +388,23 @@ func TestCheckCORSWildcard_WildcardWithCredentialsCaseInsensitive(t *testing.T) 
 // checkServerVersion additional tests
 // ---------------------------------------------------------------------------
 
+func TestCheckServerVersion_DoesNotEmitProductEOL(t *testing.T) {
+	headers := http.Header{"Server": []string{"Apache/2.2.22"}}
+	finding := checkServerVersion(headers)
+	if finding == nil {
+		t.Fatal("expected http-server-version")
+	}
+	if finding.ID != "http-server-version" {
+		t.Fatalf("ID = %q, want http-server-version", finding.ID)
+	}
+	if finding.Severity != plugins.SeverityInfo {
+		t.Fatalf("Severity = %q, want info", finding.Severity)
+	}
+	if strings.Contains(finding.ID, "eol") {
+		t.Fatalf("must not classify EOL: %q", finding.ID)
+	}
+}
+
 func TestCheckServerVersion_AmazonS3(t *testing.T) {
 	headers := http.Header{}
 	headers.Set("Server", "AmazonS3")

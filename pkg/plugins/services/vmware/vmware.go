@@ -68,6 +68,7 @@ import (
 	"fmt"
 	"net"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -271,8 +272,49 @@ func (p *VMwarePlugin) Run(conn net.Conn, timeout time.Duration, target plugins.
 	service := plugins.CreateServiceFrom(target, payload, true, result.Version, plugins.TCPTLS)
 	if target.Misconfigs {
 		service.SecurityFindings = append(service.SecurityFindings, plugins.CheckTLS(conn)...)
+		if productType == "esxi" {
+			if finding := checkESXIEOL(result.Version); finding != nil {
+				service.SecurityFindings = append(service.SecurityFindings, *finding)
+			}
+		}
 	}
 	return service, nil
+}
+
+type eolEntry struct {
+	name     string
+	severity plugins.Severity
+}
+
+var esxiEOLMap = map[string]eolEntry{
+	"5.5": {"VMware ESXi 5.5", plugins.SeverityLow},
+}
+
+// checkESXIEOL maps a SOAP <version> string to a SecurityFinding if the ESXi
+// version is end-of-life. Returns nil if not EOL or unparseable.
+func checkESXIEOL(version string) *plugins.SecurityFinding {
+	parts := strings.SplitN(strings.TrimSpace(version), ".", 3)
+	if len(parts) < 2 {
+		return nil
+	}
+	major, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return nil
+	}
+	minor, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return nil
+	}
+	entry, ok := esxiEOLMap[fmt.Sprintf("%d.%d", major, minor)]
+	if !ok {
+		return nil
+	}
+	return &plugins.SecurityFinding{
+		ID:          "esxi-eol",
+		Severity:    entry.severity,
+		Description: fmt.Sprintf("ESXi service running end-of-life version: %s", entry.name),
+		Evidence:    version,
+	}
 }
 
 func (p *VMwarePlugin) PortPriority(port uint16) bool {

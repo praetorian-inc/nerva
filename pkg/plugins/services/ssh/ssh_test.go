@@ -189,6 +189,63 @@ func TestBuildSSHFindings(t *testing.T) {
 	})
 }
 
+func TestCheckOpenSSHEOL(t *testing.T) {
+	tests := []struct {
+		banner string
+		wantID string // empty => nil finding
+	}{
+		{"SSH-2.0-OpenSSH_5.6", "openssh-eol"},
+		{"SSH-2.0-OpenSSH_5.6p1 Debian-1", "openssh-eol"},
+		{"SSH-2.0-OpenSSH_10.6", ""},
+		{"SSH-2.0-OpenSSH_10.6p2", ""},
+		{"SSH-2.0-Dropbear_2019.78", ""},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.banner, func(t *testing.T) {
+			finding := checkOpenSSHEOL(tt.banner)
+			if tt.wantID == "" {
+				if finding != nil {
+					t.Errorf("checkOpenSSHEOL(%q) = %+v, want nil", tt.banner, finding)
+				}
+				return
+			}
+			if finding == nil {
+				t.Fatalf("checkOpenSSHEOL(%q) = nil, want ID %q", tt.banner, tt.wantID)
+			}
+			if finding.ID != tt.wantID {
+				t.Errorf("finding.ID = %q, want %q", finding.ID, tt.wantID)
+			}
+		})
+	}
+}
+
+func TestMakeSSHService_OpenSSHEOL(t *testing.T) {
+	target := plugins.Target{Host: "ssh.example"}
+	eol := makeSSHService(target, plugins.ServiceSSH{Banner: "SSH-2.0-OpenSSH_5.6"}, nil, false)
+	if eol == nil {
+		t.Fatal("makeSSHService returned nil")
+	}
+	found := false
+	for _, f := range eol.SecurityFindings {
+		if f.ID == "openssh-eol" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("OpenSSH_5.6 findings = %v, want openssh-eol", eol.SecurityFindings)
+	}
+
+	supported := makeSSHService(target, plugins.ServiceSSH{Banner: "SSH-2.0-OpenSSH_10.6"}, nil, false)
+	for _, f := range supported.SecurityFindings {
+		if f.ID == "openssh-eol" {
+			t.Fatalf("OpenSSH_10.6 emitted openssh-eol: %+v", f)
+		}
+	}
+}
+
 func TestSSHPlugin_BannerFingerprintingMOVEit(t *testing.T) {
 	const moveitBanner = "SSH-2.0-MOVEit Transfer SFTP\r\n"
 	const wildCardCPE = "cpe:2.3:a:progress:moveit_transfer:*:*:*:*:*:*:*:*"

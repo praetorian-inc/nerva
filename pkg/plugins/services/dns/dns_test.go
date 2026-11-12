@@ -82,6 +82,9 @@ type dnsMockConn struct {
 	// axfrResponse controls what the mock returns for AXFR queries.
 	allowAXFR   bool
 	answerCount int
+	// versionBind is the TXT RDATA returned for version.bind. Empty defaults to
+	// "9.20" so existing AXFR tests do not emit bind-eol.
+	versionBind string
 	// readBuf holds the next response to return from Read.
 	readBuf []byte
 	// writeBuf accumulates the bytes from the current Write call.
@@ -93,8 +96,14 @@ type dnsMockConn struct {
 // The response is length-prefixed for TCP (2 bytes big-endian before the
 // DNS message).
 func buildVersionBindResponse(txID [2]byte) []byte {
-	// DNS response header with the echoed transaction ID.
-	// Flags 0x8180: QR=1 (response), OPCODE=0, AA=1, RD=1, RA=1, RCODE=0
+	return buildVersionBindResponseTXT(txID, "9.20")
+}
+
+func buildVersionBindResponseTXT(txID [2]byte, txt string) []byte {
+	if txt == "" {
+		txt = "9.20"
+	}
+	rdata := append([]byte{byte(len(txt))}, []byte(txt)...)
 	msg := []byte{
 		txID[0], txID[1], // Transaction ID (echoed)
 		0x81, 0x80, // Flags: response, no error
@@ -107,14 +116,16 @@ func buildVersionBindResponse(txID [2]byte) []byte {
 		0x04, 0x62, 0x69, 0x6e, 0x64, 0x00,
 		0x00, 0x10, // QTYPE: TXT
 		0x00, 0x03, // QCLASS: CH
-		// Answer section: minimal TXT record
+		// Answer section: TXT record
 		0xc0, 0x0c, // Name: pointer to question
 		0x00, 0x10, // TYPE: TXT
 		0x00, 0x03, // CLASS: CH
 		0x00, 0x00, 0x00, 0x00, // TTL: 0
-		0x00, 0x02, // RDLENGTH: 2
-		0x01, 0x39, // RDATA: length-prefixed "9"
 	}
+	rdlen := make([]byte, 2)
+	binary.BigEndian.PutUint16(rdlen, uint16(len(rdata)))
+	msg = append(msg, rdlen...)
+	msg = append(msg, rdata...)
 	out := make([]byte, 2+len(msg))
 	binary.BigEndian.PutUint16(out[0:2], uint16(len(msg)))
 	copy(out[2:], msg)
@@ -126,7 +137,7 @@ func buildVersionBindResponse(txID [2]byte) []byte {
 func buildAXFRSuccess(txID [2]byte, answerCount int) []byte {
 	// Minimal SOA record used as both first and last record in an AXFR.
 	soa := []byte{
-		0x00, // QNAME: root
+		0x00,       // QNAME: root
 		0x00, 0x06, // TYPE: SOA
 		0x00, 0x01, // CLASS: IN
 		0x00, 0x00, 0x00, 0x00, // TTL: 0
@@ -193,7 +204,7 @@ func (m *dnsMockConn) Write(b []byte) (int, error) {
 	isVersionBind := len(m.writeBuf) > 14 && m.writeBuf[14] == 0x07
 
 	if isVersionBind {
-		m.readBuf = buildVersionBindResponse(txID)
+		m.readBuf = buildVersionBindResponseTXT(txID, m.versionBind)
 	} else {
 		// AXFR query
 		if m.allowAXFR {
@@ -214,12 +225,12 @@ func (m *dnsMockConn) Read(b []byte) (int, error) {
 	return n, nil
 }
 
-func (m *dnsMockConn) Close() error                       { return nil }
-func (m *dnsMockConn) LocalAddr() net.Addr                { return tcpAddr{} }
-func (m *dnsMockConn) RemoteAddr() net.Addr               { return tcpAddr{} }
-func (m *dnsMockConn) SetDeadline(time.Time) error        { return nil }
-func (m *dnsMockConn) SetReadDeadline(time.Time) error    { return nil }
-func (m *dnsMockConn) SetWriteDeadline(time.Time) error   { return nil }
+func (m *dnsMockConn) Close() error                     { return nil }
+func (m *dnsMockConn) LocalAddr() net.Addr              { return tcpAddr{} }
+func (m *dnsMockConn) RemoteAddr() net.Addr             { return tcpAddr{} }
+func (m *dnsMockConn) SetDeadline(time.Time) error      { return nil }
+func (m *dnsMockConn) SetReadDeadline(time.Time) error  { return nil }
+func (m *dnsMockConn) SetWriteDeadline(time.Time) error { return nil }
 
 var defaultTCPTarget = plugins.Target{
 	Address: netip.MustParseAddrPort("127.0.0.1:53"),
@@ -333,14 +344,14 @@ func (udpAddr) String() string  { return "127.0.0.1:53" }
 // that UDPPlugin never populates SecurityFindings.
 type udpMockConn struct{}
 
-func (m *udpMockConn) Read(b []byte) (int, error)         { return 0, nil }
-func (m *udpMockConn) Write(b []byte) (int, error)        { return len(b), nil }
-func (m *udpMockConn) Close() error                       { return nil }
-func (m *udpMockConn) LocalAddr() net.Addr                { return udpAddr{} }
-func (m *udpMockConn) RemoteAddr() net.Addr               { return udpAddr{} }
-func (m *udpMockConn) SetDeadline(time.Time) error        { return nil }
-func (m *udpMockConn) SetReadDeadline(time.Time) error    { return nil }
-func (m *udpMockConn) SetWriteDeadline(time.Time) error   { return nil }
+func (m *udpMockConn) Read(b []byte) (int, error)       { return 0, nil }
+func (m *udpMockConn) Write(b []byte) (int, error)      { return len(b), nil }
+func (m *udpMockConn) Close() error                     { return nil }
+func (m *udpMockConn) LocalAddr() net.Addr              { return udpAddr{} }
+func (m *udpMockConn) RemoteAddr() net.Addr             { return udpAddr{} }
+func (m *udpMockConn) SetDeadline(time.Time) error      { return nil }
+func (m *udpMockConn) SetReadDeadline(time.Time) error  { return nil }
+func (m *udpMockConn) SetWriteDeadline(time.Time) error { return nil }
 
 // staticResponseConn is a minimal net.Conn that returns a fixed byte slice on
 // every Read call. It is used to test checkZoneTransfer in isolation, without
@@ -368,12 +379,12 @@ func (s *staticResponseConn) Write(b []byte) (int, error) {
 	s.writtenBytes = append(s.writtenBytes, b...)
 	return len(b), nil
 }
-func (s *staticResponseConn) Close() error                      { return nil }
-func (s *staticResponseConn) LocalAddr() net.Addr               { return tcpAddr{} }
-func (s *staticResponseConn) RemoteAddr() net.Addr              { return tcpAddr{} }
-func (s *staticResponseConn) SetDeadline(time.Time) error       { return nil }
-func (s *staticResponseConn) SetReadDeadline(time.Time) error   { return nil }
-func (s *staticResponseConn) SetWriteDeadline(time.Time) error  { return nil }
+func (s *staticResponseConn) Close() error                     { return nil }
+func (s *staticResponseConn) LocalAddr() net.Addr              { return tcpAddr{} }
+func (s *staticResponseConn) RemoteAddr() net.Addr             { return tcpAddr{} }
+func (s *staticResponseConn) SetDeadline(time.Time) error      { return nil }
+func (s *staticResponseConn) SetReadDeadline(time.Time) error  { return nil }
+func (s *staticResponseConn) SetWriteDeadline(time.Time) error { return nil }
 
 // buildAXFRResponse constructs a TCP-length-prefixed DNS response with the
 // given transaction ID, RCODE and ANCOUNT.
@@ -504,6 +515,213 @@ func TestCheckZoneTransferEdgeCases(t *testing.T) {
 			}
 			if got != tc.wantCount {
 				t.Errorf("checkZoneTransfer() = %d, want %d", got, tc.wantCount)
+			}
+		})
+	}
+}
+
+func buildVersionBindTXTMsg(txt string, class uint16, compressed bool) []byte {
+	msg := []byte{
+		0x00, 0x01, // Transaction ID
+		0x81, 0x80, // Flags: response
+		0x00, 0x01, // QDCOUNT
+		0x00, 0x01, // ANCOUNT
+		0x00, 0x00, // NSCOUNT
+		0x00, 0x00, // ARCOUNT
+		// Question: version.bind TXT CH
+		0x07, 0x76, 0x65, 0x72, 0x73, 0x69, 0x6f, 0x6e,
+		0x04, 0x62, 0x69, 0x6e, 0x64, 0x00,
+		0x00, 0x10, // QTYPE TXT
+		0x00, 0x03, // QCLASS CH
+	}
+	if compressed {
+		msg = append(msg, 0xc0, 0x0c)
+	} else {
+		msg = append(msg,
+			0x07, 0x76, 0x65, 0x72, 0x73, 0x69, 0x6f, 0x6e,
+			0x04, 0x62, 0x69, 0x6e, 0x64, 0x00,
+		)
+	}
+	msg = append(msg, 0x00, 0x10) // TYPE TXT
+	msg = append(msg, byte(class>>8), byte(class))
+	msg = append(msg, 0x00, 0x00, 0x00, 0x00) // TTL
+	rdata := []byte{byte(len(txt))}
+	rdata = append(rdata, []byte(txt)...)
+	msg = append(msg, byte(len(rdata)>>8), byte(len(rdata)))
+	msg = append(msg, rdata...)
+	return msg
+}
+
+func TestParseVersionBindTXT(t *testing.T) {
+	tests := []struct {
+		name   string
+		msg    []byte
+		want   string
+		wantOK bool
+	}{
+		{"9.8 compressed", buildVersionBindTXTMsg("9.8", 3, true), "9.8", true},
+		{"9.6 uncompressed", buildVersionBindTXTMsg("9.6", 3, false), "9.6", true},
+		{"9.20 compressed", buildVersionBindTXTMsg("9.20", 3, true), "9.20", true},
+		{"wrong class IN", buildVersionBindTXTMsg("9.8", 1, true), "", false},
+		{"empty rdata", func() []byte {
+			msg := buildVersionBindTXTMsg("x", 3, true)
+			// zero RDLENGTH at the last 3 bytes before rdata: rewrite last rdlength+rdata
+			// Find RDLENGTH: last 1+len("x")+2 is messy; build truncated instead.
+			return msg[:len(msg)-2] // drop rdata, leave rdlength pointing at missing bytes
+		}(), "", false},
+		{"truncated", []byte{0x00, 0x01, 0x81, 0x80}, "", false},
+		{"nil", nil, "", false},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := parseVersionBindTXT(tt.msg)
+			if ok != tt.wantOK || got != tt.want {
+				t.Errorf("parseVersionBindTXT() = (%q, %v), want (%q, %v)", got, ok, tt.want, tt.wantOK)
+			}
+		})
+	}
+}
+
+func TestCheckBINDEOL(t *testing.T) {
+	tests := []struct {
+		version string
+		wantID  string
+	}{
+		{"9.6", "bind-eol"},
+		{"9.8", "bind-eol"},
+		{"9.8.3-P1", "bind-eol"},
+		{"9.16", "bind-eol"},
+		{"9.20", ""},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.version, func(t *testing.T) {
+			finding := checkBINDEOL(tt.version)
+			if tt.wantID == "" {
+				if finding != nil {
+					t.Errorf("checkBINDEOL(%q) = %+v, want nil", tt.version, finding)
+				}
+				return
+			}
+			if finding == nil {
+				t.Fatalf("checkBINDEOL(%q) = nil, want ID %q", tt.version, tt.wantID)
+			}
+			if finding.ID != tt.wantID {
+				t.Errorf("finding.ID = %q, want %q", finding.ID, tt.wantID)
+			}
+		})
+	}
+}
+
+func TestBINDEOLFinding(t *testing.T) {
+	plugin := TCPPlugin{}
+	tests := []struct {
+		name       string
+		txt        string
+		misconfigs bool
+		wantEOL    bool
+	}{
+		{"9.6 misconfigs", "9.6", true, true},
+		{"9.8 misconfigs", "9.8", true, true},
+		{"9.20 misconfigs", "9.20", true, false},
+		{"9.6 misconfigs disabled", "9.6", false, false},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			conn := &dnsMockConn{versionBind: tt.txt}
+			target := plugins.Target{
+				Address:    defaultTCPTarget.Address,
+				Misconfigs: tt.misconfigs,
+			}
+			svc, err := plugin.Run(conn, 5*time.Second, target)
+			if err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+			if svc == nil {
+				t.Fatal("Run() returned nil service")
+			}
+			found := false
+			for _, f := range svc.SecurityFindings {
+				if f.ID == "bind-eol" {
+					found = true
+				}
+				if f.ID == "dns-zone-transfer" {
+					t.Errorf("AXFR success must not be treated as BIND version; got %q", f.ID)
+				}
+			}
+			if found != tt.wantEOL {
+				t.Errorf("bind-eol present=%v, want %v (findings=%v version=%q)", found, tt.wantEOL, svc.SecurityFindings, svc.Version)
+			}
+			if tt.wantEOL && svc.Version != tt.txt {
+				t.Errorf("service.Version = %q, want %q", svc.Version, tt.txt)
+			}
+		})
+	}
+}
+
+type udpVersionBindConn struct {
+	txt      string
+	readBuf  []byte
+	writeBuf []byte
+}
+
+func (m *udpVersionBindConn) Write(b []byte) (int, error) {
+	var txID [2]byte
+	if len(b) >= 2 {
+		copy(txID[:], b[0:2])
+	}
+	prefixed := buildVersionBindResponseTXT(txID, m.txt)
+	m.readBuf = prefixed[2:] // UDP has no TCP length prefix
+	return len(b), nil
+}
+func (m *udpVersionBindConn) Read(b []byte) (int, error) {
+	n := copy(b, m.readBuf)
+	m.readBuf = m.readBuf[n:]
+	return n, nil
+}
+func (m *udpVersionBindConn) Close() error                     { return nil }
+func (m *udpVersionBindConn) LocalAddr() net.Addr              { return udpAddr{} }
+func (m *udpVersionBindConn) RemoteAddr() net.Addr             { return udpAddr{} }
+func (m *udpVersionBindConn) SetDeadline(time.Time) error      { return nil }
+func (m *udpVersionBindConn) SetReadDeadline(time.Time) error  { return nil }
+func (m *udpVersionBindConn) SetWriteDeadline(time.Time) error { return nil }
+
+func TestBINDEOLFindingUDP(t *testing.T) {
+	plugin := UDPPlugin{}
+	tests := []struct {
+		txt     string
+		wantEOL bool
+	}{
+		{"9.6", true},
+		{"9.8", true},
+		{"9.20", false},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.txt, func(t *testing.T) {
+			conn := &udpVersionBindConn{txt: tt.txt}
+			target := plugins.Target{
+				Address:    netip.MustParseAddrPort("127.0.0.1:53"),
+				Misconfigs: true,
+			}
+			svc, err := plugin.Run(conn, 5*time.Second, target)
+			if err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+			if svc == nil {
+				t.Fatal("Run() returned nil service")
+			}
+			found := false
+			for _, f := range svc.SecurityFindings {
+				if f.ID == "bind-eol" {
+					found = true
+				}
+			}
+			if found != tt.wantEOL {
+				t.Errorf("bind-eol present=%v, want %v (findings=%v)", found, tt.wantEOL, svc.SecurityFindings)
 			}
 		})
 	}

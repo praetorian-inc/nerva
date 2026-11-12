@@ -23,6 +23,7 @@ import (
 	"io"
 	"math/big"
 	"net"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -59,6 +60,37 @@ var weakMACs = map[string]bool{
 	"hmac-sha1-96-etm@openssh.com": true,
 }
 
+type eolEntry struct {
+	name     string
+	severity plugins.Severity
+}
+
+// opensshEOLMap keys only the bound EOL fixture OpenSSH 5.6. Do not expand.
+var opensshEOLMap = map[string]eolEntry{
+	"5.6": {"OpenSSH 5.6", plugins.SeverityLow},
+}
+
+var opensshVersionRe = regexp.MustCompile(`OpenSSH_(\d+\.\d+)`)
+
+// checkOpenSSHEOL maps an RFC 4253 softwareversion banner to a SecurityFinding
+// if the OpenSSH version is end-of-life. Returns nil if not OpenSSH or not EOL.
+func checkOpenSSHEOL(banner string) *plugins.SecurityFinding {
+	m := opensshVersionRe.FindStringSubmatch(banner)
+	if len(m) < 2 {
+		return nil
+	}
+	entry, ok := opensshEOLMap[m[1]]
+	if !ok {
+		return nil
+	}
+	return &plugins.SecurityFinding{
+		ID:          "openssh-eol",
+		Severity:    entry.severity,
+		Description: fmt.Sprintf("SSH service running end-of-life OpenSSH: %s", entry.name),
+		Evidence:    banner,
+	}
+}
+
 // makeSSHService creates a Service with the given SSH payload and attaches any
 // security findings derived from the algorithm negotiation and auth state.
 //
@@ -71,6 +103,9 @@ func makeSSHService(target plugins.Target, payload plugins.ServiceSSH, algo map[
 	applySSHBannerFingerprinting(&payload, payload.Banner)
 	service := plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP)
 	service.SecurityFindings = buildSSHFindings(algo, passwordAuth)
+	if finding := checkOpenSSHEOL(payload.Banner); finding != nil {
+		service.SecurityFindings = append(service.SecurityFindings, *finding)
+	}
 	return service
 }
 
