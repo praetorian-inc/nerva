@@ -30,6 +30,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/praetorian-inc/nerva/pkg/plugins"
@@ -63,8 +64,10 @@ func checkPcAnywhereTCP(data []byte) error {
 		return invalid
 	}
 	// nmap pcanywhere-brute.nse: hello 00000000, host replies with
-	// "Please press <Enter>".
-	if bytes.Contains(data, []byte("Please press <Enter>")) {
+	// "Please press <Enter>". Real listeners vary case/spacing around
+	// the prompt; match the Enter-prompt token case-insensitively.
+	lower := strings.ToLower(string(data))
+	if strings.Contains(lower, "press <enter>") {
 		return nil
 	}
 	// GIAC: host responds with "ST" then NULs, not an arbitrary ST… banner.
