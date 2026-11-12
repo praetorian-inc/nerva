@@ -64,18 +64,19 @@ func (f *SNMPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 	stringBegin := idx + InfoOffset
 	if bytes.Contains(response, RequestID) {
 		var service *plugins.Service
+		sysDescr := ""
 		if stringBegin < len(response) {
-			service = plugins.CreateServiceFrom(target, plugins.ServiceSNMP{}, false,
-				string(response[stringBegin:]), plugins.UDP)
-		} else {
-			service = plugins.CreateServiceFrom(target, plugins.ServiceSNMP{}, false, "", plugins.UDP)
+			sysDescr = strings.Trim(string(response[stringBegin:]), "\x00")
 		}
-		if target.Misconfigs {
+		service = plugins.CreateServiceFrom(target, plugins.ServiceSNMP{}, false, sysDescr, plugins.UDP)
+		// Default-community finding requires a sysDescr value, not a public GET echo
+		// (echo leftover after idx+33 is typically <4 bytes).
+		if target.Misconfigs && len(sysDescr) >= 4 {
 			service.SecurityFindings = []plugins.SecurityFinding{{
 				ID:          "snmp-default-community",
 				Severity:    plugins.SeverityHigh,
 				Description: "SNMP service responds to default 'public' community string",
-				Evidence:    "community_string=public",
+				Evidence:    "community_string=public sysDescr=" + sysDescr,
 			}}
 		}
 		return service, nil

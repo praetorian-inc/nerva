@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"net"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/praetorian-inc/nerva/pkg/plugins"
@@ -209,13 +210,51 @@ func (p *FTPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 
 	service := plugins.CreateServiceFrom(target, payload, false, version, plugins.TCP)
 	if target.Misconfigs {
-		service.SecurityFindings = []plugins.SecurityFinding{{
-			ID:          "ftp-cleartext",
-			Severity:    plugins.SeverityLow,
-			Description: "FTP transmits data including credentials in cleartext",
-		}}
+		service.SecurityFindings = []plugins.SecurityFinding{ftpCleartextFinding()}
+		if probeAnonymousFTP(conn, timeout) {
+			service.AnonymousAccess = true
+			service.SecurityFindings = append(service.SecurityFindings, ftpAnonymousLoginFinding())
+		}
 	}
 	return service, nil
+}
+
+// probeAnonymousFTP sends a single USER anonymous (and empty PASS if 331).
+// It is independent of FTP banner family once the service is already detected.
+func probeAnonymousFTP(conn net.Conn, timeout time.Duration) bool {
+	resp, err := utils.SendRecv(conn, []byte("USER anonymous\r\n"), timeout)
+	if err != nil || len(resp) == 0 {
+		return false
+	}
+	body := string(resp)
+	if strings.HasPrefix(body, "230") {
+		return true
+	}
+	if !strings.HasPrefix(body, "331") {
+		return false
+	}
+	resp, err = utils.SendRecv(conn, []byte("PASS \r\n"), timeout)
+	if err != nil || len(resp) == 0 {
+		return false
+	}
+	return strings.HasPrefix(string(resp), "230")
+}
+
+func ftpCleartextFinding() plugins.SecurityFinding {
+	return plugins.SecurityFinding{
+		ID:          "ftp-cleartext",
+		Severity:    plugins.SeverityLow,
+		Description: "FTP transmits data including credentials in cleartext",
+	}
+}
+
+func ftpAnonymousLoginFinding() plugins.SecurityFinding {
+	return plugins.SecurityFinding{
+		ID:          "ftp-anonymous-login",
+		Severity:    plugins.SeverityMedium,
+		Description: "FTP permits anonymous login",
+		Evidence:    "USER anonymous succeeded with 230",
+	}
 }
 
 func (p *FTPPlugin) PortPriority(i uint16) bool {
