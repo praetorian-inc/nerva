@@ -15,13 +15,81 @@
 package vnc
 
 import (
+	"net"
+	"net/netip"
 	"testing"
+	"time"
 
 	"github.com/ory/dockertest/v3"
+	"github.com/stretchr/testify/assert"
 
 	"github.com/praetorian-inc/nerva/pkg/plugins"
 	"github.com/praetorian-inc/nerva/pkg/test"
 )
+
+var fixtureRFB = []byte("RFB 003.008\n")
+
+type mockConn struct {
+	readData  []byte
+	readIndex int
+}
+
+func (m *mockConn) Read(b []byte) (n int, err error) {
+	if m.readIndex >= len(m.readData) {
+		return 0, nil
+	}
+	n = copy(b, m.readData[m.readIndex:])
+	m.readIndex += n
+	return n, nil
+}
+
+func (m *mockConn) Write(b []byte) (n int, err error)  { return len(b), nil }
+func (m *mockConn) Close() error                       { return nil }
+func (m *mockConn) LocalAddr() net.Addr                { return nil }
+func (m *mockConn) RemoteAddr() net.Addr               { return nil }
+func (m *mockConn) SetDeadline(t time.Time) error      { return nil }
+func (m *mockConn) SetReadDeadline(t time.Time) error  { return nil }
+func (m *mockConn) SetWriteDeadline(t time.Time) error { return nil }
+
+func TestVNCPlugin_Run_RFBAnyPort_EmitsExposure(t *testing.T) {
+	t.Parallel()
+	conn := &mockConn{readData: fixtureRFB}
+	plugin := &VNCPlugin{}
+	target := plugins.Target{
+		Address:    netip.MustParseAddrPort("192.0.2.1:12345"),
+		Misconfigs: true,
+	}
+	service, err := plugin.Run(conn, time.Second, target)
+	assert.NoError(t, err)
+	assert.NotNil(t, service)
+	assert.Equal(t, plugins.ProtoVNC, service.Protocol)
+	assert.Len(t, service.SecurityFindings, 1)
+	assert.Equal(t, "vnc-exposed", service.SecurityFindings[0].ID)
+}
+
+func TestVNCPlugin_Run_HTTPBanner_NoFinding(t *testing.T) {
+	t.Parallel()
+	conn := &mockConn{readData: []byte("HTTP/1.1 200 OK\r\n")}
+	plugin := &VNCPlugin{}
+	target := plugins.Target{
+		Address:    netip.MustParseAddrPort("192.0.2.1:5900"),
+		Misconfigs: true,
+	}
+	service, err := plugin.Run(conn, time.Second, target)
+	assert.NoError(t, err)
+	assert.Nil(t, service)
+}
+
+func TestVNCPlugin_Run_MisconfigsFalse_IdentifiesWithoutFinding(t *testing.T) {
+	t.Parallel()
+	conn := &mockConn{readData: fixtureRFB}
+	plugin := &VNCPlugin{}
+	target := plugins.Target{Address: netip.MustParseAddrPort("192.0.2.1:5900")}
+	service, err := plugin.Run(conn, time.Second, target)
+	assert.NoError(t, err)
+	assert.NotNil(t, service)
+	assert.Empty(t, service.SecurityFindings)
+}
 
 func TestVNC(t *testing.T) {
 	testcases := []test.Testcase{
