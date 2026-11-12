@@ -328,6 +328,14 @@ var findingCatalog = map[string]FindingMeta{
 	},
 
 	// ── Container and orchestration ──────────────────────────────────────
+	"malware-backdoor": {
+		Title:          "Unauthenticated Bind-Shell or Backdoor Service",
+		Severity:       SeverityCritical,
+		Impact:         "An unauthenticated bind-shell or BACKDOOR-labeled listener grants remote command execution without credentials. Anyone who can reach the port can operate as the process user.",
+		Recommendation: "Terminate the listener, investigate the host for persistence, and block the port at the perimeter. Do not interact with the shell beyond identification.",
+		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+	},
+
 	"docker-unauth-api": {
 		Title:          "Docker API Accessible Without Authentication",
 		Severity:       SeverityCritical,

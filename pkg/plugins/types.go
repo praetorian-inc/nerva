@@ -135,6 +135,8 @@ const (
 	ProtoAnyDesk           = "anydesk"
 	ProtoBACnet            = "bacnet"
 	ProtoBGP               = "bgp"
+	ProtoBindShell         = "bind-shell"
+	ProtoBackdoor          = "backdoor"
 	ProtoCassandra         = "cassandra"
 	ProtoChromaDB          = "chromadb"
 	ProtoClickHouse        = "clickhouse"
@@ -998,6 +1000,10 @@ func (e Service) Metadata() Metadata {
 		return p
 	case ProtoBGP:
 		var p ServiceBGP
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
+	case ProtoBindShell, ProtoBackdoor:
+		var p ServiceBindShell
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
 	case ProtoZabbixAgent:
@@ -2600,6 +2606,19 @@ type ServiceBGP struct {
 }
 
 func (e ServiceBGP) Type() string { return ProtoBGP }
+
+type ServiceBindShell struct {
+	Banner string   `json:"banner,omitempty"`
+	Kind   string   `json:"kind,omitempty"`
+	CPEs   []string `json:"cpes,omitempty"`
+}
+
+func (e ServiceBindShell) Type() string {
+	if e.Kind == "backdoor" {
+		return ProtoBackdoor
+	}
+	return ProtoBindShell
+}
 
 type ServiceSCCP struct {
 	DeviceType      string `json:"device_type,omitempty"`
