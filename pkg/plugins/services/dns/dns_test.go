@@ -836,14 +836,17 @@ func (m *shortTCPFrameConn) SetDeadline(time.Time) error      { return nil }
 func (m *shortTCPFrameConn) SetReadDeadline(time.Time) error  { return nil }
 func (m *shortTCPFrameConn) SetWriteDeadline(time.Time) error { return nil }
 
-func TestCheckDNS_TCPShortDeclaredLengthIsMiss(t *testing.T) {
+func TestCheckDNS_TCPShortDeclaredLengthStillDetects(t *testing.T) {
 	conn := &shortTCPFrameConn{}
 	isDNS, version, err := CheckDNS(conn, 5*time.Second)
 	if err != nil {
 		t.Fatalf("CheckDNS() error = %v, want nil", err)
 	}
-	if isDNS {
-		t.Fatalf("CheckDNS() isDNS = true version=%q, want miss on short length-prefixed frame", version)
+	if !isDNS {
+		t.Fatal("CheckDNS() isDNS = false, want true (TXID match detects DNS even if TCP length prefix exceeds received bytes)")
+	}
+	if version != "" {
+		t.Errorf("CheckDNS() version = %q, want empty (incomplete TCP frame skips version parsing)", version)
 	}
 }
 

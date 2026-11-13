@@ -84,11 +84,13 @@ func CheckDNS(conn net.Conn, timeout time.Duration) (bool, string, error) {
 			if len(response) < 4 || !bytes.Equal(transactionID[0:2], response[2:4]) {
 				return false, "", nil
 			}
+			// TXID match is enough to detect DNS. Only parse version.bind when
+			// the TCP length prefix describes a complete DNS message; a split
+			// read (prefix without the full body) must not fail detection.
 			declaredLen := int(binary.BigEndian.Uint16(response[0:2]))
-			if declaredLen < 12 || len(response) < 2+declaredLen {
-				return false, "", nil
+			if declaredLen >= 12 && len(response) >= 2+declaredLen {
+				dnsMsg = response[2 : 2+declaredLen]
 			}
-			dnsMsg = response[2 : 2+declaredLen]
 		}
 
 		if v, ok := parseVersionBindTXT(dnsMsg); ok {
