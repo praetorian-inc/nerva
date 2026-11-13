@@ -15,6 +15,7 @@
 package pop3
 
 import (
+	"crypto/tls"
 	"net"
 	"strings"
 	"time"
@@ -95,12 +96,42 @@ func (p *POP3Plugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 	}
 	service := plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP)
 	if target.Misconfigs {
-		service.SecurityFindings = []plugins.SecurityFinding{{
-			ID:          "pop3-cleartext",
-			Severity:    plugins.SeverityMedium,
-			Description: "POP3 transmits data including credentials in cleartext",
-			Evidence:    result,
-		}}
+		if pop3STLSCommand(conn, timeout) {
+			var dial func() (net.Conn, error)
+			if addr := conn.RemoteAddr(); addr != nil {
+				a := addr.String()
+				dial = func() (net.Conn, error) { return dialPOP3ReadyForTLS(target, a, timeout) }
+			}
+			cfg := &tls.Config{InsecureSkipVerify: true, ServerName: target.Host} // #nosec G402 -- scanner
+			tconn := tls.Client(conn, cfg)
+			var findings []plugins.SecurityFinding
+			tlsOK := false
+			if err := tconn.Handshake(); err == nil {
+				findings = plugins.CheckTLS(&plugins.RawDialConn{Conn: tconn, Dial: dial})
+				tlsOK = true
+			} else if dial != nil {
+				findings = plugins.ProbeTLSMisconfigs(dial, target.Host)
+				tlsOK = len(findings) > 0
+			}
+			cleartext := plugins.SecurityFinding{
+				ID:          "pop3-cleartext",
+				Severity:    plugins.SeverityMedium,
+				Description: "POP3 transmits data including credentials in cleartext",
+				Evidence:    result,
+			}
+			if tlsOK {
+				service.SecurityFindings = append([]plugins.SecurityFinding{cleartext}, findings...)
+			} else {
+				service.SecurityFindings = []plugins.SecurityFinding{cleartext}
+			}
+		} else {
+			service.SecurityFindings = []plugins.SecurityFinding{{
+				ID:          "pop3-cleartext",
+				Severity:    plugins.SeverityMedium,
+				Description: "POP3 transmits data including credentials in cleartext",
+				Evidence:    result,
+			}}
+		}
 	}
 	return service, nil
 }
@@ -149,4 +180,33 @@ func (p *POP3Plugin) Priority() int {
 
 func (p *TLSPlugin) Priority() int {
 	return 122
+}
+
+func pop3STLSCommand(conn net.Conn, timeout time.Duration) bool {
+	resp, err := utils.SendRecv(conn, []byte("STLS\r\n"), timeout)
+	if err != nil {
+		return false
+	}
+	return strings.HasPrefix(string(resp), "+OK")
+}
+
+func dialPOP3ReadyForTLS(target plugins.Target, addr string, timeout time.Duration) (net.Conn, error) {
+	c, err := target.FollowupTCP(addr, timeout)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := utils.Recv(c, timeout); err != nil {
+		c.Close()
+		return nil, err
+	}
+	resp, err := utils.SendRecv(c, []byte("STLS\r\n"), timeout)
+	if err != nil {
+		c.Close()
+		return nil, err
+	}
+	if !strings.HasPrefix(string(resp), "+OK") {
+		c.Close()
+		return nil, &utils.InvalidResponseErrorInfo{Service: POP3, Info: "STLS rejected"}
+	}
+	return c, nil
 }

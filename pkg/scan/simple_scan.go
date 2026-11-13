@@ -23,6 +23,7 @@ import (
 	"log"
 	"net"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -264,8 +265,10 @@ func (c *Config) SimpleScanTarget(target plugins.Target) ([]*plugins.Service, er
 
 	tlsConn, tlsErr := c.DialTLS(target)
 	isTLS := tlsErr == nil
-	if isRemoteTLSAlert(tlsErr) {
-		// A peer TLS alert proves the port uses TLS, so skip plaintext probes.
+	if isTLSHandshakeFailure(tlsErr) {
+		// A peer TLS alert / protocol-version rejection proves the port uses TLS,
+		// so skip plaintext probes. WRONG_VERSION_NUMBER (non-TLS first record)
+		// is not this path — STARTTLS listeners fall through to TCP plugins.
 		if c.Verbose {
 			log.Printf("%v %v-> peer rejected TLS handshake; skipping plaintext probes\n",
 				target.Address.String(), target.Host)
@@ -402,13 +405,31 @@ func isRemoteTLSAlert(err error) bool {
 	return errors.As(err, &opErr) && opErr.Op == "remote error"
 }
 
+// isTLSHandshakeFailure is the enumerator handoff: stdlib refused the
+// handshake because of a peer TLS alert or an unsupported protocol version
+// (SSL 3.0 / TLS 1.0). It is not WRONG_VERSION_NUMBER (first record is not TLS).
+func isTLSHandshakeFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	if isRemoteTLSAlert(err) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "protocol version") ||
+		strings.Contains(msg, "no_protocols_available") ||
+		strings.Contains(msg, "no protocols available")
+}
+
 // tlsAlertMisconfigService probes anonymous/NULL/EXPORT suites after the
 // stdlib handshake failed with a peer TLS alert. CheckTLS requires a
 // *tls.Conn, which these listeners never produce.
 func (c *Config) tlsAlertMisconfigService(target plugins.Target) *plugins.Service {
-	findings := plugins.ProbeWeakCiphers(func() (net.Conn, error) {
+	dial := func() (net.Conn, error) {
 		return c.DialTCP(target)
-	}, target.Host)
+	}
+	findings := plugins.ProbeWeakCiphers(dial, target.Host)
+	findings = append(findings, plugins.ProbeOfferedTLSVersions(dial, target.Host)...)
 	if len(findings) == 0 {
 		return nil
 	}

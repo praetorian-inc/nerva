@@ -116,7 +116,7 @@ func TestTlsVersionName(t *testing.T) {
 		{tls.VersionTLS11, "TLS 1.1"},
 		{tls.VersionTLS12, "TLS 1.2"},
 		{tls.VersionTLS13, "TLS 1.3"},
-		{0x0300, "unknown (0x0300)"}, // SSL 3.0 – unrecognised
+		{0x0300, "SSL 3.0"},
 	}
 
 	for _, tc := range tests {
@@ -457,9 +457,9 @@ func startOpenSSLContainer(t *testing.T, pool *dockertest.Pool, tlsFlag string, 
 	t.Helper()
 
 	resource, err := pool.RunWithOptions(&dockertest.RunOptions{
-		Repository: "alpine",
-		Tag:        "3.21",
-		Cmd: []string{"sh", "-c", openSSLServerCmd(tlsFlag)},
+		Repository:   "alpine",
+		Tag:          "3.21",
+		Cmd:          []string{"sh", "-c", openSSLServerCmd(tlsFlag)},
 		ExposedPorts: []string{"4433/tcp"},
 	})
 	if err != nil {

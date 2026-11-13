@@ -28,6 +28,8 @@ const (
 	findingTLSAnonCipher   = "tls-anon-cipher"
 	findingTLSNullCipher   = "tls-null-cipher"
 	findingTLSExportCipher = "tls-export-cipher"
+	findingTLSRC4Cipher    = "tls-rc4-cipher"
+	findingTLS3DESCipher   = "tls-3des-cipher"
 	weakCipherProbeTimeout = 3 * time.Second
 )
 
@@ -38,6 +40,8 @@ const (
 	weakAnon
 	weakNull
 	weakExport
+	weakRC4
+	weak3DES
 )
 
 // IANA TLS 1.0–1.2 suites that are anonymous, NULL, or EXPORT.
@@ -77,6 +81,14 @@ var weakCipherSuites = []struct {
 	{0xC017, weakAnon},   // TLS_ECDH_anon_WITH_3DES_EDE_CBC_SHA
 	{0xC018, weakAnon},   // TLS_ECDH_anon_WITH_AES_128_CBC_SHA
 	{0xC019, weakAnon},   // TLS_ECDH_anon_WITH_AES_256_CBC_SHA
+	{0x0004, weakRC4},    // TLS_RSA_WITH_RC4_128_MD5
+	{0x0005, weakRC4},    // TLS_RSA_WITH_RC4_128_SHA
+	{0xC011, weakRC4},    // TLS_ECDHE_RSA_WITH_RC4_128_SHA
+	{0xC007, weakRC4},    // TLS_ECDHE_ECDSA_WITH_RC4_128_SHA
+	{0x000A, weak3DES},   // TLS_RSA_WITH_3DES_EDE_CBC_SHA
+	{0x0013, weak3DES},   // TLS_DHE_DSS_WITH_3DES_EDE_CBC_SHA
+	{0x0016, weak3DES},   // TLS_DHE_RSA_WITH_3DES_EDE_CBC_SHA
+	{0xC012, weak3DES},   // TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA
 }
 
 func classOfSuite(id uint16) weakClass {
@@ -101,6 +113,22 @@ func tcpRemoteAddr(conn net.Conn) string {
 
 type rawTCPDialer interface {
 	DialRawTCP() (net.Conn, error)
+}
+
+// RawDialConn lets CheckTLS redial through a protocol preamble (STARTTLS,
+// SSLRequest, TDS, RDP) instead of a bare TCP connect to RemoteAddr.
+type RawDialConn struct {
+	net.Conn
+	Dial func() (net.Conn, error)
+}
+
+func (c *RawDialConn) Unwrap() net.Conn { return c.Conn }
+
+func (c *RawDialConn) DialRawTCP() (net.Conn, error) {
+	if c == nil || c.Dial == nil {
+		return nil, fmt.Errorf("tls probe: no dialer")
+	}
+	return c.Dial()
 }
 
 type probeSNIProvider interface {
@@ -173,9 +201,13 @@ func ProbeWeakCiphers(dial func() (net.Conn, error), sni string) []SecurityFindi
 	if dial == nil {
 		return nil
 	}
+	deadline := time.Now().Add(weakCipherProbeTimeout)
 	var findings []SecurityFinding
-	for _, class := range []weakClass{weakAnon, weakNull, weakExport} {
-		if f := probeWeakClass(dial, sni, class); f != nil {
+	for _, class := range []weakClass{weakAnon, weakNull, weakExport, weakRC4, weak3DES} {
+		if !time.Now().Before(deadline) {
+			break
+		}
+		if f := probeWeakClass(dial, sni, class, deadline); f != nil {
 			findings = append(findings, *f)
 		}
 	}
@@ -189,13 +221,13 @@ func probeWeakCiphers(conn net.Conn) []SecurityFinding {
 	return ProbeWeakCiphers(resolveRawDial(conn), resolveProbeSNI(conn))
 }
 
-func probeWeakClass(dial func() (net.Conn, error), sni string, class weakClass) *SecurityFinding {
+func probeWeakClass(dial func() (net.Conn, error), sni string, class weakClass, deadline time.Time) *SecurityFinding {
 	c, err := dial()
 	if err != nil {
 		return nil
 	}
 	defer c.Close()
-	_ = c.SetDeadline(time.Now().Add(weakCipherProbeTimeout))
+	_ = c.SetDeadline(deadline)
 	hello := buildWeakClientHello(class, sni)
 	if _, err := c.Write(hello); err != nil {
 		return nil
@@ -241,6 +273,20 @@ func findingForWeakSuite(suite uint16) []SecurityFinding {
 			ID:          findingTLSExportCipher,
 			Severity:    SeverityHigh,
 			Description: "Server selected an EXPORT TLS cipher suite",
+			Evidence:    evidence,
+		}}
+	case weakRC4:
+		return []SecurityFinding{{
+			ID:          findingTLSRC4Cipher,
+			Severity:    SeverityMedium,
+			Description: "Server selected an RC4 TLS cipher suite",
+			Evidence:    evidence,
+		}}
+	case weak3DES:
+		return []SecurityFinding{{
+			ID:          findingTLS3DESCipher,
+			Severity:    SeverityMedium,
+			Description: "Server selected a 3DES TLS cipher suite",
 			Evidence:    evidence,
 		}}
 	default:

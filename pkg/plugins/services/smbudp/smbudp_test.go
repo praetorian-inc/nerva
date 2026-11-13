@@ -138,11 +138,14 @@ func TestPlugin_RunWithMockServer(t *testing.T) {
 
 	addr := listener.Addr().(*net.UDPAddr)
 
-	// Mock server: accept one connection then close
+	// Mock server: accept one connection then close. Bound Accept so a missed
+	// handshake cannot hang the package's 10m test timeout (CI: nerva#468).
 	serverDone := make(chan struct{})
+	acceptCtx, acceptCancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer acceptCancel()
 	go func() {
 		defer close(serverDone)
-		conn, err := listener.Accept(context.Background())
+		conn, err := listener.Accept(acceptCtx)
 		if err != nil {
 			return
 		}
@@ -190,5 +193,8 @@ func TestPlugin_RunWithMockServer(t *testing.T) {
 		t.Error("expected at least one QUIC version in metadata")
 	}
 
-	<-serverDone
+	select {
+	case <-serverDone:
+	case <-acceptCtx.Done():
+	}
 }
