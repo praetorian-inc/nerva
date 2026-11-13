@@ -27,11 +27,10 @@ import (
 	"github.com/praetorian-inc/nerva/pkg/test"
 )
 
-// TestIMAPSecurityFindings verifies that the imap-cleartext finding is emitted when Misconfigs=true.
-func TestIMAPSecurityFindings(t *testing.T) {
-	// Minimal IMAP greeting followed by a CAPABILITY response
+func runIMAPMock(t *testing.T, capLine string, misconfigs bool) *plugins.Service {
+	t.Helper()
 	greeting := "* OK IMAP server ready\r\n"
-	capResponse := "* CAPABILITY IMAP4rev1\r\n7FYWU8I4 OK CAPABILITY completed\r\n"
+	capResponse := capLine + "\r\n7FYWU8I4 OK CAPABILITY completed\r\n"
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -60,85 +59,117 @@ func TestIMAPSecurityFindings(t *testing.T) {
 	}
 	defer conn.Close()
 
-	addrStr := fmt.Sprintf("127.0.0.1:%d", serverPort)
-	addrPort := netip.MustParseAddrPort(addrStr)
-	target := plugins.Target{
+	addrPort := netip.MustParseAddrPort(fmt.Sprintf("127.0.0.1:%d", serverPort))
+	plugin := &IMAPPlugin{}
+	service, err := plugin.Run(conn, 5*time.Second, plugins.Target{
 		Host:       "127.0.0.1",
 		Address:    addrPort,
-		Misconfigs: true,
-	}
-
-	plugin := &IMAPPlugin{}
-	service, err := plugin.Run(conn, 5*time.Second, target)
+		Misconfigs: misconfigs,
+	})
 	if err != nil {
 		t.Fatalf("Run() returned unexpected error: %v", err)
 	}
 	if service == nil {
 		t.Fatal("Run() returned nil, want non-nil service")
 	}
+	return service
+}
 
-	if len(service.SecurityFindings) != 1 {
-		t.Fatalf("expected 1 finding, got %d", len(service.SecurityFindings))
+func TestIMAPSecurityFindings(t *testing.T) {
+	tests := []struct {
+		name       string
+		capLine    string
+		misconfigs bool
+		wantID     string
+	}{
+		{
+			name:       "AUTH=PLAIN before STARTTLS emits imap-cleartext",
+			capLine:    "* CAPABILITY IMAP4rev1 AUTH=PLAIN",
+			misconfigs: true,
+			wantID:     "imap-cleartext",
+		},
+		{
+			name:       "AUTH=PLAIN with STARTTLS still emits imap-cleartext",
+			capLine:    "* CAPABILITY IMAP4rev1 STARTTLS AUTH=PLAIN",
+			misconfigs: true,
+			wantID:     "imap-cleartext",
+		},
+		{
+			name:       "AUTH=LOGIN equivalent emits imap-cleartext",
+			capLine:    "* CAPABILITY IMAP4rev1 AUTH=LOGIN",
+			misconfigs: true,
+			wantID:     "imap-cleartext",
+		},
+		{
+			name:       "IMAP LOGIN available without AUTH=PLAIN emits imap-cleartext",
+			capLine:    "* CAPABILITY IMAP4rev1",
+			misconfigs: true,
+			wantID:     "imap-cleartext",
+		},
+		{
+			name:       "STARTTLS without LOGINDISABLED still emits (LOGIN remains)",
+			capLine:    "* CAPABILITY IMAP4rev1 STARTTLS",
+			misconfigs: true,
+			wantID:     "imap-cleartext",
+		},
+		{
+			name:       "LOGINDISABLED without AUTH=PLAIN does not emit",
+			capLine:    "* CAPABILITY IMAP4rev1 STARTTLS LOGINDISABLED",
+			misconfigs: true,
+		},
+		{
+			name:       "LOGINDISABLED with AUTH=PLAIN still emits",
+			capLine:    "* CAPABILITY IMAP4rev1 STARTTLS LOGINDISABLED AUTH=PLAIN",
+			misconfigs: true,
+			wantID:     "imap-cleartext",
+		},
+		{
+			name:       "Misconfigs false does not emit even with AUTH=PLAIN",
+			capLine:    "* CAPABILITY IMAP4rev1 AUTH=PLAIN",
+			misconfigs: false,
+		},
 	}
-	if service.SecurityFindings[0].ID != "imap-cleartext" {
-		t.Errorf("expected finding ID 'imap-cleartext', got %q", service.SecurityFindings[0].ID)
-	}
-	if service.SecurityFindings[0].Severity != plugins.SeverityMedium {
-		t.Errorf("expected severity medium, got %s", service.SecurityFindings[0].Severity)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			service := runIMAPMock(t, tt.capLine, tt.misconfigs)
+			if tt.wantID == "" {
+				if len(service.SecurityFindings) != 0 {
+					t.Fatalf("expected no findings, got %d: %+v", len(service.SecurityFindings), service.SecurityFindings)
+				}
+				return
+			}
+			if len(service.SecurityFindings) != 1 {
+				t.Fatalf("expected 1 finding, got %d: %+v", len(service.SecurityFindings), service.SecurityFindings)
+			}
+			if service.SecurityFindings[0].ID != tt.wantID {
+				t.Errorf("expected finding ID %q, got %q", tt.wantID, service.SecurityFindings[0].ID)
+			}
+			if service.SecurityFindings[0].Severity != plugins.SeverityMedium {
+				t.Errorf("expected severity medium, got %s", service.SecurityFindings[0].Severity)
+			}
+		})
 	}
 }
 
-// TestIMAPSecurityFindingsDisabled verifies that no findings are emitted when Misconfigs=false.
-func TestIMAPSecurityFindingsDisabled(t *testing.T) {
-	greeting := "* OK IMAP server ready\r\n"
-	capResponse := "* CAPABILITY IMAP4rev1\r\n7FYWU8I4 OK CAPABILITY completed\r\n"
-
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("Failed to start mock server: %v", err)
+func TestOffersCleartextAUTH(t *testing.T) {
+	tests := []struct {
+		caps []string
+		want bool
+	}{
+		{[]string{"IMAP4REV1", "AUTH=PLAIN"}, true},
+		{[]string{"IMAP4REV1", "STARTTLS", "AUTH=PLAIN"}, true},
+		{[]string{"IMAP4REV1", "AUTH=LOGIN"}, true},
+		{[]string{"IMAP4REV1", "STARTTLS"}, true},
+		{[]string{"IMAP4REV1"}, true},
+		{[]string{"IMAP4REV1", "STARTTLS", "LOGINDISABLED"}, false},
+		{[]string{"IMAP4REV1", "STARTTLS", "LOGINDISABLED", "AUTH=PLAIN"}, true},
+		{nil, true},
 	}
-	defer listener.Close()
-
-	tcpAddr := listener.Addr().(*net.TCPAddr)
-	serverPort := tcpAddr.Port
-
-	go func() {
-		conn, err := listener.Accept()
-		if err != nil {
-			return
+	for _, tt := range tests {
+		if got := offersCleartextAUTH(tt.caps); got != tt.want {
+			t.Errorf("offersCleartextAUTH(%v) = %v, want %v", tt.caps, got, tt.want)
 		}
-		defer conn.Close()
-		_, _ = conn.Write([]byte(greeting))
-		buf := make([]byte, 256)
-		_, _ = conn.Read(buf)
-		_, _ = conn.Write([]byte(capResponse))
-	}()
-
-	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", serverPort), 5*time.Second)
-	if err != nil {
-		t.Fatalf("Failed to connect to mock server: %v", err)
-	}
-	defer conn.Close()
-
-	addrStr := fmt.Sprintf("127.0.0.1:%d", serverPort)
-	addrPort := netip.MustParseAddrPort(addrStr)
-	target := plugins.Target{
-		Host:       "127.0.0.1",
-		Address:    addrPort,
-		Misconfigs: false,
-	}
-
-	plugin := &IMAPPlugin{}
-	service, err := plugin.Run(conn, 5*time.Second, target)
-	if err != nil {
-		t.Fatalf("Run() returned unexpected error: %v", err)
-	}
-	if service == nil {
-		t.Fatal("Run() returned nil, want non-nil service")
-	}
-
-	if len(service.SecurityFindings) != 0 {
-		t.Errorf("expected no findings when Misconfigs=false, got %d", len(service.SecurityFindings))
 	}
 }
 
