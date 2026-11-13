@@ -327,7 +327,7 @@ func xdrString(buf []byte, offset int) (string, int, bool) {
 	}
 	n := int(binary.BigEndian.Uint32(buf[offset : offset+4]))
 	offset += 4
-	if n < 0 || offset+n > len(buf) {
+	if n < 0 || offset > len(buf) || n > len(buf)-offset {
 		return "", offset, false
 	}
 	s := string(buf[offset : offset+n])
@@ -385,6 +385,9 @@ func parseExportList(payload []byte) []mountExport {
 	}
 }
 
+// probeMountExport sends MOUNT EXPORT (100005/proc 5) on the scanned socket.
+// Typical mountd is a separate rpcbind-registered port (often 20048), not nfsd
+// 2049; this probe only succeeds when that socket answers MOUNT. It never sends MNT.
 func probeMountExport(conn net.Conn, timeout time.Duration, tcp bool) []mountExport {
 	for _, version := range []uint32{3, 1} {
 		xid := generateXID()
@@ -408,6 +411,10 @@ func probeMountExport(conn net.Conn, timeout time.Duration, tcp bool) []mountExp
 func nfsExportFinding(exports []mountExport) *plugins.SecurityFinding {
 	var evidence []string
 	for _, e := range exports {
+		if len(e.Clients) == 0 {
+			evidence = append(evidence, fmt.Sprintf("%s (everyone)", e.Path))
+			continue
+		}
 		for _, c := range e.Clients {
 			if c == "*" {
 				evidence = append(evidence, fmt.Sprintf("%s *", e.Path))
@@ -464,7 +471,10 @@ func (p *NFSTCPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.
 		}
 	}
 
-	exports := probeMountExport(conn, timeout, true)
+	var exports []mountExport
+	if target.Misconfigs {
+		exports = probeMountExport(conn, timeout, true)
+	}
 	if len(nfsService.DetectedVersions) == 0 && len(exports) == 0 {
 		return nil, nil
 	}
@@ -536,7 +546,10 @@ func (p *NFSUDPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.
 		}
 	}
 
-	exports := probeMountExport(conn, timeout, false)
+	var exports []mountExport
+	if target.Misconfigs {
+		exports = probeMountExport(conn, timeout, false)
+	}
 	if len(nfsService.DetectedVersions) == 0 && len(exports) == 0 {
 		return nil, nil
 	}

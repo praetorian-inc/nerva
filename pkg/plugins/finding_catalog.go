@@ -750,9 +750,9 @@ var findingCatalog = map[string]FindingMeta{
 	"nfs-exports": {
 		Title:          "NFS Exports Publicly Listable",
 		Severity:       SeverityHigh,
-		Impact:         "An unauthenticated MOUNT EXPORT (showmount) listing reveals exported paths and client wildcards. A public (*) export exposes filesystem contents to any network attacker without mounting credentials.",
+		Impact:         "An unauthenticated MOUNT EXPORT listing on the scanned socket reveals exported paths and client wildcards (showmount -e equivalent only when that socket answers mountd). A public (*) or empty client list is world-advertised at the MOUNT protocol layer; it does not prove a successful filesystem mount or bypass of Kerberos (sec=krb5p).",
 		Recommendation: "Restrict NFS exports to specific client addresses or networks. Do not export filesystems to *. Disable the MOUNT service on internet-facing hosts or require Kerberos (sec=krb5p).",
-		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N",
 	},
 }
 
