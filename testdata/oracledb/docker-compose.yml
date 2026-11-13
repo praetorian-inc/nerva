@@ -1,0 +1,45 @@
+# Oracle TNS postures for ENG-9054 (oracle-no-auth).
+#
+# Three listeners, protocol-accurate TNS (Wireshark packet-tns / SQL*Net),
+# not a Nerva probe replay. Bind to loopback only.
+#
+#   15211 — no-auth         TNS Accept for a known SID, empty/absent logon succeeds
+#   15212 — auth-required   TNS Accept for a known SID, logon → ORA-01017
+#   15213 — tns-only        TNS Refuse ORA-12514 for every Connect (no DB session)
+#
+# Known SERVICE_NAME / SID values: XE, XEPDB1, ORCL, ORCLPDB1, FREE, FREEPDB1.
+# Unknown names are refused with ORA-12514 on every mode (stock listener).
+
+services:
+  oracle-no-auth:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nerva-oracle-no-auth
+    environment:
+      MODE: no-auth
+      PORT: "1521"
+    ports:
+      - "127.0.0.1:15211:1521"
+
+  oracle-auth-required:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nerva-oracle-auth-required
+    environment:
+      MODE: auth-required
+      PORT: "1521"
+    ports:
+      - "127.0.0.1:15212:1521"
+
+  oracle-tns-only:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nerva-oracle-tns-only
+    environment:
+      MODE: tns-only
+      PORT: "1521"
+    ports:
+      - "127.0.0.1:15213:1521"

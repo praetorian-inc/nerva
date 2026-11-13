@@ -61,11 +61,60 @@ type SecurityFinding struct {
 	Evidence       string   `json:"evidence,omitempty"`
 }
 
-// EnrichFindings applies finding catalog metadata to all security findings.
+// EnrichFindings collapses duplicate findings and applies finding catalog
+// metadata to all security findings.
 func (s *Service) EnrichFindings() {
+	s.SecurityFindings = dedupeSecurityFindings(s.SecurityFindings)
 	for i := range s.SecurityFindings {
 		s.SecurityFindings[i].Enrich()
 	}
+}
+
+// perPathFindingIDs lists finding IDs that represent a distinct exposure per
+// location rather than a single per-host condition. For these, findings with
+// different evidence (which names the location) are all kept; only exact
+// duplicates collapse. Every other ID is deduplicated to one per service.
+//
+//nolint:gochecknoglobals // package-level registry by design
+var perPathFindingIDs = map[string]bool{
+	"exposed-phpinfo": true, // one per exposed phpinfo path (/phpinfo.php, /info.php, ...)
+}
+
+// dedupeSecurityFindings collapses findings that share a de-duplication key to a
+// single entry, keeping the most detailed one. The key is the finding ID, so a
+// catalog ID reported by several detectors (for example PHP's php2shell derived
+// from both the root banner and an exposed phpinfo page) appears once per
+// service, and keeping the richest Description + Evidence preserves the
+// highest-confidence detail (e.g. the phpinfo-confirmed SAPI over the behavioral
+// guess). IDs in perPathFindingIDs instead key on ID + Evidence, so distinct
+// exposure locations each survive while exact duplicates still collapse.
+// First-seen order is preserved; ties keep the first occurrence.
+func dedupeSecurityFindings(findings []SecurityFinding) []SecurityFinding {
+	if len(findings) < 2 {
+		return findings
+	}
+	index := make(map[string]int, len(findings))
+	out := make([]SecurityFinding, 0, len(findings))
+	for _, f := range findings {
+		key := f.ID
+		if perPathFindingIDs[f.ID] {
+			key = f.ID + "\x00" + f.Evidence
+		}
+		if i, seen := index[key]; seen {
+			if findingDetail(f) > findingDetail(out[i]) {
+				out[i] = f
+			}
+			continue
+		}
+		index[key] = len(out)
+		out = append(out, f)
+	}
+	return out
+}
+
+// findingDetail scores how detailed a finding is, for duplicate resolution.
+func findingDetail(f SecurityFinding) int {
+	return len(f.Description) + len(f.Evidence)
 }
 
 // Valid returns true if the severity is a recognized value.
@@ -210,6 +259,7 @@ const (
 	ProtoPCOM              = "pcom"
 	ProtoPFCP              = "pfcp"
 	ProtoPinecone          = "pinecone"
+	ProtoPcAnywhere        = "pcanywhere"
 	ProtoPCWorx            = "pcworx"
 	ProtoPOP3              = "pop3"
 	ProtoPOP3S             = "pop3s"
@@ -286,6 +336,10 @@ func (e Service) Type() string { return TypeService }
 
 func (e Service) Metadata() Metadata {
 	switch e.Protocol {
+	case ProtoSplashtop, ProtoDameware, ProtoRealVNC, ProtoNoMachine, ProtoRadmin, ProtoNetSupport, ProtoRustDeskDiscovery:
+		var p ServiceRemoteAccess
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
 	case ProtoElasticsearch:
 		var p ServiceElasticsearch
 		_ = json.Unmarshal(e.Raw, &p)
@@ -662,6 +716,10 @@ func (e Service) Metadata() Metadata {
 		var p ServicePinecone
 		_ = json.Unmarshal(e.Raw, &p)
 		return p
+	case ProtoPcAnywhere:
+		var p ServicePcAnywhere
+		_ = json.Unmarshal(e.Raw, &p)
+		return p
 	case ProtoPCWorx:
 		var p ServicePCWorx
 		_ = json.Unmarshal(e.Raw, &p)
@@ -1002,6 +1060,12 @@ type Target struct {
 	Host       string
 	Misconfigs bool // when true, plugins should populate SecurityFindings
 	Deep       bool // when true, plugins perform additional probes (e.g., admin path discovery)
+	// DialTCP, when non-nil, opens follow-up TCP connections through the scan
+	// engine (proxy-aware). Plugins that need a fresh socket MUST use this
+	// instead of net.DialTimeout. Nil means the caller did not provide an
+	// engine dialer; plugins may fall back to net.DialTimeout only for a
+	// concrete, non-unspecified address (unit tests).
+	DialTCP func(address string, timeout time.Duration) (net.Conn, error)
 }
 
 type Plugin interface {
@@ -1365,6 +1429,9 @@ type ServiceJetDirect struct {
 	Status           string   `json:"status,omitempty"`
 	FilesystemAccess bool     `json:"filesystem_access,omitempty"`
 	CPEs             []string `json:"cpes,omitempty"`
+	// Inferred is true when the service was classified from a standard raw-print
+	// port without a positive PJL response. Deep scans can set this after a probe fails.
+	Inferred bool `json:"inferred,omitempty"`
 }
 
 func (e ServiceJetDirect) Type() string { return ProtoJetDirect }
@@ -1712,9 +1779,10 @@ type ServiceOracleEBS struct {
 func (e ServiceOracleEBS) Type() string { return ProtoOracleEBS }
 
 type ServiceOracleORDS struct {
-	APEX      bool     `json:"apex,omitempty"`
-	AICapable bool     `json:"ai_capable,omitempty"` // ORDS is the common carrier for Select AI / Vector Search / OML REST
-	CPEs      []string `json:"cpes,omitempty"`
+	APEX        bool     `json:"apex,omitempty"`
+	APEXVersion string   `json:"apex_version,omitempty"` // APEX version read from APEX-rendered markup; empty when unobtainable
+	AICapable   bool     `json:"ai_capable,omitempty"`   // ORDS is the common carrier for Select AI / Vector Search / OML REST
+	CPEs        []string `json:"cpes,omitempty"`
 }
 
 func (e ServiceOracleORDS) Type() string { return ProtoOracleORDS }
@@ -2071,6 +2139,12 @@ type ServiceOPCUA struct {
 }
 
 func (e ServiceOPCUA) Type() string { return ProtoOPCUA }
+
+type ServicePcAnywhere struct {
+	CPEs []string `json:"cpes,omitempty"`
+}
+
+func (e ServicePcAnywhere) Type() string { return ProtoPcAnywhere }
 
 type ServicePCWorx struct {
 	PLCType         string   `json:"plc_type,omitempty"`

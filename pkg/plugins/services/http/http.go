@@ -32,6 +32,7 @@ import (
 
 	"github.com/praetorian-inc/nerva/pkg/plugins"
 	"github.com/praetorian-inc/nerva/pkg/plugins/fingerprinters"
+	"github.com/praetorian-inc/nerva/pkg/plugins/oseol"
 	utils "github.com/praetorian-inc/nerva/pkg/plugins/pluginutils"
 )
 
@@ -95,6 +96,9 @@ var (
 	// The leading name component avoids false positives from bare version-like numbers
 	// such as HTTP version fragments ("1.1 proxy").
 	serverVersionRe = regexp.MustCompile(`[A-Za-z][\w.-]*/\d+\.\d+`)
+
+	// cpeVersionToken is what CPE 2.3 accepts in the version field without quoting.
+	cpeVersionToken = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 )
 
 func (p *HTTPPlugin) PortPriority(port uint16) bool {
@@ -178,6 +182,11 @@ func (p *HTTPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 	if target.Misconfigs && len(fpFindings) > 0 {
 		service.AnonymousAccess = true
 		service.SecurityFindings = append(service.SecurityFindings, fpFindings...)
+	}
+	if target.Misconfigs {
+		if finding := oseol.Check(append([]string{resp.Header.Get("Server")}, payload.CPEs...)...); finding != nil {
+			service.SecurityFindings = append(service.SecurityFindings, *finding)
+		}
 	}
 	if target.Misconfigs && resp.StatusCode/100 != 3 {
 		service.SecurityFindings = append(service.SecurityFindings, checkMissingSecurityHeaders(resp.Header, false)...)
@@ -294,6 +303,9 @@ func (p *HTTPSPlugin) Run(
 	}
 	if target.Misconfigs {
 		service.SecurityFindings = append(service.SecurityFindings, plugins.CheckTLS(conn)...)
+		if finding := oseol.Check(append([]string{resp.Header.Get("Server")}, payload.CPEs...)...); finding != nil {
+			service.SecurityFindings = append(service.SecurityFindings, *finding)
+		}
 		if resp.StatusCode/100 != 3 {
 			service.SecurityFindings = append(service.SecurityFindings, checkMissingSecurityHeaders(resp.Header, true)...)
 			if finding := checkCORSWildcard(resp.Header); finding != nil {
@@ -351,6 +363,21 @@ func (p *HTTPPlugin) FingerprintResponse(resp *http.Response, client *http.Clien
 
 func (p *HTTPSPlugin) FingerprintResponse(resp *http.Response, client *http.Client, baseURL string, host string, misconfigs bool) ([]string, []string, map[string]map[string]any, []fingerprintedTech, []plugins.SecurityFinding, string, []byte, error) {
 	return fingerprint(resp, p.analyzer, client, baseURL, host, misconfigs)
+}
+
+// cpeWithWappalyzerVersion writes the version Wappalyzer already parsed onto
+// the technology name ("PHP:8.2.12") into a wildcard CPE. Guard reads CPEs only.
+func cpeWithWappalyzerVersion(tech, cpe string) string {
+	_, version, ok := strings.Cut(tech, ":")
+	if !ok || !cpeVersionToken.MatchString(version) {
+		return cpe
+	}
+	parts := strings.Split(cpe, ":")
+	if len(parts) < 6 || parts[5] != "*" {
+		return cpe
+	}
+	parts[5] = version
+	return strings.Join(parts, ":")
 }
 
 // formatTechnologyWithVersion returns a technology string with version appended if present.
@@ -530,7 +557,7 @@ func fingerprint(resp *http.Response, analyzer *wappalyzer.Wappalyze, client *ht
 	for tech, appInfo := range fingerprintResult {
 		technologies = append(technologies, tech)
 		if cpe := appInfo.CPE; cpe != "" {
-			cpes = append(cpes, cpe)
+			cpes = append(cpes, cpeWithWappalyzerVersion(tech, cpe))
 		}
 	}
 

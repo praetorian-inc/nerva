@@ -155,3 +155,15 @@ func TestCreateScanConfig_ScanDepthMapping(t *testing.T) {
 		})
 	}
 }
+
+func TestCheckConfig_UDPScanAllowedWithoutRoot(t *testing.T) {
+	// The old "UDP Scan may require root privileges" note was gated on
+	// --udp --verbose. Removing it must not introduce any error for UDP
+	// scans in either quiet or verbose mode, regardless of uid.
+	for _, verbose := range []bool{false, true} {
+		cfg := cliConfig{useUDP: true, verbose: verbose}
+		if err := checkConfig(&cfg); err != nil {
+			t.Fatalf("checkConfig(useUDP, verbose=%v) = %v, want nil (UDP scans do not require root)", verbose, err)
+		}
+	}
+}

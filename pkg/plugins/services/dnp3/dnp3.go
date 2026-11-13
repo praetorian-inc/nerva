@@ -171,16 +171,16 @@ func buildRequestLinkStatusProbe() ([]byte, error) {
 
 	// Build frame without CRC
 	frame := []byte{
-		DNP3StartByte1,                  // Start byte 1: 0x05
-		DNP3StartByte2,                  // Start byte 2: 0x64
-		0x05,                            // Length: 5 bytes follow
-		CtrlPRM | FuncRequestLinkStatus, // Control: PRM=1, Func=0x09 (Request Link Status)
-		0x00, 0x00,                      // Destination: 0 (broadcast)
+		DNP3StartByte1, // Start byte 1: 0x05
+		DNP3StartByte2, // Start byte 2: 0x64
+		0x05,           // Length: 5 bytes follow
+		CtrlDIR | CtrlPRM | FuncRequestLinkStatus, // Control: DIR=1, PRM=1, Func=0x09 (matches captured 0xc9)
+		0x00, 0x00, // Destination: 0 (broadcast)
 		byte(srcAddr & 0xFF), byte(srcAddr >> 8), // Source: random address (little-endian)
 	}
 
-	// Calculate and append CRC-16
-	crc := calculateDNP3CRC(frame[1:]) // CRC calculated from byte 1 onwards (excluding first start byte)
+	// CRC covers the header bytes, including both start bytes (captured trailer 36 4c).
+	crc := calculateDNP3CRC(frame)
 	frame = append(frame, byte(crc&0xFF), byte(crc>>8))
 
 	return frame, nil

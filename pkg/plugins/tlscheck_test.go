@@ -15,6 +15,7 @@
 package plugins
 
 import (
+	"bytes"
 	"crypto/dsa"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -24,7 +25,9 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/binary"
 	"encoding/pem"
+	"io"
 	"math/big"
 	"net"
 	"strings"
@@ -785,4 +788,323 @@ func TestCheckTLS_Integration(t *testing.T) {
 			t.Errorf("expected tls-self-signed finding in: %+v", findings)
 		}
 	})
+}
+
+type prefixConn struct {
+	net.Conn
+	r io.Reader
+}
+
+func (c *prefixConn) Read(p []byte) (int, error) {
+	return c.r.Read(p)
+}
+
+func writeRawServerHello(w io.Writer, suite uint16) error {
+	var body []byte
+	body = append(body, 0x03, 0x03)
+	body = append(body, make([]byte, 32)...)
+	body = append(body, 0x00)
+	var cs [2]byte
+	binary.BigEndian.PutUint16(cs[:], suite)
+	body = append(body, cs[:]...)
+	body = append(body, 0x00)
+	hs := []byte{0x02, byte(len(body) >> 16), byte(len(body) >> 8), byte(len(body))}
+	hs = append(hs, body...)
+	rec := []byte{0x16, 0x03, 0x03, byte(len(hs) >> 8), byte(len(hs))}
+	rec = append(rec, hs...)
+	_, err := w.Write(rec)
+	return err
+}
+
+// startTLSTestServer serves TLS 1.2 on 127.0.0.1. When weakSuite is non-zero,
+// a ClientHello that offers only anonymous/NULL/EXPORT suites gets a raw
+// ServerHello selecting that suite; any other ClientHello completes a normal
+// crypto/tls handshake. weakSuite == 0 is modern-only.
+func startTLSTestServer(t *testing.T, cert tls.Certificate, weakSuite uint16) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	cfg := &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		MinVersion:   tls.VersionTLS12,
+		MaxVersion:   tls.VersionTLS12,
+	}
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				_ = c.SetDeadline(time.Now().Add(5 * time.Second))
+				if weakSuite == 0 {
+					_ = tls.Server(c, cfg).Handshake()
+					return
+				}
+				rec, err := readTLSRecord(c)
+				if err != nil {
+					return
+				}
+				if clientHelloIsWeakOnly(rec) {
+					offered, ok := cipherSuitesFromClientHelloRecord(rec)
+					if ok {
+						for _, id := range offered {
+							if id == weakSuite {
+								_ = writeRawServerHello(c, weakSuite)
+								return
+							}
+						}
+					}
+					return
+				}
+				r := io.MultiReader(bytes.NewReader(rec), c)
+				_ = tls.Server(&prefixConn{Conn: c, r: r}, cfg).Handshake()
+			}(c)
+		}
+	}()
+	return ln.Addr().String()
+}
+
+func writeTLSAlert(w io.Writer, level, desc byte) error {
+	_, err := w.Write([]byte{0x15, 0x03, 0x03, 0x00, 0x02, level, desc})
+	return err
+}
+
+// startWeakOnlyTLSServer offers only the given anonymous/NULL/EXPORT suite.
+// A modern ClientHello gets a fatal handshake_failure alert — no crypto/tls
+// handshake ever completes. This is the shape of a real weak-only listener.
+func startWeakOnlyTLSServer(t *testing.T, weakSuite uint16) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				_ = c.SetDeadline(time.Now().Add(5 * time.Second))
+				rec, err := readTLSRecord(c)
+				if err != nil {
+					return
+				}
+				if clientHelloIsWeakOnly(rec) {
+					offered, ok := cipherSuitesFromClientHelloRecord(rec)
+					if ok {
+						for _, id := range offered {
+							if id == weakSuite {
+								_ = writeRawServerHello(c, weakSuite)
+								return
+							}
+						}
+					}
+					return
+				}
+				_ = writeTLSAlert(c, 0x02, 0x28) // fatal handshake_failure
+			}(c)
+		}
+	}()
+	return ln.Addr().String()
+}
+
+func dialTLSClient(t *testing.T, addr string) *tls.Conn {
+	t.Helper()
+	cfg := &tls.Config{
+		InsecureSkipVerify: true, //nolint:gosec // test-only self-signed cert
+		MinVersion:         tls.VersionTLS12,
+		MaxVersion:         tls.VersionTLS12,
+	}
+	d := &net.Dialer{Timeout: 3 * time.Second}
+	raw, err := d.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("dial %s: %v", addr, err)
+	}
+	cli := tls.Client(raw, cfg)
+	if err := cli.Handshake(); err != nil {
+		_ = raw.Close()
+		t.Fatalf("handshake %s: %v", addr, err)
+	}
+	t.Cleanup(func() { _ = cli.Close() })
+	return cli
+}
+
+func TestCheckTLS_WeakCipherAccepted(t *testing.T) {
+	cert := generateSelfSignedTLSCert(t)
+	cases := []struct {
+		name  string
+		suite uint16
+		id    string
+	}{
+		{name: "ADH", suite: 0x0034, id: findingTLSAnonCipher},
+		{name: "NULL", suite: 0x0002, id: findingTLSNullCipher},
+		{name: "EXPORT", suite: 0x0003, id: findingTLSExportCipher},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			addr := startTLSTestServer(t, cert, tc.suite)
+			conn := dialTLSClient(t, addr)
+			findings := CheckTLS(conn)
+			found := false
+			for _, f := range findings {
+				if f.ID == tc.id {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Fatalf("CheckTLS() missing %s in %+v", tc.id, findings)
+			}
+		})
+	}
+}
+
+func TestProbeWeakCiphers_WeakOnlyServerNoHandshake(t *testing.T) {
+	cases := []struct {
+		name  string
+		suite uint16
+		id    string
+	}{
+		{name: "ADH", suite: 0x0034, id: findingTLSAnonCipher},
+		{name: "NULL", suite: 0x0002, id: findingTLSNullCipher},
+		{name: "EXPORT", suite: 0x0003, id: findingTLSExportCipher},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			addr := startWeakOnlyTLSServer(t, tc.suite)
+
+			cfg := &tls.Config{
+				InsecureSkipVerify: true, //nolint:gosec // test-only
+				MinVersion:         tls.VersionTLS12,
+				MaxVersion:         tls.VersionTLS12,
+			}
+			d := &net.Dialer{Timeout: 3 * time.Second}
+			raw, err := d.Dial("tcp", addr)
+			if err != nil {
+				t.Fatalf("dial: %v", err)
+			}
+			cli := tls.Client(raw, cfg)
+			if err := cli.Handshake(); err == nil {
+				_ = cli.Close()
+				t.Fatal("stdlib handshake succeeded against weak-only server")
+			}
+			_ = raw.Close()
+
+			raw2, err := d.Dial("tcp", addr)
+			if err != nil {
+				t.Fatalf("dial probe: %v", err)
+			}
+			defer raw2.Close()
+			findings := probeWeakCiphers(raw2)
+			found := false
+			for _, f := range findings {
+				if f.ID == tc.id {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Fatalf("probeWeakCiphers() missing %s in %+v", tc.id, findings)
+			}
+		})
+	}
+}
+
+func TestCheckTLS_ModernServerDoesNotEmitWeakCipherIDs(t *testing.T) {
+	cert := generateSelfSignedTLSCert(t)
+	addr := startTLSTestServer(t, cert, 0)
+	conn := dialTLSClient(t, addr)
+	findings := CheckTLS(conn)
+	for _, f := range findings {
+		switch f.ID {
+		case findingTLSAnonCipher, findingTLSNullCipher, findingTLSExportCipher:
+			t.Errorf("modern-only server emitted %s: %+v", f.ID, findings)
+		}
+	}
+}
+
+func TestBuildWeakClientHelloRoundTrip(t *testing.T) {
+	hello := buildWeakClientHello(weakAnon, "example.test")
+	if !clientHelloIsWeakOnly(hello) {
+		t.Fatal("buildWeakClientHello() was not classified as weak-only")
+	}
+	suites, ok := cipherSuitesFromClientHelloRecord(hello)
+	if !ok {
+		t.Fatal("failed to parse cipher suites from built ClientHello")
+	}
+	want := suitesForClass(weakAnon)
+	if len(suites) != len(want) {
+		t.Fatalf("suite count = %d, want %d", len(suites), len(want))
+	}
+}
+
+func TestBuildWeakClientHelloExportUsesTLS10(t *testing.T) {
+	// handshake body starts at record(5) + hs header(4)
+	const verOff = 9
+	anon := buildWeakClientHello(weakAnon, "")
+	if len(anon) < verOff+2 || anon[verOff] != 0x03 || anon[verOff+1] != 0x03 {
+		t.Fatalf("anon client_version = %x, want TLS 1.2", anon[verOff:verOff+2])
+	}
+	export := buildWeakClientHello(weakExport, "")
+	if len(export) < verOff+2 || export[verOff] != 0x03 || export[verOff+1] != 0x01 {
+		t.Fatalf("export client_version = %x, want TLS 1.0", export[verOff:verOff+2])
+	}
+	if !clientHelloIsWeakOnly(export) {
+		t.Fatal("EXPORT ClientHello was not classified as weak-only")
+	}
+}
+
+func TestWeakClientHelloExtensionsOmitsIPSNI(t *testing.T) {
+	hostname := weakClientHelloExtensions("example.test")
+	empty := weakClientHelloExtensions("")
+	if bytes.Equal(hostname, empty) {
+		t.Fatal("hostname SNI was omitted")
+	}
+	for _, ip := range []string{"192.0.2.1", "2001:db8::1"} {
+		if got := weakClientHelloExtensions(ip); !bytes.Equal(got, empty) {
+			t.Errorf("SNI %q produced a different extension block than empty SNI", ip)
+		}
+	}
+}
+
+func TestIANAWeakSuiteIDs(t *testing.T) {
+	cases := []struct {
+		id    uint16
+		class weakClass
+	}{
+		{0xC015, weakNull}, // TLS_ECDH_anon_WITH_NULL_SHA
+		{0xC016, weakAnon}, // TLS_ECDH_anon_WITH_RC4_128_SHA
+		{0xC018, weakAnon}, // TLS_ECDH_anon_WITH_AES_128_CBC_SHA
+		{0xC019, weakAnon}, // TLS_ECDH_anon_WITH_AES_256_CBC_SHA
+		{0x001A, weakAnon}, // TLS_DH_anon_WITH_DES_CBC_SHA
+		{0x001B, weakAnon}, // TLS_DH_anon_WITH_3DES_EDE_CBC_SHA
+		{0x000E, weakExport},
+	}
+	for _, tc := range cases {
+		if got := classOfSuite(tc.id); got != tc.class {
+			t.Errorf("classOfSuite(0x%04x) = %v, want %v", tc.id, got, tc.class)
+		}
+	}
+}
+
+func TestSelectedCipherFromHandshakeRecord(t *testing.T) {
+	var buf bytes.Buffer
+	if err := writeRawServerHello(&buf, 0x0034); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := selectedCipherFromHandshakeRecord(buf.Bytes())
+	if !ok {
+		t.Fatal("parse ServerHello failed")
+	}
+	if got != 0x0034 {
+		t.Fatalf("selected cipher = 0x%04x, want 0x0034", got)
+	}
 }

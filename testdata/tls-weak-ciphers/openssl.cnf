@@ -1,0 +1,21 @@
+# Minimal config so OpenSSL 1.0.2 `req` can mint the lab certs.
+# Not used for cipher selection at runtime.
+HOME = .
+RANDFILE = /certs/.rnd
+
+[ req ]
+default_bits = 2048
+default_md = sha256
+distinguished_name = req_distinguished_name
+prompt = no
+x509_extensions = v3_req
+
+[ req_distinguished_name ]
+CN = asv.test
+
+[ v3_req ]
+subjectAltName = @alt_names
+basicConstraints = CA:FALSE
+
+[ alt_names ]
+DNS.1 = asv.test

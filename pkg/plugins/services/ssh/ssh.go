@@ -30,6 +30,7 @@ import (
 
 	"github.com/praetorian-inc/nerva/pkg/plugins"
 	"github.com/praetorian-inc/nerva/pkg/plugins/fingerprinters"
+	"github.com/praetorian-inc/nerva/pkg/plugins/oseol"
 	utils "github.com/praetorian-inc/nerva/pkg/plugins/pluginutils"
 	"github.com/praetorian-inc/nerva/third_party/cryptolib/ssh"
 )
@@ -105,6 +106,13 @@ func makeSSHService(target plugins.Target, payload plugins.ServiceSSH, algo map[
 	service.SecurityFindings = buildSSHFindings(algo, passwordAuth)
 	if finding := checkOpenSSHEOL(payload.Banner); finding != nil {
 		service.SecurityFindings = append(service.SecurityFindings, *finding)
+	}
+	if target.Misconfigs {
+		inputs := []string{payload.Banner}
+		inputs = append(inputs, payload.CPEs...)
+		if finding := oseol.Check(inputs...); finding != nil {
+			service.SecurityFindings = append(service.SecurityFindings, *finding)
+		}
 	}
 	return service
 }
