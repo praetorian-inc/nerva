@@ -37,6 +37,15 @@ const NFS = "nfs"
 // NFSProgramNumber is the Sun RPC program number for NFS
 const NFSProgramNumber = 100003
 
+// MountProgramNumber is the Sun RPC program number for MOUNT (showmount)
+const MountProgramNumber = 100005
+
+// MountExportProc is MOUNT EXPORT (RFC 1094 / RFC 1813). Never MNT (1).
+const MountExportProc = 5
+
+// NFSExportsFindingID is the SecurityFinding ID emitted for a public NFS export list.
+const NFSExportsFindingID = "nfs-exports"
+
 func init() {
 	plugins.RegisterPlugin(&NFSTCPPlugin{})
 	plugins.RegisterPlugin(&NFSUDPPlugin{})
@@ -254,6 +263,176 @@ func formatVersionString(versions []int) string {
 	return fmt.Sprintf("%d", versions[0])
 }
 
+type mountExport struct {
+	Path    string
+	Clients []string
+}
+
+// buildMountCall creates a TCP or UDP RPC call for the MOUNT program.
+// procedure 5 is EXPORT; callers must never pass 1 (MNT).
+func buildMountCall(xid uint32, version uint32, procedure uint32, tcp bool) []byte {
+	body := make([]byte, 40)
+	binary.BigEndian.PutUint32(body[0:4], xid)
+	binary.BigEndian.PutUint32(body[4:8], 0) // CALL
+	binary.BigEndian.PutUint32(body[8:12], 2)
+	binary.BigEndian.PutUint32(body[12:16], MountProgramNumber)
+	binary.BigEndian.PutUint32(body[16:20], version)
+	binary.BigEndian.PutUint32(body[20:24], procedure)
+	// AUTH_NULL creds + verifier
+	if !tcp {
+		return body
+	}
+	buf := make([]byte, 44)
+	binary.BigEndian.PutUint32(buf[0:4], 0x80000028)
+	copy(buf[4:], body)
+	return buf
+}
+
+func parseRPCAccepted(response []byte, expectedXID uint32, tcp bool) (payload []byte, ok bool) {
+	offset := 0
+	if tcp {
+		if len(response) < 28 {
+			return nil, false
+		}
+		offset = 4
+	} else if len(response) < 24 {
+		return nil, false
+	}
+	if binary.BigEndian.Uint32(response[offset:offset+4]) != expectedXID {
+		return nil, false
+	}
+	offset += 4
+	if binary.BigEndian.Uint32(response[offset:offset+4]) != 1 { // REPLY
+		return nil, false
+	}
+	offset += 4
+	if binary.BigEndian.Uint32(response[offset:offset+4]) != 0 { // MSG_ACCEPTED
+		return nil, false
+	}
+	offset += 4
+	offset += 8 // verifier
+	if offset+4 > len(response) {
+		return nil, false
+	}
+	if binary.BigEndian.Uint32(response[offset:offset+4]) != 0 { // SUCCESS
+		return nil, false
+	}
+	offset += 4
+	return response[offset:], true
+}
+
+func xdrString(buf []byte, offset int) (string, int, bool) {
+	if offset+4 > len(buf) {
+		return "", offset, false
+	}
+	n := int(binary.BigEndian.Uint32(buf[offset : offset+4]))
+	offset += 4
+	if n < 0 || offset > len(buf) || n > len(buf)-offset {
+		return "", offset, false
+	}
+	s := string(buf[offset : offset+n])
+	offset += n
+	if pad := (4 - (n % 4)) % 4; pad > 0 {
+		if offset+pad > len(buf) {
+			return "", offset, false
+		}
+		offset += pad
+	}
+	return s, offset, true
+}
+
+func parseExportList(payload []byte) []mountExport {
+	var out []mountExport
+	offset := 0
+	for {
+		if offset+4 > len(payload) {
+			return nil
+		}
+		present := binary.BigEndian.Uint32(payload[offset : offset+4])
+		offset += 4
+		if present == 0 {
+			return out
+		}
+		if present != 1 {
+			return nil
+		}
+		path, next, ok := xdrString(payload, offset)
+		if !ok {
+			return nil
+		}
+		offset = next
+		var clients []string
+		for {
+			if offset+4 > len(payload) {
+				return nil
+			}
+			gPresent := binary.BigEndian.Uint32(payload[offset : offset+4])
+			offset += 4
+			if gPresent == 0 {
+				break
+			}
+			if gPresent != 1 {
+				return nil
+			}
+			name, n2, ok := xdrString(payload, offset)
+			if !ok {
+				return nil
+			}
+			offset = n2
+			clients = append(clients, name)
+		}
+		out = append(out, mountExport{Path: path, Clients: clients})
+	}
+}
+
+// probeMountExport sends MOUNT EXPORT (100005/proc 5) on the scanned socket.
+// Typical mountd is a separate rpcbind-registered port (often 20048), not nfsd
+// 2049; this probe only succeeds when that socket answers MOUNT. It never sends MNT.
+func probeMountExport(conn net.Conn, timeout time.Duration, tcp bool) []mountExport {
+	for _, version := range []uint32{3, 1} {
+		xid := generateXID()
+		packet := buildMountCall(xid, version, MountExportProc, tcp)
+		response, err := utils.SendRecv(conn, packet, timeout)
+		if err != nil || len(response) == 0 {
+			continue
+		}
+		payload, ok := parseRPCAccepted(response, xid, tcp)
+		if !ok {
+			continue
+		}
+		exports := parseExportList(payload)
+		if exports != nil {
+			return exports
+		}
+	}
+	return nil
+}
+
+func nfsExportFinding(exports []mountExport) *plugins.SecurityFinding {
+	var evidence []string
+	for _, e := range exports {
+		if len(e.Clients) == 0 {
+			evidence = append(evidence, fmt.Sprintf("%s (everyone)", e.Path))
+			continue
+		}
+		for _, c := range e.Clients {
+			if c == "*" {
+				evidence = append(evidence, fmt.Sprintf("%s *", e.Path))
+				break
+			}
+		}
+	}
+	if len(evidence) == 0 {
+		return nil
+	}
+	return &plugins.SecurityFinding{
+		ID:          NFSExportsFindingID,
+		Severity:    plugins.SeverityHigh,
+		Description: "NFS export list is retrievable and includes a public (*) client",
+		Evidence:    fmt.Sprintf("%s", evidence[0]),
+	}
+}
+
 // Run detects NFS service over TCP by sending RPC NULL procedure calls.
 // It probes versions in descending order (v4 -> v3 -> v2) and reports
 // the highest version that responds successfully.
@@ -292,13 +471,20 @@ func (p *NFSTCPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.
 		}
 	}
 
-	// If no version responded successfully, not NFS
-	if len(nfsService.DetectedVersions) == 0 {
+	var exports []mountExport
+	if target.Misconfigs {
+		exports = probeMountExport(conn, timeout, true)
+	}
+	if len(nfsService.DetectedVersions) == 0 && len(exports) == 0 {
 		return nil, nil
 	}
 
 	versionStr := formatVersionString(nfsService.DetectedVersions)
-	return plugins.CreateServiceFrom(target, nfsService, false, versionStr, plugins.TCP), nil
+	service := plugins.CreateServiceFrom(target, nfsService, false, versionStr, plugins.TCP)
+	if finding := nfsExportFinding(exports); finding != nil {
+		service.SecurityFindings = []plugins.SecurityFinding{*finding}
+	}
+	return service, nil
 }
 
 // PortPriority returns true if this is the default NFS port
@@ -360,13 +546,20 @@ func (p *NFSUDPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.
 		}
 	}
 
-	// If no version responded successfully, not NFS
-	if len(nfsService.DetectedVersions) == 0 {
+	var exports []mountExport
+	if target.Misconfigs {
+		exports = probeMountExport(conn, timeout, false)
+	}
+	if len(nfsService.DetectedVersions) == 0 && len(exports) == 0 {
 		return nil, nil
 	}
 
 	versionStr := formatVersionString(nfsService.DetectedVersions)
-	return plugins.CreateServiceFrom(target, nfsService, false, versionStr, plugins.UDP), nil
+	service := plugins.CreateServiceFrom(target, nfsService, false, versionStr, plugins.UDP)
+	if finding := nfsExportFinding(exports); finding != nil {
+		service.SecurityFindings = []plugins.SecurityFinding{*finding}
+	}
+	return service, nil
 }
 
 // PortPriority returns true if this is the default NFS port

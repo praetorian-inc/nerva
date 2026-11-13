@@ -861,6 +861,15 @@ var findingCatalog = map[string]FindingMeta{
 		Recommendation: "Enable authentication in LibreChat. Restrict network access and configure user management.",
 		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:N",
 	},
+
+	// ── NFS ──────────────────────────────────────────────────────────────
+	"nfs-exports": {
+		Title:          "NFS Exports Publicly Listable",
+		Severity:       SeverityHigh,
+		Impact:         "An unauthenticated MOUNT EXPORT listing on the scanned socket reveals exported paths and client wildcards (showmount -e equivalent only when that socket answers mountd). A public (*) or empty client list is world-advertised at the MOUNT protocol layer; it does not prove a successful filesystem mount or bypass of Kerberos (sec=krb5p).",
+		Recommendation: "Restrict NFS exports to specific client addresses or networks. Do not export filesystems to *. Disable the MOUNT service on internet-facing hosts or require Kerberos (sec=krb5p).",
+		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N",
+	},
 }
 
 // Enrich fills in Title, Impact, and Recommendation from the finding catalog
