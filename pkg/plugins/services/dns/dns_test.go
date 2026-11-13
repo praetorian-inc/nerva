@@ -17,6 +17,7 @@ package dns
 import (
 	"encoding/binary"
 	"fmt"
+	"io"
 	"net"
 	"net/netip"
 	"testing"
@@ -68,11 +69,10 @@ func (tcpAddr) String() string  { return "127.0.0.1:53" }
 
 // dnsMockConn is a net.Conn that handles DNS TCP queries dynamically.
 //
-// CheckDNS sends three identical version.bind queries on the same connection.
-// Each query contains a random 2-byte transaction ID at bytes 2-3 of the
-// length-prefixed packet (bytes 0-1 are the TCP length prefix, bytes 2-3 are
-// the transaction ID). The mock echoes the transaction ID back in the response
-// so that CheckDNS considers it valid.
+// CheckDNS sends a version.bind query whose 2-byte transaction ID sits at
+// bytes 2-3 of the length-prefixed packet (bytes 0-1 are the TCP length
+// prefix). The mock echoes the transaction ID back in the response so that
+// CheckDNS considers it valid.
 //
 // After CheckDNS passes, checkZoneTransfer sends an AXFR query. The mock
 // responds according to the axfrResponse field: if allowAXFR is true, it
@@ -593,6 +593,9 @@ func TestCheckBINDEOL(t *testing.T) {
 		{"9.8.3-P1", "bind-eol"},
 		{"9.16", "bind-eol"},
 		{"9.20", ""},
+		{"1.0", ""},
+		{"2.80", ""},
+		{"dnsmasq-2.80", ""},
 		{"", ""},
 	}
 	for _, tt := range tests {
@@ -724,6 +727,123 @@ func TestBINDEOLFindingUDP(t *testing.T) {
 				t.Errorf("bind-eol present=%v, want %v (findings=%v)", found, tt.wantEOL, svc.SecurityFindings)
 			}
 		})
+	}
+}
+
+// oneShotThenEOFConn answers the first version.bind query, then returns EOF on
+// subsequent Reads so a later SendRecv error would discard attempt-0's version
+// if CheckDNS kept looping.
+type oneShotThenEOFConn struct {
+	network  string
+	reads    int
+	writeBuf []byte
+	readBuf  []byte
+}
+
+func (m *oneShotThenEOFConn) Write(b []byte) (int, error) {
+	m.writeBuf = append(m.writeBuf, b...)
+	if m.network == "tcp" {
+		if len(m.writeBuf) < 4 {
+			return len(b), nil
+		}
+		var txID [2]byte
+		copy(txID[:], m.writeBuf[2:4])
+		m.readBuf = buildVersionBindResponseTXT(txID, "9.6")
+	} else {
+		if len(m.writeBuf) < 2 {
+			return len(b), nil
+		}
+		var txID [2]byte
+		copy(txID[:], m.writeBuf[0:2])
+		prefixed := buildVersionBindResponseTXT(txID, "9.6")
+		m.readBuf = prefixed[2:]
+	}
+	m.writeBuf = nil
+	return len(b), nil
+}
+
+func (m *oneShotThenEOFConn) Read(b []byte) (int, error) {
+	m.reads++
+	if m.reads > 1 {
+		return 0, io.EOF
+	}
+	n := copy(b, m.readBuf)
+	m.readBuf = m.readBuf[n:]
+	return n, nil
+}
+func (m *oneShotThenEOFConn) Close() error                     { return nil }
+func (m *oneShotThenEOFConn) LocalAddr() net.Addr              { return m.addr() }
+func (m *oneShotThenEOFConn) RemoteAddr() net.Addr             { return m.addr() }
+func (m *oneShotThenEOFConn) SetDeadline(time.Time) error      { return nil }
+func (m *oneShotThenEOFConn) SetReadDeadline(time.Time) error  { return nil }
+func (m *oneShotThenEOFConn) SetWriteDeadline(time.Time) error { return nil }
+func (m *oneShotThenEOFConn) addr() net.Addr {
+	if m.network == "udp" {
+		return udpAddr{}
+	}
+	return tcpAddr{}
+}
+
+func TestCheckDNS_ReturnsAfterFirstTXIDMatch(t *testing.T) {
+	conn := &oneShotThenEOFConn{network: "tcp"}
+	isDNS, version, err := CheckDNS(conn, 5*time.Second)
+	if err != nil {
+		t.Fatalf("CheckDNS() error = %v, want nil (attempt-0 version must not be discarded)", err)
+	}
+	if !isDNS {
+		t.Fatal("CheckDNS() isDNS = false, want true")
+	}
+	if version != "9.6" {
+		t.Errorf("CheckDNS() version = %q, want %q", version, "9.6")
+	}
+	if conn.reads != 1 {
+		t.Errorf("CheckDNS issued %d Recv calls, want 1 (must return after first TXID match)", conn.reads)
+	}
+}
+
+// shortTCPFrameConn returns a TCP DNS response whose declared length exceeds
+// the bytes actually present, with a matching TXID in the prefix.
+type shortTCPFrameConn struct {
+	writeBuf []byte
+	readBuf  []byte
+}
+
+func (m *shortTCPFrameConn) Write(b []byte) (int, error) {
+	m.writeBuf = append(m.writeBuf, b...)
+	if len(m.writeBuf) < 4 {
+		return len(b), nil
+	}
+	txID0, txID1 := m.writeBuf[2], m.writeBuf[3]
+	body := make([]byte, 20)
+	body[0] = txID0
+	body[1] = txID1
+	out := make([]byte, 2+len(body))
+	binary.BigEndian.PutUint16(out[0:2], 50)
+	copy(out[2:], body)
+	m.readBuf = out
+	m.writeBuf = nil
+	return len(b), nil
+}
+func (m *shortTCPFrameConn) Read(b []byte) (int, error) {
+	n := copy(b, m.readBuf)
+	m.readBuf = m.readBuf[n:]
+	return n, nil
+}
+func (m *shortTCPFrameConn) Close() error                     { return nil }
+func (m *shortTCPFrameConn) LocalAddr() net.Addr              { return tcpAddr{} }
+func (m *shortTCPFrameConn) RemoteAddr() net.Addr             { return tcpAddr{} }
+func (m *shortTCPFrameConn) SetDeadline(time.Time) error      { return nil }
+func (m *shortTCPFrameConn) SetReadDeadline(time.Time) error  { return nil }
+func (m *shortTCPFrameConn) SetWriteDeadline(time.Time) error { return nil }
+
+func TestCheckDNS_TCPShortDeclaredLengthIsMiss(t *testing.T) {
+	conn := &shortTCPFrameConn{}
+	isDNS, version, err := CheckDNS(conn, 5*time.Second)
+	if err != nil {
+		t.Fatalf("CheckDNS() error = %v, want nil", err)
+	}
+	if isDNS {
+		t.Fatalf("CheckDNS() isDNS = true version=%q, want miss on short length-prefixed frame", version)
 	}
 }
 

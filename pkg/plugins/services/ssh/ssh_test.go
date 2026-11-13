@@ -222,7 +222,7 @@ func TestCheckOpenSSHEOL(t *testing.T) {
 }
 
 func TestMakeSSHService_OpenSSHEOL(t *testing.T) {
-	target := plugins.Target{Host: "ssh.example"}
+	target := plugins.Target{Host: "ssh.example", Misconfigs: true}
 	eol := makeSSHService(target, plugins.ServiceSSH{Banner: "SSH-2.0-OpenSSH_5.6"}, nil, false)
 	if eol == nil {
 		t.Fatal("makeSSHService returned nil")
@@ -242,6 +242,19 @@ func TestMakeSSHService_OpenSSHEOL(t *testing.T) {
 	for _, f := range supported.SecurityFindings {
 		if f.ID == "openssh-eol" {
 			t.Fatalf("OpenSSH_10.6 emitted openssh-eol: %+v", f)
+		}
+	}
+}
+
+func TestMakeSSHService_OpenSSHEOL_MisconfigsFalse(t *testing.T) {
+	target := plugins.Target{Host: "ssh.example", Misconfigs: false}
+	svc := makeSSHService(target, plugins.ServiceSSH{Banner: "SSH-2.0-OpenSSH_5.6"}, nil, false)
+	if svc == nil {
+		t.Fatal("makeSSHService returned nil")
+	}
+	for _, f := range svc.SecurityFindings {
+		if f.ID == "openssh-eol" {
+			t.Fatalf("OpenSSH_5.6 with Misconfigs=false emitted openssh-eol: %+v", f)
 		}
 	}
 }

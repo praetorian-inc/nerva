@@ -104,10 +104,10 @@ func makeSSHService(target plugins.Target, payload plugins.ServiceSSH, algo map[
 	applySSHBannerFingerprinting(&payload, payload.Banner)
 	service := plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP)
 	service.SecurityFindings = buildSSHFindings(algo, passwordAuth)
-	if finding := checkOpenSSHEOL(payload.Banner); finding != nil {
-		service.SecurityFindings = append(service.SecurityFindings, *finding)
-	}
 	if target.Misconfigs {
+		if finding := checkOpenSSHEOL(payload.Banner); finding != nil {
+			service.SecurityFindings = append(service.SecurityFindings, *finding)
+		}
 		inputs := []string{payload.Banner}
 		inputs = append(inputs, payload.CPEs...)
 		if finding := oseol.Check(inputs...); finding != nil {

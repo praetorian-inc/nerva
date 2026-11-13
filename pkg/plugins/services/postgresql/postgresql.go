@@ -267,7 +267,7 @@ func extractServerVersion(response []byte) string {
 		if typ == 0x53 {
 			name, value, err := parseParameterStatus(frame)
 			if err == nil && name == "server_version" {
-				return value
+				return numericPostgreSQLVersion(value)
 			}
 		}
 		i += 1 + length
@@ -300,6 +300,16 @@ func checkPostgresEOL(version string) *plugins.SecurityFinding {
 		Description: fmt.Sprintf("PostgreSQL running end-of-life version: %s", entry.name),
 		Evidence:    version,
 	}
+}
+
+// numericPostgreSQLVersion returns the leading [0-9.]+ prefix of a
+// server_version value so distro suffixes never enter CPE or Service.Version.
+func numericPostgreSQLVersion(v string) string {
+	i := 0
+	for i < len(v) && (v[i] == '.' || (v[i] >= '0' && v[i] <= '9')) {
+		i++
+	}
+	return strings.Trim(v[:i], ".")
 }
 
 func postgresLeadingInt(s string) (int, string, bool) {

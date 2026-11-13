@@ -84,12 +84,19 @@ func CheckDNS(conn net.Conn, timeout time.Duration) (bool, string, error) {
 			if len(response) < 4 || !bytes.Equal(transactionID[0:2], response[2:4]) {
 				return false, "", nil
 			}
-			dnsMsg = response[2:]
+			declaredLen := int(binary.BigEndian.Uint16(response[0:2]))
+			if declaredLen < 12 || len(response) < 2+declaredLen {
+				return false, "", nil
+			}
+			dnsMsg = response[2 : 2+declaredLen]
 		}
 
 		if v, ok := parseVersionBindTXT(dnsMsg); ok {
 			version = v
 		}
+		// Return on the first TXID-matching response so a later SendRecv
+		// error cannot discard the version captured on this attempt.
+		return true, version, nil
 	}
 
 	return true, version, nil
@@ -370,13 +377,14 @@ func leadingInt(s string) (int, string, bool) {
 }
 
 // checkBINDEOL maps a parsed version.bind string to a SecurityFinding if the
-// BIND version is end-of-life (< 9.16 or prefix 9.16). 9.20 is not EOL.
+// BIND version is 9.x with minor <= 16. Non-9 majors (dnsmasq 2.x, Unbound 1.x)
+// and 9.20+ are not BIND EOL.
 func checkBINDEOL(version string) *plugins.SecurityFinding {
 	major, minor, ok := parseMajorMinor(version)
 	if !ok {
 		return nil
 	}
-	if major > 9 || (major == 9 && minor > 16) {
+	if major != 9 || minor > 16 {
 		return nil
 	}
 	return &plugins.SecurityFinding{
