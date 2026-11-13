@@ -51,7 +51,7 @@ func (p *Plugin) Name() string { return protocolName }
 
 func (p *Plugin) Type() plugins.Protocol { return plugins.TCP }
 
-// Priority matches other Recv-only TCP plugins (e.g. rat). A negative value
+// Priority 80 sits with other Recv-only TCP plugins (rat is 90). Negative
 // would Recv-timeout every unknown port before HTTP/Echo in the slow lane.
 func (p *Plugin) Priority() int { return 80 }
 
