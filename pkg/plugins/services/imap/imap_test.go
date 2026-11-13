@@ -101,14 +101,27 @@ func TestIMAPSecurityFindings(t *testing.T) {
 			wantID:     "imap-cleartext",
 		},
 		{
-			name:       "STARTTLS without AUTH=PLAIN does not emit",
+			name:       "IMAP LOGIN available without AUTH=PLAIN emits imap-cleartext",
+			capLine:    "* CAPABILITY IMAP4rev1",
+			misconfigs: true,
+			wantID:     "imap-cleartext",
+		},
+		{
+			name:       "STARTTLS without LOGINDISABLED still emits (LOGIN remains)",
 			capLine:    "* CAPABILITY IMAP4rev1 STARTTLS",
+			misconfigs: true,
+			wantID:     "imap-cleartext",
+		},
+		{
+			name:       "LOGINDISABLED without AUTH=PLAIN does not emit",
+			capLine:    "* CAPABILITY IMAP4rev1 STARTTLS LOGINDISABLED",
 			misconfigs: true,
 		},
 		{
-			name:       "no cleartext AUTH does not emit",
-			capLine:    "* CAPABILITY IMAP4rev1",
+			name:       "LOGINDISABLED with AUTH=PLAIN still emits",
+			capLine:    "* CAPABILITY IMAP4rev1 STARTTLS LOGINDISABLED AUTH=PLAIN",
 			misconfigs: true,
+			wantID:     "imap-cleartext",
 		},
 		{
 			name:       "Misconfigs false does not emit even with AUTH=PLAIN",
@@ -147,9 +160,11 @@ func TestOffersCleartextAUTH(t *testing.T) {
 		{[]string{"IMAP4REV1", "AUTH=PLAIN"}, true},
 		{[]string{"IMAP4REV1", "STARTTLS", "AUTH=PLAIN"}, true},
 		{[]string{"IMAP4REV1", "AUTH=LOGIN"}, true},
-		{[]string{"IMAP4REV1", "STARTTLS"}, false},
-		{[]string{"IMAP4REV1"}, false},
-		{nil, false},
+		{[]string{"IMAP4REV1", "STARTTLS"}, true},
+		{[]string{"IMAP4REV1"}, true},
+		{[]string{"IMAP4REV1", "STARTTLS", "LOGINDISABLED"}, false},
+		{[]string{"IMAP4REV1", "STARTTLS", "LOGINDISABLED", "AUTH=PLAIN"}, true},
+		{nil, true},
 	}
 	for _, tt := range tests {
 		if got := offersCleartextAUTH(tt.caps); got != tt.want {

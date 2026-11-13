@@ -123,17 +123,21 @@ func parseCapabilityTokens(capData string) []string {
 	return strings.Fields(rest)
 }
 
-// offersCleartextAUTH reports whether pre-STARTTLS CAPABILITY advertises a
-// cleartext SASL mechanism (AUTH=PLAIN or AUTH=LOGIN). STARTTLS in the same
-// list does not suppress this — PLAIN offered before TLS still counts.
+// offersCleartextAUTH reports whether pre-STARTTLS CAPABILITY allows sending
+// credentials in the clear: SASL AUTH=PLAIN / AUTH=LOGIN, or the IMAP LOGIN
+// command (available unless LOGINDISABLED). STARTTLS in the same list does
+// not suppress AUTH=PLAIN — PLAIN offered before TLS still counts.
 func offersCleartextAUTH(caps []string) bool {
+	loginDisabled := false
 	for _, tok := range caps {
 		switch tok {
 		case "AUTH=PLAIN", "AUTH=LOGIN":
 			return true
+		case "LOGINDISABLED":
+			loginDisabled = true
 		}
 	}
-	return false
+	return !loginDisabled
 }
 
 func DetectIMAP(conn net.Conn, timeout time.Duration) (string, bool, error) {
