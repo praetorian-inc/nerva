@@ -20,6 +20,8 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/praetorian-inc/nerva/pkg/plugins"
@@ -36,12 +38,13 @@ func init() {
 	plugins.RegisterPlugin(&TCPPlugin{})
 }
 
-func CheckDNS(conn net.Conn, timeout time.Duration) (bool, error) {
+func CheckDNS(conn net.Conn, timeout time.Duration) (bool, string, error) {
+	var version string
 	for attempts := 0; attempts < 3; attempts++ {
 		transactionID := make([]byte, 2)
 		_, err := rand.Read(transactionID)
 		if err != nil {
-			return false, &utils.RandomizeError{Message: "Transaction ID"}
+			return false, "", &utils.RandomizeError{Message: "Transaction ID"}
 		}
 
 		InitialConnectionPackage := append(transactionID, []byte{ //nolint:gocritic
@@ -62,38 +65,60 @@ func CheckDNS(conn net.Conn, timeout time.Duration) (bool, error) {
 
 		response, err := utils.SendRecv(conn, InitialConnectionPackage, timeout)
 		if err != nil {
-			return false, err
+			return false, "", err
 		}
 
 		if len(response) == 0 {
-			return false, nil
+			return false, "", nil
 		}
 
+		var dnsMsg []byte
 		if conn.RemoteAddr().Network() == "udp" {
 			if !bytes.Equal(transactionID[0:2], response[0:2]) {
-				return false, nil
+				return false, "", nil
 			}
+			dnsMsg = response
 		}
 
 		if conn.RemoteAddr().Network() == "tcp" {
-			if !bytes.Equal(transactionID[0:2], response[2:4]) {
-				return false, nil
+			if len(response) < 4 || !bytes.Equal(transactionID[0:2], response[2:4]) {
+				return false, "", nil
+			}
+			// TXID match is enough to detect DNS. Only parse version.bind when
+			// the TCP length prefix describes a complete DNS message; a split
+			// read (prefix without the full body) must not fail detection.
+			declaredLen := int(binary.BigEndian.Uint16(response[0:2]))
+			if declaredLen >= 12 && len(response) >= 2+declaredLen {
+				dnsMsg = response[2 : 2+declaredLen]
 			}
 		}
+
+		if v, ok := parseVersionBindTXT(dnsMsg); ok {
+			version = v
+		}
+		// Return on the first TXID-matching response so a later SendRecv
+		// error cannot discard the version captured on this attempt.
+		return true, version, nil
 	}
 
-	return true, nil
+	return true, version, nil
 }
 
 func (p *UDPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
-	isDNS, err := CheckDNS(conn, timeout)
+	isDNS, version, err := CheckDNS(conn, timeout)
 	if err != nil {
 		return nil, err
 	}
 
 	if isDNS {
 		payload := plugins.ServiceDNS{}
-		return plugins.CreateServiceFrom(target, payload, false, "", plugins.UDP), nil
+		service := plugins.CreateServiceFrom(target, payload, false, version, plugins.UDP)
+		if target.Misconfigs {
+			if finding := checkBINDEOL(version); finding != nil {
+				service.SecurityFindings = append(service.SecurityFindings, *finding)
+			}
+		}
+		return service, nil
 	}
 
 	return nil, nil
@@ -179,24 +204,27 @@ func checkZoneTransfer(conn net.Conn, timeout time.Duration) (int, error) {
 }
 
 func (p TCPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
-	isDNS, err := CheckDNS(conn, timeout)
+	isDNS, version, err := CheckDNS(conn, timeout)
 	if err != nil {
 		return nil, err
 	}
 
 	if isDNS {
 		payload := plugins.ServiceDNS{}
-		service := plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP)
+		service := plugins.CreateServiceFrom(target, payload, false, version, plugins.TCP)
 
 		if target.Misconfigs {
+			if finding := checkBINDEOL(version); finding != nil {
+				service.SecurityFindings = append(service.SecurityFindings, *finding)
+			}
 			ancount, err := checkZoneTransfer(conn, timeout)
 			if err == nil && ancount > 0 {
-				service.SecurityFindings = []plugins.SecurityFinding{{
+				service.SecurityFindings = append(service.SecurityFindings, plugins.SecurityFinding{
 					ID:          "dns-zone-transfer",
 					Severity:    plugins.SeverityHigh,
 					Description: "DNS zone transfer (AXFR) enabled; exposes all DNS records including internal hostnames and network topology",
 					Evidence:    fmt.Sprintf("AXFR returned %d records", ancount),
-				}}
+				})
 			}
 		}
 
@@ -223,4 +251,148 @@ func (p *UDPPlugin) Priority() int {
 
 func (p TCPPlugin) Type() plugins.Protocol {
 	return plugins.TCP
+}
+
+// parseVersionBindTXT extracts the TXT RDATA from a CHAOS version.bind answer.
+// Returns ("", false) on truncated messages, wrong class, or empty RDATA.
+func parseVersionBindTXT(msg []byte) (string, bool) {
+	if len(msg) < 12 {
+		return "", false
+	}
+	qdcount := int(binary.BigEndian.Uint16(msg[4:6]))
+	ancount := int(binary.BigEndian.Uint16(msg[6:8]))
+	if ancount < 1 {
+		return "", false
+	}
+	off := 12
+	var ok bool
+	for i := 0; i < qdcount; i++ {
+		off, ok = skipDNSName(msg, off)
+		if !ok || off+4 > len(msg) {
+			return "", false
+		}
+		off += 4 // QTYPE + QCLASS
+	}
+	off, ok = skipDNSName(msg, off)
+	if !ok || off+10 > len(msg) {
+		return "", false
+	}
+	typ := binary.BigEndian.Uint16(msg[off : off+2])
+	class := binary.BigEndian.Uint16(msg[off+2 : off+4])
+	rdlen := int(binary.BigEndian.Uint16(msg[off+8 : off+10]))
+	off += 10
+	if typ != 16 || class != 3 {
+		return "", false
+	}
+	if rdlen == 0 || off+rdlen > len(msg) {
+		return "", false
+	}
+	rdata := msg[off : off+rdlen]
+	var b strings.Builder
+	i := 0
+	for i < len(rdata) {
+		n := int(rdata[i])
+		i++
+		if i+n > len(rdata) {
+			return "", false
+		}
+		b.Write(rdata[i : i+n])
+		i += n
+	}
+	s := b.String()
+	if s == "" {
+		return "", false
+	}
+	return s, true
+}
+
+func skipDNSName(msg []byte, off int) (int, bool) {
+	if off >= len(msg) {
+		return 0, false
+	}
+	end := off
+	consumedEnd := false
+	jumps := 0
+	for {
+		if off >= len(msg) {
+			return 0, false
+		}
+		l := int(msg[off])
+		if l&0xc0 == 0xc0 {
+			if off+1 >= len(msg) {
+				return 0, false
+			}
+			if !consumedEnd {
+				end = off + 2
+				consumedEnd = true
+			}
+			off = int(binary.BigEndian.Uint16(msg[off:off+2]) & 0x3fff)
+			jumps++
+			if jumps > 10 {
+				return 0, false
+			}
+			continue
+		}
+		if l&0xc0 != 0 {
+			return 0, false
+		}
+		if l == 0 {
+			off++
+			if !consumedEnd {
+				end = off
+			}
+			return end, true
+		}
+		off += 1 + l
+	}
+}
+
+func parseMajorMinor(version string) (int, int, bool) {
+	version = strings.TrimSpace(version)
+	major, rest, ok := leadingInt(version)
+	if !ok {
+		return 0, 0, false
+	}
+	minor := 0
+	if strings.HasPrefix(rest, ".") {
+		minor, _, ok = leadingInt(rest[1:])
+		if !ok {
+			return 0, 0, false
+		}
+	}
+	return major, minor, true
+}
+
+func leadingInt(s string) (int, string, bool) {
+	i := 0
+	for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+		i++
+	}
+	if i == 0 {
+		return 0, s, false
+	}
+	n, err := strconv.Atoi(s[:i])
+	if err != nil {
+		return 0, s, false
+	}
+	return n, s[i:], true
+}
+
+// checkBINDEOL maps a parsed version.bind string to a SecurityFinding if the
+// BIND version is 9.x with minor <= 16. Non-9 majors (dnsmasq 2.x, Unbound 1.x)
+// and 9.20+ are not BIND EOL.
+func checkBINDEOL(version string) *plugins.SecurityFinding {
+	major, minor, ok := parseMajorMinor(version)
+	if !ok {
+		return nil
+	}
+	if major != 9 || minor > 16 {
+		return nil
+	}
+	return &plugins.SecurityFinding{
+		ID:          "bind-eol",
+		Severity:    plugins.SeverityLow,
+		Description: fmt.Sprintf("BIND service running end-of-life version: %d.%d", major, minor),
+		Evidence:    version,
+	}
 }

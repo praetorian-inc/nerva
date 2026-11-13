@@ -19,6 +19,8 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/praetorian-inc/nerva/pkg/plugins"
@@ -217,16 +219,14 @@ func (p *POSTGRESPlugin) Run(conn net.Conn, timeout time.Duration, target plugin
 		return nil, nil
 	}
 
-	// Generate CPE for vulnerability tracking
-	// TODO: Extract version from ParameterStatus messages for more precise CPE
-	// Currently using wildcard version "*" to enable asset inventory
-	cpe := buildPostgreSQLCPE("")
+	version := extractServerVersion(response)
+	cpe := buildPostgreSQLCPE(version)
 
 	payload := plugins.ServicePostgreSQL{
 		AuthRequired: !successfulAuth(response),
 		CPEs:         []string{cpe},
 	}
-	service := plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP)
+	service := plugins.CreateServiceFrom(target, payload, false, version, plugins.TCP)
 	if target.Misconfigs && !payload.AuthRequired {
 		service.AnonymousAccess = true
 		service.SecurityFindings = []plugins.SecurityFinding{{
@@ -236,7 +236,95 @@ func (p *POSTGRESPlugin) Run(conn net.Conn, timeout time.Duration, target plugin
 			Evidence:    "Connection succeeded without credentials",
 		}}
 	}
+	if target.Misconfigs {
+		if finding := checkPostgresEOL(version); finding != nil {
+			service.SecurityFindings = append(service.SecurityFindings, *finding)
+		}
+	}
 	return service, nil
+}
+
+type eolEntry struct {
+	name     string
+	severity plugins.Severity
+}
+
+var postgresEOLMap = map[string]eolEntry{
+	"9.1": {"PostgreSQL 9.1", plugins.SeverityLow},
+}
+
+// extractServerVersion walks type+int32-length frames and returns the
+// server_version ParameterStatus value, or "" if none is present.
+func extractServerVersion(response []byte) string {
+	i := 0
+	for i+5 <= len(response) {
+		typ := response[i]
+		length := int(binary.BigEndian.Uint32(response[i+1 : i+5]))
+		if length < 4 || i+1+length > len(response) {
+			break
+		}
+		frame := response[i : i+1+length]
+		if typ == 0x53 {
+			name, value, err := parseParameterStatus(frame)
+			if err == nil && name == "server_version" {
+				return numericPostgreSQLVersion(value)
+			}
+		}
+		i += 1 + length
+	}
+	return ""
+}
+
+// checkPostgresEOL maps a server_version string to a SecurityFinding if the
+// PostgreSQL version is end-of-life (major.minor 9.1). Returns nil otherwise.
+func checkPostgresEOL(version string) *plugins.SecurityFinding {
+	version = strings.TrimSpace(version)
+	major, rest, ok := postgresLeadingInt(version)
+	if !ok {
+		return nil
+	}
+	minor := 0
+	if strings.HasPrefix(rest, ".") {
+		minor, _, ok = postgresLeadingInt(rest[1:])
+		if !ok {
+			return nil
+		}
+	}
+	entry, found := postgresEOLMap[fmt.Sprintf("%d.%d", major, minor)]
+	if !found {
+		return nil
+	}
+	return &plugins.SecurityFinding{
+		ID:          "postgres-eol",
+		Severity:    entry.severity,
+		Description: fmt.Sprintf("PostgreSQL running end-of-life version: %s", entry.name),
+		Evidence:    version,
+	}
+}
+
+// numericPostgreSQLVersion returns the leading [0-9.]+ prefix of a
+// server_version value so distro suffixes never enter CPE or Service.Version.
+func numericPostgreSQLVersion(v string) string {
+	i := 0
+	for i < len(v) && (v[i] == '.' || (v[i] >= '0' && v[i] <= '9')) {
+		i++
+	}
+	return strings.Trim(v[:i], ".")
+}
+
+func postgresLeadingInt(s string) (int, string, bool) {
+	i := 0
+	for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+		i++
+	}
+	if i == 0 {
+		return 0, s, false
+	}
+	n, err := strconv.Atoi(s[:i])
+	if err != nil {
+		return 0, s, false
+	}
+	return n, s[i:], true
 }
 
 func (p *POSTGRESPlugin) Name() string {
