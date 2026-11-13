@@ -152,6 +152,7 @@ func TestFalsePositiveBannersDoNotEmit(t *testing.T) {
 		"Welcome to backdoor-lab\n",
 		"Backdoor protection enabled\n",
 		"Server: bash-4.4#1-Debian\r\n",
+		"bash-4.4#1-Debian\n",
 		"bash-completion#section\n",
 	}
 	for _, banner := range banners {

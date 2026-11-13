@@ -36,9 +36,9 @@ const (
 var (
 	noJobControl = []byte("no job control in this shell")
 	nmapBackdoor = []byte("**BACKDOOR**")
-	// Line-anchored bash prompt (ticket fixture bash-*#). Unanchored matching
-	// would fire on package tags and Server headers.
-	bashPrompt = regexp.MustCompile(`(?m)^bash-[0-9][\w.-]*#`)
+	// Line-anchored bash prompt (ticket fixture bash-*#). Require whitespace
+	// or EOL after '#', so build tags like bash-4.4#1-Debian do not match.
+	bashPrompt = regexp.MustCompile(`(?m)^bash-[0-9][\w.-]*#(?:\s|$)`)
 )
 
 type Plugin struct{}
@@ -51,9 +51,9 @@ func (p *Plugin) Name() string { return protocolName }
 
 func (p *Plugin) Type() plugins.Protocol { return plugins.TCP }
 
-// Priority is negative so this Recv-only detector runs before HTTP/Echo
-// probes that write to the connection (simple_scan sorts ascending).
-func (p *Plugin) Priority() int { return -1 }
+// Priority matches other Recv-only TCP plugins (e.g. rat). A negative value
+// would Recv-timeout every unknown port before HTTP/Echo in the slow lane.
+func (p *Plugin) Priority() int { return 80 }
 
 // PortPriority is always false: bind-shells and BACKDOOR labels are not a
 // well-known port identity.
