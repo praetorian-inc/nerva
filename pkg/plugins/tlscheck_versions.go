@@ -62,10 +62,14 @@ func ProbeOfferedTLSVersions(dial func() (net.Conn, error), sni string) []Securi
 	if dial == nil {
 		return nil
 	}
+	deadline := time.Now().Add(weakCipherProbeTimeout)
 	seen := map[string]struct{}{}
 	var findings []SecurityFinding
 	for _, ver := range offeredVersions {
-		f := probeOfferedVersion(dial, sni, ver)
+		if !time.Now().Before(deadline) {
+			break
+		}
+		f := probeOfferedVersion(dial, sni, ver, deadline)
 		if f == nil {
 			continue
 		}
@@ -82,13 +86,13 @@ func probeOfferedVersions(conn net.Conn) []SecurityFinding {
 	return ProbeOfferedTLSVersions(resolveRawDial(conn), resolveProbeSNI(conn))
 }
 
-func probeOfferedVersion(dial func() (net.Conn, error), sni string, clientVersion uint16) *SecurityFinding {
+func probeOfferedVersion(dial func() (net.Conn, error), sni string, clientVersion uint16, deadline time.Time) *SecurityFinding {
 	c, err := dial()
 	if err != nil {
 		return nil
 	}
 	defer c.Close()
-	_ = c.SetDeadline(time.Now().Add(weakCipherProbeTimeout))
+	_ = c.SetDeadline(deadline)
 	hello := buildVersionClientHello(clientVersion, sni)
 	if _, err := c.Write(hello); err != nil {
 		return nil

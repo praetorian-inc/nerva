@@ -50,11 +50,14 @@ func TestPOP3STLSThenTLS10EmitsWeakVersionNotCleartext(t *testing.T) {
 	for _, f := range service.SecurityFindings {
 		ids[f.ID] = true
 	}
-	if ids["pop3-cleartext"] {
-		t.Fatalf("STLS-then-1.0 emitted pop3-cleartext: %+v", service.SecurityFindings)
+	if !ids["pop3-cleartext"] {
+		t.Fatalf("STLS-then-1.0 missing pop3-cleartext (plaintext listener still open): %+v", service.SecurityFindings)
 	}
 	if !ids["tls-weak-version-10"] {
 		t.Fatalf("missing tls-weak-version-10: %+v", service.SecurityFindings)
+	}
+	if service.TLS {
+		t.Fatal("opportunistic STLS must not set Service.TLS (implicit TLS only)")
 	}
 }
 

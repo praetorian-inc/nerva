@@ -188,11 +188,14 @@ func TestIMAPSTARTTLSThenTLS10EmitsWeakVersionNotCleartext(t *testing.T) {
 	for _, f := range service.SecurityFindings {
 		ids[f.ID] = true
 	}
-	if ids["imap-cleartext"] {
-		t.Fatalf("STARTTLS-then-1.0 emitted imap-cleartext: %+v", service.SecurityFindings)
+	if !ids["imap-cleartext"] {
+		t.Fatalf("STARTTLS-then-1.0 missing imap-cleartext (plaintext listener still open): %+v", service.SecurityFindings)
 	}
 	if !ids["tls-weak-version-10"] {
 		t.Fatalf("STARTTLS-then-1.0 missing tls-weak-version-10: %+v", service.SecurityFindings)
+	}
+	if service.TLS {
+		t.Fatal("opportunistic STARTTLS must not set Service.TLS (implicit TLS only)")
 	}
 }
 

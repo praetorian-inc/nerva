@@ -195,7 +195,7 @@ func checkWeakSignature(cert *x509.Certificate) *SecurityFinding {
 	case x509.MD5WithRSA:
 		return &SecurityFinding{
 			ID:          findingTLSWeakSignature,
-			Severity:    SeverityMedium,
+			Severity:    SeverityLow,
 			Description: "TLS certificate is signed with MD5, which is broken for certificate signatures",
 			Evidence:    fmt.Sprintf("signature_algorithm=%s", cert.SignatureAlgorithm),
 		}
@@ -254,6 +254,6 @@ func checkUntrustedCA(leaf *x509.Certificate, chain []*x509.Certificate) *Securi
 		ID:          findingTLSUntrustedCA,
 		Severity:    SeverityLow,
 		Description: "TLS certificate is not chained to a public certificate authority",
-		Evidence:    fmt.Sprintf("subject=%q, issuer=%q", leaf.Subject.CommonName, leaf.Issuer.CommonName),
+		Evidence:    fmt.Sprintf("subject=%q, issuer=%q, verify=%v", leaf.Subject.CommonName, leaf.Issuer.CommonName, err),
 	}
 }

@@ -169,16 +169,16 @@ func (p *IMAPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 				findings = plugins.ProbeTLSMisconfigs(dial, target.Host)
 				tlsOK = len(findings) > 0
 			}
+			cleartext := plugins.SecurityFinding{
+				ID:          "imap-cleartext",
+				Severity:    plugins.SeverityMedium,
+				Description: "IMAP transmits data including credentials in cleartext",
+				Evidence:    result,
+			}
 			if tlsOK {
-				service.TLS = true
-				service.SecurityFindings = findings
+				service.SecurityFindings = append([]plugins.SecurityFinding{cleartext}, findings...)
 			} else {
-				service.SecurityFindings = []plugins.SecurityFinding{{
-					ID:          "imap-cleartext",
-					Severity:    plugins.SeverityMedium,
-					Description: "IMAP transmits data including credentials in cleartext",
-					Evidence:    result,
-				}}
+				service.SecurityFindings = []plugins.SecurityFinding{cleartext}
 			}
 		} else {
 			service.SecurityFindings = []plugins.SecurityFinding{{
@@ -269,12 +269,13 @@ func dialIMAPReadyForTLS(target plugins.Target, addr string, timeout time.Durati
 		c.Close()
 		return nil, err
 	}
-	if _, err := utils.SendRecv(c, []byte("7FYWU8I4 CAPABILITY\r\n"), timeout); err != nil {
+	capTag := "7FYWU8I4"
+	if _, err := imapSendRecvUntilTag(c, []byte(capTag+" CAPABILITY\r\n"), capTag, timeout); err != nil {
 		c.Close()
 		return nil, err
 	}
 	tag := "S8TLS"
-	resp, err := utils.SendRecv(c, []byte(tag+" STARTTLS\r\n"), timeout)
+	resp, err := imapSendRecvUntilTag(c, []byte(tag+" STARTTLS\r\n"), tag, timeout)
 	if err != nil {
 		c.Close()
 		return nil, err
@@ -284,4 +285,32 @@ func dialIMAPReadyForTLS(target plugins.Target, addr string, timeout time.Durati
 		return nil, &utils.InvalidResponseErrorInfo{Service: IMAP, Info: "STARTTLS rejected"}
 	}
 	return c, nil
+}
+
+func imapSendRecvUntilTag(conn net.Conn, data []byte, tag string, timeout time.Duration) ([]byte, error) {
+	if err := utils.Send(conn, data, timeout); err != nil {
+		return nil, err
+	}
+	prefix := strings.ToUpper(tag) + " "
+	deadline := time.Now().Add(timeout)
+	var all []byte
+	for time.Now().Before(deadline) {
+		chunk, err := utils.Recv(conn, time.Until(deadline))
+		if err != nil {
+			if len(all) > 0 {
+				return all, nil
+			}
+			return nil, err
+		}
+		if len(chunk) == 0 {
+			break
+		}
+		all = append(all, chunk...)
+		for _, line := range strings.Split(string(all), "\r\n") {
+			if strings.HasPrefix(strings.ToUpper(line), prefix) {
+				return all, nil
+			}
+		}
+	}
+	return all, nil
 }

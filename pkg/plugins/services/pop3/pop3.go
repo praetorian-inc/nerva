@@ -113,16 +113,16 @@ func (p *POP3Plugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 				findings = plugins.ProbeTLSMisconfigs(dial, target.Host)
 				tlsOK = len(findings) > 0
 			}
+			cleartext := plugins.SecurityFinding{
+				ID:          "pop3-cleartext",
+				Severity:    plugins.SeverityMedium,
+				Description: "POP3 transmits data including credentials in cleartext",
+				Evidence:    result,
+			}
 			if tlsOK {
-				service.TLS = true
-				service.SecurityFindings = findings
+				service.SecurityFindings = append([]plugins.SecurityFinding{cleartext}, findings...)
 			} else {
-				service.SecurityFindings = []plugins.SecurityFinding{{
-					ID:          "pop3-cleartext",
-					Severity:    plugins.SeverityMedium,
-					Description: "POP3 transmits data including credentials in cleartext",
-					Evidence:    result,
-				}}
+				service.SecurityFindings = []plugins.SecurityFinding{cleartext}
 			}
 		} else {
 			service.SecurityFindings = []plugins.SecurityFinding{{

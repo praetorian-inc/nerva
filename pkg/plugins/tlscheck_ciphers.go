@@ -201,9 +201,13 @@ func ProbeWeakCiphers(dial func() (net.Conn, error), sni string) []SecurityFindi
 	if dial == nil {
 		return nil
 	}
+	deadline := time.Now().Add(weakCipherProbeTimeout)
 	var findings []SecurityFinding
 	for _, class := range []weakClass{weakAnon, weakNull, weakExport, weakRC4, weak3DES} {
-		if f := probeWeakClass(dial, sni, class); f != nil {
+		if !time.Now().Before(deadline) {
+			break
+		}
+		if f := probeWeakClass(dial, sni, class, deadline); f != nil {
 			findings = append(findings, *f)
 		}
 	}
@@ -217,13 +221,13 @@ func probeWeakCiphers(conn net.Conn) []SecurityFinding {
 	return ProbeWeakCiphers(resolveRawDial(conn), resolveProbeSNI(conn))
 }
 
-func probeWeakClass(dial func() (net.Conn, error), sni string, class weakClass) *SecurityFinding {
+func probeWeakClass(dial func() (net.Conn, error), sni string, class weakClass, deadline time.Time) *SecurityFinding {
 	c, err := dial()
 	if err != nil {
 		return nil
 	}
 	defer c.Close()
-	_ = c.SetDeadline(time.Now().Add(weakCipherProbeTimeout))
+	_ = c.SetDeadline(deadline)
 	hello := buildWeakClientHello(class, sni)
 	if _, err := c.Write(hello); err != nil {
 		return nil
