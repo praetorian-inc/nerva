@@ -97,19 +97,32 @@ func (p *POP3Plugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 	service := plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP)
 	if target.Misconfigs {
 		if pop3STLSCommand(conn, timeout) {
-			service.TLS = true
 			var dial func() (net.Conn, error)
 			if addr := conn.RemoteAddr(); addr != nil {
 				a := addr.String()
-				dial = func() (net.Conn, error) { return dialPOP3ReadyForTLS(a, timeout) }
+				dial = func() (net.Conn, error) { return dialPOP3ReadyForTLS(target, a, timeout) }
 			}
 			cfg := &tls.Config{InsecureSkipVerify: true, ServerName: target.Host} // #nosec G402 -- scanner
 			tconn := tls.Client(conn, cfg)
+			var findings []plugins.SecurityFinding
+			tlsOK := false
 			if err := tconn.Handshake(); err == nil {
-				service.SecurityFindings = append(service.SecurityFindings, plugins.CheckTLS(&plugins.RawDialConn{Conn: tconn, Dial: dial})...)
+				findings = plugins.CheckTLS(&plugins.RawDialConn{Conn: tconn, Dial: dial})
+				tlsOK = true
 			} else if dial != nil {
-				service.SecurityFindings = append(service.SecurityFindings, plugins.ProbeOfferedTLSVersions(dial, target.Host)...)
-				service.SecurityFindings = append(service.SecurityFindings, plugins.ProbeWeakCiphers(dial, target.Host)...)
+				findings = plugins.ProbeTLSMisconfigs(dial, target.Host)
+				tlsOK = len(findings) > 0
+			}
+			if tlsOK {
+				service.TLS = true
+				service.SecurityFindings = findings
+			} else {
+				service.SecurityFindings = []plugins.SecurityFinding{{
+					ID:          "pop3-cleartext",
+					Severity:    plugins.SeverityMedium,
+					Description: "POP3 transmits data including credentials in cleartext",
+					Evidence:    result,
+				}}
 			}
 		} else {
 			service.SecurityFindings = []plugins.SecurityFinding{{
@@ -177,8 +190,8 @@ func pop3STLSCommand(conn net.Conn, timeout time.Duration) bool {
 	return strings.HasPrefix(string(resp), "+OK")
 }
 
-func dialPOP3ReadyForTLS(addr string, timeout time.Duration) (net.Conn, error) {
-	c, err := net.DialTimeout("tcp", addr, timeout)
+func dialPOP3ReadyForTLS(target plugins.Target, addr string, timeout time.Duration) (net.Conn, error) {
+	c, err := target.FollowupTCP(addr, timeout)
 	if err != nil {
 		return nil, err
 	}

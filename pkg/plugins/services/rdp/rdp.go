@@ -482,10 +482,9 @@ func (p *RDPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 			}
 			if selectedProtocol&(protocolSSL|protocolHybrid|protocolHybridEx) != 0 {
 				if addr := conn.RemoteAddr(); addr != nil {
-					offered := plugins.ProbeOfferedTLSVersions(func() (net.Conn, error) {
-						return dialRDPReadyForTLS(addr.String(), timeout)
-					}, target.Host)
-					service.SecurityFindings = append(service.SecurityFindings, offered...)
+					a := addr.String()
+					dial := func() (net.Conn, error) { return dialRDPReadyForTLS(target, a, timeout) }
+					service.SecurityFindings = append(service.SecurityFindings, plugins.ProbeTLSMisconfigs(dial, target.Host)...)
 				}
 			}
 		}
@@ -506,7 +505,7 @@ func (p *TLSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 					service.SecurityFindings = append(service.SecurityFindings, *finding)
 				}
 			}
-			service.SecurityFindings = append(service.SecurityFindings, plugins.CheckTLS(&rdpProbeConn{Conn: conn, timeout: timeout})...)
+			service.SecurityFindings = append(service.SecurityFindings, plugins.CheckTLS(&rdpProbeConn{Conn: conn, timeout: timeout, target: target})...)
 		}
 		return service, nil
 	}
@@ -538,6 +537,7 @@ func (p *TLSPlugin) Priority() int {
 type rdpProbeConn struct {
 	net.Conn
 	timeout time.Duration
+	target  plugins.Target
 }
 
 func (c *rdpProbeConn) Unwrap() net.Conn { return c.Conn }
@@ -546,11 +546,11 @@ func (c *rdpProbeConn) DialRawTCP() (net.Conn, error) {
 	if c.RemoteAddr() == nil {
 		return nil, fmt.Errorf("rdp: no remote addr")
 	}
-	return dialRDPReadyForTLS(c.RemoteAddr().String(), c.timeout)
+	return dialRDPReadyForTLS(c.target, c.RemoteAddr().String(), c.timeout)
 }
 
-func dialRDPReadyForTLS(addr string, timeout time.Duration) (net.Conn, error) {
-	c, err := net.DialTimeout("tcp", addr, timeout)
+func dialRDPReadyForTLS(target plugins.Target, addr string, timeout time.Duration) (net.Conn, error) {
+	c, err := target.FollowupTCP(addr, timeout)
 	if err != nil {
 		return nil, err
 	}

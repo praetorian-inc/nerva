@@ -66,8 +66,15 @@ func serveSMTPSTARTTLSThen10(c net.Conn) {
 		return
 	}
 	_, _ = c.Write([]byte("250-mail.example.com\r\n250-STARTTLS\r\n250 AUTH LOGIN\r\n"))
-	if _, err := c.Read(buf); err != nil {
+	n, err := c.Read(buf)
+	if err != nil {
 		return
+	}
+	if n >= 4 && string(buf[:4]) == "MAIL" {
+		_, _ = c.Write([]byte("550 no relay\r\n"))
+		if _, err := c.Read(buf); err != nil {
+			return
+		}
 	}
 	_, _ = c.Write([]byte("220 ready\r\n"))
 	writeTLS10ServerHello(c)

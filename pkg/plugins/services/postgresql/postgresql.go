@@ -241,10 +241,9 @@ func (p *POSTGRESPlugin) Run(conn net.Conn, timeout time.Duration, target plugin
 			}}
 		}
 		if addr := conn.RemoteAddr(); addr != nil {
-			offered := plugins.ProbeOfferedTLSVersions(func() (net.Conn, error) {
-				return dialPostgresReadyForTLS(addr.String(), timeout)
-			}, target.Host)
-			service.SecurityFindings = append(service.SecurityFindings, offered...)
+			a := addr.String()
+			dial := func() (net.Conn, error) { return dialPostgresReadyForTLS(target, a, timeout) }
+			service.SecurityFindings = append(service.SecurityFindings, plugins.ProbeTLSMisconfigs(dial, target.Host)...)
 		}
 	}
 	return service, nil
@@ -261,8 +260,8 @@ func (p *POSTGRESPlugin) Priority() int {
 	return 1000
 }
 
-func dialPostgresReadyForTLS(addr string, timeout time.Duration) (net.Conn, error) {
-	c, err := net.DialTimeout("tcp", addr, timeout)
+func dialPostgresReadyForTLS(target plugins.Target, addr string, timeout time.Duration) (net.Conn, error) {
+	c, err := target.FollowupTCP(addr, timeout)
 	if err != nil {
 		return nil, err
 	}

@@ -1068,6 +1068,15 @@ type Target struct {
 	DialTCP func(address string, timeout time.Duration) (net.Conn, error)
 }
 
+// FollowupTCP opens a fresh TCP connection through DialTCP when the scan
+// engine provided one (proxy-aware); otherwise net.DialTimeout for unit tests.
+func (t Target) FollowupTCP(addr string, timeout time.Duration) (net.Conn, error) {
+	if t.DialTCP != nil {
+		return t.DialTCP(addr, timeout)
+	}
+	return net.DialTimeout("tcp", addr, timeout)
+}
+
 type Plugin interface {
 	Run(net.Conn, time.Duration, Target) (*Service, error)
 	PortPriority(uint16) bool

@@ -373,10 +373,9 @@ func (p *MSSQLPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.T
 		}
 		if data.Encryption != encryptNotSup {
 			if addr := conn.RemoteAddr(); addr != nil {
-				offered := plugins.ProbeOfferedTLSVersions(func() (net.Conn, error) {
-					return dialMSSQLReadyForTLS(addr.String(), timeout)
-				}, target.Host)
-				service.SecurityFindings = append(service.SecurityFindings, offered...)
+				a := addr.String()
+				dial := func() (net.Conn, error) { return dialMSSQLReadyForTLS(target, a, timeout) }
+				service.SecurityFindings = append(service.SecurityFindings, plugins.ProbeTLSMisconfigs(dial, target.Host)...)
 			}
 		}
 	}
@@ -401,8 +400,8 @@ const (
 	encryptReq    byte = 0x03 // ENCRYPT_REQ: entire connection TLS after handshake
 )
 
-func dialMSSQLReadyForTLS(addr string, timeout time.Duration) (net.Conn, error) {
-	c, err := net.DialTimeout("tcp", addr, timeout)
+func dialMSSQLReadyForTLS(target plugins.Target, addr string, timeout time.Duration) (net.Conn, error) {
+	c, err := target.FollowupTCP(addr, timeout)
 	if err != nil {
 		return nil, err
 	}

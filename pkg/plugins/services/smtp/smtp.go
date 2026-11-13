@@ -199,21 +199,42 @@ func (p *SMTPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 						Evidence:    "EHLO response lacks AUTH capability",
 					})
 				}
+				if checkOpenRelay(conn, timeout) {
+					service.SecurityFindings = append(service.SecurityFindings, plugins.SecurityFinding{
+						ID:          "smtp-open-relay",
+						Severity:    plugins.SeverityHigh,
+						Description: "SMTP server accepts mail relay between non-local addresses",
+						Evidence:    "Server accepted RCPT TO:<test@example.org> after MAIL FROM:<test@example.com>",
+					})
+				}
 			}
 			if ehloHasToken(data.AuthMethods, "STARTTLS") && smtpSTARTTLSCommand(conn, timeout) {
-				service.TLS = true
 				var dial func() (net.Conn, error)
 				if addr := conn.RemoteAddr(); addr != nil {
 					a := addr.String()
-					dial = func() (net.Conn, error) { return dialSMTPReadyForTLS(a, timeout) }
+					dial = func() (net.Conn, error) { return dialSMTPReadyForTLS(target, a, timeout) }
 				}
 				cfg := &tls.Config{InsecureSkipVerify: true, ServerName: target.Host} // #nosec G402 -- scanner
 				tconn := tls.Client(conn, cfg)
+				var findings []plugins.SecurityFinding
+				tlsOK := false
 				if err := tconn.Handshake(); err == nil {
-					service.SecurityFindings = append(service.SecurityFindings, plugins.CheckTLS(&plugins.RawDialConn{Conn: tconn, Dial: dial})...)
+					findings = plugins.CheckTLS(&plugins.RawDialConn{Conn: tconn, Dial: dial})
+					tlsOK = true
 				} else if dial != nil {
-					service.SecurityFindings = append(service.SecurityFindings, plugins.ProbeOfferedTLSVersions(dial, target.Host)...)
-					service.SecurityFindings = append(service.SecurityFindings, plugins.ProbeWeakCiphers(dial, target.Host)...)
+					findings = plugins.ProbeTLSMisconfigs(dial, target.Host)
+					tlsOK = len(findings) > 0
+				}
+				if tlsOK {
+					service.TLS = true
+					service.SecurityFindings = append(service.SecurityFindings, findings...)
+				} else {
+					service.SecurityFindings = append([]plugins.SecurityFinding{{
+						ID:          "smtp-cleartext",
+						Severity:    plugins.SeverityLow,
+						Description: "SMTP transmits data including credentials in cleartext",
+						Evidence:    data.Banner,
+					}}, service.SecurityFindings...)
 				}
 			} else {
 				service.SecurityFindings = append([]plugins.SecurityFinding{{
@@ -222,14 +243,6 @@ func (p *SMTPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 					Description: "SMTP transmits data including credentials in cleartext",
 					Evidence:    data.Banner,
 				}}, service.SecurityFindings...)
-				if len(data.AuthMethods) > 0 && checkOpenRelay(conn, timeout) {
-					service.SecurityFindings = append(service.SecurityFindings, plugins.SecurityFinding{
-						ID:          "smtp-open-relay",
-						Severity:    plugins.SeverityHigh,
-						Description: "SMTP server accepts mail relay between non-local addresses",
-						Evidence:    "Server accepted RCPT TO:<test@example.org> after MAIL FROM:<test@example.com>",
-					})
-				}
 			}
 		}
 		return service, nil
@@ -292,8 +305,8 @@ func smtpSTARTTLSCommand(conn net.Conn, timeout time.Duration) bool {
 	return bytes.Equal(resp[0:3], []byte("220"))
 }
 
-func dialSMTPReadyForTLS(addr string, timeout time.Duration) (net.Conn, error) {
-	c, err := net.DialTimeout("tcp", addr, timeout)
+func dialSMTPReadyForTLS(target plugins.Target, addr string, timeout time.Duration) (net.Conn, error) {
+	c, err := target.FollowupTCP(addr, timeout)
 	if err != nil {
 		return nil, err
 	}

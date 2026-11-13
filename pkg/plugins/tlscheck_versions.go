@@ -49,6 +49,11 @@ var offeredVersions = []uint16{
 	tls.VersionTLS11,
 }
 
+// ProbeTLSMisconfigs runs offered-version and weak-cipher probes on the same dialer.
+func ProbeTLSMisconfigs(dial func() (net.Conn, error), sni string) []SecurityFinding {
+	return mergeFindingsByID(ProbeOfferedTLSVersions(dial, sni), ProbeWeakCiphers(dial, sni))
+}
+
 // ProbeOfferedTLSVersions dials via dial and sends a ClientHello whose
 // client_version is SSL 3.0, TLS 1.0, or TLS 1.1. A ServerHello is enough to
 // record that the version is offered, including mixed stacks that also speak

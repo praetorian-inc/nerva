@@ -21,6 +21,7 @@ import (
 	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"net"
 	"time"
@@ -229,7 +230,7 @@ func checkUntrustedCA(leaf *x509.Certificate, chain []*x509.Certificate) *Securi
 	if checkSelfSignedCert(leaf, chain) != nil {
 		return nil
 	}
-	opts := x509.VerifyOptions{CurrentTime: time.Now()}
+	opts := x509.VerifyOptions{CurrentTime: leaf.NotBefore.Add(time.Second)}
 	if len(chain) > 1 {
 		inter := x509.NewCertPool()
 		for _, c := range chain[1:] {
@@ -237,7 +238,16 @@ func checkUntrustedCA(leaf *x509.Certificate, chain []*x509.Certificate) *Securi
 		}
 		opts.Intermediates = inter
 	}
-	if _, err := leaf.Verify(opts); err == nil {
+	_, err := leaf.Verify(opts)
+	if err == nil {
+		return nil
+	}
+	var sysRoots x509.SystemRootsError
+	if errors.As(err, &sysRoots) {
+		return nil
+	}
+	var unknown x509.UnknownAuthorityError
+	if !errors.As(err, &unknown) {
 		return nil
 	}
 	return &SecurityFinding{
