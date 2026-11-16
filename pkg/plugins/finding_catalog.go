@@ -222,6 +222,13 @@ var findingCatalog = map[string]FindingMeta{
 		Recommendation: "Replace FTP with SFTP or FTPS. If FTP must remain, restrict access to trusted networks and enforce strong credentials.",
 		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N",
 	},
+	"ftp-anonymous-login": {
+		Title:          "Anonymous FTP Login",
+		Severity:       SeverityMedium,
+		Impact:         "Anonymous FTP allows unauthenticated users to retrieve (and sometimes upload) files, exposing sensitive data and providing a staging area for further compromise.",
+		Recommendation: "Disable anonymous FTP. Require authenticated access and prefer SFTP or FTPS.",
+		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:N",
+	},
 
 	// ── Vault ────────────────────────────────────────────────────────────
 	"vault-uninitialized": {

@@ -18,11 +18,14 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/ory/dockertest/v3"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/praetorian-inc/nerva/pkg/plugins"
 	"github.com/praetorian-inc/nerva/pkg/test"
@@ -120,6 +123,380 @@ func TestFTPSecurityFindings(t *testing.T) {
 	}
 	if service.AnonymousAccess {
 		t.Error("expected AnonymousAccess to be false")
+	}
+}
+
+func TestFTPAnonymousLoginIndependentOfBannerFamily(t *testing.T) {
+	// I3: anonymous success must emit ftp-anonymous-login for more than one
+	// banner family once isFTPBanner has already accepted the service.
+	banners := []struct {
+		name   string
+		banner string
+	}{
+		{"generic-low-confidence", "220 Welcome\r\n"},
+		{"vsftpd", "220 (vsFTPd 3.0.5)\r\n"},
+		{"proftpd", "220 ProFTPD 1.3.5 Server (Debian)\r\n"},
+		{"filezilla", "220 FileZilla Server version 0.9.60\r\n"},
+		{"microsoft-iis", "220 Microsoft FTP Service\r\n"},
+	}
+
+	for _, tc := range banners {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			require.NoError(t, err)
+			defer listener.Close()
+
+			go func() {
+				conn, err := listener.Accept()
+				if err != nil {
+					return
+				}
+				defer conn.Close()
+				_, _ = conn.Write([]byte(tc.banner))
+				buf := make([]byte, 256)
+				n, err := conn.Read(buf)
+				if err != nil || n == 0 {
+					return
+				}
+				if strings.HasPrefix(string(buf[:n]), "USER anonymous") {
+					_, _ = conn.Write([]byte("230 Login successful.\r\n"))
+				}
+			}()
+
+			conn, err := net.DialTimeout("tcp", listener.Addr().String(), 5*time.Second)
+			require.NoError(t, err)
+			defer conn.Close()
+
+			plugin := &FTPPlugin{}
+			service, err := plugin.Run(conn, 5*time.Second, plugins.Target{
+				Host:       "127.0.0.1",
+				Address:    netip.MustParseAddrPort("127.0.0.1:21"),
+				Misconfigs: true,
+			})
+			require.NoError(t, err)
+			require.NotNil(t, service)
+			assert.True(t, service.AnonymousAccess, "230 must set AnonymousAccess for family %s", tc.name)
+			assert.Contains(t, securityFindingIDs(service), "ftp-anonymous-login")
+		})
+	}
+}
+
+// TestFTPAnonymousLoginSingleShot proves I5: one documented-default attempt
+// (USER anonymous, empty PASS only if 331). A password list would fail this.
+func TestFTPAnonymousLoginSingleShot(t *testing.T) {
+	cases := []struct {
+		name          string
+		userReply     string
+		passReply     string
+		wantUSER      int
+		wantPASS      int
+		wantAnonymous bool
+	}{
+		{
+			name:          "230-on-user",
+			userReply:     "230 Login successful.\r\n",
+			wantUSER:      1,
+			wantPASS:      0,
+			wantAnonymous: true,
+		},
+		{
+			name:          "331-then-230",
+			userReply:     "331 Please specify the password.\r\n",
+			passReply:     "230 Login successful.\r\n",
+			wantUSER:      1,
+			wantPASS:      1,
+			wantAnonymous: true,
+		},
+		{
+			name:          "530-reject",
+			userReply:     "530 Login incorrect.\r\n",
+			wantUSER:      1,
+			wantPASS:      0,
+			wantAnonymous: false,
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			var mu sync.Mutex
+			var cmds []string
+
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			require.NoError(t, err)
+			defer listener.Close()
+
+			go func() {
+				conn, err := listener.Accept()
+				if err != nil {
+					return
+				}
+				defer conn.Close()
+				_, _ = conn.Write([]byte("220 (vsFTPd 3.0.5)\r\n"))
+				buf := make([]byte, 256)
+				for {
+					n, err := conn.Read(buf)
+					if err != nil || n == 0 {
+						return
+					}
+					line := string(buf[:n])
+					mu.Lock()
+					cmds = append(cmds, line)
+					mu.Unlock()
+					switch {
+					case strings.HasPrefix(line, "USER "):
+						_, _ = conn.Write([]byte(tc.userReply))
+					case strings.HasPrefix(line, "PASS"):
+						if tc.passReply != "" {
+							_, _ = conn.Write([]byte(tc.passReply))
+						}
+					}
+				}
+			}()
+
+			conn, err := net.DialTimeout("tcp", listener.Addr().String(), 5*time.Second)
+			require.NoError(t, err)
+			defer conn.Close()
+
+			plugin := &FTPPlugin{}
+			service, err := plugin.Run(conn, 5*time.Second, plugins.Target{
+				Host:       "127.0.0.1",
+				Address:    netip.MustParseAddrPort("127.0.0.1:21"),
+				Misconfigs: true,
+			})
+			require.NoError(t, err)
+			require.NotNil(t, service)
+			assert.Equal(t, tc.wantAnonymous, service.AnonymousAccess)
+
+			mu.Lock()
+			got := append([]string(nil), cmds...)
+			mu.Unlock()
+
+			userN, passN := 0, 0
+			for _, c := range got {
+				switch {
+				case strings.HasPrefix(c, "USER "):
+					userN++
+					assert.Truef(t, strings.HasPrefix(c, "USER anonymous"), "documented default only, got %q", c)
+				case strings.HasPrefix(c, "PASS"):
+					passN++
+					assert.True(t, strings.HasPrefix(c, "PASS \r\n") || strings.HasPrefix(c, "PASS\r\n"), "empty PASS only, got %q", c)
+				}
+			}
+			assert.Equal(t, tc.wantUSER, userN)
+			assert.Equal(t, tc.wantPASS, passN)
+			assert.NotContains(t, securityFindingIDs(service), "built-in-accounts")
+			if tc.wantAnonymous {
+				assert.Contains(t, securityFindingIDs(service), "ftp-anonymous-login")
+			} else {
+				assert.NotContains(t, securityFindingIDs(service), "ftp-anonymous-login")
+			}
+		})
+	}
+}
+
+func TestFTPAnonymousLoginRejectedDoesNotAutofail(t *testing.T) {
+	banner := "220 (vsFTPd 3.0.5)\r\n"
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Failed to start mock server: %v", err)
+	}
+	defer listener.Close()
+
+	tcpAddr := listener.Addr().(*net.TCPAddr)
+	serverPort := tcpAddr.Port
+
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		_, _ = conn.Write([]byte(banner))
+		buf := make([]byte, 256)
+		n, err := conn.Read(buf)
+		if err != nil || n == 0 {
+			return
+		}
+		if strings.HasPrefix(string(buf[:n]), "USER anonymous") {
+			_, _ = conn.Write([]byte("530 Login incorrect.\r\n"))
+		}
+	}()
+
+	time.Sleep(10 * time.Millisecond)
+
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", serverPort), 5*time.Second)
+	if err != nil {
+		t.Fatalf("Failed to connect to mock server: %v", err)
+	}
+	defer conn.Close()
+
+	addrPort := netip.MustParseAddrPort("127.0.0.1:21")
+	plugin := &FTPPlugin{}
+	service, err := plugin.Run(conn, 5*time.Second, plugins.Target{
+		Host:       "127.0.0.1",
+		Address:    addrPort,
+		Misconfigs: true,
+	})
+	if err != nil {
+		t.Fatalf("Run() returned unexpected error: %v", err)
+	}
+	if service == nil {
+		t.Fatal("Run() returned nil")
+	}
+	if service.AnonymousAccess {
+		t.Error("expected AnonymousAccess false when anonymous is rejected")
+	}
+	for _, f := range service.SecurityFindings {
+		if f.ID == "ftp-anonymous-login" {
+			t.Fatal("rejected anonymous login must not emit ftp-anonymous-login")
+		}
+		if f.ID == "built-in-accounts" {
+			t.Fatal("rejected default must not autofail Built-in Accounts")
+		}
+	}
+}
+
+func TestFTPAnonymousLogin331Then230(t *testing.T) {
+	banner := "220 (vsFTPd 3.0.5)\r\n"
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Failed to start mock server: %v", err)
+	}
+	defer listener.Close()
+
+	tcpAddr := listener.Addr().(*net.TCPAddr)
+	serverPort := tcpAddr.Port
+
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		_, _ = conn.Write([]byte(banner))
+		buf := make([]byte, 256)
+		n, err := conn.Read(buf)
+		if err != nil || n == 0 {
+			return
+		}
+		if !strings.HasPrefix(string(buf[:n]), "USER anonymous") {
+			return
+		}
+		_, _ = conn.Write([]byte("331 Please specify the password.\r\n"))
+		n, err = conn.Read(buf)
+		if err != nil || n == 0 {
+			return
+		}
+		if strings.HasPrefix(string(buf[:n]), "PASS") {
+			_, _ = conn.Write([]byte("230 Login successful.\r\n"))
+		}
+	}()
+
+	time.Sleep(10 * time.Millisecond)
+
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", serverPort), 5*time.Second)
+	if err != nil {
+		t.Fatalf("Failed to connect to mock server: %v", err)
+	}
+	defer conn.Close()
+
+	plugin := &FTPPlugin{}
+	service, err := plugin.Run(conn, 5*time.Second, plugins.Target{
+		Host:       "127.0.0.1",
+		Address:    netip.MustParseAddrPort("127.0.0.1:21"),
+		Misconfigs: true,
+	})
+	if err != nil {
+		t.Fatalf("Run() returned unexpected error: %v", err)
+	}
+	if service == nil {
+		t.Fatal("Run() returned nil")
+	}
+	if !service.AnonymousAccess {
+		t.Fatal("expected AnonymousAccess true after 331 then 230")
+	}
+	found := false
+	for _, f := range service.SecurityFindings {
+		if f.ID == "ftp-anonymous-login" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected ftp-anonymous-login, got %#v", service.SecurityFindings)
+	}
+}
+
+func TestFTPAnonymousLogin331Then530(t *testing.T) {
+	banner := "220 (vsFTPd 3.0.5)\r\n"
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Failed to start mock server: %v", err)
+	}
+	defer listener.Close()
+
+	tcpAddr := listener.Addr().(*net.TCPAddr)
+	serverPort := tcpAddr.Port
+
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		_, _ = conn.Write([]byte(banner))
+		buf := make([]byte, 256)
+		n, err := conn.Read(buf)
+		if err != nil || n == 0 {
+			return
+		}
+		if !strings.HasPrefix(string(buf[:n]), "USER anonymous") {
+			return
+		}
+		_, _ = conn.Write([]byte("331 Please specify the password.\r\n"))
+		n, err = conn.Read(buf)
+		if err != nil || n == 0 {
+			return
+		}
+		if strings.HasPrefix(string(buf[:n]), "PASS") {
+			_, _ = conn.Write([]byte("530 Login incorrect.\r\n"))
+		}
+	}()
+
+	time.Sleep(10 * time.Millisecond)
+
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", serverPort), 5*time.Second)
+	if err != nil {
+		t.Fatalf("Failed to connect to mock server: %v", err)
+	}
+	defer conn.Close()
+
+	plugin := &FTPPlugin{}
+	service, err := plugin.Run(conn, 5*time.Second, plugins.Target{
+		Host:       "127.0.0.1",
+		Address:    netip.MustParseAddrPort("127.0.0.1:21"),
+		Misconfigs: true,
+	})
+	if err != nil {
+		t.Fatalf("Run() returned unexpected error: %v", err)
+	}
+	if service == nil {
+		t.Fatal("Run() returned nil")
+	}
+	if service.AnonymousAccess {
+		t.Error("expected AnonymousAccess false after 331 then 530")
+	}
+	for _, f := range service.SecurityFindings {
+		if f.ID == "ftp-anonymous-login" {
+			t.Fatal("331 then 530 must not emit ftp-anonymous-login")
+		}
+		if f.ID == "built-in-accounts" {
+			t.Fatal("rejected default must not autofail Built-in Accounts")
+		}
 	}
 }
 
@@ -300,4 +677,12 @@ func TestBuildFTPCPE(t *testing.T) {
 			assert.Equal(t, tt.wantCPE, cpe, "CPE mismatch for: %s", tt.name)
 		})
 	}
+}
+
+func securityFindingIDs(s *plugins.Service) []string {
+	ids := make([]string, 0, len(s.SecurityFindings))
+	for _, f := range s.SecurityFindings {
+		ids = append(ids, f.ID)
+	}
+	return ids
 }
