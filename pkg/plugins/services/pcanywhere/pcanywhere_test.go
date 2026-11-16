@@ -30,6 +30,10 @@ var fixtureST = []byte{'S', 'T', 0x00, 0x00}
 // Recorded TCP banner: nmap match pcanywheredata.
 var fixtureNmapBanner = []byte{0x00, 'X', 0x08, 0x00, '}', 0x08, '\r', '\n', 0x00, '.', 0x08, '.', '.', '.', '\r', '\n'}
 
+// Recorded Enter-prompt greeting variant with CRLF prefix and spaced ellipsis,
+// representative of proprietary Enter-prompt handshakes missed by earlier matching.
+var fixtureEnterPrompt = []byte("\r\nPlease press <ENTER> . . . . .\r\n")
+
 // Recorded UDP status: nmap Probe UDP pc-anywhere match.
 var fixtureUDP = []byte("NRHOST____AHM_3___\x00")
 
@@ -64,9 +68,14 @@ func TestCheckPcAnywhereTCP(t *testing.T) {
 	}{
 		{name: "ST handshake", data: fixtureST, wantErr: false},
 		{name: "nmap Please press Enter", data: []byte("Please press <Enter>"), wantErr: false},
+		{name: "Enter prompt uppercase key token", data: []byte("Please press <ENTER>"), wantErr: false},
+		{name: "Enter prompt mixed case", data: []byte("PLEASE PRESS <Enter>..."), wantErr: false},
+		{name: "Enter prompt without Please prefix", data: []byte("Press <Enter> to continue"), wantErr: true},
+		{name: "Enter prompt recorded CRLF and spaced ellipsis", data: fixtureEnterPrompt, wantErr: false},
 		{name: "nmap pcanywheredata banner", data: fixtureNmapBanner, wantErr: false},
 		{name: "ST prefix false positive", data: []byte("STATUS OK\r\n"), wantErr: true},
 		{name: "HTTP banner fake", data: []byte("HTTP/1.1 200 OK"), wantErr: true},
+		{name: "generic enter text false positive", data: []byte("Press ENTER on keyboard"), wantErr: true},
 		{name: "empty", data: []byte{}, wantErr: true},
 		{name: "too short", data: []byte{0x00}, wantErr: true},
 		{name: "unrelated TCP", data: []byte{0x17, 0x24, 0x11}, wantErr: true},
@@ -109,6 +118,22 @@ func TestPcAnywherePlugin_Run_HandshakeSuccess_EmitsFinding(t *testing.T) {
 	assert.Equal(t, plugins.SeverityLow, service.SecurityFindings[0].Severity)
 }
 
+func TestPcAnywherePlugin_Run_EnterPromptHandshake_EmitsFinding(t *testing.T) {
+	conn := &mockConn{readData: fixtureEnterPrompt}
+	plugin := &PcAnywherePlugin{}
+	target := plugins.Target{
+		Address:    netip.MustParseAddrPort("192.0.2.1:5631"),
+		Misconfigs: true,
+	}
+	service, err := plugin.Run(conn, time.Second, target)
+	assert.NoError(t, err)
+	assert.NotNil(t, service)
+	assert.Equal(t, plugins.ProtoPcAnywhere, service.Protocol)
+	assert.Len(t, service.SecurityFindings, 1)
+	assert.Equal(t, "pcanywhere-exposed", service.SecurityFindings[0].ID)
+	assert.Equal(t, plugins.SeverityLow, service.SecurityFindings[0].Severity)
+}
+
 func TestPcAnywherePlugin_Run_NmapBanner_IdentifiesProtocol(t *testing.T) {
 	conn := &mockConn{readData: fixtureNmapBanner}
 	plugin := &PcAnywherePlugin{}
@@ -122,6 +147,18 @@ func TestPcAnywherePlugin_Run_NmapBanner_IdentifiesProtocol(t *testing.T) {
 
 func TestPcAnywherePlugin_Run_HTTPBanner_NoFinding(t *testing.T) {
 	conn := &mockConn{readData: []byte("HTTP/1.1 200 OK")}
+	plugin := &PcAnywherePlugin{}
+	target := plugins.Target{
+		Address:    netip.MustParseAddrPort("192.0.2.1:5631"),
+		Misconfigs: true,
+	}
+	service, err := plugin.Run(conn, time.Second, target)
+	assert.NoError(t, err)
+	assert.Nil(t, service)
+}
+
+func TestPcAnywherePlugin_Run_GenericEnterText_NoFinding(t *testing.T) {
+	conn := &mockConn{readData: []byte("Press ENTER on keyboard")}
 	plugin := &PcAnywherePlugin{}
 	target := plugins.Target{
 		Address:    netip.MustParseAddrPort("192.0.2.1:5631"),
