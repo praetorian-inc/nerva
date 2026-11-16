@@ -16,6 +16,8 @@ package openvpn
 
 import (
 	"crypto/rand"
+	"encoding/binary"
+	"io"
 	"net"
 	"reflect"
 	"time"
@@ -28,11 +30,14 @@ const OPENVPN = "OpenVPN"
 
 type Plugin struct{}
 
+type TCPPlugin struct{}
+
 func init() {
 	plugins.RegisterPlugin(&Plugin{})
+	plugins.RegisterPlugin(&TCPPlugin{})
 }
 
-func (p *Plugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
+func detectOpenVPN(conn net.Conn, timeout time.Duration, target plugins.Target, transport plugins.Protocol) (*plugins.Service, error) {
 	/**
 	 * https://build.openvpn.net/doxygen/ssl__pkt_8h_source.html
 	 * https://openvpn.net/community-resources/openvpn-protocol/
@@ -60,7 +65,7 @@ func (p *Plugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target
 		return nil, &utils.RandomizeError{Message: "session ID"}
 	}
 
-	response, err := utils.SendRecv(conn, InitialConnectionPackage, timeout)
+	response, err := sendRecvOpenVPN(conn, InitialConnectionPackage, timeout, transport == plugins.TCP)
 	if err != nil {
 		return nil, err
 	}
@@ -75,11 +80,60 @@ func (p *Plugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target
 				response[i:i+SessionIDLength],
 				InitialConnectionPackage[1:1+SessionIDLength],
 			) {
-				return plugins.CreateServiceFrom(target, plugins.ServiceOpenVPN{}, false, "", plugins.UDP), nil
+				service := plugins.CreateServiceFrom(target, plugins.ServiceOpenVPN{}, false, "", transport)
+				if target.Misconfigs {
+					service.SecurityFindings = []plugins.SecurityFinding{{
+						ID:          "openvpn-exposed",
+						Severity:    plugins.SeverityLow,
+						Description: "OpenVPN tunnel listener exposed to the network",
+						Evidence:    "CLIENT_RESET answered with SERVER_RESET",
+					}}
+				}
+				return service, nil
 			}
 		}
 	}
 	return nil, nil
+}
+
+// sendRecvOpenVPN exchanges one OpenVPN control packet. TCP mode prepends and
+// strips the 2-byte big-endian length prefix required by the OpenVPN stream
+// protocol; UDP mode sends the datagram as-is.
+func sendRecvOpenVPN(conn net.Conn, pkt []byte, timeout time.Duration, tcp bool) ([]byte, error) {
+	if !tcp {
+		return utils.SendRecv(conn, pkt, timeout)
+	}
+	if len(pkt) == 0 || len(pkt) > 0xffff {
+		return nil, nil
+	}
+	framed := make([]byte, 2+len(pkt))
+	binary.BigEndian.PutUint16(framed[:2], uint16(len(pkt)))
+	copy(framed[2:], pkt)
+	if err := utils.Send(conn, framed, timeout); err != nil {
+		return nil, err
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(timeout))
+	var hdr [2]byte
+	if _, err := io.ReadFull(conn, hdr[:]); err != nil {
+		return []byte{}, nil
+	}
+	n := int(binary.BigEndian.Uint16(hdr[:]))
+	if n == 0 || n > 2048 {
+		return nil, nil
+	}
+	body := make([]byte, n)
+	if _, err := io.ReadFull(conn, body); err != nil {
+		return []byte{}, nil
+	}
+	return body, nil
+}
+
+func (p *Plugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
+	return detectOpenVPN(conn, timeout, target, plugins.UDP)
+}
+
+func (p *TCPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
+	return detectOpenVPN(conn, timeout, target, plugins.TCP)
 }
 
 func (p *Plugin) PortPriority(i uint16) bool {
@@ -94,5 +148,21 @@ func (p *Plugin) Type() plugins.Protocol {
 }
 
 func (p *Plugin) Priority() int {
+	return 708
+}
+
+func (p *TCPPlugin) PortPriority(i uint16) bool {
+	return i == 1194
+}
+
+func (p *TCPPlugin) Name() string {
+	return OPENVPN
+}
+
+func (p *TCPPlugin) Type() plugins.Protocol {
+	return plugins.TCP
+}
+
+func (p *TCPPlugin) Priority() int {
 	return 708
 }

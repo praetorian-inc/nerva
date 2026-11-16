@@ -87,7 +87,16 @@ func (p *VNCPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 		return nil, nil
 	}
 
-	return plugins.CreateServiceFrom(target, plugins.ServiceVNC{}, false, info, plugins.TCP), nil
+	service := plugins.CreateServiceFrom(target, plugins.ServiceVNC{}, false, info, plugins.TCP)
+	if target.Misconfigs {
+		service.SecurityFindings = []plugins.SecurityFinding{{
+			ID:          "vnc-exposed",
+			Severity:    plugins.SeverityLow,
+			Description: "VNC (RFB) remote access listener exposed to the network",
+			Evidence:    "RFB " + info,
+		}}
+	}
+	return service, nil
 }
 
 func (p *VNCPlugin) Name() string {

@@ -495,6 +495,27 @@ var findingCatalog = map[string]FindingMeta{
 		Recommendation: "Disable pcAnywhere. Replace it with a supported remote-access solution restricted to trusted networks.",
 		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N",
 	},
+	"vnc-exposed": {
+		Title:          "VNC Service Exposed",
+		Severity:       SeverityLow,
+		Impact:         "An exposed VNC (RFB) listener increases the attack surface for unauthorized remote desktop access, including when authentication is required.",
+		Recommendation: "Restrict VNC to trusted networks. Require strong authentication and prefer a tunneled or vendor-supported remote-access solution.",
+		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N",
+	},
+	"openvpn-exposed": {
+		Title:          "OpenVPN Tunnel Service Exposed",
+		Severity:       SeverityLow,
+		Impact:         "An exposed OpenVPN tunnel listener (UDP or TCP) increases the attack surface for VPN endpoint targeting. This is distinct from an exposed management interface.",
+		Recommendation: "Restrict OpenVPN to trusted networks and disable the management interface on public addresses. Prefer certificate authentication and tls-crypt/tls-auth where appropriate.",
+		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N",
+	},
+	"x11-exposed": {
+		Title:          "X11 Service Exposed",
+		Severity:       SeverityLow,
+		Impact:         "An X11 listener that requires authentication is still a remote-access surface. Unauthenticated access is reported separately as x11-unauth-access.",
+		Recommendation: "Disable X11 TCP listening or restrict it to trusted networks. Use SSH X11 forwarding instead of exposing the display protocol.",
+		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N",
+	},
 	"vmware-exposed": {
 		Title:          "VMware Management Interface Exposed",
 		Severity:       SeverityLow,

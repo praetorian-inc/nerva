@@ -449,14 +449,20 @@ func TestRunWithMockServer(t *testing.T) {
 				}
 			}
 
-			// For failed and authenticate responses: verify no AnonymousAccess or SecurityFindings
+			// For failed and authenticate responses: exposure finding, not unauth.
 			if tt.name == "valid X11 failed response - still detected as X11" ||
 				tt.name == "valid X11 authenticate response" {
 				if result.AnonymousAccess {
 					t.Error("expected AnonymousAccess to be false")
 				}
-				if len(result.SecurityFindings) != 0 {
-					t.Errorf("expected 0 security findings, got %d", len(result.SecurityFindings))
+				if len(result.SecurityFindings) != 1 {
+					t.Fatalf("expected 1 security finding, got %d", len(result.SecurityFindings))
+				}
+				if result.SecurityFindings[0].ID != "x11-exposed" {
+					t.Errorf("expected finding ID 'x11-exposed', got %q", result.SecurityFindings[0].ID)
+				}
+				if result.SecurityFindings[0].ID == "x11-unauth-access" {
+					t.Error("x11-unauth-access must remain Success-only")
 				}
 			}
 		})
