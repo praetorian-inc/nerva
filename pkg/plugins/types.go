@@ -1137,14 +1137,15 @@ type ServiceHARTIP struct {
 func (e ServiceHARTIP) Type() string { return ProtoHARTIP }
 
 type ServiceRDP struct {
-	OSFingerprint       string `json:"fingerprint,omitempty"` // e.g. Windows Server 2016 or 2019
-	OSVersion           string `json:"os_version,omitempty"`
-	TargetName          string `json:"target_name,omitempty"`
-	NetBIOSComputerName string `json:"netbios_computer_name,omitempty"`
-	NetBIOSDomainName   string `json:"netbios_domain_name,omitempty"`
-	DNSComputerName     string `json:"dns_computer_name,omitempty"`
-	DNSDomainName       string `json:"dns_domain_name,omitempty"`
-	ForestName          string `json:"forest_name,omitempty"`
+	CPEs                []string `json:"cpes,omitempty"`
+	OSFingerprint       string   `json:"fingerprint,omitempty"` // e.g. Windows Server 2016 or 2019
+	OSVersion           string   `json:"os_version,omitempty"`
+	TargetName          string   `json:"target_name,omitempty"`
+	NetBIOSComputerName string   `json:"netbios_computer_name,omitempty"`
+	NetBIOSDomainName   string   `json:"netbios_domain_name,omitempty"`
+	DNSComputerName     string   `json:"dns_computer_name,omitempty"`
+	DNSDomainName       string   `json:"dns_domain_name,omitempty"`
+	ForestName          string   `json:"forest_name,omitempty"`
 }
 
 func (e ServiceRDP) Type() string { return ProtoRDP }
@@ -1172,14 +1173,15 @@ type RPCB struct {
 func (e ServiceRPC) Type() string { return ProtoRPC }
 
 type ServiceSMB struct {
-	SigningEnabled      bool   `json:"signing_enabled"`  // e.g. Is SMB Signing Enabled?
-	SigningRequired     bool   `json:"signing_required"` // e.g. Is SMB Signing Required?
-	OSVersion           string `json:"os_version"`
-	NetBIOSComputerName string `json:"netbios_computer_name,omitempty"`
-	NetBIOSDomainName   string `json:"netbios_domain_name,omitempty"`
-	DNSComputerName     string `json:"dns_computer_name,omitempty"`
-	DNSDomainName       string `json:"dns_domain_name,omitempty"`
-	ForestName          string `json:"forest_name,omitempty"`
+	CPEs                []string `json:"cpes,omitempty"`
+	SigningEnabled      bool     `json:"signing_enabled"`  // e.g. Is SMB Signing Enabled?
+	SigningRequired     bool     `json:"signing_required"` // e.g. Is SMB Signing Required?
+	OSVersion           string   `json:"os_version"`
+	NetBIOSComputerName string   `json:"netbios_computer_name,omitempty"`
+	NetBIOSDomainName   string   `json:"netbios_domain_name,omitempty"`
+	DNSComputerName     string   `json:"dns_computer_name,omitempty"`
+	DNSDomainName       string   `json:"dns_domain_name,omitempty"`
+	ForestName          string   `json:"forest_name,omitempty"`
 }
 
 func (e ServiceSMB) Type() string { return ProtoSMB }
@@ -1262,7 +1264,10 @@ type ServiceQdrant struct {
 
 func (e ServiceQdrant) Type() string { return ProtoQdrant }
 
-type ServiceSNMP struct{}
+type ServiceSNMP struct {
+	CPEs        []string `json:"cpes,omitempty"`
+	Description string   `json:"description,omitempty"`
+}
 
 func (e ServiceSNMP) Type() string { return ProtoSNMP }
 
@@ -1492,7 +1497,8 @@ type ServiceTeamViewer struct {
 func (e ServiceTeamViewer) Type() string { return ProtoTeamViewer }
 
 type ServiceTelnet struct {
-	ServerData string `json:"server_data"`
+	CPEs       []string `json:"cpes,omitempty"`
+	ServerData string   `json:"server_data"`
 }
 
 func (e ServiceTelnet) Type() string { return ProtoTelnet }

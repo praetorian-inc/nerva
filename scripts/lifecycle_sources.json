@@ -1,0 +1,42 @@
+{
+  "ubuntu": {
+    "vendor_url": "https://ubuntu.com/about/release-cycle",
+    "eol_label": "Maintenance & Security Support"
+  },
+  "debian": {
+    "vendor_url": "https://www.debian.org/releases/",
+    "eol_label": "Debian LTS"
+  },
+  "rhel": {
+    "vendor_url": "https://access.redhat.com/support/policy/updates/errata",
+    "eol_label": "Maintenance Support"
+  },
+  "centos": {
+    "vendor_url": "https://www.centos.org/centos-linux-eol/",
+    "eol_label": "Security Support"
+  },
+  "centos-stream": {
+    "vendor_url": "https://www.centos.org/centos-stream/",
+    "eol_label": "Security Support"
+  },
+  "fedora": {
+    "vendor_url": "https://docs.fedoraproject.org/en-US/releases/lifecycle/",
+    "eol_label": "Security Support"
+  },
+  "freebsd": {
+    "vendor_url": "https://www.freebsd.org/security/",
+    "eol_label": "Security Support"
+  },
+  "windows-server": {
+    "vendor_url": "https://learn.microsoft.com/en-us/lifecycle/policies/fixed",
+    "eol_label": "Security Support"
+  },
+  "windows": {
+    "vendor_url": "https://learn.microsoft.com/en-us/lifecycle/policies/fixed",
+    "eol_label": "Security Support"
+  },
+  "cisco-ios-xe": {
+    "vendor_url": "https://www.cisco.com/c/en/us/products/collateral/ios-nx-os-software/ios-xe-16/bulletin-c25-2378701.html",
+    "eol_label": "Security Support"
+  }
+}

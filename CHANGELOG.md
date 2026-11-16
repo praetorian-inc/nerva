@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Persist versioned OS CPEs from recognized service evidence and emit sourced EOL findings for Fedora, FreeBSD, legacy Windows (IIS/SMB/RDP), and Cisco IOS XE 17.3/17.6/17.9 on identified routers/switches. Reuse existing Ubuntu/CentOS detection; distinguish CentOS Stream. Unknown/conflicting releases remain unclassified for EOL. Cisco APs and unverified product lifecycles are excluded.
+- Decode SNMP sysDescr using ASN.1 instead of fixed offsets; retain it as metadata for OS identification.
+
 - Elasticsearch unauthenticated HTTP access finding `elasticsearch-no-auth` on GET / 200 identity JSON (ENG-9055).
 - OS end-of-life detection beyond RDP: emit `os-eol` when banner/CPE metadata identifies vendor-unsupported Ubuntu, Debian, RHEL, or CentOS (ENG-9062). Windows via RDP remains `rdp-eol-os`. Ubuntu HTTP `Server: Apache/x.y.z (Ubuntu)` maps to the shipping LTS the same way OpenSSH banners already do.
 - Fingerprint internet-exposed Verifone VHQ and Ingenico Estate Manager / TMS management UIs; emit `pos-poi-management-exposed` (ENG-9060). Identity is live-captured HTML titles only (`VHQ`, `Ingenico Estate Management`, `TMS Web Access- Login`).

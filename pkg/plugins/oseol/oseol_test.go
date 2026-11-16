@@ -184,7 +184,7 @@ func TestCheck_DoesNotInventUnlistedVersion(t *testing.T) {
 	now = func() time.Time { return date(2026, time.October, 15) }
 	t.Cleanup(func() { now = orig })
 
-	if got := Check("cpe:2.3:o:canonical:ubuntu_linux:12.04:*:*:*:*:*:*:*"); got != nil {
-		t.Fatalf("unlisted Ubuntu 12.04 should not emit (not in researched table), got %+v", got)
+	if got := Check("cpe:2.3:o:canonical:ubuntu_linux:99.99:*:*:*:*:*:*:*"); got != nil {
+		t.Fatalf("unknown Ubuntu 99.99 should not emit, got %+v", got)
 	}
 }

@@ -17,9 +17,9 @@ package snmp
 import (
 	"bytes"
 	"net"
-	"strings"
 	"time"
 
+	ber "github.com/go-asn1-ber/asn1-ber"
 	"github.com/praetorian-inc/nerva/pkg/plugins"
 	utils "github.com/praetorian-inc/nerva/pkg/plugins/pluginutils"
 )
@@ -33,7 +33,6 @@ func init() {
 }
 
 func (f *SNMPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
-	RequestID := []byte{0x2b, 0x06, 0x01, 0x02, 0x01, 0x01, 0x01, 0x00}
 	InitialConnectionPackage := []byte{
 		0x30, 0x29, // package length
 		0x02, 0x01, 0x00, // Version: 1
@@ -47,8 +46,6 @@ func (f *SNMPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 		0x30, 0x0e, 0x30, 0x0c, 0x06, 0x08, 0x2b, 0x06, // Object ID
 		0x01, 0x02, 0x01, 0x01, 0x01, 0x00, 0x05, 0x00,
 	}
-	InfoOffset := 33
-
 	response, err := utils.SendRecv(conn, InitialConnectionPackage, timeout)
 	if err != nil {
 		return nil, err
@@ -57,19 +54,9 @@ func (f *SNMPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 		return nil, nil
 	}
 
-	idx := strings.Index(string(response), "public")
-	if idx == -1 {
-		return nil, nil
-	}
-	stringBegin := idx + InfoOffset
-	if bytes.Contains(response, RequestID) {
-		var service *plugins.Service
-		if stringBegin < len(response) {
-			service = plugins.CreateServiceFrom(target, plugins.ServiceSNMP{}, false,
-				string(response[stringBegin:]), plugins.UDP)
-		} else {
-			service = plugins.CreateServiceFrom(target, plugins.ServiceSNMP{}, false, "", plugins.UDP)
-		}
+	description, ok := parseDescription(response)
+	if ok {
+		service := plugins.CreateServiceFrom(target, plugins.ServiceSNMP{Description: description}, false, description, plugins.UDP)
 		if target.Misconfigs {
 			service.SecurityFindings = []plugins.SecurityFinding{{
 				ID:          "snmp-default-community",
@@ -81,6 +68,55 @@ func (f *SNMPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 		return service, nil
 	}
 	return nil, nil
+}
+
+// SNMP uses BER, not the stricter DER accepted by encoding/asn1. Decode with
+// the BER library, then validate the response to our public-community sysDescr GET.
+func parseDescription(response []byte) (string, bool) {
+	if len(response) > 65535 {
+		return "", false
+	}
+	reader := bytes.NewReader(response)
+	message, err := ber.ReadPacket(reader)
+	if err != nil || reader.Len() != 0 || !isSequence(message) || len(message.Children) != 3 {
+		return "", false
+	}
+	version, community, pdu := message.Children[0], message.Children[1], message.Children[2]
+	if !integerEquals(version, 0) || !isPrimitive(community, ber.TagOctetString) || string(community.ByteValue) != "public" {
+		return "", false
+	}
+	if pdu.ClassType != ber.ClassContext || pdu.TagType != ber.TypeConstructed || pdu.Tag != 2 || len(pdu.Children) != 4 {
+		return "", false
+	}
+	if !integerEquals(pdu.Children[0], -1) || !integerEquals(pdu.Children[1], 0) || !integerEquals(pdu.Children[2], 0) || !isSequence(pdu.Children[3]) {
+		return "", false
+	}
+	for _, binding := range pdu.Children[3].Children {
+		if !isSequence(binding) || len(binding.Children) != 2 {
+			return "", false
+		}
+		oid, value := binding.Children[0], binding.Children[1]
+		if isPrimitive(oid, ber.TagObjectIdentifier) && oid.Value == "1.3.6.1.2.1.1.1.0" && isPrimitive(value, ber.TagOctetString) {
+			return string(value.ByteValue), true
+		}
+	}
+	return "", false
+}
+
+func isSequence(packet *ber.Packet) bool {
+	return packet.ClassType == ber.ClassUniversal && packet.TagType == ber.TypeConstructed && packet.Tag == ber.TagSequence
+}
+
+func isPrimitive(packet *ber.Packet, tag ber.Tag) bool {
+	return packet.ClassType == ber.ClassUniversal && packet.TagType == ber.TypePrimitive && packet.Tag == tag
+}
+
+func integerEquals(packet *ber.Packet, expected int64) bool {
+	if !isPrimitive(packet, ber.TagInteger) || len(packet.ByteValue) == 0 {
+		return false
+	}
+	value, err := ber.ParseInt64(packet.ByteValue)
+	return err == nil && value == expected
 }
 
 func (f *SNMPPlugin) Name() string {

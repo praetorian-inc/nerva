@@ -59,17 +59,7 @@ func TestSNMP(t *testing.T) {
 
 // TestSNMPSecurityFindings verifies that security findings are set when Misconfigs is true.
 func TestSNMPSecurityFindings(t *testing.T) {
-	// Build a mock SNMP response containing "public" and the RequestID bytes,
-	// with enough bytes after "public"+33 for a version string.
-	requestID := []byte{0x2b, 0x06, 0x01, 0x02, 0x01, 0x01, 0x01, 0x00}
-	// Craft response: padding + "public" + 33 bytes of padding + sysDescr + requestID bytes
-	sysDescr := "Linux test 5.4.0"
-	padding := make([]byte, 10)
-	afterPublic := make([]byte, 33)
-	response := append(padding, []byte("public")...)
-	response = append(response, afterPublic...)
-	response = append(response, []byte(sysDescr)...)
-	response = append(response, requestID...)
+	response := descriptionResponse(t, "Linux test 5.4.0")
 
 	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
@@ -123,14 +113,7 @@ func TestSNMPSecurityFindings(t *testing.T) {
 
 // TestSNMPSecurityFindingsDisabled verifies that no security findings are set when Misconfigs is false.
 func TestSNMPSecurityFindingsDisabled(t *testing.T) {
-	requestID := []byte{0x2b, 0x06, 0x01, 0x02, 0x01, 0x01, 0x01, 0x00}
-	sysDescr := "Linux test 5.4.0"
-	padding := make([]byte, 10)
-	afterPublic := make([]byte, 33)
-	response := append(padding, []byte("public")...)
-	response = append(response, afterPublic...)
-	response = append(response, []byte(sysDescr)...)
-	response = append(response, requestID...)
+	response := descriptionResponse(t, "Linux test 5.4.0")
 
 	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {

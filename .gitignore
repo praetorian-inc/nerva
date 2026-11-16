@@ -47,3 +47,6 @@ dist/
 .claude/.serena/
 .claude/.serena-warmup-status.json
 .claude/agent-memory/
+
+# Lifecycle refresh script/test bytecode
+/scripts/__pycache__/

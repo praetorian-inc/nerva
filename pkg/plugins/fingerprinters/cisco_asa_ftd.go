@@ -60,8 +60,8 @@ func init() {
 var asaFTDVersionRegex = regexp.MustCompile(`^[0-9]+(?:\.[0-9]+){0,4}(?:\([0-9]+\))?$`)
 
 // asaFTDServerVersionRegex extracts version from Server header.
-// Matches patterns like: ASDM/7.18(1), ASA/9.16(4), Firepower/7.2.0
-var asaFTDServerVersionRegex = regexp.MustCompile(`(?i)(?:ASDM|ASA|Firepower)[/\s]+([0-9]+(?:\.[0-9]+)+(?:\([0-9]+\))?)`)
+// ASDM is a separate management application, not an ASA/FTD OS version.
+var asaFTDServerVersionRegex = regexp.MustCompile(`(?i)(?:ASA|Firepower)[/\s]+([0-9]+(?:\.[0-9]+)+(?:\([0-9]+\))?)`)
 
 // asdmVersionRegex extracts ASDM version from Server header.
 // Matches: Cisco ASDM/7.18(1)
