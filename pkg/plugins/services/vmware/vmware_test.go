@@ -468,6 +468,87 @@ func TestPluginMetadata(t *testing.T) {
 	assert.False(t, plugin.PortPriority(80), "Port 80 should not be prioritized")
 }
 
+func TestCheckESXIEOL(t *testing.T) {
+	tests := []struct {
+		version string
+		wantID  string
+	}{
+		{"5.5", "esxi-eol"},
+		{"5.5.0", "esxi-eol"},
+		{"8.0", ""},
+		{"8.0.0", ""},
+		{"", ""},
+		{"invalid", ""},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.version, func(t *testing.T) {
+			finding := checkESXIEOL(tt.version)
+			if tt.wantID == "" {
+				if finding != nil {
+					t.Errorf("checkESXIEOL(%q) = %+v, want nil", tt.version, finding)
+				}
+				return
+			}
+			if finding == nil {
+				t.Fatalf("checkESXIEOL(%q) = nil, want ID %q", tt.version, tt.wantID)
+			}
+			if finding.ID != tt.wantID {
+				t.Errorf("finding.ID = %q, want %q", finding.ID, tt.wantID)
+			}
+		})
+	}
+}
+
+func TestESXIEOLFromSOAP(t *testing.T) {
+	tests := []struct {
+		name    string
+		version string
+		apiType string
+		wantID  string
+	}{
+		{"hostagent 5.5", "5.5.0", "HostAgent", "esxi-eol"},
+		{"hostagent 8.0", "8.0.0", "HostAgent", ""},
+		{"vcenter 5.5", "5.5.0", "VirtualCenter", ""},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			body := buildSOAPResponse(
+				"VMware ESXi",
+				"VMware ESXi "+tt.version+" build-1",
+				"VMware, Inc.",
+				tt.version,
+				"1",
+				tt.apiType,
+				tt.version,
+				"vmnix-x86",
+				"embeddedEsx",
+			)
+			result := parseVMwareResponse(body)
+			if result == nil {
+				t.Fatal("parseVMwareResponse returned nil")
+			}
+			var finding *plugins.SecurityFinding
+			if classifyVMwareProduct(result.ApiType) == "esxi" {
+				finding = checkESXIEOL(result.Version)
+			}
+			if tt.wantID == "" {
+				if finding != nil {
+					t.Errorf("finding = %+v, want nil", finding)
+				}
+				return
+			}
+			if finding == nil {
+				t.Fatalf("finding = nil, want ID %q", tt.wantID)
+			}
+			if finding.ID != tt.wantID {
+				t.Errorf("finding.ID = %q, want %q", finding.ID, tt.wantID)
+			}
+		})
+	}
+}
+
 // mockConn implements net.Conn for a single Recv (4096-byte Read).
 type mockConn struct {
 	readData  []byte
