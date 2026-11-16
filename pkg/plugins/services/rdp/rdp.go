@@ -57,6 +57,7 @@ var eolVersionMap = map[string]eolEntry{
 const RDP = "rdp"
 
 const (
+	protocolSSL      = 0x01
 	protocolHybrid   = 0x02
 	protocolHybridEx = 0x08
 	typeNegRSP       = 0x02
@@ -226,14 +227,14 @@ func checkNLADisabled(selectedProtocol int) *plugins.SecurityFinding {
 	}
 }
 
-func DetectRDP(conn net.Conn, timeout time.Duration) (string, int, bool, error) {
-	InitialConnectionPacket := []byte{
-		0x03, 0x00, 0x00, 0x13, 0x0e, 0xe0, 0x00, 0x00,
-		0x00, 0x00, 0x00, 0x01, 0x00, 0x08, 0x00, 0x0b,
-		0x00, 0x00, 0x00,
-	}
+var rdpInitialConnectionPacket = []byte{
+	0x03, 0x00, 0x00, 0x13, 0x0e, 0xe0, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x01, 0x00, 0x08, 0x00, 0x0b,
+	0x00, 0x00, 0x00,
+}
 
-	response, err := utils.SendRecv(conn, InitialConnectionPacket, timeout)
+func DetectRDP(conn net.Conn, timeout time.Duration) (string, int, bool, error) {
+	response, err := utils.SendRecv(conn, rdpInitialConnectionPacket, timeout)
 	if err != nil {
 		return "", -1, false, err
 	}
@@ -479,6 +480,13 @@ func (p *RDPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 			if finding := checkNLADisabled(selectedProtocol); finding != nil {
 				service.SecurityFindings = append(service.SecurityFindings, *finding)
 			}
+			if selectedProtocol&(protocolSSL|protocolHybrid|protocolHybridEx) != 0 {
+				if addr := conn.RemoteAddr(); addr != nil {
+					a := addr.String()
+					dial := func() (net.Conn, error) { return dialRDPReadyForTLS(target, a, timeout) }
+					service.SecurityFindings = append(service.SecurityFindings, plugins.ProbeTLSMisconfigs(dial, target.Host)...)
+				}
+			}
 		}
 		return service, nil
 	}
@@ -497,7 +505,7 @@ func (p *TLSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Tar
 					service.SecurityFindings = append(service.SecurityFindings, *finding)
 				}
 			}
-			service.SecurityFindings = append(service.SecurityFindings, plugins.CheckTLS(conn)...)
+			service.SecurityFindings = append(service.SecurityFindings, plugins.CheckTLS(&rdpProbeConn{Conn: conn, timeout: timeout, target: target})...)
 		}
 		return service, nil
 	}
@@ -524,4 +532,36 @@ func (p *RDPPlugin) Priority() int {
 
 func (p *TLSPlugin) Priority() int {
 	return 89
+}
+
+type rdpProbeConn struct {
+	net.Conn
+	timeout time.Duration
+	target  plugins.Target
+}
+
+func (c *rdpProbeConn) Unwrap() net.Conn { return c.Conn }
+
+func (c *rdpProbeConn) DialRawTCP() (net.Conn, error) {
+	if c.RemoteAddr() == nil {
+		return nil, fmt.Errorf("rdp: no remote addr")
+	}
+	return dialRDPReadyForTLS(c.target, c.RemoteAddr().String(), c.timeout)
+}
+
+func dialRDPReadyForTLS(target plugins.Target, addr string, timeout time.Duration) (net.Conn, error) {
+	c, err := target.FollowupTCP(addr, timeout)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := utils.SendRecv(c, rdpInitialConnectionPacket, timeout)
+	if err != nil {
+		c.Close()
+		return nil, err
+	}
+	if !checkRDP(resp) {
+		c.Close()
+		return nil, &utils.InvalidResponseError{Service: RDP}
+	}
+	return c, nil
 }

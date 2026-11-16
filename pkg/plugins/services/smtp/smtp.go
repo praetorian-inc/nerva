@@ -16,6 +16,7 @@ package smtp
 
 import (
 	"bytes"
+	"crypto/tls"
 	"net"
 	"strings"
 	"time"
@@ -182,12 +183,6 @@ func (p *SMTPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 		}
 		service := plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP)
 		if target.Misconfigs {
-			service.SecurityFindings = []plugins.SecurityFinding{{
-				ID:          "smtp-cleartext",
-				Severity:    plugins.SeverityLow,
-				Description: "SMTP transmits data including credentials in cleartext",
-				Evidence:    data.Banner,
-			}}
 			if len(data.AuthMethods) > 0 {
 				hasAuth := false
 				for _, method := range data.AuthMethods {
@@ -212,6 +207,42 @@ func (p *SMTPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 						Evidence:    "Server accepted RCPT TO:<test@example.org> after MAIL FROM:<test@example.com>",
 					})
 				}
+			}
+			if ehloHasToken(data.AuthMethods, "STARTTLS") && smtpSTARTTLSCommand(conn, timeout) {
+				var dial func() (net.Conn, error)
+				if addr := conn.RemoteAddr(); addr != nil {
+					a := addr.String()
+					dial = func() (net.Conn, error) { return dialSMTPReadyForTLS(target, a, timeout) }
+				}
+				cfg := &tls.Config{InsecureSkipVerify: true, ServerName: target.Host} // #nosec G402 -- scanner
+				tconn := tls.Client(conn, cfg)
+				var findings []plugins.SecurityFinding
+				tlsOK := false
+				if err := tconn.Handshake(); err == nil {
+					findings = plugins.CheckTLS(&plugins.RawDialConn{Conn: tconn, Dial: dial})
+					tlsOK = true
+				} else if dial != nil {
+					findings = plugins.ProbeTLSMisconfigs(dial, target.Host)
+					tlsOK = len(findings) > 0
+				}
+				cleartext := plugins.SecurityFinding{
+					ID:          "smtp-cleartext",
+					Severity:    plugins.SeverityLow,
+					Description: "SMTP transmits data including credentials in cleartext",
+					Evidence:    data.Banner,
+				}
+				if tlsOK {
+					service.SecurityFindings = append(append([]plugins.SecurityFinding{cleartext}, service.SecurityFindings...), findings...)
+				} else {
+					service.SecurityFindings = append([]plugins.SecurityFinding{cleartext}, service.SecurityFindings...)
+				}
+			} else {
+				service.SecurityFindings = append([]plugins.SecurityFinding{{
+					ID:          "smtp-cleartext",
+					Severity:    plugins.SeverityLow,
+					Description: "SMTP transmits data including credentials in cleartext",
+					Evidence:    data.Banner,
+				}}, service.SecurityFindings...)
 			}
 		}
 		return service, nil
@@ -259,4 +290,80 @@ func (p *SMTPPlugin) Priority() int {
 
 func (p *TLSPlugin) Priority() int {
 	return 61
+}
+
+func ehloHasToken(methods []string, token string) bool {
+	joined := strings.ToUpper(strings.Join(methods, " "))
+	return strings.Contains(joined, strings.ToUpper(token))
+}
+
+func smtpSTARTTLSCommand(conn net.Conn, timeout time.Duration) bool {
+	resp, err := utils.SendRecv(conn, []byte("STARTTLS\r\n"), timeout)
+	if err != nil || len(resp) < 3 {
+		return false
+	}
+	return bytes.Equal(resp[0:3], []byte("220"))
+}
+
+func dialSMTPReadyForTLS(target plugins.Target, addr string, timeout time.Duration) (net.Conn, error) {
+	c, err := target.FollowupTCP(addr, timeout)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := smtpRecvReply(c, timeout); err != nil {
+		c.Close()
+		return nil, err
+	}
+	if _, err := smtpSendRecvReply(c, []byte("EHLO example.com\r\n"), timeout); err != nil {
+		c.Close()
+		return nil, err
+	}
+	resp, err := smtpSendRecvReply(c, []byte("STARTTLS\r\n"), timeout)
+	if err != nil {
+		c.Close()
+		return nil, err
+	}
+	if len(resp) < 3 || !bytes.Equal(resp[0:3], []byte("220")) {
+		c.Close()
+		return nil, &utils.InvalidResponseErrorInfo{Service: SMTP, Info: "STARTTLS rejected"}
+	}
+	return c, nil
+}
+
+func smtpSendRecvReply(conn net.Conn, data []byte, timeout time.Duration) ([]byte, error) {
+	if err := utils.Send(conn, data, timeout); err != nil {
+		return nil, err
+	}
+	return smtpRecvReply(conn, timeout)
+}
+
+func smtpRecvReply(conn net.Conn, timeout time.Duration) ([]byte, error) {
+	deadline := time.Now().Add(timeout)
+	var all []byte
+	for time.Now().Before(deadline) {
+		chunk, err := utils.Recv(conn, time.Until(deadline))
+		if err != nil {
+			if len(all) > 0 {
+				return all, nil
+			}
+			return nil, err
+		}
+		if len(chunk) == 0 {
+			break
+		}
+		all = append(all, chunk...)
+		if smtpReplyComplete(all) {
+			return all, nil
+		}
+	}
+	return all, nil
+}
+
+func smtpReplyComplete(b []byte) bool {
+	for _, line := range bytes.Split(b, []byte("\r\n")) {
+		if len(line) >= 4 && line[0] >= '2' && line[0] <= '5' && line[3] == ' ' {
+			return true
+		}
+	}
+	return false
 }

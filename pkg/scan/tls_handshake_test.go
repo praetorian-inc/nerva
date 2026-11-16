@@ -84,3 +84,19 @@ func TestSimpleScanTargetSkipsPlaintextSlowLaneAfterTLSAlert(t *testing.T) {
 		t.Fatalf("server accepted %d connections, want only the TLS probe", got)
 	}
 }
+
+func TestIsTLSHandshakeFailure(t *testing.T) {
+	if isTLSHandshakeFailure(nil) {
+		t.Fatal("nil is not a handshake failure")
+	}
+	if !isTLSHandshakeFailure(&net.OpError{Op: "remote error", Err: errors.New("tls: protocol version not supported")}) {
+		t.Fatal("remote protocol-version alert must hand off to enumerator")
+	}
+	if !isTLSHandshakeFailure(errors.New("tls: no protocols available")) {
+		t.Fatal("NO_PROTOCOLS_AVAILABLE must hand off")
+	}
+	wrong := errors.New("tls: first record does not look like a TLS handshake")
+	if isTLSHandshakeFailure(wrong) {
+		t.Fatal("WRONG_VERSION_NUMBER / non-TLS first record must not skip plaintext")
+	}
+}

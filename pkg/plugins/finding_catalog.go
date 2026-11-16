@@ -118,6 +118,13 @@ var findingCatalog = map[string]FindingMeta{
 	},
 
 	// ── TLS findings ─────────────────────────────────────────────────────
+	"tls-weak-version-ssl3": {
+		Title:          "SSL 3.0 Supported",
+		Severity:       SeverityLow,
+		Impact:         "SSL 3.0 is broken (POODLE) and is an automatic fail under PCI DSS when offered, including on mixed stacks that also speak TLS 1.2.",
+		Recommendation: "Disable SSL 3.0. Configure a minimum protocol version of TLS 1.2.",
+		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:N/A:N",
+	},
 	"tls-weak-version-10": {
 		Title:          "TLS 1.0 Supported",
 		Severity:       SeverityLow,
@@ -146,6 +153,27 @@ var findingCatalog = map[string]FindingMeta{
 		Recommendation: "Replace self-signed certificates with certificates issued by a trusted Certificate Authority for production services.",
 		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:U/C:N/I:N/A:N",
 	},
+	"tls-weak-signature": {
+		Title:          "Weak TLS Certificate Signature",
+		Severity:       SeverityLow,
+		Impact:         "MD5 and SHA-1 certificate signatures can be collided, allowing an attacker to forge a trusted certificate for the service.",
+		Recommendation: "Reissue the certificate with SHA-256 or stronger. Disable MD5 and SHA-1 in the CA and server configuration.",
+		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:N/I:H/A:N",
+	},
+	"tls-cn-mismatch": {
+		Title:          "TLS Certificate Hostname Mismatch",
+		Severity:       SeverityLow,
+		Impact:         "A certificate whose CN/SAN does not match the probed name cannot authenticate the service, enabling man-in-the-middle substitution.",
+		Recommendation: "Issue a certificate whose subject alternative names include every hostname the service is reached by.",
+		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:U/C:N/I:L/A:N",
+	},
+	"tls-untrusted-ca": {
+		Title:          "TLS Certificate Not Chained to a Public CA",
+		Severity:       SeverityLow,
+		Impact:         "A certificate that does not chain to a public CA cannot be validated by standard clients, matching the PCI ASV cert-quality check for non-public issuers.",
+		Recommendation: "Replace the certificate with one issued by a publicly trusted certificate authority.",
+		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:U/C:N/I:L/A:N",
+	},
 	"tls-weak-key": {
 		Title:          "Weak TLS Certificate Key",
 		Severity:       SeverityLow,
@@ -173,6 +201,20 @@ var findingCatalog = map[string]FindingMeta{
 		Impact:         "EXPORT-grade cipher suites use deliberately weakened keys. Historical attacks (FREAK, Logjam) recover those keys and decrypt the session.",
 		Recommendation: "Disable all EXPORT cipher suites. Use modern key sizes and authenticated encryption.",
 		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+	},
+	"tls-rc4-cipher": {
+		Title:          "RC4 TLS Cipher Suite Accepted",
+		Severity:       SeverityMedium,
+		Impact:         "RC4 is cryptographically broken. Biases in the keystream allow recovery of plaintext, including HTTP cookies, given enough sessions.",
+		Recommendation: "Disable RC4 cipher suites. Prefer AES-GCM or ChaCha20-Poly1305.",
+		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:N/A:N",
+	},
+	"tls-3des-cipher": {
+		Title:          "3DES TLS Cipher Suite Accepted",
+		Severity:       SeverityMedium,
+		Impact:         "3DES is limited to a 64-bit block size. The Sweet32 attack recovers plaintext from long-lived connections.",
+		Recommendation: "Disable 3DES (DES-CBC3) cipher suites. Prefer AES-GCM or ChaCha20-Poly1305.",
+		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:N/A:N",
 	},
 
 	// ── SSH findings ─────────────────────────────────────────────────────

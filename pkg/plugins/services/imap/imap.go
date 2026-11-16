@@ -15,6 +15,7 @@
 package imap
 
 import (
+	"crypto/tls"
 	"net"
 	"strings"
 	"time"
@@ -151,12 +152,42 @@ func (p *IMAPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 	}
 	service := plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP)
 	if target.Misconfigs {
-		service.SecurityFindings = []plugins.SecurityFinding{{
-			ID:          "imap-cleartext",
-			Severity:    plugins.SeverityMedium,
-			Description: "IMAP transmits data including credentials in cleartext",
-			Evidence:    result,
-		}}
+		if starttlsOK := imapSTARTTLSCommand(conn, timeout); starttlsOK {
+			var dial func() (net.Conn, error)
+			if addr := conn.RemoteAddr(); addr != nil {
+				a := addr.String()
+				dial = func() (net.Conn, error) { return dialIMAPReadyForTLS(target, a, timeout) }
+			}
+			cfg := &tls.Config{InsecureSkipVerify: true, ServerName: target.Host} // #nosec G402 -- scanner
+			tconn := tls.Client(conn, cfg)
+			var findings []plugins.SecurityFinding
+			tlsOK := false
+			if err := tconn.Handshake(); err == nil {
+				findings = plugins.CheckTLS(&plugins.RawDialConn{Conn: tconn, Dial: dial})
+				tlsOK = true
+			} else if dial != nil {
+				findings = plugins.ProbeTLSMisconfigs(dial, target.Host)
+				tlsOK = len(findings) > 0
+			}
+			cleartext := plugins.SecurityFinding{
+				ID:          "imap-cleartext",
+				Severity:    plugins.SeverityMedium,
+				Description: "IMAP transmits data including credentials in cleartext",
+				Evidence:    result,
+			}
+			if tlsOK {
+				service.SecurityFindings = append([]plugins.SecurityFinding{cleartext}, findings...)
+			} else {
+				service.SecurityFindings = []plugins.SecurityFinding{cleartext}
+			}
+		} else {
+			service.SecurityFindings = []plugins.SecurityFinding{{
+				ID:          "imap-cleartext",
+				Severity:    plugins.SeverityMedium,
+				Description: "IMAP transmits data including credentials in cleartext",
+				Evidence:    result,
+			}}
+		}
 	}
 	return service, nil
 }
@@ -208,4 +239,78 @@ func (p *TLSPlugin) Priority() int {
 
 func (p *TLSPlugin) Type() plugins.Protocol {
 	return plugins.TCPTLS
+}
+
+func imapSTARTTLSCommand(conn net.Conn, timeout time.Duration) bool {
+	tag := "S8TLS"
+	resp, err := utils.SendRecv(conn, []byte(tag+" STARTTLS\r\n"), timeout)
+	if err != nil {
+		return false
+	}
+	return imapTaggedOK(resp, tag)
+}
+
+func imapTaggedOK(resp []byte, tag string) bool {
+	prefix := strings.ToUpper(tag) + " OK"
+	for _, line := range strings.Split(string(resp), "\r\n") {
+		if strings.HasPrefix(strings.ToUpper(line), prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func dialIMAPReadyForTLS(target plugins.Target, addr string, timeout time.Duration) (net.Conn, error) {
+	c, err := target.FollowupTCP(addr, timeout)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := utils.Recv(c, timeout); err != nil {
+		c.Close()
+		return nil, err
+	}
+	capTag := "7FYWU8I4"
+	if _, err := imapSendRecvUntilTag(c, []byte(capTag+" CAPABILITY\r\n"), capTag, timeout); err != nil {
+		c.Close()
+		return nil, err
+	}
+	tag := "S8TLS"
+	resp, err := imapSendRecvUntilTag(c, []byte(tag+" STARTTLS\r\n"), tag, timeout)
+	if err != nil {
+		c.Close()
+		return nil, err
+	}
+	if !imapTaggedOK(resp, tag) {
+		c.Close()
+		return nil, &utils.InvalidResponseErrorInfo{Service: IMAP, Info: "STARTTLS rejected"}
+	}
+	return c, nil
+}
+
+func imapSendRecvUntilTag(conn net.Conn, data []byte, tag string, timeout time.Duration) ([]byte, error) {
+	if err := utils.Send(conn, data, timeout); err != nil {
+		return nil, err
+	}
+	prefix := strings.ToUpper(tag) + " "
+	deadline := time.Now().Add(timeout)
+	var all []byte
+	for time.Now().Before(deadline) {
+		chunk, err := utils.Recv(conn, time.Until(deadline))
+		if err != nil {
+			if len(all) > 0 {
+				return all, nil
+			}
+			return nil, err
+		}
+		if len(chunk) == 0 {
+			break
+		}
+		all = append(all, chunk...)
+		for _, line := range strings.Split(string(all), "\r\n") {
+			if strings.HasPrefix(strings.ToUpper(line), prefix) {
+				return all, nil
+			}
+		}
+	}
+	return all, nil
 }

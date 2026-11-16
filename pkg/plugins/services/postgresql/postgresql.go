@@ -25,6 +25,9 @@ import (
 	utils "github.com/praetorian-inc/nerva/pkg/plugins/pluginutils"
 )
 
+// SSLRequest per PostgreSQL protocol: length 8 + 80877103.
+var postgresSSLRequest = []byte{0x00, 0x00, 0x00, 0x08, 0x04, 0xd2, 0x16, 0x2f}
+
 type POSTGRESPlugin struct{}
 
 const POSTGRES = "postgres"
@@ -227,14 +230,21 @@ func (p *POSTGRESPlugin) Run(conn net.Conn, timeout time.Duration, target plugin
 		CPEs:         []string{cpe},
 	}
 	service := plugins.CreateServiceFrom(target, payload, false, "", plugins.TCP)
-	if target.Misconfigs && !payload.AuthRequired {
-		service.AnonymousAccess = true
-		service.SecurityFindings = []plugins.SecurityFinding{{
-			ID:          "postgresql-no-auth",
-			Severity:    plugins.SeverityCritical,
-			Description: "PostgreSQL accessible without authentication",
-			Evidence:    "Connection succeeded without credentials",
-		}}
+	if target.Misconfigs {
+		if !payload.AuthRequired {
+			service.AnonymousAccess = true
+			service.SecurityFindings = []plugins.SecurityFinding{{
+				ID:          "postgresql-no-auth",
+				Severity:    plugins.SeverityCritical,
+				Description: "PostgreSQL accessible without authentication",
+				Evidence:    "Connection succeeded without credentials",
+			}}
+		}
+		if addr := conn.RemoteAddr(); addr != nil {
+			a := addr.String()
+			dial := func() (net.Conn, error) { return dialPostgresReadyForTLS(target, a, timeout) }
+			service.SecurityFindings = append(service.SecurityFindings, plugins.ProbeTLSMisconfigs(dial, target.Host)...)
+		}
 	}
 	return service, nil
 }
@@ -248,4 +258,21 @@ func (p *POSTGRESPlugin) Type() plugins.Protocol {
 
 func (p *POSTGRESPlugin) Priority() int {
 	return 1000
+}
+
+func dialPostgresReadyForTLS(target plugins.Target, addr string, timeout time.Duration) (net.Conn, error) {
+	c, err := target.FollowupTCP(addr, timeout)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := utils.SendRecv(c, postgresSSLRequest, timeout)
+	if err != nil {
+		c.Close()
+		return nil, err
+	}
+	if len(resp) < 1 || resp[0] != 'S' {
+		c.Close()
+		return nil, &utils.InvalidResponseErrorInfo{Service: POSTGRES, Info: "SSLRequest not accepted"}
+	}
+	return c, nil
 }

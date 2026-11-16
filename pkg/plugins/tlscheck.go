@@ -21,6 +21,7 @@ import (
 	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"net"
 	"time"
@@ -29,8 +30,8 @@ import (
 // CheckTLS inspects the TLS connection state and returns security findings for
 // weak versions, expired certificates, self-signed certificates, and weak keys.
 // When conn is a TCP *tls.Conn it also probes whether the peer accepts
-// anonymous, NULL, or EXPORT cipher suites via a raw ClientHello (Go's stdlib
-// client will not offer those suites).
+// anonymous, NULL, EXPORT, RC4, or 3DES cipher suites via a raw ClientHello
+// (Go's stdlib client will not offer those suites).
 // Returns nil if conn is not a *tls.Conn or no issues are found.
 // Peers that reject the stdlib handshake (weak-only ADH/NULL/EXPORT listeners)
 // never produce a *tls.Conn; the scan path calls ProbeWeakCiphers instead.
@@ -58,9 +59,20 @@ func CheckTLS(conn net.Conn) []SecurityFinding {
 		if f := checkWeakKey(leaf); f != nil {
 			findings = append(findings, *f)
 		}
+		if f := checkWeakSignature(leaf); f != nil {
+			findings = append(findings, *f)
+		}
+		sni := resolveProbeSNI(conn)
+		if f := checkHostnameMismatch(leaf, sni); f != nil {
+			findings = append(findings, *f)
+		}
+		if f := checkUntrustedCA(leaf, state.PeerCertificates); f != nil {
+			findings = append(findings, *f)
+		}
 	}
 
 	findings = append(findings, probeWeakCiphers(conn)...)
+	findings = mergeFindingsByID(findings, probeOfferedVersions(conn))
 
 	if len(findings) == 0 {
 		return nil
@@ -72,6 +84,8 @@ func CheckTLS(conn net.Conn) []SecurityFinding {
 // Exported because HTTP's http.go uses it too.
 func TLSVersionName(version uint16) string {
 	switch version {
+	case versionSSL30:
+		return "SSL 3.0"
 	case tls.VersionTLS10:
 		return "TLS 1.0"
 	case tls.VersionTLS11:
@@ -87,6 +101,13 @@ func TLSVersionName(version uint16) string {
 
 func checkWeakTLSVersion(version uint16) *SecurityFinding {
 	switch version {
+	case versionSSL30:
+		return &SecurityFinding{
+			ID:          findingTLSWeakVersionSSL3,
+			Severity:    SeverityLow,
+			Description: "Server offered SSL 3.0, which is broken (POODLE) and forbidden by PCI DSS",
+			Evidence:    "offered_version=" + TLSVersionName(version),
+		}
 	case tls.VersionTLS10:
 		return &SecurityFinding{
 			ID:          "tls-weak-version-10",
@@ -167,4 +188,72 @@ func checkWeakKey(cert *x509.Certificate) *SecurityFinding {
 		}
 	}
 	return nil
+}
+
+func checkWeakSignature(cert *x509.Certificate) *SecurityFinding {
+	switch cert.SignatureAlgorithm {
+	case x509.MD5WithRSA:
+		return &SecurityFinding{
+			ID:          findingTLSWeakSignature,
+			Severity:    SeverityLow,
+			Description: "TLS certificate is signed with MD5, which is broken for certificate signatures",
+			Evidence:    fmt.Sprintf("signature_algorithm=%s", cert.SignatureAlgorithm),
+		}
+	case x509.SHA1WithRSA, x509.ECDSAWithSHA1:
+		return &SecurityFinding{
+			ID:          findingTLSWeakSignature,
+			Severity:    SeverityLow,
+			Description: "TLS certificate is signed with SHA-1, which is deprecated for certificate signatures",
+			Evidence:    fmt.Sprintf("signature_algorithm=%s", cert.SignatureAlgorithm),
+		}
+	default:
+		return nil
+	}
+}
+
+func checkHostnameMismatch(cert *x509.Certificate, sni string) *SecurityFinding {
+	if sni == "" || net.ParseIP(sni) != nil {
+		return nil
+	}
+	if err := cert.VerifyHostname(sni); err == nil {
+		return nil
+	}
+	return &SecurityFinding{
+		ID:          findingTLSCNMismatch,
+		Severity:    SeverityLow,
+		Description: "TLS certificate common name / SAN does not match the probed hostname",
+		Evidence:    fmt.Sprintf("sni=%q, subject=%q", sni, cert.Subject.CommonName),
+	}
+}
+
+func checkUntrustedCA(leaf *x509.Certificate, chain []*x509.Certificate) *SecurityFinding {
+	if checkSelfSignedCert(leaf, chain) != nil {
+		return nil
+	}
+	opts := x509.VerifyOptions{CurrentTime: leaf.NotBefore.Add(time.Second)}
+	if len(chain) > 1 {
+		inter := x509.NewCertPool()
+		for _, c := range chain[1:] {
+			inter.AddCert(c)
+		}
+		opts.Intermediates = inter
+	}
+	_, err := leaf.Verify(opts)
+	if err == nil {
+		return nil
+	}
+	var sysRoots x509.SystemRootsError
+	if errors.As(err, &sysRoots) {
+		return nil
+	}
+	var unknown x509.UnknownAuthorityError
+	if !errors.As(err, &unknown) {
+		return nil
+	}
+	return &SecurityFinding{
+		ID:          findingTLSUntrustedCA,
+		Severity:    SeverityLow,
+		Description: "TLS certificate is not chained to a public certificate authority",
+		Evidence:    fmt.Sprintf("subject=%q, issuer=%q, verify=%v", leaf.Subject.CommonName, leaf.Issuer.CommonName, err),
+	}
 }
