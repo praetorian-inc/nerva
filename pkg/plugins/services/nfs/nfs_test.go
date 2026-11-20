@@ -16,7 +16,11 @@ package nfs
 
 import (
 	"encoding/binary"
+	"fmt"
+	"net"
+	"net/netip"
 	"testing"
+	"time"
 
 	"github.com/ory/dockertest/v3"
 	"github.com/stretchr/testify/assert"
@@ -431,5 +435,232 @@ func TestNFS(t *testing.T) {
 				t.Errorf("%v", err)
 			}
 		})
+	}
+}
+
+type recordingConn struct {
+	net.Conn
+	writes [][]byte
+}
+
+func (r *recordingConn) Write(p []byte) (int, error) {
+	cp := append([]byte(nil), p...)
+	r.writes = append(r.writes, cp)
+	return r.Conn.Write(p)
+}
+
+func xdrEncodeString(s string) []byte {
+	n := len(s)
+	pad := (4 - (n % 4)) % 4
+	buf := make([]byte, 4+n+pad)
+	binary.BigEndian.PutUint32(buf[0:4], uint32(n))
+	copy(buf[4:], s)
+	return buf
+}
+
+func encodeExportList(path string, clients []string) []byte {
+	var b []byte
+	trueb := make([]byte, 4)
+	binary.BigEndian.PutUint32(trueb, 1)
+	falseb := make([]byte, 4)
+	b = append(b, trueb...)
+	b = append(b, xdrEncodeString(path)...)
+	for _, c := range clients {
+		b = append(b, trueb...)
+		b = append(b, xdrEncodeString(c)...)
+	}
+	b = append(b, falseb...)
+	b = append(b, falseb...)
+	return b
+}
+
+func rpcAcceptTCP(xid uint32, payload []byte) []byte {
+	bodyLen := 24 + len(payload)
+	buf := make([]byte, 4+bodyLen)
+	binary.BigEndian.PutUint32(buf[0:4], 0x80000000|uint32(bodyLen))
+	binary.BigEndian.PutUint32(buf[4:8], xid)
+	binary.BigEndian.PutUint32(buf[8:12], 1)
+	copy(buf[28:], payload)
+	return buf
+}
+
+func serveMountFixture(t *testing.T, path string, clients []string, answerNFS, answerExport bool) net.Listener {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		buf := make([]byte, 4096)
+		for {
+			_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+			n, err := conn.Read(buf)
+			if err != nil || n < 28 {
+				return
+			}
+			xid := binary.BigEndian.Uint32(buf[4:8])
+			program := binary.BigEndian.Uint32(buf[16:20])
+			proc := binary.BigEndian.Uint32(buf[24:28])
+			var reply []byte
+			switch {
+			case program == NFSProgramNumber && proc == 0 && answerNFS:
+				reply = rpcAcceptTCP(xid, nil)
+			case program == MountProgramNumber && proc == MountExportProc && answerExport:
+				reply = rpcAcceptTCP(xid, encodeExportList(path, clients))
+			case program == MountProgramNumber && proc == 1:
+				t.Errorf("detector sent MOUNT MNT (procedure 1)")
+				return
+			default:
+				// accepted=false via PROG_UNAVAIL (accept_stat=1)
+				fail := rpcAcceptTCP(xid, nil)
+				binary.BigEndian.PutUint32(fail[24:28], 1)
+				reply = fail
+			}
+			_, _ = conn.Write(reply)
+		}
+	}()
+	return ln
+}
+
+func runAgainstFixture(t *testing.T, ln net.Listener, misconfigs bool) (*plugins.Service, [][]byte, error) {
+	t.Helper()
+	addr := ln.Addr().(*net.TCPAddr)
+	raw, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", addr.Port), 5*time.Second)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	rec := &recordingConn{Conn: raw}
+	defer rec.Close()
+	target := plugins.Target{
+		Host:       "127.0.0.1",
+		Address:    netip.MustParseAddrPort(fmt.Sprintf("127.0.0.1:%d", addr.Port)),
+		Misconfigs: misconfigs,
+	}
+	svc, err := (&NFSTCPPlugin{}).Run(rec, 2*time.Second, target)
+	return svc, rec.writes, err
+}
+
+func TestNFSExportPublicFixtureEmitsFinding(t *testing.T) {
+	ln := serveMountFixture(t, "/home", []string{"*"}, true, true)
+	defer ln.Close()
+	svc, writes, err := runAgainstFixture(t, ln, true)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if svc == nil {
+		t.Fatal("expected service")
+	}
+	if len(svc.SecurityFindings) != 1 {
+		t.Fatalf("findings=%d want 1", len(svc.SecurityFindings))
+	}
+	if svc.SecurityFindings[0].ID != NFSExportsFindingID {
+		t.Errorf("id=%q want %q", svc.SecurityFindings[0].ID, NFSExportsFindingID)
+	}
+	assertNoMountProc(t, writes)
+}
+
+func TestNFSExportRestrictedDoesNotEmit(t *testing.T) {
+	ln := serveMountFixture(t, "/home", []string{"10.0.0.0/8"}, true, true)
+	defer ln.Close()
+	svc, writes, err := runAgainstFixture(t, ln, true)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if svc == nil {
+		t.Fatal("expected NFS service without finding")
+	}
+	if len(svc.SecurityFindings) != 0 {
+		t.Fatalf("findings=%d want 0", len(svc.SecurityFindings))
+	}
+	assertNoMountProc(t, writes)
+}
+
+func TestNFSExportFailureDoesNotEmit(t *testing.T) {
+	ln := serveMountFixture(t, "/home", []string{"*"}, true, false)
+	defer ln.Close()
+	svc, writes, err := runAgainstFixture(t, ln, true)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if svc != nil && len(svc.SecurityFindings) != 0 {
+		t.Fatalf("emitted %d findings on EXPORT failure", len(svc.SecurityFindings))
+	}
+	assertNoMountProc(t, writes)
+}
+
+func TestNFSExportMisconfigsFalseDoesNotEmit(t *testing.T) {
+	ln := serveMountFixture(t, "/home", []string{"*"}, true, true)
+	defer ln.Close()
+	svc, writes, err := runAgainstFixture(t, ln, false)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if svc == nil {
+		t.Fatal("expected NFS service")
+	}
+	if len(svc.SecurityFindings) != 0 {
+		t.Fatalf("findings=%d want 0 when Misconfigs=false", len(svc.SecurityFindings))
+	}
+	assertNoMountProc(t, writes)
+	for _, w := range writes {
+		if len(w) >= 28 && binary.BigEndian.Uint32(w[16:20]) == MountProgramNumber {
+			t.Fatalf("MOUNT probe sent when Misconfigs=false")
+		}
+	}
+}
+
+func TestNFSExportEmptyGroupsIsPublic(t *testing.T) {
+	ln := serveMountFixture(t, "/home", nil, true, true)
+	defer ln.Close()
+	svc, _, err := runAgainstFixture(t, ln, true)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if svc == nil || len(svc.SecurityFindings) != 1 {
+		t.Fatalf("empty groups should emit nfs-exports")
+	}
+}
+
+func TestNFSExportMountOnlySocket(t *testing.T) {
+	ln := serveMountFixture(t, "/home", []string{"*"}, false, true)
+	defer ln.Close()
+	svc, writes, err := runAgainstFixture(t, ln, true)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if svc == nil {
+		t.Fatal("expected service when MOUNT EXPORT succeeds on a non-nfsd socket")
+	}
+	if len(svc.SecurityFindings) != 1 || svc.SecurityFindings[0].ID != NFSExportsFindingID {
+		t.Fatalf("mount-only socket should emit nfs-exports")
+	}
+	assertNoMountProc(t, writes)
+}
+
+func TestXDRStringRejectsOversizedLength(t *testing.T) {
+	buf := make([]byte, 8)
+	binary.BigEndian.PutUint32(buf[0:4], 0x7fffffff)
+	_, _, ok := xdrString(buf, 0)
+	if ok {
+		t.Fatal("oversized XDR length must fail closed")
+	}
+}
+
+func assertNoMountProc(t *testing.T, writes [][]byte) {
+	t.Helper()
+	for _, w := range writes {
+		if len(w) < 28 {
+			continue
+		}
+		program := binary.BigEndian.Uint32(w[16:20])
+		proc := binary.BigEndian.Uint32(w[24:28])
+		if program == MountProgramNumber && proc == 1 {
+			t.Fatalf("sent MOUNT MNT procedure")
+		}
 	}
 }
