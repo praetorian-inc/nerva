@@ -16,7 +16,10 @@ package snmp
 
 import (
 	"bytes"
+	"fmt"
 	"net"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -77,10 +80,55 @@ func (f *SNMPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 				Description: "SNMP service responds to default 'public' community string",
 				Evidence:    "community_string=public",
 			}}
+			if finding := checkSNMPEOL(service.Version); finding != nil {
+				service.SecurityFindings = append(service.SecurityFindings, *finding)
+			}
 		}
 		return service, nil
 	}
 	return nil, nil
+}
+
+type eolEntry struct {
+	name     string
+	severity plugins.Severity
+}
+
+var snmpESXIEOLMap = map[string]eolEntry{
+	"5.5": {"VMware ESXi 5.5", plugins.SeverityLow},
+}
+
+var esxiSysDescrRe = regexp.MustCompile(`VMware ESXi ([0-9.]+)`)
+
+// checkSNMPEOL maps an SNMP sysDescr string to a SecurityFinding if it discloses
+// an end-of-life VMware ESXi version. ID is snmp-eol, not esxi-eol.
+func checkSNMPEOL(sysDescr string) *plugins.SecurityFinding {
+	m := esxiSysDescrRe.FindStringSubmatch(sysDescr)
+	if len(m) < 2 {
+		return nil
+	}
+	parts := strings.SplitN(m[1], ".", 3)
+	if len(parts) < 2 {
+		return nil
+	}
+	major, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return nil
+	}
+	minor, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return nil
+	}
+	entry, ok := snmpESXIEOLMap[fmt.Sprintf("%d.%d", major, minor)]
+	if !ok {
+		return nil
+	}
+	return &plugins.SecurityFinding{
+		ID:          "snmp-eol",
+		Severity:    entry.severity,
+		Description: fmt.Sprintf("SNMP sysDescr discloses end-of-life product: %s", entry.name),
+		Evidence:    sysDescr,
+	}
 }
 
 func (f *SNMPPlugin) Name() string {

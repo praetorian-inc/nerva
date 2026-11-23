@@ -91,6 +91,38 @@ func TestBuildMSSQLCPE_WithoutVersion(t *testing.T) {
 	}
 }
 
+func TestCheckMSSQLEOL(t *testing.T) {
+	tests := []struct {
+		version string
+		wantID  string
+	}{
+		{"9.0.1399\n", "mssql-eol"},
+		{"9.0.1399", "mssql-eol"},
+		{"16.0.1000\n", ""},
+		{"16.0.1000", ""},
+		{"", ""},
+		{"invalid", ""},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.version, func(t *testing.T) {
+			finding := checkMSSQLEOL(tt.version)
+			if tt.wantID == "" {
+				if finding != nil {
+					t.Errorf("checkMSSQLEOL(%q) = %+v, want nil", tt.version, finding)
+				}
+				return
+			}
+			if finding == nil {
+				t.Fatalf("checkMSSQLEOL(%q) = nil, want ID %q", tt.version, tt.wantID)
+			}
+			if finding.ID != tt.wantID {
+				t.Errorf("finding.ID = %q, want %q", finding.ID, tt.wantID)
+			}
+		})
+	}
+}
+
 func TestMSSQL(t *testing.T) {
 	testcases := []test.Testcase{
 		{

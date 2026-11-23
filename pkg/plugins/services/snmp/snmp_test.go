@@ -175,3 +175,131 @@ func TestSNMPSecurityFindingsDisabled(t *testing.T) {
 		t.Fatalf("expected 0 findings, got %d", len(service.SecurityFindings))
 	}
 }
+
+func TestCheckSNMPEOL(t *testing.T) {
+	tests := []struct {
+		sysDescr string
+		wantID   string
+	}{
+		{"VMware ESXi 5.5.0", "snmp-eol"},
+		{"VMware ESXi 5.5.0 build-3248547", "snmp-eol"},
+		{"Linux test 5.4.0", ""},
+		{"VMware ESXi 8.0.0", ""},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.sysDescr, func(t *testing.T) {
+			finding := checkSNMPEOL(tt.sysDescr)
+			if tt.wantID == "" {
+				if finding != nil {
+					t.Errorf("checkSNMPEOL(%q) = %+v, want nil", tt.sysDescr, finding)
+				}
+				return
+			}
+			if finding == nil {
+				t.Fatalf("checkSNMPEOL(%q) = nil, want ID %q", tt.sysDescr, tt.wantID)
+			}
+			if finding.ID != tt.wantID {
+				t.Errorf("finding.ID = %q, want %q", finding.ID, tt.wantID)
+			}
+		})
+	}
+}
+
+func TestSNMPEOLFinding(t *testing.T) {
+	tests := []struct {
+		name       string
+		sysDescr   string
+		misconfigs bool
+		wantIDs    []string
+	}{
+		{
+			name:       "esxi 5.5 misconfigs",
+			sysDescr:   "VMware ESXi 5.5.0",
+			misconfigs: true,
+			wantIDs:    []string{"snmp-default-community", "snmp-eol"},
+		},
+		{
+			name:       "linux misconfigs",
+			sysDescr:   "Linux test 5.4.0",
+			misconfigs: true,
+			wantIDs:    []string{"snmp-default-community"},
+		},
+		{
+			name:       "esxi 5.5 misconfigs disabled",
+			sysDescr:   "VMware ESXi 5.5.0",
+			misconfigs: false,
+			wantIDs:    nil,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			requestID := []byte{0x2b, 0x06, 0x01, 0x02, 0x01, 0x01, 0x01, 0x00}
+			padding := make([]byte, 10)
+			afterPublic := make([]byte, 33)
+			response := append(padding, []byte("public")...)
+			response = append(response, afterPublic...)
+			response = append(response, []byte(tt.sysDescr)...)
+			response = append(response, requestID...)
+
+			pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatalf("Failed to start mock UDP server: %v", err)
+			}
+			defer pc.Close()
+
+			serverAddr := pc.LocalAddr().String()
+
+			go func() {
+				buf := make([]byte, 4096)
+				n, addr, err := pc.ReadFrom(buf)
+				if err != nil || n == 0 {
+					return
+				}
+				_, _ = pc.WriteTo(response, addr)
+			}()
+
+			conn, err := net.DialTimeout("udp", serverAddr, 5*time.Second)
+			if err != nil {
+				t.Fatalf("Failed to connect to mock server: %v", err)
+			}
+			defer conn.Close()
+
+			addrStr := fmt.Sprintf("127.0.0.1:%s", serverAddr[len("127.0.0.1:"):])
+			addrPort := netip.MustParseAddrPort(addrStr)
+			target := plugins.Target{
+				Host:       "127.0.0.1",
+				Address:    addrPort,
+				Misconfigs: tt.misconfigs,
+			}
+
+			plugin := &SNMPPlugin{}
+			service, err := plugin.Run(conn, 5*time.Second, target)
+			if err != nil {
+				t.Fatalf("Run() returned unexpected error: %v", err)
+			}
+			if service == nil {
+				t.Fatal("Run() returned nil, want non-nil service")
+			}
+
+			got := map[string]bool{}
+			for _, f := range service.SecurityFindings {
+				got[f.ID] = true
+			}
+			if len(service.SecurityFindings) != len(tt.wantIDs) {
+				t.Fatalf("findings = %v, want %v", service.SecurityFindings, tt.wantIDs)
+			}
+			for _, id := range tt.wantIDs {
+				if !got[id] {
+					t.Errorf("missing finding ID %q in %v", id, service.SecurityFindings)
+				}
+			}
+			if got["esxi-eol"] {
+				t.Errorf("SNMP must emit snmp-eol, not esxi-eol")
+			}
+		})
+	}
+}

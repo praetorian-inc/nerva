@@ -16,9 +16,11 @@ package postgres
 
 import (
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/netip"
+	"strings"
 	"testing"
 	"time"
 
@@ -454,6 +456,266 @@ func TestPostgreSQLSecurityFindings_AuthSASL(t *testing.T) {
 
 	assert.False(t, service.AnonymousAccess, "AnonymousAccess must be false for SASL auth")
 	assert.Empty(t, service.SecurityFindings, "no findings expected when SASL auth is required")
+}
+
+func buildParameterStatusPacket(name, value string) []byte {
+	payload := append([]byte(name), 0)
+	payload = append(payload, []byte(value)...)
+	payload = append(payload, 0)
+	length := uint32(4 + len(payload))
+	msg := make([]byte, 1+int(length))
+	msg[0] = 0x53
+	binary.BigEndian.PutUint32(msg[1:5], length)
+	copy(msg[5:], payload)
+	return msg
+}
+
+func TestExtractServerVersion(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{"plain 16.1", "16.1", "16.1"},
+		{"debian suffix", "16.1 (Debian 16.1-1.pgdg120+1)", "16.1"},
+		{"ubuntu 9.1", "9.1.24 (Ubuntu 9.1.24-0ubuntu0.12.04)", "9.1.24"},
+		{"empty", "", ""},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			resp := append(buildAuthOKPacket(), buildParameterStatusPacket("server_version", tt.value)...)
+			got := extractServerVersion(resp)
+			if got != tt.want {
+				t.Errorf("extractServerVersion(%q) = %q, want %q", tt.value, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCheckPostgresEOL(t *testing.T) {
+	tests := []struct {
+		version string
+		wantID  string
+	}{
+		{"9.1", "postgres-eol"},
+		{"9.1.24", "postgres-eol"},
+		{"9.1.24 (Ubuntu 9.1.24-0ubuntu0.12.04)", "postgres-eol"},
+		{"16", ""},
+		{"16.0", ""},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.version, func(t *testing.T) {
+			finding := checkPostgresEOL(tt.version)
+			if tt.wantID == "" {
+				if finding != nil {
+					t.Errorf("checkPostgresEOL(%q) = %+v, want nil", tt.version, finding)
+				}
+				return
+			}
+			if finding == nil {
+				t.Fatalf("checkPostgresEOL(%q) = nil, want ID %q", tt.version, tt.wantID)
+			}
+			if finding.ID != tt.wantID {
+				t.Errorf("finding.ID = %q, want %q", finding.ID, tt.wantID)
+			}
+		})
+	}
+}
+
+func TestPostgreSQLEOLFinding(t *testing.T) {
+	tests := []struct {
+		name       string
+		version    string
+		misconfigs bool
+		wantEOL    bool
+	}{
+		{"9.1 misconfigs", "9.1", true, true},
+		{"16 misconfigs", "16", true, false},
+		{"16.0 misconfigs", "16.0", true, false},
+		{"9.1 misconfigs disabled", "9.1", false, false},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatalf("failed to start mock server: %v", err)
+			}
+			defer listener.Close()
+			serverPort := listener.Addr().(*net.TCPAddr).Port
+
+			go func() {
+				for {
+					conn, err := listener.Accept()
+					if err != nil {
+						return
+					}
+					go func(c net.Conn) {
+						defer c.Close()
+						buf := make([]byte, 4096)
+						_, _ = c.Read(buf)
+						resp := append(buildAuthOKPacket(), buildParameterStatusPacket("server_version", tt.version)...)
+						_, _ = c.Write(resp)
+					}(conn)
+				}
+			}()
+
+			conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", serverPort), 5*time.Second)
+			if err != nil {
+				t.Fatalf("failed to connect to mock server: %v", err)
+			}
+			defer conn.Close()
+
+			addrPort := netip.MustParseAddrPort(fmt.Sprintf("127.0.0.1:%d", serverPort))
+			target := plugins.Target{
+				Host:       "127.0.0.1",
+				Address:    addrPort,
+				Misconfigs: tt.misconfigs,
+			}
+			plugin := &POSTGRESPlugin{}
+			service, err := plugin.Run(conn, 5*time.Second, target)
+			if err != nil {
+				t.Fatalf("Run() error: %v", err)
+			}
+			if service == nil {
+				t.Fatal("Run() returned nil")
+			}
+			if tt.wantEOL && !strings.Contains(service.Version, tt.version) {
+				t.Errorf("service.Version = %q, want to contain %q", service.Version, tt.version)
+			}
+			found := false
+			for _, f := range service.SecurityFindings {
+				if f.ID == "postgres-eol" {
+					found = true
+				}
+			}
+			if found != tt.wantEOL {
+				t.Errorf("postgres-eol present=%v, want %v (findings=%v)", found, tt.wantEOL, service.SecurityFindings)
+			}
+		})
+	}
+}
+
+func TestPostgreSQLDistroVersionCPE(t *testing.T) {
+	const raw = "16.1 (Debian 16.1-1.pgdg120+1)"
+	const numeric = "16.1"
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to start mock server: %v", err)
+	}
+	defer listener.Close()
+	serverPort := listener.Addr().(*net.TCPAddr).Port
+
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				buf := make([]byte, 4096)
+				_, _ = c.Read(buf)
+				resp := append(buildAuthOKPacket(), buildParameterStatusPacket("server_version", raw)...)
+				_, _ = c.Write(resp)
+			}(conn)
+		}
+	}()
+
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", serverPort), 5*time.Second)
+	if err != nil {
+		t.Fatalf("failed to connect to mock server: %v", err)
+	}
+	defer conn.Close()
+
+	plugin := &POSTGRESPlugin{}
+	service, err := plugin.Run(conn, 5*time.Second, plugins.Target{
+		Host:    "127.0.0.1",
+		Address: netip.MustParseAddrPort(fmt.Sprintf("127.0.0.1:%d", serverPort)),
+	})
+	if err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+	if service == nil {
+		t.Fatal("Run() returned nil")
+	}
+	if service.Version != numeric {
+		t.Errorf("service.Version = %q, want %q", service.Version, numeric)
+	}
+	if strings.Contains(service.Version, "Debian") || strings.Contains(service.Version, " ") {
+		t.Errorf("service.Version %q must not include distro suffix", service.Version)
+	}
+
+	var payload plugins.ServicePostgreSQL
+	if err := json.Unmarshal(service.Raw, &payload); err != nil {
+		t.Fatalf("json.Unmarshal(service.Raw): %v", err)
+	}
+	wantCPE := "cpe:2.3:a:postgresql:postgresql:16.1:*:*:*:*:*:*:*"
+	if len(payload.CPEs) != 1 || payload.CPEs[0] != wantCPE {
+		t.Errorf("CPEs = %v, want [%q]", payload.CPEs, wantCPE)
+	}
+}
+
+func TestPostgreSQLDistroVersionStillEOL(t *testing.T) {
+	const raw = "9.1.24 (Ubuntu 9.1.24-0ubuntu0.12.04)"
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to start mock server: %v", err)
+	}
+	defer listener.Close()
+	serverPort := listener.Addr().(*net.TCPAddr).Port
+
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				buf := make([]byte, 4096)
+				_, _ = c.Read(buf)
+				resp := append(buildAuthOKPacket(), buildParameterStatusPacket("server_version", raw)...)
+				_, _ = c.Write(resp)
+			}(conn)
+		}
+	}()
+
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", serverPort), 5*time.Second)
+	if err != nil {
+		t.Fatalf("failed to connect to mock server: %v", err)
+	}
+	defer conn.Close()
+
+	plugin := &POSTGRESPlugin{}
+	service, err := plugin.Run(conn, 5*time.Second, plugins.Target{
+		Host:       "127.0.0.1",
+		Address:    netip.MustParseAddrPort(fmt.Sprintf("127.0.0.1:%d", serverPort)),
+		Misconfigs: true,
+	})
+	if err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+	if service == nil {
+		t.Fatal("Run() returned nil")
+	}
+	if service.Version != "9.1.24" {
+		t.Errorf("service.Version = %q, want %q", service.Version, "9.1.24")
+	}
+	found := false
+	for _, f := range service.SecurityFindings {
+		if f.ID == "postgres-eol" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("postgres-eol missing for %q (findings=%v)", raw, service.SecurityFindings)
+	}
 }
 
 // TestPostgreSQLDockerWithPassword is a Docker integration test that verifies no anonymous

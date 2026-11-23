@@ -861,6 +861,49 @@ var findingCatalog = map[string]FindingMeta{
 		Recommendation: "Enable authentication in LibreChat. Restrict network access and configure user management.",
 		CVSS:           "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:N",
 	},
+	// ── Product EOL ────────────────────────────────────────────────────
+	"openssh-eol": {
+		Title:          "OpenSSH End-of-Life Version",
+		Severity:       SeverityLow,
+		Impact:         "The host is running an OpenSSH version that no longer receives security patches, leaving all known and future vulnerabilities permanently unpatched.",
+		Recommendation: "Migrate to a supported OpenSSH version. If immediate migration is not possible, isolate the host on a restricted network segment and apply compensating controls.",
+		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N",
+	},
+	"esxi-eol": {
+		Title:          "VMware ESXi End-of-Life Version",
+		Severity:       SeverityLow,
+		Impact:         "The host is running a VMware ESXi version that no longer receives security patches, leaving all known and future vulnerabilities permanently unpatched.",
+		Recommendation: "Migrate the workload to a supported ESXi version. If immediate migration is not possible, isolate the host on a restricted network segment and apply compensating controls.",
+		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N",
+	},
+	"snmp-eol": {
+		Title:          "SNMP-Disclosed End-of-Life Product",
+		Severity:       SeverityLow,
+		Impact:         "The SNMP sysDescr discloses a product version that no longer receives security patches, leaving all known and future vulnerabilities permanently unpatched.",
+		Recommendation: "Migrate the workload to a supported product version. If immediate migration is not possible, isolate the host on a restricted network segment and apply compensating controls.",
+		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N",
+	},
+	"bind-eol": {
+		Title:          "ISC BIND End-of-Life Version",
+		Severity:       SeverityLow,
+		Impact:         "The host is running an ISC BIND version that no longer receives security patches, leaving all known and future vulnerabilities permanently unpatched.",
+		Recommendation: "Migrate to a supported BIND version. If immediate migration is not possible, isolate the host on a restricted network segment and apply compensating controls.",
+		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N",
+	},
+	"postgres-eol": {
+		Title:          "PostgreSQL End-of-Life Version",
+		Severity:       SeverityLow,
+		Impact:         "The host is running a PostgreSQL version that no longer receives security patches, leaving all known and future vulnerabilities permanently unpatched.",
+		Recommendation: "Migrate to a supported PostgreSQL version. If immediate migration is not possible, isolate the host on a restricted network segment and apply compensating controls.",
+		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N",
+	},
+	"mssql-eol": {
+		Title:          "Microsoft SQL Server End-of-Life Version",
+		Severity:       SeverityLow,
+		Impact:         "The host is running a Microsoft SQL Server version that no longer receives security patches, leaving all known and future vulnerabilities permanently unpatched.",
+		Recommendation: "Migrate to a supported SQL Server version. If immediate migration is not possible, isolate the host on a restricted network segment and apply compensating controls.",
+		CVSS:           "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N",
+	},
 }
 
 // Enrich fills in Title, Impact, and Recommendation from the finding catalog
