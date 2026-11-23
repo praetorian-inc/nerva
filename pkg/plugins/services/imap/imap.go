@@ -134,7 +134,16 @@ func DetectIMAP(conn net.Conn, timeout time.Duration) (string, bool, error) {
 		}
 	}
 	check, err := checkCapability(conn, timeout)
-	return string(response[5:]), check, err
+
+	/* Strip the "* OK " greeting prefix to recover the banner. checkGreeting
+	/* accepts the 4-byte greeting "* OK", so guard the slice: a short greeting
+	/* (e.g. a hostile server sending exactly "* OK") would otherwise panic with
+	/* "slice bounds out of range". */
+	banner := ""
+	if len(response) > 5 {
+		banner = string(response[5:])
+	}
+	return banner, check, err
 }
 
 func (p *IMAPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
