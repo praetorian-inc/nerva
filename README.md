@@ -387,7 +387,7 @@ Technology detection for web services, organized by category:
 | MySQL | TCP | 3306 |
 | MSSQL | TCP | 1433 |
 | Oracle | TCP | 1521 |
-| MongoDB | TCP | 27017 |
+| MongoDB | TCP/TLS | 27017 |
 | Redis | TCP/TLS | 6379, 6380 |
 | Cassandra | TCP | 9042 |
 | InfluxDB | TCP | 8086 |

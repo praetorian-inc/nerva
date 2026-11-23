@@ -108,6 +108,10 @@ Version Compatibility Matrix:
 
 type MONGODBPlugin struct{}
 
+// MONGODBTLSPlugin detects MongoDB servers that require TLS on the wire
+// (net.tls.mode requireTLS), reached over a TLS connection.
+type MONGODBTLSPlugin struct{}
+
 const MONGODB = "mongodb"
 
 // mongoDBMetadata holds enriched metadata extracted from MongoDB responses
@@ -127,6 +131,7 @@ const (
 
 func init() {
 	plugins.RegisterPlugin(&MONGODBPlugin{})
+	plugins.RegisterPlugin(&MONGODBTLSPlugin{})
 }
 
 // checkMongoDBMsgResponse validates that the response is a valid MongoDB OP_MSG message.
@@ -1143,7 +1148,9 @@ func buildMongoDBCPE(version string) string {
 	return fmt.Sprintf("cpe:2.3:a:mongodb:mongodb:%s:*:*:*:*:*:*:*", version)
 }
 
-func (p *MONGODBPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
+// runMongoDB contains the Run logic shared by MONGODBPlugin and MONGODBTLSPlugin.
+// isTLS is true when conn is a TLS connection (TCPTLS transport).
+func runMongoDB(conn net.Conn, timeout time.Duration, target plugins.Target, isTLS bool) (*plugins.Service, error) {
 	metadata, check, err := DetectMongoDB(conn, timeout)
 	if check && err != nil {
 		return nil, nil
@@ -1158,7 +1165,12 @@ func (p *MONGODBPlugin) Run(conn net.Conn, timeout time.Duration, target plugins
 		cpe := buildMongoDBCPE(metadata.Version)
 		payload.CPEs = []string{cpe}
 
-		service := plugins.CreateServiceFrom(target, payload, false, metadata.Version, plugins.TCP)
+		transport := plugins.TCP
+		if isTLS {
+			transport = plugins.TCPTLS
+		}
+
+		service := plugins.CreateServiceFrom(target, payload, isTLS, metadata.Version, transport)
 
 		if target.Misconfigs && checkMongoDBAuth(conn, timeout) {
 			service.AnonymousAccess = true
@@ -1175,6 +1187,15 @@ func (p *MONGODBPlugin) Run(conn net.Conn, timeout time.Duration, target plugins
 	return nil, err
 }
 
+func (p *MONGODBPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
+	return runMongoDB(conn, timeout, target, false)
+}
+
+// Run implements the Plugin interface for MongoDB over TLS.
+func (p *MONGODBTLSPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {
+	return runMongoDB(conn, timeout, target, true)
+}
+
 func (p *MONGODBPlugin) PortPriority(port uint16) bool {
 	return port == 27017
 }
@@ -1187,5 +1208,23 @@ func (p *MONGODBPlugin) Type() plugins.Protocol {
 }
 
 func (p *MONGODBPlugin) Priority() int {
+	return -1
+}
+
+// PortPriority returns true for the default MongoDB port, which is also the
+// port TLS-only deployments listen on.
+func (p *MONGODBTLSPlugin) PortPriority(port uint16) bool {
+	return port == 27017
+}
+
+func (p *MONGODBTLSPlugin) Name() string {
+	return MONGODB
+}
+
+func (p *MONGODBTLSPlugin) Type() plugins.Protocol {
+	return plugins.TCPTLS
+}
+
+func (p *MONGODBTLSPlugin) Priority() int {
 	return -1
 }
