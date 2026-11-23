@@ -449,3 +449,14 @@ func TestIdentifyVendor(t *testing.T) {
 		})
 	}
 }
+
+// TestEnrichDiameterZeroLengthAVPNoPanic is a regression test: an AVP with
+// Length=0 produced a negative dataLength and a cea[28:20] slice panic.
+func TestEnrichDiameterZeroLengthAVPNoPanic(t *testing.T) {
+	buf := make([]byte, 28) // AVP header at offset 20 is all zeros (Length=0)
+
+	_, _, err := enrichDiameter(buf)
+	if err == nil {
+		t.Error("expected error when no Product-Name AVP is present")
+	}
+}

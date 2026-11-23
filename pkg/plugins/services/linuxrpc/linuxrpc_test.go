@@ -53,3 +53,20 @@ func TestRPC(t *testing.T) {
 		})
 	}
 }
+
+// TestParseRPCInfoOversizedNetworkIDLenNoPanic is a regression test: a declared
+// networkIDLen larger than the remaining bytes panicked at response[0:networkIDLen].
+func TestParseRPCInfoOversizedNetworkIDLenNoPanic(t *testing.T) {
+	resp := make([]byte, 0x20+0x20)
+	// After the 0x20 header: program(4) version(4) networkIDLen(4) then 20 bytes remain.
+	body := resp[0x20:]
+	body[11] = 0x40 // networkIDLen = 64 > 20 remaining
+
+	lookup := &plugins.ServiceRPC{}
+	if err := parseRPCInfo(resp, lookup); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if len(lookup.Entries) != 0 {
+		t.Errorf("expected no entries, got %d", len(lookup.Entries))
+	}
+}

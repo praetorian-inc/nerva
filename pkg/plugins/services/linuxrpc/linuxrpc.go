@@ -138,23 +138,41 @@ func parseRPCInfo(response []byte, lookupResponse *plugins.ServiceRPC) error {
 			networkIDLen++
 		}
 		response = response[4:]
+		if networkIDLen < 0 || networkIDLen > len(response) {
+			return nil
+		}
 		tmp.Protocol = string(response[0:networkIDLen])
 		response = response[networkIDLen:]
+		if len(response) < 4 {
+			return nil
+		}
 		addressLen := int(binary.BigEndian.Uint32(response[0:4]))
 		for addressLen%4 != 0 {
 			addressLen++
 		}
 		response = response[4:]
+		if addressLen < 0 || addressLen > len(response) {
+			return nil
+		}
 		tmp.Address = string(response[0:addressLen])
 		response = response[addressLen:]
+		if len(response) < 4 {
+			return nil
+		}
 		ownerLen := int(binary.BigEndian.Uint32(response[0:4]))
 		for ownerLen%4 != 0 {
 			ownerLen++
 		}
 		response = response[4:]
+		if ownerLen < 0 || ownerLen > len(response) {
+			return nil
+		}
 		tmp.Owner = string(response[0:ownerLen])
 		response = response[ownerLen:]
 
+		if len(response) < 4 {
+			return nil
+		}
 		valueFollows = int(binary.BigEndian.Uint32(response[0:4]))
 		response = response[4:]
 

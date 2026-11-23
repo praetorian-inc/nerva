@@ -372,7 +372,7 @@ func DetectRDPAuth(conn net.Conn, timeout time.Duration) (*plugins.ServiceRDP, b
 	targetInfoLen := int(responseData.TargetInfoLen)
 	if targetInfoLen > 0 {
 		startIdx := int(responseData.TargetInfoBufferOffset)
-		if startIdx+targetInfoLen > len(response) {
+		if startIdx+targetInfoLen > len(response) || len(response)-startIdx < avPairLen {
 			return &info, true, fmt.Errorf("Invalid TargetInfoLen value")
 		}
 		var avPair AVPair

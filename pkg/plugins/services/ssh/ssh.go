@@ -246,11 +246,11 @@ func checkAlgo(data []byte) (map[string]string, error) {
 	ciphersClientServer := string(data[4+encryptAlgoCToSBegin : 4+encryptAlgoCToSBegin+encryptAlgoCToSLength])
 
 	encryptAlgoSToCBegin := 4 + encryptAlgoCToSBegin + encryptAlgoCToSLength
-	if length < 4+encryptAlgoCToSBegin {
+	if length < 4+encryptAlgoSToCBegin {
 		return nil, fmt.Errorf("invalid response length")
 	}
 	encryptAlgoSToCLength := int(big.NewInt(0).SetBytes(data[encryptAlgoSToCBegin : 4+encryptAlgoSToCBegin]).Uint64())
-	if length < 4+encryptAlgoCToSBegin+encryptAlgoSToCLength {
+	if length < 4+encryptAlgoSToCBegin+encryptAlgoSToCLength {
 		return nil, fmt.Errorf("invalid response length")
 	}
 	ciphersServerClient := string(data[4+encryptAlgoSToCBegin : 4+encryptAlgoSToCBegin+encryptAlgoSToCLength])
@@ -270,7 +270,7 @@ func checkAlgo(data []byte) (map[string]string, error) {
 		return nil, fmt.Errorf("invalid response length")
 	}
 	macAlgoSToCLength := int(big.NewInt(0).SetBytes(data[macAlgoSToCBegin : 4+macAlgoSToCBegin]).Uint64())
-	if length < 4+macAlgoSToCBegin+macAlgoCToSLength {
+	if length < 4+macAlgoSToCBegin+macAlgoSToCLength {
 		return nil, fmt.Errorf("invalid response length")
 	}
 	macServerClient := string(data[4+macAlgoSToCBegin : 4+macAlgoSToCBegin+macAlgoSToCLength])
@@ -306,11 +306,11 @@ func checkAlgo(data []byte) (map[string]string, error) {
 	languagesClientServer := string(data[4+langAlgoCToSBegin : 4+langAlgoCToSBegin+langAlgoCToSLength])
 
 	langAlgoSToCBegin := 4 + langAlgoCToSBegin + langAlgoCToSLength
-	if length < 4+langAlgoCToSBegin {
+	if length < 4+langAlgoSToCBegin {
 		return nil, fmt.Errorf("invalid response length")
 	}
 	langAlgoSToCLength := int(big.NewInt(0).SetBytes(data[langAlgoSToCBegin : 4+langAlgoSToCBegin]).Uint64())
-	if length < 4+langAlgoCToSBegin+langAlgoSToCLength {
+	if length < 4+langAlgoSToCBegin+langAlgoSToCLength {
 		return nil, fmt.Errorf("invalid response length")
 	}
 	languagesServerClient := string(data[4+langAlgoSToCBegin : 4+langAlgoSToCBegin+langAlgoSToCLength])

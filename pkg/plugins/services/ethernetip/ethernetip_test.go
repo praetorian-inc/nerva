@@ -15,6 +15,7 @@
 package ethernetip
 
 import (
+	"encoding/binary"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -182,4 +183,17 @@ func TestNormalizeForCPE(t *testing.T) {
 			assert.Equal(t, tt.expected, result)
 		})
 	}
+}
+
+// TestParseListIdentityResponseBoundary62NoPanic is a regression test for an
+// off-by-one: a 62-byte response read response[62] when parsing the product name length.
+func TestParseListIdentityResponseBoundary62NoPanic(t *testing.T) {
+	resp := make([]byte, 62)
+	binary.LittleEndian.PutUint16(resp[0:2], CommandListIdentity)
+	binary.LittleEndian.PutUint16(resp[24:26], 1)    // CPF item count
+	binary.LittleEndian.PutUint16(resp[26:28], 0x0C) // CIP Identity type code
+	binary.LittleEndian.PutUint16(resp[28:30], 32)   // item length; 30+32 == 62
+
+	_, err := parseListIdentityResponse(resp)
+	assert.Error(t, err)
 }

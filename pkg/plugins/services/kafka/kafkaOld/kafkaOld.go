@@ -212,6 +212,9 @@ func checkMetadataQuery(conn net.Conn, timeout time.Duration) (bool, error) {
 	if len(response) == 0 {
 		return true, &utils.ServerNotEnable{}
 	}
+	if len(response) < 12 {
+		return false, nil
+	}
 
 	// Similar to checkApiVersions, first we test the length
 	responseLength := binary.BigEndian.Uint32(response[0:4])
@@ -246,8 +249,15 @@ func checkMetadataQuery(conn net.Conn, timeout time.Duration) (bool, error) {
 		/* node_id	(INT32, 4 bytes)
 		/* host		(STRING, First the length N is given as an INT16. Then N bytes follow. So 2 + N bytes total)
 		/* port		(INT32, 4 bytes) */
+		if int(index)+6 > len(response) {
+			return false, nil
+		}
 		hostLength := binary.BigEndian.Uint16(response[index+4 : index+6])
-		index += 4 + 2 + hostLength + 4
+		nextIndex := int(index) + 4 + 2 + int(hostLength) + 4
+		if nextIndex > len(response) {
+			return false, nil
+		}
+		index = uint16(nextIndex)
 	}
 
 	topicsIndex := index

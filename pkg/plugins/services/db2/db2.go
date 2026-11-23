@@ -277,8 +277,8 @@ func extractParameter(response []byte, targetCodepoint uint16) []byte {
 			dataEnd := offset + int(paramLen)
 
 			// Validate bounds
-			if dataEnd > responseLen {
-				return nil // Truncated parameter
+			if paramLen < 4 || dataEnd > responseLen {
+				return nil // Truncated or invalid parameter
 			}
 
 			// Return parameter data (excluding length and codepoint)
