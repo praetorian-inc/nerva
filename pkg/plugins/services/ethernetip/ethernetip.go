@@ -185,7 +185,7 @@ func buildListIdentityRequest() []byte {
 // parseListIdentityResponse parses an EtherNet/IP List Identity response
 func parseListIdentityResponse(response []byte) (Data, error) {
 	// Minimum valid response: 24-byte header + 2-byte item count + item header + identity data
-	minResponseLength := 24 + 2 + 4 + 32
+	minResponseLength := 24 + 2 + 4 + 33
 	if len(response) < minResponseLength {
 		return Data{}, &utils.InvalidResponseErrorInfo{
 			Service: ETHERNETIP,

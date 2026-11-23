@@ -361,3 +361,27 @@ func TestSSH(t *testing.T) {
 		})
 	}
 }
+
+// TestCheckAlgoTruncatedAtServerToClientCipherLengthNoPanic is a regression test.
+// With the kex, host-key and C2S-cipher lengths all zero, the S2C cipher length
+// field begins at offset 34 (22 header+cookie, then three 4-byte length fields).
+// Truncating at or inside that field previously passed a wrong guard and overran.
+func TestCheckAlgoTruncatedAtServerToClientCipherLengthNoPanic(t *testing.T) {
+	const s2cBegin = 34
+	for i := s2cBegin; i <= 256; i++ {
+		func(n int) {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Fatalf("checkAlgo panicked on %d-byte input: %v", n, r)
+				}
+			}()
+			// Fresh exact-size buffer so cap == len; slicing a longer buffer would
+			// read into spare capacity and mask the overrun.
+			buf := make([]byte, n) // all-zero length fields
+			_, err := checkAlgo(buf)
+			if n < s2cBegin+4 && err == nil {
+				t.Errorf("expected error for %d-byte truncated input", n)
+			}
+		}(i)
+	}
+}

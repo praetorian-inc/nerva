@@ -360,3 +360,16 @@ func buildTestEXCSATRD(params map[uint16][]byte) []byte {
 
 	return msg
 }
+
+// TestExtractParameterShortParamLenNoPanic is a regression test: a matching
+// codepoint with paramLen < 4 made dataStart exceed dataEnd and panicked.
+func TestExtractParameterShortParamLenNoPanic(t *testing.T) {
+	const codepoint uint16 = 0x1041
+	resp := make([]byte, 14)                           // 10-byte DDM header + 4-byte parameter header
+	binary.BigEndian.PutUint16(resp[10:12], 0)         // paramLen = 0
+	binary.BigEndian.PutUint16(resp[12:14], codepoint) // matching codepoint
+
+	if got := extractParameter(resp, codepoint); got != nil {
+		t.Errorf("expected nil for invalid paramLen, got %v", got)
+	}
+}

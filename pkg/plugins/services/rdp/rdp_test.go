@@ -718,3 +718,47 @@ func TestTLSPlugin_EOL(t *testing.T) {
 		t.Errorf("SecurityFindings[0].Severity = %q, want high", service.SecurityFindings[0].Severity)
 	}
 }
+
+// TestDetectRDPAuthTargetInfoNearBufferEndNoPanic is a regression test: an NTLM
+// challenge with TargetInfoLen 1-3 whose offset leaves < 4 bytes (an AV_PAIR header)
+// before the buffer end previously overran.
+func TestDetectRDPAuthTargetInfoNearBufferEndNoPanic(t *testing.T) {
+	challenge := make([]byte, 56)
+	copy(challenge[0:8], []byte("NTLMSSP\x00"))
+	binary.LittleEndian.PutUint32(challenge[8:12], 2)   // MessageType
+	binary.LittleEndian.PutUint16(challenge[40:42], 1)  // TargetInfoLen
+	binary.LittleEndian.PutUint16(challenge[42:44], 1)  // TargetInfoMaxLen
+	binary.LittleEndian.PutUint32(challenge[44:48], 53) // offset: 3 bytes left
+	copy(challenge[52:56], []byte{0, 0, 0, 0x0F})       // Version[4:]
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		buf := make([]byte, 1024)
+		_, _ = c.Read(buf)
+		_, _ = c.Write(challenge)
+	}()
+
+	conn, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	info, isRDP, err := DetectRDPAuth(conn, 2*time.Second)
+	if !isRDP || info == nil {
+		t.Errorf("expected recognised NTLM challenge, got isRDP=%v info=%v", isRDP, info)
+	}
+	if err == nil {
+		t.Error("expected error for invalid TargetInfo bounds")
+	}
+}

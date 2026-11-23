@@ -328,3 +328,41 @@ func TestRTSPSecurityFindings(t *testing.T) {
 		})
 	}
 }
+
+// TestRunServerHeaderWithoutCRLFNoPanic is a regression test: a valid-looking
+// response whose Server header has no trailing CRLF must not panic.
+func TestRunServerHeaderWithoutCRLFNoPanic(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		buf := make([]byte, 1024)
+		n, _ := c.Read(buf)
+		req := string(buf[:n])
+		i := strings.Index(req, "Cseq: ")
+		if i == -1 {
+			return
+		}
+		rest := req[i+len("Cseq: "):]
+		cseq := rest[:strings.Index(rest, "\r\n")]
+		_, _ = c.Write([]byte("RTSP/1.0 200 OK\r\nCSeq: " + cseq + "\r\nServer: X"))
+	}()
+
+	conn, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	svc, err := (&RTSPPlugin{}).Run(conn, 2*time.Second, plugins.Target{})
+	assert.NoError(t, err)
+	assert.Nil(t, svc)
+}

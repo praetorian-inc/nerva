@@ -104,7 +104,7 @@ func (p *RTSPPlugin) Run(conn net.Conn, timeout time.Duration, target plugins.Ta
 
 		serverValueStart := serverStart + RtspServerHeaderLength
 		serverValueEnd := strings.Index(response[serverValueStart:], "\r\n")
-		if serverValueStart+serverValueEnd >= len(response) {
+		if serverValueEnd < 0 || serverValueStart+serverValueEnd >= len(response) {
 			return nil, nil
 		}
 

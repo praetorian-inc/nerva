@@ -359,7 +359,7 @@ func enrichDiameter(cea []byte) (string, uint32, error) {
 
 		// Extract data length
 		dataLength := int(avpLength) - (dataOffset - offset)
-		if dataOffset+dataLength > len(cea) {
+		if dataLength < 0 || dataOffset+dataLength > len(cea) {
 			break
 		}
 
