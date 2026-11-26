@@ -142,6 +142,51 @@ func TestIMAPSecurityFindingsDisabled(t *testing.T) {
 	}
 }
 
+// TestDetectIMAPShortGreeting is a regression test for a panic on hostile input:
+// a server that sends only a short greeting ("* OK" or "* BYE") passes checkGreeting
+// but previously caused string(response[5:]) to panic with slice bounds out of range.
+func TestDetectIMAPShortGreeting(t *testing.T) {
+	for _, greeting := range []string{"* OK", "* BYE"} {
+		t.Run(greeting, func(t *testing.T) {
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatalf("Failed to start mock server: %v", err)
+			}
+			defer listener.Close()
+
+			go func() {
+				conn, err := listener.Accept()
+				if err != nil {
+					return
+				}
+				defer conn.Close()
+				// Only the greeting, then close: no capability follow-up.
+				_, _ = conn.Write([]byte(greeting))
+			}()
+
+			conn, err := net.DialTimeout("tcp", listener.Addr().String(), 5*time.Second)
+			if err != nil {
+				t.Fatalf("Failed to connect to mock server: %v", err)
+			}
+			defer conn.Close()
+
+			// Must not panic; reaching the assertions proves it.
+			banner, check, err := DetectIMAP(conn, 5*time.Second)
+			if banner != "" {
+				t.Errorf("expected empty banner for %q, got %q", greeting, banner)
+			}
+			// The mock closes after the greeting, so the capability handshake
+			// fails (EOF) and DetectIMAP reports check=false with a non-nil error.
+			if check {
+				t.Error("expected check == false when capability handshake fails")
+			}
+			if err == nil {
+				t.Error("expected non-nil error when capability handshake fails")
+			}
+		})
+	}
+}
+
 func TestIMAP(t *testing.T) {
 	testcases := []test.Testcase{
 		{
