@@ -77,7 +77,15 @@ func DetectPOP3(conn net.Conn, timeout time.Duration, tls bool) (string, bool, e
 		}
 	}
 
-	return string(initialResponse[4:]), true, nil
+	// Strip the "+OK " prefix to recover the banner. HasPrefix only guarantees
+	// 3 bytes ("+OK"), and initialResponse[4:] is a default-high slice bounded
+	// by len, so a hostile server greeting with exactly "+OK" would otherwise
+	// panic with "slice bounds out of range". Mirrors the IMAP greeting guard.
+	banner := ""
+	if len(initialResponse) > 4 {
+		banner = string(initialResponse[4:])
+	}
+	return banner, true, nil
 }
 
 func (p *POP3Plugin) Run(conn net.Conn, timeout time.Duration, target plugins.Target) (*plugins.Service, error) {

@@ -84,6 +84,49 @@ func TestPOP3SecurityFindings(t *testing.T) {
 	}
 }
 
+// TestDetectPOP3ShortGreeting is a regression test for a panic on hostile input:
+// a server greeting of exactly "+OK" (3 bytes) passes the "+OK" prefix check but
+// previously caused string(initialResponse[4:]) to panic with slice bounds out of range.
+func TestDetectPOP3ShortGreeting(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Failed to start mock server: %v", err)
+	}
+	defer listener.Close()
+
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		// Exactly 3 bytes, no space and no CRLF.
+		_, _ = conn.Write([]byte("+OK"))
+		buf := make([]byte, 256)
+		_, _ = conn.Read(buf)
+		// The "-ERR" reply is required for DetectPOP3 to reach the guarded slice.
+		_, _ = conn.Write([]byte("-ERR unknown command\r\n"))
+	}()
+
+	conn, err := net.DialTimeout("tcp", listener.Addr().String(), 5*time.Second)
+	if err != nil {
+		t.Fatalf("Failed to connect to mock server: %v", err)
+	}
+	defer conn.Close()
+
+	// Must not panic; reaching the assertions proves it.
+	banner, check, err := DetectPOP3(conn, 5*time.Second, false)
+	if banner != "" {
+		t.Errorf("expected empty banner for 3-byte greeting, got %q", banner)
+	}
+	if !check {
+		t.Error("expected check == true")
+	}
+	if err != nil {
+		t.Errorf("expected nil error, got %v", err)
+	}
+}
+
 // TestPOP3SecurityFindingsDisabled verifies that no findings are emitted when Misconfigs=false.
 func TestPOP3SecurityFindingsDisabled(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
